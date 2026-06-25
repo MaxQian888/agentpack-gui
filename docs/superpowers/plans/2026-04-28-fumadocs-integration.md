@@ -208,12 +208,12 @@ git commit -m "feat(docs): configure Next.js and Fumadocs MDX plugin"
 ```mdx
 ---
 title: Getting Started
-description: Welcome to the react-quick-starter documentation.
+description: Welcome to the agentpack-gui documentation.
 ---
 
 # Getting Started
 
-This is the documentation skeleton for `react-quick-starter`.
+This is the documentation skeleton for `agentpack-gui`.
 
 Add your content here.
 ```
@@ -299,7 +299,7 @@ import { source } from "@/lib/source"
 
 export default function Layout({ children }: { children: ReactNode }) {
   return (
-    <DocsLayout tree={source.getPageTree()} nav={{ title: "react-quick-starter" }}>
+    <DocsLayout tree={source.getPageTree()} nav={{ title: "agentpack-gui" }}>
       {children}
     </DocsLayout>
   )

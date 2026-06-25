@@ -1,6 +1,6 @@
-# Contributing to React Quick Starter
+# Contributing to agentpack
 
-Thank you for your interest in contributing to React Quick Starter! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to agentpack! This document provides guidelines and instructions for contributing.
 
 ## Table of Contents
 
@@ -23,12 +23,12 @@ See [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
 1. **Fork the repository** on GitHub
 2. **Clone your fork** locally:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/react-quick-starter.git
-   cd react-quick-starter
+   git clone https://github.com/YOUR_USERNAME/agentpack-gui.git
+   cd agentpack-gui
    ```
 3. **Add the upstream remote**:
    ```bash
-   git remote add upstream https://github.com/AstroAir/react-quick-starter.git
+   git remote add upstream https://github.com/Arxtect/agentpack-gui.git
    ```
 
 ## Development Setup
@@ -287,7 +287,7 @@ describe('Button', () => {
 
 If you have questions, feel free to:
 
-1. Check existing [Issues](https://github.com/AstroAir/react-quick-starter/issues)
+1. Check existing [Issues](https://github.com/Arxtect/agentpack-gui/issues)
 2. Open a new issue for discussion
 3. Reach out to maintainers
 

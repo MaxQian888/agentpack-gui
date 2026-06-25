@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-25
+
+### Added
+
+- Multi-platform auto-publishing release pipeline: pushing a `v*` tag builds
+  Linux/Windows/macOS installers and publishes a GitHub release automatically
+- `verify-version` release gate: the pushed tag must match the version in
+  `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, so a
+  release only happens after a real version bump
+
+### Changed
+
+- Rebranded project metadata to **agentpack** / `agentpack-gui`
+  (`Arxtect/agentpack-gui`) across package manifests, docs and governance files
+
+## [Previous] - foundation
+
 ### Added
 
 - Initial project setup with Next.js 16 and React 19
@@ -43,5 +60,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basic UI components (Button)
 - Project structure and configuration
 
-[Unreleased]: https://github.com/AstroAir/react-quick-starter/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/AstroAir/react-quick-starter/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Arxtect/agentpack-gui/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Arxtect/agentpack-gui/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/Arxtect/agentpack-gui/releases/tag/v0.1.0

@@ -90,7 +90,7 @@ export const defaultLocale: Locale = "en"
 ```json
 {
   "page": {
-    "title": "React Quick Starter",
+    "title": "agentpack",
     "subtitle": "Next.js 16 + Tauri 2.9 + Tailwind v4 + shadcn/ui",
     "instructionEdit": "Get started by editing",
     "instructionSave": "Save and see your changes instantly.",
@@ -118,7 +118,7 @@ export const defaultLocale: Locale = "en"
 ```json
 {
   "page": {
-    "title": "React 快速启动模板",
+    "title": "agentpack",
     "subtitle": "Next.js 16 + Tauri 2.9 + Tailwind v4 + shadcn/ui",
     "instructionEdit": "编辑开始",
     "instructionSave": "保存即可立即看到变化。",
@@ -517,7 +517,7 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "React Quick Starter",
+  title: "agentpack",
   description: "Next.js 16 + Tauri 2.9 + Tailwind v4 + shadcn/ui",
 }
 
@@ -977,7 +977,7 @@ test.describe("smoke", () => {
   test("page loads with main heading", async ({ page }) => {
     await page.goto("/")
     // Page should render the main title from i18n (default locale = en)
-    await expect(page.locator("body")).toContainText("React Quick Starter")
+    await expect(page.locator("body")).toContainText("agentpack")
   })
 
   test("tauri demo is hidden in web mode", async ({ page }) => {

@@ -8,7 +8,7 @@ status: approved
 
 ## Overview
 
-Integrate the [Fumadocs](https://fumadocs.dev) documentation framework into the `react-quick-starter` monorepo as a pnpm workspace subpackage (`docs/`). The docs site will be developed within the same repository but deployed independently from the main Next.js + Tauri application. Initial content is a minimal skeleton (one placeholder MDX page).
+Integrate the [Fumadocs](https://fumadocs.dev) documentation framework into the `agentpack-gui` monorepo as a pnpm workspace subpackage (`docs/`). The docs site will be developed within the same repository but deployed independently from the main Next.js + Tauri application. Initial content is a minimal skeleton (one placeholder MDX page).
 
 ## Constraints
 
@@ -19,7 +19,7 @@ Integrate the [Fumadocs](https://fumadocs.dev) documentation framework into the 
 ## Repository Structure
 
 ```
-react-quick-starter/
+agentpack-gui/
 ├── pnpm-workspace.yaml        # declares docs as workspace package
 ├── package.json               # adds docs:dev, docs:build, docs:start scripts
 ├── tsconfig.json              # existing (inherited by docs/tsconfig.json)

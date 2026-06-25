@@ -1,8 +1,16 @@
-# React Quick Starter
+# agentpack
 
-一个现代化的全栈启动模板，结合了用于 Web 应用的 **Next.js 16** 和 **React 19**，以及用于跨平台桌面应用的 **Tauri 2.9**。使用 TypeScript、Tailwind CSS v4 和 shadcn/ui 组件构建。
+**agentpack** 是一个跨平台桌面安装器（终端 `agentpack` TUI 的 GUI 版本），用于一键配置
+Claude Code、Codex、工程技能（skills）、MCP 服务器、网络/镜像以及 cc-switch。基于
+**Next.js 16**（React 19）和 **Tauri 2.9** 构建，使用 TypeScript、Tailwind CSS v4 和
+shadcn/ui，可运行于 Windows、macOS 和 Linux。
 
 [English Documentation](./README.md)
+
+> 纯逻辑位于 `lib/agentpack/`；系统操作（带实时输出流的进程执行、文件系统、cc-switch
+> SQLite 数据库）是 `src-tauri/src/` 中的 Rust/Tauri 命令。支持中英双语（en/zh-CN）、
+> 试运行预览模式、配置导入/导出、操作系统覆盖以及实时步骤日志流。详见 `CLAUDE.md` →
+> “agentpack desktop app”。使用 `pnpm tauri dev` 运行。
 
 ## 特性
 
@@ -50,8 +58,8 @@
 1. **克隆仓库**
 
    ```bash
-   git clone <your-repo-url>
-   cd react-quick-starter
+   git clone https://github.com/Arxtect/agentpack-gui.git
+   cd agentpack-gui
    ```
 
 2. **安装依赖**
@@ -195,7 +203,7 @@ pnpm dlx shadcn@latest add button card dialog
 ## 项目结构
 
 ```
-react-quick-starter/
+agentpack-gui/
 ├── app/                      # Next.js App Router（主应用）
 │   ├── layout.tsx           # 根布局，包含字体和元数据
 │   ├── page.tsx             # 主着陆页
@@ -259,9 +267,9 @@ cp .env.example .env.local
 
 ```json
 {
-  "productName": "react-quick-starter", // 应用名称
-  "version": "0.1.0", // 应用版本
-  "identifier": "com.reactquickstarter.desktop", // 唯一应用标识符
+  "productName": "agentpack", // 应用名称
+  "version": "0.2.0", // 应用版本
+  "identifier": "com.agentpack.desktop", // 唯一应用标识符
   "build": {
     "frontendDist": "../out", // Next.js 构建输出
     "devUrl": "http://localhost:3000" // 开发服务器 URL
@@ -269,7 +277,7 @@ cp .env.example .env.local
   "app": {
     "windows": [
       {
-        "title": "react-quick-starter", // 窗口标题
+        "title": "agentpack", // 窗口标题
         "width": 800, // 默认宽度
         "height": 600, // 默认高度
         "resizable": true, // 允许调整大小

@@ -1,16 +1,18 @@
-# React Quick Starter
+# agentpack
 
-A modern, full-stack starter template combining **Next.js 16** with **React 19** for web applications and **Tauri 2.9** for cross-platform desktop applications. Built with TypeScript, Tailwind CSS v4, and shadcn/ui components.
+**agentpack** is a cross-platform desktop installer — a GUI port of the terminal
+`agentpack` TUI — that sets up Claude Code, Codex, engineering skills, MCP servers,
+network/mirrors and cc-switch. It is built with **Next.js 16** (React 19) and
+**Tauri 2.9**, in TypeScript, Tailwind CSS v4 and shadcn/ui, and runs on Windows,
+macOS and Linux.
 
 [中文文档](./README_zh.md)
 
-> **This repo ships the `agentpack` desktop app** — a GUI installer (ported from the
-> terminal `agentpack` TUI) for Claude Code, Codex, engineering skills, MCP servers,
-> network/mirrors and cc-switch. Pure logic lives in `lib/agentpack/`; system
-> operations (process exec with live streaming, filesystem, cc-switch SQLite DB) are
-> Rust/Tauri commands in `src-tauri/src/`. Bilingual (en/zh-CN), with a dry-run preview
-> mode, config import/export, OS override and live step-log streaming. See `CLAUDE.md`
-> → "agentpack desktop app". Run it with `pnpm tauri dev`.
+> Pure logic lives in `lib/agentpack/`; system operations (process exec with live
+> streaming, filesystem, cc-switch SQLite DB) are Rust/Tauri commands in
+> `src-tauri/src/`. Bilingual (en/zh-CN), with a dry-run preview mode, config
+> import/export, OS override and live step-log streaming. See `CLAUDE.md` →
+> "agentpack desktop app". Run it with `pnpm tauri dev`.
 
 ## Features
 
@@ -58,8 +60,8 @@ Before you begin, ensure you have the following installed:
 1. **Clone the repository**
 
    ```bash
-   git clone <your-repo-url>
-   cd react-quick-starter
+   git clone https://github.com/Arxtect/agentpack-gui.git
+   cd agentpack-gui
    ```
 
 2. **Install dependencies**
@@ -203,7 +205,7 @@ pnpm dlx shadcn@latest add button card dialog
 ## Project Structure
 
 ```
-react-quick-starter/
+agentpack-gui/
 ├── app/                      # Next.js App Router (main app)
 │   ├── layout.tsx           # Root layout with fonts and metadata
 │   ├── page.tsx             # Main landing page
@@ -267,9 +269,9 @@ Edit `src-tauri/tauri.conf.json` to customize your desktop app:
 
 ```json
 {
-  "productName": "react-quick-starter", // App name
-  "version": "0.1.0", // App version
-  "identifier": "com.reactquickstarter.desktop", // Unique app identifier
+  "productName": "agentpack", // App name
+  "version": "0.2.0", // App version
+  "identifier": "com.agentpack.desktop", // Unique app identifier
   "build": {
     "frontendDist": "../out", // Next.js build output
     "devUrl": "http://localhost:3000" // Dev server URL
@@ -277,7 +279,7 @@ Edit `src-tauri/tauri.conf.json` to customize your desktop app:
   "app": {
     "windows": [
       {
-        "title": "react-quick-starter", // Window title
+        "title": "agentpack", // Window title
         "width": 800, // Default width
         "height": 600, // Default height
         "resizable": true, // Allow resizing

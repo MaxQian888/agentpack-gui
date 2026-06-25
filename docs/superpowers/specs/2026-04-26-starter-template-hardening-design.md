@@ -1,7 +1,7 @@
 # Starter Template Hardening — Design Spec
 
 - **Date**: 2026-04-26
-- **Repo**: `AstroAir/react-quick-starter`
+- **Repo**: `Arxtect/agentpack-gui`
 - **Scope position**: 公开开源模板（primary） + 个人 starter（secondary）
 - **Density**: 中间偏轻 — 补"底座"+ 只示范 Tauri 一端的最佳实践，不替消费者预设 React 业务 pattern
 - **Tooling family**: Prettier + 现有 ESLint（不替换为 Biome）
@@ -89,7 +89,7 @@
 | 文件                 | 内容                                                                                                                        |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `SECURITY.md`        | 简洁漏洞披露策略：报告渠道（GitHub Security Advisories 私有报告 + 备用邮箱占位）、支持的版本、披露时间窗（90 天）。约 30 行 |
-| `.github/CODEOWNERS` | `* @AstroAir @MaxQian888`；`src-tauri/` 留示范注释行 `# @rust-team`                                                         |
+| `.github/CODEOWNERS` | `* @Arxtect @MaxQian888`；`src-tauri/` 留示范注释行 `# @rust-team`                                                          |
 | `CODE_OF_CONDUCT.md` | Contributor Covenant 2.1 全文（CONTRIBUTING.md 已引用但文件缺失）                                                           |
 
 ### 修订现有文档（消除内部矛盾）
@@ -130,13 +130,13 @@
 
 ### `src-tauri/Cargo.toml` 元数据
 
-| 字段          | 当前值          | 改为                                                                                                                      |
-| ------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `name`        | `"app"`         | `"react-quick-starter"`（与 `package.json` / `tauri.conf.json` 的 `productName` 一致；`[lib].name = "app_lib"` 保留不变） |
-| `description` | `"A Tauri App"` | `"React + Tauri 16/2.9 quick-starter desktop application"`                                                                |
-| `authors`     | `["you"]`       | `["AstroAir <astro_air@126.com>"]`                                                                                        |
-| `license`     | `""`            | `"MIT"`（与根 LICENSE 一致）                                                                                              |
-| `repository`  | `""`            | `"https://github.com/AstroAir/react-quick-starter"`                                                                       |
+| 字段          | 当前值          | 改为                                                                                                                |
+| ------------- | --------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `name`        | `"app"`         | `"agentpack-gui"`（与 `package.json` / `tauri.conf.json` 的 `productName` 一致；`[lib].name = "app_lib"` 保留不变） |
+| `description` | `"A Tauri App"` | `"React + Tauri 16/2.9 quick-starter desktop application"`                                                          |
+| `authors`     | `["you"]`       | `["Arxtect"]`                                                                                                       |
+| `license`     | `""`            | `"MIT"`（与根 LICENSE 一致）                                                                                        |
+| `repository`  | `""`            | `"https://github.com/Arxtect/agentpack-gui"`                                                                        |
 
 新增依赖（用于段落 4 的错误派生）：`thiserror = "2"`，`tauri-plugin-updater = "2"`。
 

@@ -1,7 +1,7 @@
 # Phase 2 — i18n + Theme + E2E + CI 增强 Design Spec
 
 - **Date**: 2026-04-26
-- **Repo**: `AstroAir/react-quick-starter`
+- **Repo**: `Arxtect/agentpack-gui`
 - **Phase**: 2（在 Phase 1「中间偏轻」之上的 opinionated 扩展）
 - **Tooling**: next-intl + next-themes + Playwright + Codecov / CodeQL / Release-Please
 

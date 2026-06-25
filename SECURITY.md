@@ -13,11 +13,8 @@ The latest `master` branch and the most recent tagged release receive security u
 
 **Do not report vulnerabilities via public GitHub issues.**
 
-Please use one of:
-
-1. **GitHub Security Advisories** (preferred): open a private advisory at
-   https://github.com/AstroAir/react-quick-starter/security/advisories/new
-2. **Email**: send details to `astro_air@126.com` with subject prefix `[security]`.
+Please use **GitHub Security Advisories** (preferred): open a private advisory at
+https://github.com/Arxtect/agentpack-gui/security/advisories/new
 
 Include:
 

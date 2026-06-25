@@ -1,10 +1,10 @@
 [package]
-name = "react-quick-starter"
+name = "agentpack-gui"
 version = "0.2.0"
-description = "React + Tauri 16/2.9 quick-starter desktop application"
-authors = ["AstroAir <astro_air@126.com>"]
+description = "agentpack — desktop installer for Claude Code, Codex, engineering skills, MCP servers, network/mirrors and cc-switch"
+authors = ["Arxtect"]
 license = "MIT"
-repository = "https://github.com/AstroAir/react-quick-starter"
+repository = "https://github.com/Arxtect/agentpack-gui"
 edition = "2021"
 rust-version = "1.77.2"
 

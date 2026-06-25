@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Bring `react-quick-starter` to open-source-template "standard practices" by adding DX foundation (Prettier/Husky/commitlint), reconciling doc inconsistencies, hardening Tauri security & metadata, and demonstrating one typed Tauri IPC bridge — without introducing React-side scaffolding (store/provider/i18n).
+**Goal:** Bring `agentpack-gui` to open-source-template "standard practices" by adding DX foundation (Prettier/Husky/commitlint), reconciling doc inconsistencies, hardening Tauri security & metadata, and demonstrating one typed Tauri IPC bridge — without introducing React-side scaffolding (store/provider/i18n).
 
 **Architecture:** 4 sequential segments, each commits independently. Segment 1 (DX) → Segment 2 (governance/docs) → Segment 3 (Tauri security/metadata) → Segment 4 (IPC bridge demo). Tests-first for the 3 modules with logic (`lib/env.ts`, `lib/tauri.ts`, Rust `commands.rs`); declarative config changes verified by running the toolchain.
 
@@ -314,7 +314,7 @@ Expected: still works; `package.json` is valid JSON.
 
 ```
 # Public env vars — exposed to browser, MUST start with NEXT_PUBLIC_
-NEXT_PUBLIC_APP_NAME="React Quick Starter"
+NEXT_PUBLIC_APP_NAME="agentpack"
 NEXT_PUBLIC_API_URL=https://api.example.com
 
 # Private env vars (server-only, NOT exposed to browser).
@@ -499,8 +499,8 @@ The latest `master` branch and the most recent tagged release receive security u
 Please use one of:
 
 1. **GitHub Security Advisories** (preferred): open a private advisory at
-   https://github.com/AstroAir/react-quick-starter/security/advisories/new
-2. **Email**: send details to `astro_air@126.com` with subject prefix `[security]`.
+   https://github.com/Arxtect/agentpack-gui/security/advisories/new
+2. **Email**: send details to `the Arxtect maintainers via GitHub` with subject prefix `[security]`.
 
 Include:
 
@@ -513,7 +513,7 @@ We aim to acknowledge reports within 7 days and to disclose / patch within 90 da
 
 - [ ] **Step 2: Create `CODE_OF_CONDUCT.md`** with Contributor Covenant 2.1
 
-Use the official text from https://www.contributor-covenant.org/version/2/1/code_of_conduct/code_of_conduct.md verbatim. Replace the contact placeholder near the bottom with `astro_air@126.com`.
+Use the official text from https://www.contributor-covenant.org/version/2/1/code_of_conduct/code_of_conduct.md verbatim. Replace the contact placeholder near the bottom with `the Arxtect maintainers via GitHub`.
 
 (If the engineer cannot fetch the URL: the canonical text is ~120 lines, public domain CC0. Fetch via `curl -fsSL https://www.contributor-covenant.org/version/2/1/code_of_conduct/code_of_conduct.md -o CODE_OF_CONDUCT.md` and then sed-replace the `[INSERT CONTACT METHOD]` placeholder with the email above.)
 
@@ -521,11 +521,11 @@ Use the official text from https://www.contributor-covenant.org/version/2/1/code
 
 ```
 # Default owners — every PR requests review from these accounts.
-* @AstroAir @MaxQian888
+* @Arxtect @MaxQian888
 
 # Example: scope-specific owners (uncomment + edit when growing the team).
-# /src-tauri/  @AstroAir @MaxQian888
-# /docs/       @AstroAir
+# /src-tauri/  @Arxtect @MaxQian888
+# /docs/       @Arxtect
 ```
 
 ---
@@ -734,12 +734,12 @@ git commit -m "docs: add governance files and reconcile doc inconsistencies
 
 ```toml
 [package]
-name = "react-quick-starter"
+name = "agentpack-gui"
 version = "0.1.0"
 description = "React + Tauri 16/2.9 quick-starter desktop application"
-authors = ["AstroAir <astro_air@126.com>"]
+authors = ["Arxtect"]
 license = "MIT"
-repository = "https://github.com/AstroAir/react-quick-starter"
+repository = "https://github.com/Arxtect/agentpack-gui"
 edition = "2021"
 rust-version = "1.77.2"
 ```
@@ -924,18 +924,18 @@ This template ships the `tauri-plugin-updater` plugin **disabled** (`tauri.conf.
 ## 1. Generate a signing key pair
 
 ```bash
-pnpm tauri signer generate -w ~/.tauri/react-quick-starter.key
+pnpm tauri signer generate -w ~/.tauri/agentpack-gui.key
 ```
 ````
 
 You'll be prompted for a password (optional but recommended). The command writes:
 
-- `~/.tauri/react-quick-starter.key` — **PRIVATE KEY**, never commit
-- `~/.tauri/react-quick-starter.key.pub` — public key
+- `~/.tauri/agentpack-gui.key` — **PRIVATE KEY**, never commit
+- `~/.tauri/agentpack-gui.key.pub` — public key
 
 ## 2. Wire the public key into config
 
-Copy the **single-line** content of `~/.tauri/react-quick-starter.key.pub` into
+Copy the **single-line** content of `~/.tauri/agentpack-gui.key.pub` into
 `src-tauri/tauri.conf.json` → `plugins.updater.pubkey`.
 
 ## 3. Configure the update endpoint
@@ -947,7 +947,7 @@ GitHub Releases is the simplest host. Set:
   "updater": {
     "active": true,
     "endpoints": [
-      "https://github.com/AstroAir/react-quick-starter/releases/latest/download/latest.json"
+      "https://github.com/Arxtect/agentpack-gui/releases/latest/download/latest.json"
     ],
     "pubkey": "<paste public key here>"
   }

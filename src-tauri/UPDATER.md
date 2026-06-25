@@ -5,17 +5,17 @@ This template ships the `tauri-plugin-updater` plugin **disabled** (`tauri.conf.
 ## 1. Generate a signing key pair
 
 ```bash
-pnpm tauri signer generate -w ~/.tauri/react-quick-starter.key
+pnpm tauri signer generate -w ~/.tauri/agentpack-gui.key
 ```
 
 You'll be prompted for a password (optional but recommended). The command writes:
 
-- `~/.tauri/react-quick-starter.key` — **PRIVATE KEY**, never commit
-- `~/.tauri/react-quick-starter.key.pub` — public key
+- `~/.tauri/agentpack-gui.key` — **PRIVATE KEY**, never commit
+- `~/.tauri/agentpack-gui.key.pub` — public key
 
 ## 2. Wire the public key into config
 
-Copy the **single-line** content of `~/.tauri/react-quick-starter.key.pub` into
+Copy the **single-line** content of `~/.tauri/agentpack-gui.key.pub` into
 `src-tauri/tauri.conf.json` → `plugins.updater.pubkey`.
 
 ## 3. Configure the update endpoint
@@ -27,7 +27,7 @@ GitHub Releases is the simplest host. Set:
   "updater": {
     "active": true,
     "endpoints": [
-      "https://github.com/AstroAir/react-quick-starter/releases/latest/download/latest.json"
+      "https://github.com/Arxtect/agentpack-gui/releases/latest/download/latest.json"
     ],
     "pubkey": "<paste public key here>"
   }
