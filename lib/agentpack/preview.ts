@@ -21,6 +21,8 @@ export function previewLines(
   switch (step.kind) {
     case "command":
       return [`$ ${commandToString(step.command)}`, out.wouldRun(commandToString(step.command))]
+    case "info":
+      return step.lines
     case "mergeFile":
     case "ccVisibleApps":
       return [out.wouldWrite(step.path)]

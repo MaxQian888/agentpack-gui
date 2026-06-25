@@ -82,6 +82,10 @@ async function execute(
       if (code !== 0) throw new Error(`${printable} — ${m.coreOutput.exitedWithCode(code)}`)
       return
     }
+    case "info": {
+      for (const line of step.lines) log(line)
+      return
+    }
     case "mergeFile":
     case "ccVisibleApps": {
       const existing = await api.readTextFile(step.path)

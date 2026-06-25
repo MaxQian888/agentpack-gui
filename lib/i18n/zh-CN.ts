@@ -351,6 +351,8 @@ export const zhCN = {
     cancel: "取消",
     close: "关闭",
     retry: "重试失败项",
+    proceed: "确认执行",
+    upgrade: "升级",
     installNow: "立即安装",
     uninstallNow: "立即卸载",
     apply: "应用",

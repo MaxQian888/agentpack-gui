@@ -93,6 +93,7 @@ export interface Paths {
 
 export type StepKind =
   | "command"
+  | "info"
   | "mergeFile"
   | "skillInstall"
   | "skillRemove"
@@ -109,6 +110,12 @@ export interface CommandStep extends StepBase {
   kind: "command"
   command: Command
   verifyOnly?: boolean
+}
+
+/** Surface informational lines (e.g. a manual-install note) without side effects. */
+export interface InfoStep extends StepBase {
+  kind: "info"
+  lines: string[]
 }
 
 /** Read a config file, apply a pure text transform, write it back. */
@@ -146,6 +153,7 @@ export interface CcVisibleAppsStep extends StepBase {
 
 export type StepDescriptor =
   | CommandStep
+  | InfoStep
   | MergeFileStep
   | SkillInstallStep
   | SkillRemoveStep

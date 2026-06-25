@@ -29,6 +29,8 @@ export const writeTextFile = (path: string, content: string) =>
 
 export const removeDir = (path: string) => invoke<void>("remove_dir", { path })
 
+export const pathExists = (path: string) => invoke<boolean>("path_exists", { path })
+
 export const installSkill = (id: string, targets: AgentTarget[]) =>
   invoke<string[]>("install_skill", { id, targets })
 

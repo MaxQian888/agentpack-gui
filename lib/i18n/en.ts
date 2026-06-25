@@ -364,6 +364,8 @@ export const en = {
     cancel: "Cancel",
     close: "Close",
     retry: "Retry failed",
+    proceed: "Proceed",
+    upgrade: "Upgrade",
     installNow: "Install now",
     uninstallNow: "Uninstall now",
     apply: "Apply",

@@ -1,36 +1,29 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { CLI_TOOLS } from "@/lib/agentpack/registry"
-import { detectCli } from "@/lib/tauri/commands"
-import { isTauri } from "@/lib/tauri"
+import { cliInstallStep } from "@/lib/agentpack/plan"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
-
-type Detection = { installed: boolean; version?: string }
+import { useRunnerCtx } from "../run/runner-context"
 
 export function ClisSection() {
   const t = useT()
   const clis = useAppStore((s) => s.plan.clis)
   const toggleCli = useAppStore((s) => s.toggleCli)
-  const [detected, setDetected] = useState<Record<string, Detection>>({})
+  const detections = useAppStore((s) => s.detections)
+  const effectiveOS = useAppStore((s) => s.effectiveOS)
+  const { run } = useRunnerCtx()
 
-  useEffect(() => {
-    if (!isTauri()) return
-    let cancelled = false
-    Promise.all(
-      CLI_TOOLS.map(async (tool) => [tool.id, await detectCli(tool.bin, !!tool.gui)] as const)
-    ).then((entries) => {
-      if (!cancelled) setDetected(Object.fromEntries(entries))
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  const upgradeNow = (tool: (typeof CLI_TOOLS)[number]) => {
+    const cmd = tool.upgrade?.[effectiveOS()] ?? tool.install[effectiveOS()]
+    if (!cmd) return
+    void run([cliInstallStep(tool.id, cmd, true, t)])
+  }
 
   return (
     <SectionShell title={t.tools.title} subtitle={t.tools.subtitle}>
@@ -38,7 +31,7 @@ export function ClisSection() {
       <div className="flex flex-col gap-3">
         {CLI_TOOLS.map((tool) => {
           const meta = t.catalog.cli[tool.id]
-          const d = detected[tool.id]
+          const d = detections[tool.id]
           const checked = clis.includes(tool.id)
           return (
             <Card key={tool.id} className="flex-row items-center gap-3 p-4">
@@ -53,10 +46,17 @@ export function ClisSection() {
               </label>
               {d ? (
                 d.installed ? (
-                  <Badge variant="secondary" className="shrink-0 font-normal">
-                    {t.envcheck.installed}
-                    {d.version ? ` · ${d.version}` : ""}
-                  </Badge>
+                  <>
+                    <Badge variant="secondary" className="shrink-0 font-normal">
+                      {t.envcheck.installed}
+                      {d.version ? ` · ${d.version}` : ""}
+                    </Badge>
+                    {!tool.gui ? (
+                      <Button variant="outline" size="sm" onClick={() => upgradeNow(tool)}>
+                        {t.shell.upgrade}
+                      </Button>
+                    ) : null}
+                  </>
                 ) : (
                   <Badge variant="outline" className="shrink-0 font-normal text-muted-foreground">
                     {t.envcheck.notFound}

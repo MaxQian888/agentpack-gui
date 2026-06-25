@@ -22,6 +22,12 @@ pub fn write_text_file(path: String, content: String) -> Result<(), String> {
   fs::write(&path, content).map_err(|e| e.to_string())
 }
 
+/// Whether a path exists (used to show skill install status).
+#[tauri::command]
+pub fn path_exists(path: String) -> bool {
+  Path::new(&path).exists()
+}
+
 /// Remove a directory tree (used to uninstall a skill). No-op if absent.
 #[tauri::command]
 pub fn remove_dir(path: String) -> Result<(), String> {

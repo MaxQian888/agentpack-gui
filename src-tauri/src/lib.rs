@@ -23,6 +23,7 @@ pub fn run() {
       exec::is_process_running,
       fsops::read_text_file,
       fsops::write_text_file,
+      fsops::path_exists,
       fsops::remove_dir,
       fsops::install_skill,
       ccswitch::cc_load_providers,

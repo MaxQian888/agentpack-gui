@@ -11,14 +11,19 @@ const emptyPlan = (os: OS): Plan => ({
   network: {},
 })
 
+export type Detection = { installed: boolean; version?: string }
+
 interface State {
   plan: Plan
   dryRun: boolean
   osOverride: OS | null
   paths: Paths | null
   panelOpen: boolean
+  detections: Record<string, Detection>
 
   effectiveOS: () => OS
+  installedClis: () => Set<string>
+  setDetections: (d: Record<string, Detection>) => void
   setPaths: (p: Paths) => void
   toggleDryRun: () => void
   setOsOverride: (os: OS | null) => void
@@ -41,8 +46,16 @@ export const useAppStore = create<State>((set, get) => ({
   osOverride: null,
   paths: null,
   panelOpen: false,
+  detections: {},
 
   effectiveOS: () => get().osOverride ?? get().paths?.os ?? "mac",
+  installedClis: () =>
+    new Set(
+      Object.entries(get().detections)
+        .filter(([, d]) => d.installed)
+        .map(([id]) => id)
+    ),
+  setDetections: (d) => set({ detections: d }),
   setPaths: (p) => set((s) => ({ paths: p, plan: { ...s.plan, os: s.osOverride ?? p.os } })),
   toggleDryRun: () => set((s) => ({ dryRun: !s.dryRun })),
   setOsOverride: (os) =>

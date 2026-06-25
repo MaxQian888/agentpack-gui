@@ -20,8 +20,9 @@ export function ExecutionPanel() {
   const t = useT()
   const open = useAppStore((s) => s.panelOpen)
   const setPanelOpen = useAppStore((s) => s.setPanelOpen)
-  const { reports, running, dryRun, cancel } = useRunnerCtx()
-  const finished = !running && reports.length > 0
+  const { reports, running, dryRun, awaitingConfirm, confirm, retry, cancel } = useRunnerCtx()
+  const finished = !running && !awaitingConfirm && reports.length > 0
+  const hasErrors = reports.some((r) => r.status === "error")
 
   return (
     <Sheet open={open} onOpenChange={setPanelOpen}>
@@ -35,7 +36,9 @@ export function ExecutionPanel() {
               </Badge>
             ) : null}
           </SheetTitle>
-          <SheetDescription>{dryRun ? t.review.dryRunSuffix.trim() : t.brand}</SheetDescription>
+          <SheetDescription>
+            {awaitingConfirm ? t.review.title : dryRun ? t.review.dryRunSuffix.trim() : t.brand}
+          </SheetDescription>
         </SheetHeader>
 
         <div className="flex-1 space-y-4 overflow-auto px-4">
@@ -44,14 +47,28 @@ export function ExecutionPanel() {
         </div>
 
         <SheetFooter className="flex-row justify-end gap-2">
-          {running ? (
+          {awaitingConfirm ? (
+            <>
+              <Button variant="outline" onClick={() => setPanelOpen(false)}>
+                {t.shell.cancel}
+              </Button>
+              <Button onClick={() => void confirm()}>{t.shell.proceed}</Button>
+            </>
+          ) : running ? (
             <Button variant="outline" onClick={cancel}>
               {t.shell.cancel}
             </Button>
           ) : (
-            <Button variant="outline" onClick={() => setPanelOpen(false)}>
-              {t.shell.close}
-            </Button>
+            <>
+              {finished && hasErrors ? (
+                <Button variant="outline" onClick={() => void retry()}>
+                  {t.shell.retry}
+                </Button>
+              ) : null}
+              <Button variant="outline" onClick={() => setPanelOpen(false)}>
+                {t.shell.close}
+              </Button>
+            </>
           )}
         </SheetFooter>
       </SheetContent>

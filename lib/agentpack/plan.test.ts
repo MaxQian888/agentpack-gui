@@ -43,3 +43,26 @@ it("codex mcp step targets the resolved config path", () => {
 it("verify steps are all verifyOnly", () => {
   expect(buildVerifySteps(plan).every((s) => s.verifyOnly)).toBe(true)
 })
+
+it("installed CLIs use the upgrade command + label", () => {
+  const step = buildSteps(plan, paths, undefined, new Set(["claude-code"])).find(
+    (s) => s.id === "cli-claude-code"
+  )!
+  expect(step.kind).toBe("command")
+  expect(step.kind === "command" && step.command.args.join(" ")).toContain("@latest")
+})
+
+it("emits an info step (manual note) when an OS has no installer", () => {
+  const linuxPlan = {
+    ...plan,
+    os: "linux" as const,
+    clis: ["cc-switch" as const],
+    skills: [],
+    mcps: [],
+  }
+  const step = buildSteps(linuxPlan, { ...paths, os: "linux" }).find(
+    (s) => s.id === "cli-cc-switch"
+  )!
+  expect(step.kind).toBe("info")
+  expect(step.kind === "info" && step.lines.join(" ")).toMatch(/github\.com\/farion1231/)
+})

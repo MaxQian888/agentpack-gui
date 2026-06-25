@@ -14,7 +14,12 @@ import type { ProviderApp, ProviderForm, VisibleApps } from "./ccswitch/types"
  * Closures (merge transforms) stay in TS; only their read/write primitives
  * cross IPC at run time. `messages` localizes labels (defaults to English).
  */
-export function buildSteps(plan: Plan, paths: Paths, messages: Messages = en): StepDescriptor[] {
+export function buildSteps(
+  plan: Plan,
+  paths: Paths,
+  messages: Messages = en,
+  installed: ReadonlySet<string> = new Set()
+): StepDescriptor[] {
   const t = messages.steps
   const cat = messages.catalog
   const steps: StepDescriptor[] = []
@@ -29,14 +34,28 @@ export function buildSteps(plan: Plan, paths: Paths, messages: Messages = en): S
     })
   }
 
-  // 2. CLI installs.
+  // 2. CLI installs — already-installed tools upgrade; missing ones install.
   for (const id of plan.clis) {
     const tool = findCli(id)
     if (!tool) continue
     const title = cat.cli[id]?.title ?? id
-    const cmd = tool.install[plan.os]
+    const upgrade = installed.has(id)
+    const cmd = upgrade ? (tool.upgrade?.[plan.os] ?? tool.install[plan.os]) : tool.install[plan.os]
     if (cmd) {
-      steps.push({ kind: "command", id: `cli-${id}`, label: t.installCli(title), command: cmd })
+      steps.push({
+        kind: "command",
+        id: `cli-${id}`,
+        label: upgrade ? t.upgradeCli(title) : t.installCli(title),
+        command: cmd,
+      })
+    } else {
+      // No automated installer on this OS — surface the manual note instead of silently skipping.
+      steps.push({
+        kind: "info",
+        id: `cli-${id}`,
+        label: t.installCli(title),
+        lines: [tool.manualNote ?? t.noInstaller(title), t.manualInstall],
+      })
     }
   }
 
