@@ -59,8 +59,34 @@ Root `pnpm-lock.yaml` is the single lockfile for all packages. Run `pnpm install
 
 - `app/` - Next.js App Router (layout.tsx, page.tsx, globals.css)
 - `components/ui/` - All 57 shadcn/ui components pre-installed (**no test files here**)
+- `components/agentpack/` - the agentpack installer UI (shell, header, sidebar, sections, run panel)
 - `hooks/` - Shared hooks (e.g., `use-mobile.ts`)
 - `lib/utils.ts` - `cn()` utility (clsx + tailwind-merge)
+
+### agentpack desktop app
+
+The home page (`app/page.tsx`) renders the **agentpack** installer — a GUI port of
+the terminal `agentpack` TUI that sets up Claude Code, Codex, engineering skills,
+MCP servers, network/mirrors and cc-switch.
+
+**Hybrid architecture (pure TS logic + Rust side-effects):**
+
+- `lib/agentpack/` — browser-safe pure logic (no Node builtins): `registry`,
+  `presets`, `types` (incl. `StepDescriptor`/`Paths`), `config`, `report`,
+  `locale`, `merge/{mcp,network}`, `ccswitch/*`. `plan.ts` turns a `Plan` into a
+  declarative `StepDescriptor[]`; `preview.ts` renders dry-run "would …" lines;
+  `runner.ts` executes descriptors.
+- `lib/tauri/commands.ts` — the SOLE bridge: typed `invoke`/`Channel` wrappers.
+- `src-tauri/src/{paths,exec,fsops,ccswitch}.rs` — the side-effects: `run_command`
+  (streams output via `tauri::ipc::Channel`), `detect_cli`, `is_process_running`,
+  file read/write/remove, resource-based `install_skill`, and the cc-switch
+  SQLite DB (`rusqlite`, bundled) with guardrails.
+- `lib/i18n/` — the typed bilingual catalog (`en`/`zh-CN`, `Messages = typeof en`)
+  - `I18nProvider`/`useT`/`useLocale`. `store/app-store.ts` is the Zustand store.
+
+**Dry-run is structural:** in preview mode `runner.ts` renders preview lines
+locally and NEVER calls a mutating Rust command. Skills ship as Tauri resources
+(`src-tauri/assets/skills/`, wired via `bundle.resources`).
 
 ### Docs Structure (`docs/`)
 
