@@ -20,6 +20,10 @@ export async function runCommand(cmd: Command, onLine: (line: string) => void): 
 export const detectCli = (bin: string, gui: boolean) =>
   invoke<{ installed: boolean; version?: string }>("detect_cli", { bin, gui })
 
+/** Latest published version of an npm package, or null if it can't be determined. */
+export const latestVersion = (pkg: string) =>
+  invoke<string | null>("latest_version", { package: pkg })
+
 export const isProcessRunning = (name: string) => invoke<boolean>("is_process_running", { name })
 
 export const readTextFile = (path: string) => invoke<string>("read_text_file", { path })

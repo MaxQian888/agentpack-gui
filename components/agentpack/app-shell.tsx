@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { isTauri } from "@/lib/tauri"
-import { detectCli, getPaths } from "@/lib/tauri/commands"
+import { detectCli, getPaths, latestVersion } from "@/lib/tauri/commands"
 import { buildSteps } from "@/lib/agentpack/plan"
 import { CLI_TOOLS } from "@/lib/agentpack/registry"
 import { useAppStore } from "@/store/app-store"
@@ -25,6 +25,7 @@ function ShellBody() {
   const paths = useAppStore((s) => s.paths)
   const setPaths = useAppStore((s) => s.setPaths)
   const setDetections = useAppStore((s) => s.setDetections)
+  const setLatestVersion = useAppStore((s) => s.setLatestVersion)
   const installedClis = useAppStore((s) => s.installedClis)
   const { run } = useRunnerCtx()
   const [section, setSection] = useState<SectionKey>("presets")
@@ -37,9 +38,22 @@ function ShellBody() {
     Promise.all(
       CLI_TOOLS.map(async (tool) => [tool.id, await detectCli(tool.bin, !!tool.gui)] as const)
     )
-      .then((entries) => setDetections(Object.fromEntries(entries)))
+      .then((entries) => {
+        setDetections(Object.fromEntries(entries))
+        // Fire-and-forget: resolve the latest published version for every installed
+        // npm-based CLI so the UI can show Upgrade only when one is actually behind.
+        for (const [id, det] of entries) {
+          const tool = CLI_TOOLS.find((c) => c.id === id)
+          if (!tool?.npmPackage || !det.installed) continue
+          latestVersion(tool.npmPackage)
+            .then((v) => {
+              if (v) setLatestVersion(id, v)
+            })
+            .catch(() => {})
+        }
+      })
       .catch(() => {})
-  }, [setPaths, setDetections])
+  }, [setPaths, setDetections, setLatestVersion])
 
   const onRun = () => {
     if (!paths) {

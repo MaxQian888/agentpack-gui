@@ -56,6 +56,7 @@ export const en = {
     detecting: "Detecting installed tools…",
     installed: "✔ installed",
     notFound: "○ not found",
+    latest: "latest",
   },
 
   tools: {

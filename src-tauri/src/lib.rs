@@ -20,6 +20,7 @@ pub fn run() {
       paths::get_paths,
       exec::run_command,
       exec::detect_cli,
+      exec::latest_version,
       exec::is_process_running,
       fsops::read_text_file,
       fsops::write_text_file,

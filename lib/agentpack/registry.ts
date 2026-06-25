@@ -11,6 +11,7 @@ export const CLI_TOOLS: readonly CliTool[] = [
   {
     id: "claude-code",
     bin: "claude",
+    npmPackage: "@anthropic-ai/claude-code",
     install: {
       win: { file: "npm", args: ["install", "-g", "@anthropic-ai/claude-code"] },
       mac: { file: "npm", args: ["install", "-g", "@anthropic-ai/claude-code"] },
@@ -25,6 +26,7 @@ export const CLI_TOOLS: readonly CliTool[] = [
   {
     id: "codex",
     bin: "codex",
+    npmPackage: "@openai/codex",
     install: {
       win: { file: "npm", args: ["install", "-g", "@openai/codex"] },
       mac: { file: "npm", args: ["install", "-g", "@openai/codex"] },

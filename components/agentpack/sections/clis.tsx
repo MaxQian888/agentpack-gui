@@ -6,6 +6,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { CLI_TOOLS } from "@/lib/agentpack/registry"
 import { cliInstallStep } from "@/lib/agentpack/plan"
+import { isUpgradeAvailable } from "@/lib/agentpack/version"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
@@ -16,6 +17,7 @@ export function ClisSection() {
   const clis = useAppStore((s) => s.plan.clis)
   const toggleCli = useAppStore((s) => s.toggleCli)
   const detections = useAppStore((s) => s.detections)
+  const latestVersions = useAppStore((s) => s.latestVersions)
   const effectiveOS = useAppStore((s) => s.effectiveOS)
   const { run } = useRunnerCtx()
 
@@ -32,6 +34,9 @@ export function ClisSection() {
         {CLI_TOOLS.map((tool) => {
           const meta = t.catalog.cli[tool.id]
           const d = detections[tool.id]
+          const latest = latestVersions[tool.id]
+          const canUpgrade = !tool.gui && isUpgradeAvailable(d?.version, latest)
+          const upToDate = !tool.gui && !!latest && !canUpgrade
           const checked = clis.includes(tool.id)
           return (
             <Card key={tool.id} className="flex-row items-center gap-3 p-4">
@@ -51,10 +56,17 @@ export function ClisSection() {
                       {t.envcheck.installed}
                       {d.version ? ` · ${d.version}` : ""}
                     </Badge>
-                    {!tool.gui ? (
+                    {canUpgrade ? (
                       <Button variant="outline" size="sm" onClick={() => upgradeNow(tool)}>
                         {t.shell.upgrade}
                       </Button>
+                    ) : upToDate ? (
+                      <Badge
+                        variant="outline"
+                        className="shrink-0 font-normal text-muted-foreground"
+                      >
+                        {t.envcheck.latest}
+                      </Badge>
                     ) : null}
                   </>
                 ) : (

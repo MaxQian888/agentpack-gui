@@ -20,10 +20,12 @@ interface State {
   paths: Paths | null
   panelOpen: boolean
   detections: Record<string, Detection>
+  latestVersions: Record<string, string>
 
   effectiveOS: () => OS
   installedClis: () => Set<string>
   setDetections: (d: Record<string, Detection>) => void
+  setLatestVersion: (id: string, version: string) => void
   setPaths: (p: Paths) => void
   toggleDryRun: () => void
   setOsOverride: (os: OS | null) => void
@@ -47,6 +49,7 @@ export const useAppStore = create<State>((set, get) => ({
   paths: null,
   panelOpen: false,
   detections: {},
+  latestVersions: {},
 
   effectiveOS: () => get().osOverride ?? get().paths?.os ?? "mac",
   installedClis: () =>
@@ -56,6 +59,8 @@ export const useAppStore = create<State>((set, get) => ({
         .map(([id]) => id)
     ),
   setDetections: (d) => set({ detections: d }),
+  setLatestVersion: (id, version) =>
+    set((s) => ({ latestVersions: { ...s.latestVersions, [id]: version } })),
   setPaths: (p) => set((s) => ({ paths: p, plan: { ...s.plan, os: s.osOverride ?? p.os } })),
   toggleDryRun: () => set((s) => ({ dryRun: !s.dryRun })),
   setOsOverride: (os) =>

@@ -53,6 +53,7 @@ export const zhCN = {
     detecting: "正在检测已安装的工具…",
     installed: "✔ 已安装",
     notFound: "○ 未找到",
+    latest: "最新",
   },
 
   tools: {

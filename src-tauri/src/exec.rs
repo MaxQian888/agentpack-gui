@@ -80,6 +80,26 @@ pub fn detect_cli(bin: String, gui: bool) -> DetectionResult {
   }
 }
 
+/// Query the latest published version of an npm package (`npm view <pkg> version`).
+/// Runs on a side thread with a hard timeout so a slow/hung registry never blocks
+/// startup. Returns `None` on any failure (no npm, offline, timeout) — the UI then
+/// hides the upgrade action because it can't confirm a newer version exists.
+#[tauri::command]
+pub fn latest_version(package: String) -> Option<String> {
+  let (tx, rx) = std::sync::mpsc::channel();
+  std::thread::spawn(move || {
+    let out = Command::new("npm").args(["view", &package, "version"]).output();
+    let _ = tx.send(out);
+  });
+  match rx.recv_timeout(std::time::Duration::from_secs(8)) {
+    Ok(Ok(o)) if o.status.success() => {
+      let v = String::from_utf8_lossy(&o.stdout);
+      v.lines().next().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    }
+    _ => None,
+  }
+}
+
 /// Whether a process with this base name is running (best-effort, used as a
 /// guardrail before writing the cc-switch DB).
 #[tauri::command]

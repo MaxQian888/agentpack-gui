@@ -19,6 +19,8 @@ export interface CliTool {
   bin: string
   /** GUI app: detect by PATH lookup only, never execute it (it may open a window). */
   gui?: boolean
+  /** npm package name, used to query the latest published version (npm-based CLIs only). */
+  npmPackage?: string
   /** Per-OS install command. `null` => not installable that way on this OS. */
   install: Record<OS, Command | null>
   /** Optional per-OS upgrade command. */
