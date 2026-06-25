@@ -4,6 +4,14 @@ A modern, full-stack starter template combining **Next.js 16** with **React 19**
 
 [中文文档](./README_zh.md)
 
+> **This repo ships the `agentpack` desktop app** — a GUI installer (ported from the
+> terminal `agentpack` TUI) for Claude Code, Codex, engineering skills, MCP servers,
+> network/mirrors and cc-switch. Pure logic lives in `lib/agentpack/`; system
+> operations (process exec with live streaming, filesystem, cc-switch SQLite DB) are
+> Rust/Tauri commands in `src-tauri/src/`. Bilingual (en/zh-CN), with a dry-run preview
+> mode, config import/export, OS override and live step-log streaming. See `CLAUDE.md`
+> → "agentpack desktop app". Run it with `pnpm tauri dev`.
+
 ## Features
 
 - ⚡️ **Next.js 16** with App Router and React 19

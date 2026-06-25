@@ -1,0 +1,370 @@
+import type { Messages } from "./types"
+
+/**
+ * Simplified Chinese catalog. `satisfies Messages` pins it to the English
+ * shape (the source of truth); product names, CLI flags, env vars and URLs are
+ * intentionally left in English.
+ */
+export const zhCN = {
+  brand: "agentpack",
+
+  header: {
+    tagline: "Claude Code · Codex · 技能 · MCP · cc-switch 一键安装向导",
+    dryRunBadge: "  [演练]",
+  },
+
+  nav: {
+    hint: "↑↓ 移动 · 空格 选择 · 回车 确认",
+    back: "esc 返回",
+    continue: "按回车继续…",
+    proceed: "继续？ ",
+    leaveBlank: "按回车留空 / 跳过。",
+  },
+
+  welcome: {
+    title: "欢迎使用 agentpack",
+    intro: "本向导一次性安装并配置 Claude Code、Codex、领域技能、MCP 服务与 cc-switch。",
+    language: "语言",
+    hint: "↑↓ 切换语言 · 回车 开始",
+  },
+
+  presetsScreen: {
+    title: "选择一个预设",
+    subtitle: "预设会预填你的选择，之后每一步仍可调整。",
+  },
+
+  presets: {
+    custom: { title: "自定义", description: "全部手动选择。" },
+    minimal: { title: "极简", description: "Claude Code + 本地记忆 MCP。" },
+    recommended: {
+      title: "推荐",
+      description: "Claude Code、Codex、cc-switch + 核心 MCP 服务。",
+    },
+    everything: {
+      title: "全部",
+      description: "所有 CLI、技能与 MCP 服务。",
+    },
+  } as Record<string, { title: string; description: string }>,
+
+  progress: (index: number, total: number) => `第 ${index}/${total} 步`,
+
+  envcheck: {
+    title: (osLabel: string) => `环境检查（${osLabel}）`,
+    detecting: "正在检测已安装的工具…",
+    installed: "✔ 已安装",
+    notFound: "○ 未找到",
+    latest: "最新",
+  },
+
+  tools: {
+    title: "要安装哪些 CLI？",
+    subtitle: "已安装的工具默认不勾选。",
+    upgradeNote: "勾选已安装的工具可将其升级到最新版本。",
+    installedSuffix: "  (已安装)",
+  },
+
+  skills: {
+    title: "选择要安装的领域技能",
+    installsTo: (targets: string) => `安装到：${targets}`,
+  },
+
+  mcp: {
+    title: "选择要添加的 MCP 服务",
+    subtitle: "需要 API 密钥的服务会在下一步提示（可跳过）。",
+    keySuffix: " (需密钥)",
+  },
+
+  mcpKeys: {
+    title: (index: number, total: number) => `API 密钥 (${index}/${total})`,
+    hint: "粘贴密钥后按回车，或直接回车跳过（保留占位符）。",
+  },
+
+  network: {
+    titleOptional: "网络配置（可选）",
+    title: "网络配置",
+    ask: "配置自定义 API 中转端点和 npm 镜像源吗？（之后也可用 cc-switch 管理供应商。）",
+    configureNow: "现在配置？ ",
+    baseUrlLabel: "API base URL / 中转端点：",
+    tokenLabel: "API token（用于中转）：",
+    registryLabel: "npm 镜像源 URL：",
+  },
+
+  review: {
+    title: "确认安装计划",
+    dryRunSuffix: "（演练——不会做任何更改）",
+    installClis: "安装 CLI：",
+    skills: "技能：",
+    mcpServers: "MCP 服务：",
+    network: "网络：",
+    none: "  （无）",
+    keySet: " · 已设密钥",
+    placeholder: " · 占位符",
+    baseUrl: (v: string) => `base URL：${v}`,
+    apiToken: "API token：••••••",
+    npmRegistry: (v: string) => `npm 镜像源：${v}`,
+  },
+
+  summary: {
+    dryRunComplete: "演练完成",
+    setupComplete: "安装完成",
+    counts: (ok: number, failed: number) => ` —— ${ok} 成功${failed ? `，${failed} 失败` : ""}`,
+    failedSteps: "失败的步骤：",
+    pendingKeys: "设置以下环境变量以启用已跳过的 MCP 密钥：",
+    nextSteps: "下一步：",
+    nextRunPrefix: "  • 运行 ",
+    nextRunClaudeSuffix: " 启动 Claude Code",
+    nextRunCodexSuffix: " 启动 Codex",
+    savedConfig: (path: string) => `已保存配置到 ${path}`,
+    retryHint: "按 r 重试失败的步骤",
+    exit: "按回车退出。",
+  },
+
+  verify: {
+    claudeVersion: "校验 Claude Code（claude --version）",
+    claudeMcp: "校验 MCP 服务（claude mcp list）",
+    codexVersion: "校验 Codex（codex --version）",
+  },
+
+  errors: {
+    invalidJson: "配置 JSON 无效。",
+    unknownOs: (os: string) => `配置中的系统未知：${os}`,
+    unknownCli: (id: string) => `配置中的 CLI id 未知：${id}`,
+    unknownSkill: (id: string) => `配置中的技能 id 未知：${id}`,
+    unknownMcp: (id: string) => `配置中的 MCP id 未知：${id}`,
+    configReadFailed: (path: string) => `无法读取配置文件：${path}`,
+    needYes: "加 --yes 执行，或加 --dry-run 预览。",
+  },
+
+  headless: {
+    previewIntro: "来自配置的计划：",
+    running: (label: string) => `… ${label}`,
+  },
+
+  catalog: {
+    cli: {
+      "claude-code": {
+        title: "Claude Code",
+        description: "Anthropic 的终端编码代理（@anthropic-ai/claude-code）。",
+      },
+      codex: {
+        title: "OpenAI Codex",
+        description: "OpenAI 的终端编码代理（@openai/codex）。",
+      },
+      "cc-switch": {
+        title: "cc-switch",
+        description: "管理 / 切换 Claude Code 与 Codex 的 API 供应商的桌面 GUI。",
+      },
+    } as Record<string, { title: string; description: string }>,
+    skills: {
+      "cpp-cmake": {
+        title: "C++ / CMake 工程化",
+        description: "CMake presets、targets、工具链、vcpkg、out-of-source 构建。",
+      },
+      python: {
+        title: "Python 工程化",
+        description: "uv、venv、pyproject、ruff、pytest、打包。",
+      },
+      android: {
+        title: "Android 工程化",
+        description: "Gradle Kotlin DSL、SDK/NDK、adb、构建变体、签名。",
+      },
+      "stm32-c": {
+        title: "STM32 固件（C）",
+        description: "arm-none-eabi + CMake、HAL/LL、OpenOCD 烧录、NVIC/寄存器。",
+      },
+      rust: {
+        title: "Rust 工程化",
+        description: "cargo、workspace、clippy、rustfmt、async/tokio、测试。",
+      },
+      "web-frontend": {
+        title: "Web 前端（React/TS）",
+        description: "React、TypeScript、Vite、Tailwind、测试、可访问性。",
+      },
+    } as Record<string, { title: string; description: string }>,
+    mcp: {
+      supermemory: {
+        title: "Supermemory",
+        purpose: "持久化跨会话记忆（托管）。",
+      },
+      memory: {
+        title: "Memory（官方知识图谱）",
+        purpose: "本地知识图谱记忆，无需 API 密钥。",
+      },
+      context7: {
+        title: "Context7",
+        purpose: "最新的、版本精确的库文档。",
+      },
+      "sequential-thinking": {
+        title: "Sequential Thinking",
+        purpose: "结构化的逐步推理工具。",
+      },
+      fetch: { title: "Fetch", purpose: "抓取并提取网页内容。" },
+      filesystem: {
+        title: "Filesystem",
+        purpose: "在允许的目录内读写文件。",
+      },
+      exa: { title: "Exa Search", purpose: "语义 / 神经网络网页搜索。" },
+      tavily: { title: "Tavily", purpose: "带引用与爬取的网页搜索。" },
+      "brave-search": {
+        title: "Brave Search",
+        purpose: "注重隐私的网页搜索。",
+      },
+      github: {
+        title: "GitHub",
+        purpose: "Issue、PR、代码搜索、仓库管理。",
+      },
+      playwright: {
+        title: "Playwright",
+        purpose: "浏览器自动化与 DOM 检查。",
+      },
+    } as Record<string, { title: string; purpose: string }>,
+  },
+
+  steps: {
+    npmRegistry: (url: string) => `设置 npm 镜像源 → ${url}`,
+    installCli: (title: string) => `安装 ${title}`,
+    upgradeCli: (title: string) => `升级 ${title}`,
+    noInstaller: (title: string) => `本系统没有 ${title} 的自动安装方式。`,
+    manualInstall: "需要手动安装",
+    saveConfig: (path: string) => `保存配置 → ${path}`,
+    savedConfigTo: (path: string) => `已保存可重放的配置到 ${path}`,
+    installSkill: (title: string, targets: string) => `安装技能 “${title}” → ${targets}`,
+    uninstallSkill: (title: string, targets: string) => `卸载技能 “${title}” ← ${targets}`,
+    ccVisibleApps: "应用 cc-switch 显示的应用",
+    ccProviderAdd: (name: string) => `添加 cc-switch 供应商 “${name}”`,
+    ccProviderUpdate: (name: string) => `更新 cc-switch 供应商 “${name}”`,
+    ccProviderDelete: (name: string) => `删除 cc-switch 供应商 “${name}”`,
+    ccProviderSetCurrent: (name: string) => `将 cc-switch 供应商 “${name}” 设为当前`,
+    addMcpClaude: (title: string) => `添加 MCP “${title}” → Claude Code`,
+    addMcpCodex: (title: string) => `添加 MCP “${title}” → Codex`,
+    codexMcpWritten: (id: string) => `已写入 mcp_servers.${id} 到 config.toml`,
+    configureClaudeRelay: "配置 Claude Code API 端点",
+    configureCodexRelay: "配置 Codex API 端点",
+    claudeSettingsUpdated: "已更新 ~/.claude/settings.json 的 env",
+    codexProviderUpdated: "已更新 ~/.codex/config.toml 的 model_providers",
+  },
+
+  coreOutput: {
+    wouldRun: (cmd: string) => `将运行：${cmd}`,
+    commandNotFound: (file: string) => `找不到命令：${file}`,
+    exitedWithCode: (code: number) => `退出码 ${code}`,
+    copy: (src: string, dest: string) => `复制 ${src} -> ${dest}`,
+    wouldCopy: (src: string, dest: string) => `将复制 ${src} -> ${dest}`,
+    write: (path: string) => `写入 ${path}`,
+    wouldWrite: (path: string) => `将写入 ${path}`,
+    delete: (path: string) => `删除 ${path}`,
+    wouldDelete: (path: string) => `将删除 ${path}`,
+  },
+
+  menu: {
+    title: "主菜单",
+    hint: "↑↓ 移动 · 回车 选择 · esc 返回",
+    returnHint: "按回车返回菜单。",
+    presets: "一键预设安装",
+    skills: "工程技能",
+    ccswitch: "cc-switch 管理",
+    clis: "安装 / 升级 CLI",
+    mcp: "MCP 服务",
+    network: "网络 / 镜像",
+    saveConfig: "将当前配置导出为文件",
+    exit: "退出",
+    progress: (done: number, total: number, secs: number) =>
+      `已完成 ${done}/${total} · 用时 ${secs}s`,
+    cancelHint: "再按一次 ESC 取消剩余步骤。",
+    cancelled: (n: number) => `已取消 —— 跳过 ${n} 步。`,
+    retryHint: "按 r 重试失败项 · 回车返回。",
+    allDone: "全部步骤已完成。",
+    finishedWithErrors: "已完成，但有失败。",
+  },
+
+  skillsManage: {
+    categoryTitle: "工程技能",
+    categorySubtitle: "选择一个工程领域，然后安装或卸载其技能。",
+    listTitle: (area: string) => `${area} —— 技能`,
+    installed: "✔ 已安装",
+    notInstalled: "○ 未安装",
+    toggleHint: "回车：安装 / 卸载 · esc 返回",
+    targets: (targets: string) => `安装目标：${targets}`,
+    actionInstall: "安装",
+    actionUninstall: "卸载",
+  },
+
+  ccswitch: {
+    menuTitle: "cc-switch 管理",
+    install: "安装 / 检测 cc-switch",
+    visibleApps: "显示的应用（只留 Claude 和 Codex）",
+    providers: "供应商管理",
+    detected: "✔ 已检测到 cc-switch",
+    notDetected: "○ 未检测到 cc-switch",
+    visibleTitle: "cc-switch 中显示的应用",
+    visibleHint: "空格 切换 · 回车 应用 · esc 返回",
+    appLabels: {
+      claude: "Claude Code",
+      claudeDesktop: "Claude Desktop",
+      codex: "Codex",
+      gemini: "Gemini CLI",
+      opencode: "OpenCode",
+      openclaw: "OpenClaw",
+      hermes: "Hermes",
+    } as Record<string, string>,
+    providersTitle: "cc-switch 供应商",
+    runtimeWarning: (current: string, min: string) =>
+      `供应商管理需要 Node ≥ ${min}（node:sqlite）；当前 Node 为 ${current}。请升级 Node，或使用独立二进制版本。`,
+    noDb: "未找到 cc-switch 数据库。请先启动一次 cc-switch，再回到这里。",
+    empty: "暂无供应商。",
+    addProvider: "+ 添加供应商",
+    addRecommended: (label: string) => `★ 添加推荐供应商：${label}`,
+    current: "当前",
+    rowActionEdit: "编辑",
+    rowActionDelete: "删除",
+    rowActionSetCurrent: "设为当前",
+    rowActionBack: "返回",
+    setCurrentNote:
+      "提示：仅修改 cc-switch 数据库标记 —— 需打开 cc-switch 才能同步到实际生效配置。",
+    formAddTitle: "添加供应商",
+    formEditTitle: "编辑供应商",
+    fieldName: "名称：",
+    fieldApp: "用于哪个 app？",
+    fieldBaseUrl: "Base URL：",
+    fieldToken: "API key / token：",
+    fieldAuthKind: "Claude 鉴权变量",
+    authTokenLabel: "ANTHROPIC_AUTH_TOKEN（中转）",
+    apiKeyLabel: "ANTHROPIC_API_KEY（官方）",
+    fieldModel: "模型（可选）：",
+    fieldNotes: "备注（可选）：",
+    fieldWebsite: "官网（可选）：",
+  },
+
+  shell: {
+    toggleTheme: "切换主题",
+    light: "浅色",
+    dark: "深色",
+    system: "跟随系统",
+    language: "语言",
+    preview: "预览（演练）",
+    osOverride: "系统",
+    osAuto: "自动",
+    run: "执行计划",
+    runReview: "确认计划",
+    addToPlan: "加入计划",
+    loadConfig: "导入配置",
+    saveConfigBtn: "保存配置",
+    cancel: "取消",
+    close: "关闭",
+    retry: "重试失败项",
+    proceed: "确认执行",
+    upgrade: "升级",
+    installNow: "立即安装",
+    uninstallNow: "立即卸载",
+    apply: "应用",
+    add: "添加",
+    edit: "编辑",
+    delete: "删除",
+    setCurrent: "设为当前",
+    save: "保存",
+    emptyPlan: "计划为空。请先选择 CLI、技能、MCP 服务或网络选项。",
+    notInTauri: "请在桌面应用中运行（pnpm tauri dev）以执行安装。",
+    configSaved: (path: string) => `已保存配置到 ${path}`,
+    configLoaded: "配置已载入到你的计划。",
+  },
+} satisfies Messages

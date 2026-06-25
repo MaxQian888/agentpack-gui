@@ -1,0 +1,107 @@
+"use client"
+
+import { useCallback, useRef, useState } from "react"
+import { toast } from "sonner"
+import { runSteps } from "@/lib/agentpack/runner"
+import { buildVerifySteps } from "@/lib/agentpack/plan"
+import type { Plan, StepDescriptor, StepReport } from "@/lib/agentpack/types"
+import { useAppStore } from "@/store/app-store"
+import { useT } from "@/lib/i18n/provider"
+
+export interface RunOpts {
+  /** Append verify steps for this plan (real runs only). */
+  plan?: Plan
+  /** Show the pending step list and wait for confirm() before executing (real runs). */
+  review?: boolean
+}
+
+export interface RunnerState {
+  reports: StepReport[]
+  running: boolean
+  dryRun: boolean
+  awaitingConfirm: boolean
+  /** Prepare/run a set of descriptors. */
+  run: (steps: StepDescriptor[], opts?: RunOpts) => Promise<void>
+  /** Execute the reviewed steps (after a review gate). */
+  confirm: () => Promise<void>
+  /** Re-run only the steps that failed. */
+  retry: () => Promise<void>
+  cancel: () => void
+}
+
+export function useRunner(): RunnerState {
+  const t = useT()
+  const dryRun = useAppStore((s) => s.dryRun)
+  const paths = useAppStore((s) => s.paths)
+  const setPanelOpen = useAppStore((s) => s.setPanelOpen)
+  const [reports, setReports] = useState<StepReport[]>([])
+  const [running, setRunning] = useState(false)
+  const [awaitingConfirm, setAwaitingConfirm] = useState(false)
+  const ctrl = useRef<AbortController | null>(null)
+  const pending = useRef<StepDescriptor[]>([])
+
+  const execute = useCallback(
+    async (steps: StepDescriptor[]) => {
+      if (!paths) return
+      pending.current = steps
+      setReports(steps.map((s) => ({ id: s.id, label: s.label, status: "pending", output: [] })))
+      setRunning(true)
+      ctrl.current = new AbortController()
+      await runSteps(steps, {
+        dryRun,
+        paths,
+        messages: t,
+        signal: ctrl.current.signal,
+        onUpdate: (r, i) =>
+          setReports((prev) => {
+            const next = [...prev]
+            next[i] = { ...r, output: [...r.output] }
+            return next
+          }),
+      })
+      setRunning(false)
+    },
+    [dryRun, paths, t]
+  )
+
+  const run = useCallback(
+    async (steps: StepDescriptor[], opts: RunOpts = {}) => {
+      if (!paths) {
+        toast.error(t.shell.notInTauri)
+        return
+      }
+      const all = opts.plan && !dryRun ? [...steps, ...buildVerifySteps(opts.plan, t)] : steps
+      if (all.length === 0) {
+        toast.message(t.shell.emptyPlan)
+        return
+      }
+      setPanelOpen(true)
+      if (opts.review && !dryRun) {
+        pending.current = all
+        setReports(all.map((s) => ({ id: s.id, label: s.label, status: "pending", output: [] })))
+        setRunning(false)
+        setAwaitingConfirm(true)
+        return
+      }
+      setAwaitingConfirm(false)
+      await execute(all)
+    },
+    [dryRun, paths, setPanelOpen, t, execute]
+  )
+
+  const confirm = useCallback(async () => {
+    setAwaitingConfirm(false)
+    await execute(pending.current)
+  }, [execute])
+
+  const retry = useCallback(async () => {
+    const failed = new Set(reports.filter((r) => r.status === "error").map((r) => r.id))
+    const steps = pending.current.filter((s) => failed.has(s.id))
+    if (steps.length === 0) return
+    await execute(steps)
+  }, [reports, execute])
+
+  const cancel = useCallback(() => ctrl.current?.abort(), [])
+
+  return { reports, running, dryRun, awaitingConfirm, run, confirm, retry, cancel }
+}
