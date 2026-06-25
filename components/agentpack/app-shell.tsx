@@ -7,6 +7,11 @@ import { useAppStore } from "@/store/app-store"
 import { useT } from "@/lib/i18n/provider"
 import { Header } from "./header"
 import { SidebarNav, type SectionKey } from "./sidebar-nav"
+import { PresetsSection } from "./sections/presets"
+import { ClisSection } from "./sections/clis"
+import { SkillsSection } from "./sections/skills"
+import { McpSection } from "./sections/mcp"
+import { NetworkSection } from "./sections/network"
 
 function Placeholder({ title }: { title: string }) {
   return (
@@ -30,15 +35,15 @@ export function AppShell() {
   const renderSection = () => {
     switch (section) {
       case "presets":
-        return <Placeholder title={t.menu.presets} />
+        return <PresetsSection />
       case "clis":
-        return <Placeholder title={t.menu.clis} />
+        return <ClisSection />
       case "skills":
-        return <Placeholder title={t.menu.skills} />
+        return <SkillsSection />
       case "mcp":
-        return <Placeholder title={t.menu.mcp} />
+        return <McpSection />
       case "network":
-        return <Placeholder title={t.menu.network} />
+        return <NetworkSection />
       case "ccswitch":
         return <Placeholder title={t.menu.ccswitch} />
       case "config":
