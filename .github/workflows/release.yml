@@ -7,9 +7,11 @@ name: Release
 # Triggers on tags matching v* (e.g., v1.0.0, v2.1.0-beta).
 #
 # This workflow:
-# 1. Runs quality checks and tests
-# 2. Builds Tauri desktop applications for all platforms
-# 3. Creates a draft GitHub release with all artifacts
+# 1. Verifies the pushed tag matches the version in package.json,
+#    Cargo.toml and tauri.conf.json (you MUST bump the version to release)
+# 2. Runs quality checks and tests
+# 3. Builds Tauri desktop applications for all platforms (Linux/Windows/macOS)
+# 4. Publishes a GitHub release with all artifacts (auto-published, not draft)
 # ============================================================================
 
 on:
@@ -29,26 +31,63 @@ permissions:
   checks: write
 
 jobs:
+  # Gate: a release can only happen when the version was actually bumped.
+  # The pushed tag (e.g. v0.2.0 -> 0.2.0) must match the version declared in
+  # package.json, src-tauri/Cargo.toml and src-tauri/tauri.conf.json. If they
+  # disagree the whole release fails before anything is built or published.
+  verify-version:
+    name: Verify Version Bump
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Verify tag matches package versions
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          TAURI="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          CARGO="$(grep -m1 '^version = ' src-tauri/Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+
+          echo "tag             : $TAG"
+          echo "package.json    : $PKG"
+          echo "tauri.conf.json : $TAURI"
+          echo "Cargo.toml      : $CARGO"
+
+          fail=0
+          if [ "$TAG" != "$PKG" ];   then echo "::error::tag ($TAG) != package.json ($PKG)"; fail=1; fi
+          if [ "$TAG" != "$TAURI" ]; then echo "::error::tag ($TAG) != tauri.conf.json ($TAURI)"; fail=1; fi
+          if [ "$TAG" != "$CARGO" ]; then echo "::error::tag ($TAG) != Cargo.toml ($CARGO)"; fail=1; fi
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Version mismatch — bump all three version files to match the tag before releasing."
+            exit 1
+          fi
+          echo "All versions match $TAG ✅"
+
   # Run quality checks first
   quality:
     name: Quality Check
+    needs: verify-version
     uses: ./.github/workflows/quality.yml
 
   # Run tests
   test:
     name: Test Suite
+    needs: verify-version
     uses: ./.github/workflows/test.yml
 
   # Build Tauri apps for all platforms
   build-tauri:
     name: Build Tauri
-    needs: [quality, test]
+    needs: [verify-version, quality, test]
     uses: ./.github/workflows/build-tauri.yml
 
   # Create the GitHub release
   create-release:
     name: Create Release
-    needs: [quality, test, build-tauri]
+    needs: [verify-version, quality, test, build-tauri]
     runs-on: ubuntu-latest
 
     permissions:
@@ -69,8 +108,12 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
-          draft: true
+          name: agentpack ${{ github.ref_name }}
+          draft: false
+          # Tags containing a hyphen (e.g. v1.0.0-beta) are published as pre-releases.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
+          fail_on_unmatched_files: false
           files: |
             artifacts/**/*.AppImage
             artifacts/**/*.deb

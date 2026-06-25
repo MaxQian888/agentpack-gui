@@ -214,23 +214,34 @@ Update `src-tauri/tauri.conf.json` for code signing:
 **Runs on:** Tags starting with `v` (e.g., `v1.0.0`)  
 **Duration:** ~1-2 minutes
 
-Automatically creates a GitHub release with all built artifacts when you push a version tag.
+Automatically builds and **publishes** a GitHub release with all built artifacts
+(Linux / Windows / macOS) when you push a version tag.
+
+**You must bump the version to release.** The first job, `verify-version`, checks
+that the pushed tag matches the version declared in `package.json`,
+`src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`. If any of them disagree,
+the release fails before anything is built — so pushing a tag without a real
+version bump will never publish a package.
 
 **How to Create a Release:**
 
 ```bash
-# Create and push a version tag
-git tag v1.0.0
-git push origin v1.0.0
+# 1. Bump the version in all three files to the SAME value, e.g. 0.2.0:
+#    - package.json            "version": "0.2.0"
+#    - src-tauri/Cargo.toml    version = "0.2.0"
+#    - src-tauri/tauri.conf.json "version": "0.2.0"
+# 2. Commit the bump
+git commit -am "chore(release): v0.2.0"
+# 3. Create and push the matching tag
+git tag v0.2.0
+git push origin master --tags
 ```
 
-The release will be created as a **draft** with:
+The release is **published automatically** (not a draft) with:
 
-- Auto-generated release notes
-- All platform-specific installers attached
-- Changelog based on commits since last tag
-
-**Review and publish the draft release manually** after verifying the artifacts.
+- Auto-generated release notes / changelog based on commits since last tag
+- All platform-specific installers attached (AppImage, deb, msi, exe, dmg)
+- Tags containing a hyphen (e.g. `v1.0.0-beta`) are marked as **pre-releases**
 
 ## Caching Strategy
 
@@ -330,7 +341,7 @@ All jobs upload artifacts that are retained for 7-30 days:
 2. **Use feature branches** for development
 3. **Create pull requests** for code review
 4. **Tag releases** with semantic versioning (v1.0.0)
-5. **Review draft releases** before publishing
+5. **Bump all three version files** to match the tag — the release is gated on it
 6. **Monitor CI/CD costs** and optimize as needed
 7. **Keep dependencies updated** regularly
 8. **Review security audit** results

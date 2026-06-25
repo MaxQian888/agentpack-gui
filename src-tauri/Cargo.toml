@@ -1,6 +1,6 @@
 [package]
 name = "react-quick-starter"
-version = "0.1.0"
+version = "0.2.0"
 description = "React + Tauri 16/2.9 quick-starter desktop application"
 authors = ["AstroAir <astro_air@126.com>"]
 license = "MIT"
