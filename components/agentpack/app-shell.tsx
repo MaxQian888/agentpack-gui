@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { isTauri } from "@/lib/tauri"
 import { getPaths } from "@/lib/tauri/commands"
+import { buildSteps } from "@/lib/agentpack/plan"
 import { useAppStore } from "@/store/app-store"
 import { useT } from "@/lib/i18n/provider"
 import { Header } from "./header"
@@ -12,17 +13,17 @@ import { ClisSection } from "./sections/clis"
 import { SkillsSection } from "./sections/skills"
 import { McpSection } from "./sections/mcp"
 import { NetworkSection } from "./sections/network"
+import { CcSwitchSection } from "./sections/ccswitch"
+import { ConfigIO } from "./config-io"
+import { RunnerProvider, useRunnerCtx } from "./run/runner-context"
+import { ExecutionPanel } from "./run/execution-panel"
 
-function Placeholder({ title }: { title: string }) {
-  return (
-    <div className="rounded-lg border border-dashed p-8 text-sm text-muted-foreground">{title}</div>
-  )
-}
-
-export function AppShell() {
+function ShellBody() {
   const t = useT()
+  const plan = useAppStore((s) => s.plan)
+  const paths = useAppStore((s) => s.paths)
   const setPaths = useAppStore((s) => s.setPaths)
-  const setPanelOpen = useAppStore((s) => s.setPanelOpen)
+  const { run } = useRunnerCtx()
   const [section, setSection] = useState<SectionKey>("presets")
 
   useEffect(() => {
@@ -31,6 +32,14 @@ export function AppShell() {
         .then(setPaths)
         .catch(() => {})
   }, [setPaths])
+
+  const onRun = () => {
+    if (!paths) {
+      void run([], plan)
+      return
+    }
+    void run(buildSteps(plan, paths, t), plan)
+  }
 
   const renderSection = () => {
     switch (section) {
@@ -45,9 +54,9 @@ export function AppShell() {
       case "network":
         return <NetworkSection />
       case "ccswitch":
-        return <Placeholder title={t.menu.ccswitch} />
+        return <CcSwitchSection />
       case "config":
-        return <Placeholder title={t.menu.saveConfig} />
+        return <ConfigIO />
     }
   }
 
@@ -55,9 +64,18 @@ export function AppShell() {
     <div className="flex h-screen bg-background text-foreground">
       <SidebarNav active={section} onSelect={setSection} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <Header onRun={() => setPanelOpen(true)} />
+        <Header onRun={onRun} />
         <main className="flex-1 overflow-auto p-6">{renderSection()}</main>
       </div>
+      <ExecutionPanel />
     </div>
+  )
+}
+
+export function AppShell() {
+  return (
+    <RunnerProvider>
+      <ShellBody />
+    </RunnerProvider>
   )
 }
