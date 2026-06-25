@@ -41,3 +41,110 @@ it("aborted signal skips remaining steps", async () => {
   const reports = await runSteps(steps, { dryRun: false, paths, signal: ctrl.signal })
   expect(reports[0].status).toBe("skipped")
 })
+
+it("successful command logs the printable line and streams output", async () => {
+  ;(api.runCommand as jest.Mock).mockImplementation(async (_cmd, onLine) => {
+    onLine("hello")
+    return 0
+  })
+  const updates: number[] = []
+  const steps: StepDescriptor[] = [
+    { kind: "command", id: "c", label: "c", command: { file: "echo", args: ["hi"] } },
+  ]
+  const reports = await runSteps(steps, {
+    dryRun: false,
+    paths,
+    onUpdate: (_r, i) => updates.push(i),
+  })
+  expect(reports[0].status).toBe("done")
+  expect(reports[0].output).toEqual(["$ echo hi", "hello"])
+  expect(updates.length).toBeGreaterThan(0)
+})
+
+it("info step logs its lines without IPC", async () => {
+  const steps: StepDescriptor[] = [
+    { kind: "info", id: "i", label: "i", lines: ["note-a", "note-b"] },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(reports[0].status).toBe("done")
+  expect(reports[0].output).toEqual(["note-a", "note-b"])
+})
+
+it("mergeFile reads, transforms and writes the file", async () => {
+  ;(api.readTextFile as jest.Mock).mockResolvedValue("{}")
+  const steps: StepDescriptor[] = [
+    {
+      kind: "mergeFile",
+      id: "m",
+      label: "m",
+      path: "/h/.codex/config.toml",
+      merge: (e) => e + "!",
+      writtenNote: "",
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(reports[0].status).toBe("done")
+  expect(api.writeTextFile).toHaveBeenCalledWith("/h/.codex/config.toml", "{}!")
+})
+
+it("ccVisibleApps reads + writes via the same merge path", async () => {
+  ;(api.readTextFile as jest.Mock).mockResolvedValue("{}")
+  const steps: StepDescriptor[] = [
+    { kind: "ccVisibleApps", id: "v", label: "v", path: "/cfg.json", merge: () => "{merged}" },
+  ]
+  await runSteps(steps, { dryRun: false, paths })
+  expect(api.writeTextFile).toHaveBeenCalledWith("/cfg.json", "{merged}")
+})
+
+it("skillInstall installs and logs each returned dest", async () => {
+  ;(api.installSkill as jest.Mock).mockResolvedValue(["/h/.claude/skills/rust"])
+  const steps: StepDescriptor[] = [
+    { kind: "skillInstall", id: "s", label: "s", skillId: "rust", targets: ["claude"] },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(api.installSkill).toHaveBeenCalledWith("rust", ["claude"])
+  expect(reports[0].output.join("\n")).toContain("/h/.claude/skills/rust")
+})
+
+it("skillRemove deletes each dest", async () => {
+  const steps: StepDescriptor[] = [
+    {
+      kind: "skillRemove",
+      id: "s",
+      label: "s",
+      skillId: "rust",
+      targets: ["claude"],
+      dests: ["/h/.claude/skills/rust"],
+    },
+  ]
+  await runSteps(steps, { dryRun: false, paths })
+  expect(api.removeDir).toHaveBeenCalledWith("/h/.claude/skills/rust")
+})
+
+it("ccProvider forwards the payload and logs returned lines", async () => {
+  ;(api.ccWriteProvider as jest.Mock).mockResolvedValue(["added Mine"])
+  const steps: StepDescriptor[] = [
+    {
+      kind: "ccProvider",
+      id: "p",
+      label: "p",
+      op: "add",
+      payload: { app: "claude", settingsConfig: "{}", form: { name: "Mine" } },
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(api.ccWriteProvider).toHaveBeenCalledWith(
+    expect.objectContaining({ op: "add", dryRun: false, app: "claude" })
+  )
+  expect(reports[0].output).toContain("added Mine")
+})
+
+it("a non-verify command throwing is recorded as error", async () => {
+  ;(api.runCommand as jest.Mock).mockRejectedValue("network down")
+  const steps: StepDescriptor[] = [
+    { kind: "command", id: "c", label: "c", command: { file: "x", args: [] } },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(reports[0].status).toBe("error")
+  expect(reports[0].error).toBe("network down")
+})

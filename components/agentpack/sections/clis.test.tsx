@@ -7,7 +7,7 @@ import { ClisSection } from "./clis"
 
 beforeEach(() => {
   useAppStore.getState().resetPlan()
-  useAppStore.setState({ detections: {} })
+  useAppStore.setState({ detections: {}, latestVersions: {} })
 })
 
 function renderClis() {
@@ -30,8 +30,46 @@ it("shows detected version from the store and toggles selection", async () => {
   expect(useAppStore.getState().plan.clis.length).toBeGreaterThan(0)
 })
 
-it("offers an upgrade action for installed non-GUI tools", () => {
-  useAppStore.setState({ detections: { "claude-code": { installed: true, version: "1.0.0" } } })
+it("offers an upgrade action when a newer version is available", () => {
+  useAppStore.setState({
+    detections: { "claude-code": { installed: true, version: "1.0.0" } },
+    latestVersions: { "claude-code": "2.0.0" },
+  })
   renderClis()
   expect(screen.getByRole("button", { name: /Upgrade/i })).toBeInTheDocument()
+})
+
+it("shows a latest badge and no upgrade when already current", () => {
+  useAppStore.setState({
+    detections: { "claude-code": { installed: true, version: "2.0.0" } },
+    latestVersions: { "claude-code": "2.0.0" },
+  })
+  renderClis()
+  expect(screen.queryByRole("button", { name: /Upgrade/i })).not.toBeInTheDocument()
+  expect(screen.getByText("latest")).toBeInTheDocument()
+})
+
+it("hides the upgrade button when the latest version is unknown", () => {
+  useAppStore.setState({ detections: { "claude-code": { installed: true, version: "1.0.0" } } })
+  renderClis()
+  expect(screen.queryByRole("button", { name: /Upgrade/i })).not.toBeInTheDocument()
+})
+
+it("runs an upgrade step when the upgrade button is clicked", async () => {
+  useAppStore.setState({
+    detections: { "claude-code": { installed: true, version: "1.0.0" } },
+    latestVersions: { "claude-code": "2.0.0" },
+    paths: { os: "mac" } as never,
+    dryRun: true,
+    panelOpen: false,
+  })
+  renderClis()
+  await userEvent.click(screen.getByRole("button", { name: /Upgrade/i }))
+  expect(useAppStore.getState().panelOpen).toBe(true)
+})
+
+it("shows a not-found badge for a detected-but-missing tool", () => {
+  useAppStore.setState({ detections: { "claude-code": { installed: false } } })
+  renderClis()
+  expect(screen.getAllByText(/not found/i).length).toBeGreaterThan(0)
 })

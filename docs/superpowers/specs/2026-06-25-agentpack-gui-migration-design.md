@@ -30,22 +30,22 @@ both modes.
 
 ### Frontend modules (`lib/agentpack/`)
 
-| Module | Source origin | Notes |
-| --- | --- | --- |
-| `types.ts` | `core/types.ts` | OS, Command, CliTool, SkillDef, McpServer, Plan, NetworkConfig + new `StepDescriptor` |
-| `registry.ts` | `core/registry.ts` | CLI_TOOLS, SKILLS, MCP_SERVERS, find* — unchanged |
-| `presets.ts` | `core/presets.ts` | PRESETS — unchanged |
-| `config.ts` | `core/config.ts` | serializePlan / parseConfig (secrets redacted); `fillSecretsFromEnv` becomes "fill from provided map" (no `process.env` in browser) |
-| `merge/mcp.ts` | `core/install/mcp.ts` | buildClaudeMcpCommand, buildCodexMcpEntry, mergeCodexMcp — unchanged |
-| `merge/network.ts` | `core/install/network.ts` | npmRegistryCommand, mergeClaudeSettings, mergeCodexProvider — unchanged |
-| `ccswitch/provider.ts` | `core/ccswitch/provider.ts` | buildSettingsConfig — unchanged |
-| `ccswitch/settings.ts` | `core/ccswitch/settings.ts` | visibleApps read/merge + keys/defaults — unchanged |
-| `ccswitch/preset.ts` | `core/ccswitch/preset.ts` | RECOMMENDED_PROVIDERS — unchanged |
-| `ccswitch/types.ts` | `core/ccswitch/types.ts` | ProviderApp, VisibleApps, Provider, ProviderForm — unchanged |
-| `plan.ts` | `core/plan.ts` + `core/actions.ts` + `core/verify.ts` | **restructured** to emit declarative `StepDescriptor[]` instead of step closures |
-| `runner.ts` | `core/runner.ts` | sequential, non-aborting, status callbacks; dispatches descriptors to preview (dry) or Rust (execute) |
-| `preview.ts` | `core/exec.ts` + `coreOutput` strings | given a descriptor, produce its dry-run "would …" lines |
-| `report.ts` | `core/report.ts` | summarize() / pendingKeyEnvs() — unchanged |
+| Module                 | Source origin                                         | Notes                                                                                                                               |
+| ---------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `types.ts`             | `core/types.ts`                                       | OS, Command, CliTool, SkillDef, McpServer, Plan, NetworkConfig + new `StepDescriptor`                                               |
+| `registry.ts`          | `core/registry.ts`                                    | CLI_TOOLS, SKILLS, MCP_SERVERS, find\* — unchanged                                                                                  |
+| `presets.ts`           | `core/presets.ts`                                     | PRESETS — unchanged                                                                                                                 |
+| `config.ts`            | `core/config.ts`                                      | serializePlan / parseConfig (secrets redacted); `fillSecretsFromEnv` becomes "fill from provided map" (no `process.env` in browser) |
+| `merge/mcp.ts`         | `core/install/mcp.ts`                                 | buildClaudeMcpCommand, buildCodexMcpEntry, mergeCodexMcp — unchanged                                                                |
+| `merge/network.ts`     | `core/install/network.ts`                             | npmRegistryCommand, mergeClaudeSettings, mergeCodexProvider — unchanged                                                             |
+| `ccswitch/provider.ts` | `core/ccswitch/provider.ts`                           | buildSettingsConfig — unchanged                                                                                                     |
+| `ccswitch/settings.ts` | `core/ccswitch/settings.ts`                           | visibleApps read/merge + keys/defaults — unchanged                                                                                  |
+| `ccswitch/preset.ts`   | `core/ccswitch/preset.ts`                             | RECOMMENDED_PROVIDERS — unchanged                                                                                                   |
+| `ccswitch/types.ts`    | `core/ccswitch/types.ts`                              | ProviderApp, VisibleApps, Provider, ProviderForm — unchanged                                                                        |
+| `plan.ts`              | `core/plan.ts` + `core/actions.ts` + `core/verify.ts` | **restructured** to emit declarative `StepDescriptor[]` instead of step closures                                                    |
+| `runner.ts`            | `core/runner.ts`                                      | sequential, non-aborting, status callbacks; dispatches descriptors to preview (dry) or Rust (execute)                               |
+| `preview.ts`           | `core/exec.ts` + `coreOutput` strings                 | given a descriptor, produce its dry-run "would …" lines                                                                             |
+| `report.ts`            | `core/report.ts`                                      | summarize() / pendingKeyEnvs() — unchanged                                                                                          |
 
 **StepDescriptor kinds:** `command` (run a CLI command), `mergeFile` (read →
 pure merge → write a JSON/TOML config), `skillInstall`, `skillRemove`,
@@ -57,16 +57,16 @@ carries a localized `label` and a typed `payload`; the runner switches on kind.
 Custom Tauri commands (no extra ACL permissions needed for app commands in
 Tauri 2; no new Tauri plugins; CSP unchanged — IPC only):
 
-| Command | Replaces | Behavior |
-| --- | --- | --- |
-| `run_command(file, args, on_event: Channel)` | `core/exec.ts` | spawn via `std::process::Command`, stream stdout+stderr lines through a `tauri::ipc::Channel`, return exit code; non-zero → error |
-| `detect_cli(bin, gui)` | `core/detect.ts` | `where`/`which` PATH lookup; non-GUI also `--version` probe; GUI also checks `~/.cc-switch` |
-| `is_process_running(name)` | `core/detect.ts` | `tasklist` (Windows) / `pgrep -x` |
-| `read_text_file(path)` / `write_text_file(path, content)` / `remove_dir(path)` | `core/install/configfiles.ts`, `skills.ts` | write creates parent dirs |
-| `install_skill(id, targets)` | `core/install/skills.ts` | copy bundled skill from Tauri **resources** (`bundle.resources` ships `assets/skills/`) into target skills dirs |
-| `get_paths()` | `core/paths.ts` | returns resolved absolute paths (home, claudeSettings, codexConfig, claude/codex skills dirs, ccSwitch settings + db) so the frontend never does path math |
-| `cc_load_providers()` | `core/ccswitch/db.ts` | read-only via `rusqlite`; schema assert; returns Claude/Codex providers |
-| `cc_write_provider(op, …, dry_run)` | `core/ccswitch/db.ts` | add/update/delete/set_current; guardrails: refuse while cc-switch running, back up DB, schema assert, transaction, refuse deleting active; `dry_run` returns rendered SQL lines without touching the DB |
+| Command                                                                        | Replaces                                   | Behavior                                                                                                                                                                                                |
+| ------------------------------------------------------------------------------ | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run_command(file, args, on_event: Channel)`                                   | `core/exec.ts`                             | spawn via `std::process::Command`, stream stdout+stderr lines through a `tauri::ipc::Channel`, return exit code; non-zero → error                                                                       |
+| `detect_cli(bin, gui)`                                                         | `core/detect.ts`                           | `where`/`which` PATH lookup; non-GUI also `--version` probe; GUI also checks `~/.cc-switch`                                                                                                             |
+| `is_process_running(name)`                                                     | `core/detect.ts`                           | `tasklist` (Windows) / `pgrep -x`                                                                                                                                                                       |
+| `read_text_file(path)` / `write_text_file(path, content)` / `remove_dir(path)` | `core/install/configfiles.ts`, `skills.ts` | write creates parent dirs                                                                                                                                                                               |
+| `install_skill(id, targets)`                                                   | `core/install/skills.ts`                   | copy bundled skill from Tauri **resources** (`bundle.resources` ships `assets/skills/`) into target skills dirs                                                                                         |
+| `get_paths()`                                                                  | `core/paths.ts`                            | returns resolved absolute paths (home, claudeSettings, codexConfig, claude/codex skills dirs, ccSwitch settings + db) so the frontend never does path math                                              |
+| `cc_load_providers()`                                                          | `core/ccswitch/db.ts`                      | read-only via `rusqlite`; schema assert; returns Claude/Codex providers                                                                                                                                 |
+| `cc_write_provider(op, …, dry_run)`                                            | `core/ccswitch/db.ts`                      | add/update/delete/set_current; guardrails: refuse while cc-switch running, back up DB, schema assert, transaction, refuse deleting active; `dry_run` returns rendered SQL lines without touching the DB |
 
 cc-switch SQL generation lives **only** in Rust (single source of truth);
 dry-run goes through Rust read-only/no-op so the "would run: <SQL>" echo stays
@@ -82,14 +82,14 @@ faithful.
 - **State:** a Zustand store holds the building `Plan` (clis, skills, mcps,
   mcpKeys, network) + locale + dryRun + osOverride + run state.
 - **Sections ↔ TUI screens:**
-  - *Presets* — selectable cards (Custom/Minimal/Recommended/Everything) that
+  - _Presets_ — selectable cards (Custom/Minimal/Recommended/Everything) that
     pre-fill the store.
-  - *CLIs* — env-check status rows (installed/not found) + install/upgrade
+  - _CLIs_ — env-check status rows (installed/not found) + install/upgrade
     toggles.
-  - *Skills* — per-category list with live install status + install/uninstall.
-  - *MCP* — multi-select + per-server API-key inputs (skippable).
-  - *Network* — relay base URL + token + npm mirror inputs.
-  - *cc-switch* — install/check, Visible-apps switches, Provider table
+  - _Skills_ — per-category list with live install status + install/uninstall.
+  - _MCP_ — multi-select + per-server API-key inputs (skippable).
+  - _Network_ — relay base URL + token + npm mirror inputs.
+  - _cc-switch_ — install/check, Visible-apps switches, Provider table
     (add/edit/delete/set-current) + recommended-provider presets; Node/runtime
     note retained where relevant.
 - **Execution panel** (shadcn `Sheet`/`Dialog`): Review plan → Run → **live

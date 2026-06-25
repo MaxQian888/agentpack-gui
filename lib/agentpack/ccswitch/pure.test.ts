@@ -35,3 +35,47 @@ it("visibleApps round-trips and defaults missing keys to true", () => {
   expect(JSON.parse(merged).visibleApps.gemini).toBe(false)
   expect(JSON.parse(merged).visibleApps.claude).toBe(true)
 })
+
+it("claude provider uses ANTHROPIC_API_KEY for api_key auth and includes the model", () => {
+  const json = JSON.parse(
+    buildSettingsConfig({
+      name: "n",
+      app: "claude",
+      baseUrl: "https://b",
+      token: "t",
+      claudeAuthKind: "api_key",
+      model: "opus",
+    })
+  )
+  expect(json.env.ANTHROPIC_API_KEY).toBe("t")
+  expect(json.env.ANTHROPIC_MODEL).toBe("opus")
+})
+
+it("codex provider embeds the model when provided", () => {
+  const json = JSON.parse(
+    buildSettingsConfig({
+      name: "n",
+      app: "codex",
+      baseUrl: "https://b/v1",
+      token: "sk",
+      claudeAuthKind: "auth_token",
+      model: "gpt-5",
+    })
+  )
+  expect(json.config).toContain("gpt-5")
+})
+
+it("readVisibleApps honors explicit false and falls back when corrupt", () => {
+  const explicit = readVisibleApps(JSON.stringify({ visibleApps: { claude: false } }))
+  expect(explicit.claude).toBe(false)
+  // codex absent → defaults to shown
+  expect(explicit.codex).toBe(true)
+  // unparsable settings → all shown
+  expect(readVisibleApps("{ not json").claude).toBe(true)
+})
+
+it("mergeVisibleApps preserves other fields in settings.json", () => {
+  const out = JSON.parse(mergeVisibleApps(JSON.stringify({ theme: "dark" }), DEFAULT_VISIBLE_APPS))
+  expect(out.theme).toBe("dark")
+  expect(out.visibleApps.codex).toBe(true)
+})

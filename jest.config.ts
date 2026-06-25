@@ -30,6 +30,10 @@ const config: Config = {
     "!**/out/**",
     "!components/ui/**",
     "!app/**/layout.{js,jsx,ts,tsx}",
+    // Pure type-only modules (interfaces / type aliases) — no runtime to cover.
+    "!lib/agentpack/types.ts",
+    "!lib/agentpack/ccswitch/types.ts",
+    "!lib/i18n/types.ts",
   ],
 
   // The directory where Jest should output its coverage files
@@ -48,10 +52,10 @@ const config: Config = {
   // Uncomment to enable strict coverage requirements
   coverageThreshold: {
     global: {
-      branches: 60,
-      functions: 60,
-      lines: 70,
-      statements: 70,
+      branches: 90,
+      functions: 90,
+      lines: 90,
+      statements: 90,
     },
   },
 
@@ -189,7 +193,7 @@ const config: Config = {
   testMatch: ["**/__tests__/**/*.?([mc])[jt]s?(x)", "**/?(*.)+(spec|test).?([mc])[jt]s?(x)"],
 
   // An array of regexp pattern strings that are matched against all test paths, matched tests are skipped
-  testPathIgnorePatterns: ["/node_modules/", "/.next/", "/out/", "/src-tauri/"],
+  testPathIgnorePatterns: ["/node_modules/", "/.next/", "/out/", "/src-tauri/", "/e2e/"],
 
   // The regexp pattern or array of patterns that Jest uses to detect test files
   // testRegex: [],

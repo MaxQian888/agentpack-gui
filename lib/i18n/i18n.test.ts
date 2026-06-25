@@ -1,6 +1,13 @@
 import { en } from "./en"
 import { zhCN } from "./zh-CN"
+import { getMessages } from "./index"
 import { CLI_TOOLS, SKILLS, MCP_SERVERS } from "@/lib/agentpack/registry"
+
+it("getMessages resolves catalogs and falls back to English", () => {
+  expect(getMessages("zh-CN")).toBe(zhCN)
+  expect(getMessages("en")).toBe(en)
+  expect(getMessages("fr" as never)).toBe(en)
+})
 
 function keys(o: object): string[] {
   return Object.entries(o).flatMap(([k, v]) =>

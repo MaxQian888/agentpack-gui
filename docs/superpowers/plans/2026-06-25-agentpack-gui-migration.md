@@ -81,6 +81,7 @@ app/layout.tsx        # + I18nProvider, ThemeProvider
 ### Task A1: Add frontend + Rust dependencies
 
 **Files:**
+
 - Modify: `package.json` (dependencies)
 - Modify: `src-tauri/Cargo.toml` (dependencies)
 
@@ -113,6 +114,7 @@ git commit -m "build: add smol-toml, rusqlite (bundled), dirs deps"
 ### Task A2: Copy skill assets + wire Tauri resources
 
 **Files:**
+
 - Create: `src-tauri/assets/skills/<id>/SKILL.md` (6 skills)
 - Modify: `src-tauri/tauri.conf.json` (`bundle.resources`, `productName`, `identifier`)
 
@@ -150,10 +152,12 @@ git commit -m "feat: bundle skill assets as Tauri resources; brand app as agentp
 ### Task B1: Port `types.ts` + add `StepDescriptor` and `Paths`
 
 **Files:**
+
 - Create: `lib/agentpack/types.ts`
 - Test: `lib/agentpack/types.test.ts` (type-only smoke)
 
 **Interfaces:**
+
 - Produces: `OS`, `AgentTarget`, `Command`, `CliTool`, `SkillDef`, `McpServer`, `McpKeys`, `NetworkConfig`, `Plan`, `StepStatus`; NEW `Paths`, `StepDescriptor` union, `StepReport`.
 
 - [ ] **Step 1: Port the source types**
@@ -254,7 +258,12 @@ import type { Plan, StepDescriptor, Paths } from "./types"
 
 it("type shapes are usable", () => {
   const p: Plan = { os: "mac", clis: [], skills: [], mcps: [], mcpKeys: {}, network: {} }
-  const s: StepDescriptor = { kind: "command", id: "x", label: "x", command: { file: "npm", args: [] } }
+  const s: StepDescriptor = {
+    kind: "command",
+    id: "x",
+    label: "x",
+    command: { file: "npm", args: [] },
+  }
   const paths: Pick<Paths, "os"> = { os: "mac" }
   expect(p.os).toBe("mac")
   expect(s.kind).toBe("command")
@@ -277,10 +286,12 @@ git commit -m "feat(agentpack): port core types + add StepDescriptor/Paths"
 ### Task B2: Port `registry.ts` + `presets.ts`
 
 **Files:**
+
 - Create: `lib/agentpack/registry.ts`, `lib/agentpack/presets.ts`
 - Test: `lib/agentpack/registry.test.ts`
 
 **Interfaces:**
+
 - Produces: `CLI_TOOLS`, `SKILLS`, `MCP_SERVERS`, `findCli`, `findSkill`, `findMcp`; `PRESETS`, `findPreset`.
 
 - [ ] **Step 1: Port both files**
@@ -294,8 +305,8 @@ import { CLI_TOOLS, MCP_SERVERS, findCli, findMcp } from "./registry"
 import { PRESETS, findPreset } from "./presets"
 
 it("each CLI has an install command for every OS key", () => {
-  for (const c of CLI_TOOLS) for (const os of ["win", "mac", "linux"] as const)
-    expect(c.install).toHaveProperty(os)
+  for (const c of CLI_TOOLS)
+    for (const os of ["win", "mac", "linux"] as const) expect(c.install).toHaveProperty(os)
 })
 it("everything preset covers the whole registry", () => {
   const e = findPreset("everything")!
@@ -323,10 +334,12 @@ git commit -m "feat(agentpack): port registry + presets"
 ### Task B3: Port merge functions (`merge/mcp.ts`, `merge/network.ts`)
 
 **Files:**
+
 - Create: `lib/agentpack/merge/mcp.ts`, `lib/agentpack/merge/network.ts`
 - Test: `lib/agentpack/merge/merge.test.ts`
 
 **Interfaces:**
+
 - Produces: `buildClaudeMcpCommand`, `buildCodexMcpEntry`, `mergeCodexMcp`; `npmRegistryCommand`, `CODEX_RELAY_ENV`, `mergeClaudeSettings`, `mergeCodexProvider`.
 
 - [ ] **Step 1: Port both files**
@@ -376,10 +389,12 @@ git commit -m "feat(agentpack): port MCP + network merge functions"
 ### Task B4: Port cc-switch pure modules
 
 **Files:**
+
 - Create: `lib/agentpack/ccswitch/types.ts`, `provider.ts`, `settings.ts`, `preset.ts`
 - Test: `lib/agentpack/ccswitch/pure.test.ts`
 
 **Interfaces:**
+
 - Produces: `ProviderApp`, `VisibleApps`, `Provider`, `ProviderForm`, `ClaudeAuthKind`; `buildSettingsConfig`; `VISIBLE_APP_KEYS`, `DEFAULT_VISIBLE_APPS`, `readVisibleApps`, `mergeVisibleApps`; `RECOMMENDED_PROVIDERS`.
 
 - [ ] **Step 1: Port the four files**
@@ -393,7 +408,15 @@ import { buildSettingsConfig } from "./provider"
 import { readVisibleApps, mergeVisibleApps, DEFAULT_VISIBLE_APPS } from "./settings"
 
 it("claude provider uses AUTH_TOKEN by default", () => {
-  const json = JSON.parse(buildSettingsConfig({ name: "n", app: "claude", baseUrl: "https://b", token: "t", claudeAuthKind: "auth_token" }))
+  const json = JSON.parse(
+    buildSettingsConfig({
+      name: "n",
+      app: "claude",
+      baseUrl: "https://b",
+      token: "t",
+      claudeAuthKind: "auth_token",
+    })
+  )
   expect(json.env.ANTHROPIC_AUTH_TOKEN).toBe("t")
   expect(json.env.ANTHROPIC_BASE_URL).toBe("https://b")
 })
@@ -417,10 +440,12 @@ git commit -m "feat(agentpack): port cc-switch pure modules"
 ### Task B5: Port `config.ts`, `report.ts`, `locale.ts`
 
 **Files:**
+
 - Create: `lib/agentpack/config.ts`, `report.ts`, `locale.ts`
 - Test: `lib/agentpack/config.test.ts`
 
 **Interfaces:**
+
 - Produces: `CONFIG_VERSION`, `serializePlan`, `parseConfig`, `fillSecrets`; `summarize`, `pendingKeyEnvs`; `detectLang`, `normalizeLang`.
 
 - [ ] **Step 1: Port `config.ts`**
@@ -445,7 +470,14 @@ export function detectBrowserLang(): Lang {
 import { serializePlan, parseConfig } from "./config"
 import type { Plan } from "./types"
 
-const plan: Plan = { os: "mac", clis: ["claude-code"], skills: [], mcps: [{ id: "context7", targets: ["claude"] }], mcpKeys: { context7: "secret" }, network: { apiToken: "t" } }
+const plan: Plan = {
+  os: "mac",
+  clis: ["claude-code"],
+  skills: [],
+  mcps: [{ id: "context7", targets: ["claude"] }],
+  mcpKeys: { context7: "secret" },
+  network: { apiToken: "t" },
+}
 
 it("serialize redacts secrets and parse validates", () => {
   const json = serializePlan(plan)
@@ -476,10 +508,12 @@ git commit -m "feat(agentpack): port config, report, locale"
 ### Task C1: Port the i18n catalogs + shell strings
 
 **Files:**
+
 - Create: `lib/i18n/en.ts`, `lib/i18n/zh-CN.ts`, `lib/i18n/types.ts`, `lib/i18n/index.ts`
 - Test: `lib/i18n/i18n.test.ts`
 
 **Interfaces:**
+
 - Produces: `en`, `zhCN`, `catalogs`, `getMessages(lang)`, types `Lang`, `Messages`, `CoreOutput`.
 
 - [ ] **Step 1: Port all four i18n files**
@@ -514,7 +548,8 @@ import { CLI_TOOLS, SKILLS, MCP_SERVERS } from "@/lib/agentpack/registry"
 
 function keys(o: object): string[] {
   return Object.entries(o).flatMap(([k, v]) =>
-    v && typeof v === "object" && typeof v !== "function" ? keys(v).map((s) => `${k}.${s}`) : [k])
+    v && typeof v === "object" && typeof v !== "function" ? keys(v).map((s) => `${k}.${s}`) : [k]
+  )
 }
 it("zh-CN structurally matches en", () => {
   expect(keys(zhCN).sort()).toEqual(keys(en).sort())
@@ -539,10 +574,12 @@ git commit -m "feat(i18n): port typed agentpack catalog + shell strings"
 ### Task C2: I18nProvider + useT hook
 
 **Files:**
+
 - Create: `lib/i18n/provider.tsx`
 - Test: `lib/i18n/provider.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `getMessages`, `Lang`, `detectBrowserLang`.
 - Produces: `<I18nProvider>`, `useT(): Messages`, `useLocale(): { lang, setLang }`.
 
@@ -563,14 +600,20 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     const saved = localStorage.getItem(KEY) as Lang | null
     setLangState(saved ?? detectBrowserLang())
   }, [])
-  const setLang = (l: Lang) => { setLangState(l); localStorage.setItem(KEY, l) }
+  const setLang = (l: Lang) => {
+    setLangState(l)
+    localStorage.setItem(KEY, l)
+  }
   return <Ctx.Provider value={{ lang, setLang, t: getMessages(lang) }}>{children}</Ctx.Provider>
 }
 export function useT(): Messages {
-  const c = useContext(Ctx); if (!c) throw new Error("useT outside I18nProvider"); return c.t
+  const c = useContext(Ctx)
+  if (!c) throw new Error("useT outside I18nProvider")
+  return c.t
 }
 export function useLocale() {
-  const c = useContext(Ctx); if (!c) throw new Error("useLocale outside I18nProvider")
+  const c = useContext(Ctx)
+  if (!c) throw new Error("useLocale outside I18nProvider")
   return { lang: c.lang, setLang: c.setLang }
 }
 ```
@@ -581,12 +624,21 @@ export function useLocale() {
 import { render, screen, act } from "@testing-library/react"
 import { I18nProvider, useT, useLocale } from "./provider"
 
-function Probe() { const t = useT(); const { setLang } = useLocale()
-  return <button onClick={() => setLang("zh-CN")}>{t.menu.title}</button> }
+function Probe() {
+  const t = useT()
+  const { setLang } = useLocale()
+  return <button onClick={() => setLang("zh-CN")}>{t.menu.title}</button>
+}
 it("provides messages and switches locale", async () => {
-  render(<I18nProvider><Probe /></I18nProvider>)
+  render(
+    <I18nProvider>
+      <Probe />
+    </I18nProvider>
+  )
   expect(await screen.findByText("Main menu")).toBeInTheDocument()
-  await act(async () => { screen.getByRole("button").click() })
+  await act(async () => {
+    screen.getByRole("button").click()
+  })
   expect(screen.getByText("主菜单")).toBeInTheDocument()
 })
 ```
@@ -608,10 +660,12 @@ git commit -m "feat(i18n): add client I18nProvider + useT/useLocale"
 ### Task D1: `paths.rs` — get_paths
 
 **Files:**
+
 - Create: `src-tauri/src/paths.rs`
 - Modify: `src-tauri/src/lib.rs` (mod + handler)
 
 **Interfaces:**
+
 - Produces: `#[tauri::command] get_paths() -> Paths` with fields `home, claude_settings, claude_skills_dir, codex_config, codex_skills_dir, cc_switch_settings, cc_switch_db, os` serialized **camelCase**.
 
 - [ ] **Step 1: Implement**
@@ -676,11 +730,13 @@ git commit -m "feat(tauri): get_paths command"
 ### Task D2: `exec.rs` — run_command (streaming), detect_cli, is_process_running
 
 **Files:**
+
 - Create: `src-tauri/src/exec.rs`
 - Modify: `src-tauri/src/lib.rs`
 - Test: `src-tauri/src/exec.rs` (`#[cfg(test)]`)
 
 **Interfaces:**
+
 - Produces:
   - `run_command(file: String, args: Vec<String>, on_event: Channel<String>) -> Result<i32, String>` — emits each output line through the channel, returns exit code, `Err` if spawn fails.
   - `detect_cli(bin: String, gui: bool) -> DetectionResult { installed: bool, version: Option<String> }`
@@ -788,10 +844,12 @@ git commit -m "feat(tauri): run_command streaming + detect_cli + is_process_runn
 ### Task D3: `fsops.rs` — file ops + install_skill
 
 **Files:**
+
 - Create: `src-tauri/src/fsops.rs`
 - Modify: `src-tauri/src/lib.rs`
 
 **Interfaces:**
+
 - Produces:
   - `read_text_file(path) -> Result<String, String>` (missing → `Ok("")`)
   - `write_text_file(path, content) -> Result<(), String>` (creates parents)
@@ -864,11 +922,13 @@ git commit -m "feat(tauri): file ops + resource-based install_skill"
 ### Task D4: `ccswitch.rs` — provider DB (rusqlite) with guardrails
 
 **Files:**
+
 - Create: `src-tauri/src/ccswitch.rs`
 - Modify: `src-tauri/src/lib.rs`
 - Test: `src-tauri/src/ccswitch.rs` (`#[cfg(test)]`)
 
 **Interfaces:**
+
 - Produces:
   - `cc_load_providers() -> Result<Vec<Provider>, String>` (read-only; `[]` if no DB)
   - `cc_write_provider(req: WriteReq) -> Result<Vec<String>, String>` where `WriteReq { op: "add"|"update"|"delete"|"setCurrent", dry_run: bool, id: Option<String>, app: String, form: Option<ProviderForm>, settings_config: Option<String> }`. The frontend builds `settings_config` (via the ported `buildSettingsConfig`) and passes it in; Rust handles ids/sort/guards/SQL.
@@ -1060,11 +1120,13 @@ git commit -m "feat(tauri): cc-switch provider DB via rusqlite with guardrails"
 ### Task E1: `lib/tauri/commands.ts`
 
 **Files:**
+
 - Create: `lib/tauri/commands.ts`
 - Modify: `lib/tauri.ts` (keep `isTauri`; re-export or leave `greet`)
 - Test: `lib/tauri/commands.test.ts` (mock `@tauri-apps/api/core`)
 
 **Interfaces:**
+
 - Consumes: `invoke`, `Channel` from `@tauri-apps/api/core`; types from `@/lib/agentpack/types`, `@/lib/agentpack/ccswitch/types`.
 - Produces typed wrappers:
   - `getPaths(): Promise<Paths>`
@@ -1095,9 +1157,11 @@ export const detectCli = (bin: string, gui: boolean) =>
   invoke<{ installed: boolean; version?: string }>("detect_cli", { bin, gui })
 export const isProcessRunning = (name: string) => invoke<boolean>("is_process_running", { name })
 export const readTextFile = (path: string) => invoke<string>("read_text_file", { path })
-export const writeTextFile = (path: string, content: string) => invoke<void>("write_text_file", { path, content })
+export const writeTextFile = (path: string, content: string) =>
+  invoke<void>("write_text_file", { path, content })
 export const removeDir = (path: string) => invoke<void>("remove_dir", { path })
-export const installSkill = (id: string, targets: AgentTarget[]) => invoke<string[]>("install_skill", { id, targets })
+export const installSkill = (id: string, targets: AgentTarget[]) =>
+  invoke<string[]>("install_skill", { id, targets })
 export const ccLoadProviders = () => invoke<Provider[]>("cc_load_providers")
 
 export interface CcWriteReq {
@@ -1116,7 +1180,9 @@ export const ccWriteProvider = (req: CcWriteReq) => invoke<string[]>("cc_write_p
 ```ts
 jest.mock("@tauri-apps/api/core", () => ({
   invoke: jest.fn(async (cmd: string) => (cmd === "get_paths" ? { os: "mac" } : undefined)),
-  Channel: class { onmessage: ((m: string) => void) | null = null },
+  Channel: class {
+    onmessage: ((m: string) => void) | null = null
+  },
 }))
 import { getPaths, detectCli } from "./commands"
 import { invoke } from "@tauri-apps/api/core"
@@ -1147,10 +1213,12 @@ git commit -m "feat(tauri): typed TS wrappers for backend commands"
 ### Task F1: `plan.ts` — buildSteps + buildVerifySteps → StepDescriptor[]
 
 **Files:**
+
 - Create: `lib/agentpack/plan.ts`
 - Test: `lib/agentpack/plan.test.ts`
 
 **Interfaces:**
+
 - Consumes: registry finders, merge functions, `Paths`, `Messages`, `Plan`.
 - Produces: `buildSteps(plan: Plan, paths: Paths, messages?: Messages): StepDescriptor[]`; `buildVerifySteps(plan, messages?): CommandStep[]`; and menu-action builders mirroring `core/actions.ts`: `skillInstallStep`, `skillRemoveStep`, `visibleAppsStep`, `providerStep(op, ...)`.
 
@@ -1165,43 +1233,82 @@ import { mergeClaudeSettings, mergeCodexProvider, npmRegistryCommand } from "./m
 import type { Paths, Plan, StepDescriptor, CommandStep } from "./types"
 
 export function buildSteps(plan: Plan, paths: Paths, messages: Messages = en): StepDescriptor[] {
-  const t = messages.steps, cat = messages.catalog
+  const t = messages.steps,
+    cat = messages.catalog
   const steps: StepDescriptor[] = []
 
   if (plan.network.npmRegistry) {
-    steps.push({ kind: "command", id: "npm-registry", label: t.npmRegistry(plan.network.npmRegistry), command: npmRegistryCommand(plan.network.npmRegistry) })
+    steps.push({
+      kind: "command",
+      id: "npm-registry",
+      label: t.npmRegistry(plan.network.npmRegistry),
+      command: npmRegistryCommand(plan.network.npmRegistry),
+    })
   }
   for (const id of plan.clis) {
-    const tool = findCli(id); if (!tool) continue
+    const tool = findCli(id)
+    if (!tool) continue
     const title = cat.cli[id]?.title ?? id
     const cmd = tool.install[plan.os]
-    if (cmd) steps.push({ kind: "command", id: `cli-${id}`, label: t.installCli(title), command: cmd })
+    if (cmd)
+      steps.push({ kind: "command", id: `cli-${id}`, label: t.installCli(title), command: cmd })
   }
   for (const sk of plan.skills) {
-    const def = findSkill(sk.id); if (!def || sk.targets.length === 0) continue
+    const def = findSkill(sk.id)
+    if (!def || sk.targets.length === 0) continue
     const title = cat.skills[sk.id]?.title ?? sk.id
-    steps.push({ kind: "skillInstall", id: `skill-${sk.id}`, label: t.installSkill(title, sk.targets.join(", ")), skillId: sk.id, targets: sk.targets })
+    steps.push({
+      kind: "skillInstall",
+      id: `skill-${sk.id}`,
+      label: t.installSkill(title, sk.targets.join(", ")),
+      skillId: sk.id,
+      targets: sk.targets,
+    })
   }
   for (const m of plan.mcps) {
-    const server = findMcp(m.id); if (!server || m.targets.length === 0) continue
+    const server = findMcp(m.id)
+    if (!server || m.targets.length === 0) continue
     const title = cat.mcp[m.id]?.title ?? m.id
     const key = plan.mcpKeys[m.id]
     if (m.targets.includes("claude"))
-      steps.push({ kind: "command", id: `mcp-claude-${m.id}`, label: t.addMcpClaude(title), command: buildClaudeMcpCommand(server, key) })
+      steps.push({
+        kind: "command",
+        id: `mcp-claude-${m.id}`,
+        label: t.addMcpClaude(title),
+        command: buildClaudeMcpCommand(server, key),
+      })
     if (m.targets.includes("codex")) {
       const entry = buildCodexMcpEntry(server, key)
-      steps.push({ kind: "mergeFile", id: `mcp-codex-${m.id}`, label: t.addMcpCodex(title), path: paths.codexConfig,
-        merge: (existing) => mergeCodexMcp(existing, server.id, entry), writtenNote: t.codexMcpWritten(server.id) })
+      steps.push({
+        kind: "mergeFile",
+        id: `mcp-codex-${m.id}`,
+        label: t.addMcpCodex(title),
+        path: paths.codexConfig,
+        merge: (existing) => mergeCodexMcp(existing, server.id, entry),
+        writtenNote: t.codexMcpWritten(server.id),
+      })
     }
   }
   const net = plan.network
   if (net.apiBaseUrl || net.apiToken) {
     if (plan.clis.includes("claude-code"))
-      steps.push({ kind: "mergeFile", id: "relay-claude", label: t.configureClaudeRelay, path: paths.claudeSettings,
-        merge: (e) => mergeClaudeSettings(e, net), writtenNote: t.claudeSettingsUpdated })
+      steps.push({
+        kind: "mergeFile",
+        id: "relay-claude",
+        label: t.configureClaudeRelay,
+        path: paths.claudeSettings,
+        merge: (e) => mergeClaudeSettings(e, net),
+        writtenNote: t.claudeSettingsUpdated,
+      })
     if (plan.clis.includes("codex") && net.apiBaseUrl)
-      steps.push({ kind: "mergeFile", id: "relay-codex", label: t.configureCodexRelay, path: paths.codexConfig,
-        merge: (e) => mergeCodexProvider(e, net), writtenNote: t.codexProviderUpdated })
+      steps.push({
+        kind: "mergeFile",
+        id: "relay-codex",
+        label: t.configureCodexRelay,
+        path: paths.codexConfig,
+        merge: (e) => mergeCodexProvider(e, net),
+        writtenNote: t.codexProviderUpdated,
+      })
   }
   return steps
 }
@@ -1210,12 +1317,30 @@ export function buildVerifySteps(plan: Plan, messages: Messages = en): CommandSt
   const v = messages.verify
   const steps: CommandStep[] = []
   if (plan.clis.includes("claude-code")) {
-    steps.push({ kind: "command", id: "verify-claude-version", label: v.claudeVersion, verifyOnly: true, command: { file: "claude", args: ["--version"] } })
+    steps.push({
+      kind: "command",
+      id: "verify-claude-version",
+      label: v.claudeVersion,
+      verifyOnly: true,
+      command: { file: "claude", args: ["--version"] },
+    })
     if (plan.mcps.some((m) => m.targets.includes("claude")))
-      steps.push({ kind: "command", id: "verify-claude-mcp", label: v.claudeMcp, verifyOnly: true, command: { file: "claude", args: ["mcp", "list"] } })
+      steps.push({
+        kind: "command",
+        id: "verify-claude-mcp",
+        label: v.claudeMcp,
+        verifyOnly: true,
+        command: { file: "claude", args: ["mcp", "list"] },
+      })
   }
   if (plan.clis.includes("codex"))
-    steps.push({ kind: "command", id: "verify-codex-version", label: v.codexVersion, verifyOnly: true, command: { file: "codex", args: ["--version"] } })
+    steps.push({
+      kind: "command",
+      id: "verify-codex-version",
+      label: v.codexVersion,
+      verifyOnly: true,
+      command: { file: "codex", args: ["--version"] },
+    })
   return steps
 }
 ```
@@ -1228,21 +1353,78 @@ import { buildSettingsConfig } from "./ccswitch/provider"
 import type { AgentTarget } from "./types"
 import type { ProviderApp, ProviderForm, VisibleApps } from "./ccswitch/types"
 
-export function skillInstallStep(skillId: string, title: string, targets: AgentTarget[], m: Messages = en): StepDescriptor {
-  return { kind: "skillInstall", id: `skill-install-${skillId}`, label: m.steps.installSkill(title, targets.join(", ")), skillId, targets }
+export function skillInstallStep(
+  skillId: string,
+  title: string,
+  targets: AgentTarget[],
+  m: Messages = en
+): StepDescriptor {
+  return {
+    kind: "skillInstall",
+    id: `skill-install-${skillId}`,
+    label: m.steps.installSkill(title, targets.join(", ")),
+    skillId,
+    targets,
+  }
 }
-export function skillRemoveStep(skillId: string, title: string, targets: AgentTarget[], dests: string[], m: Messages = en): StepDescriptor {
-  return { kind: "skillRemove", id: `skill-remove-${skillId}`, label: m.steps.uninstallSkill(title, targets.join(", ")), skillId, targets, dests }
+export function skillRemoveStep(
+  skillId: string,
+  title: string,
+  targets: AgentTarget[],
+  dests: string[],
+  m: Messages = en
+): StepDescriptor {
+  return {
+    kind: "skillRemove",
+    id: `skill-remove-${skillId}`,
+    label: m.steps.uninstallSkill(title, targets.join(", ")),
+    skillId,
+    targets,
+    dests,
+  }
 }
-export function visibleAppsStep(path: string, visible: VisibleApps, m: Messages = en): StepDescriptor {
-  return { kind: "ccVisibleApps", id: "cc-visible-apps", label: m.steps.ccVisibleApps, path, merge: (e) => mergeVisibleApps(e, visible) }
+export function visibleAppsStep(
+  path: string,
+  visible: VisibleApps,
+  m: Messages = en
+): StepDescriptor {
+  return {
+    kind: "ccVisibleApps",
+    id: "cc-visible-apps",
+    label: m.steps.ccVisibleApps,
+    path,
+    merge: (e) => mergeVisibleApps(e, visible),
+  }
 }
-export function providerStep(op: "add" | "update" | "delete" | "setCurrent", app: ProviderApp, form: ProviderForm | undefined, name: string, id: string | undefined, m: Messages = en): StepDescriptor {
-  const label = op === "add" ? m.steps.ccProviderAdd(name) : op === "update" ? m.steps.ccProviderUpdate(name)
-    : op === "delete" ? m.steps.ccProviderDelete(name) : m.steps.ccProviderSetCurrent(name)
+export function providerStep(
+  op: "add" | "update" | "delete" | "setCurrent",
+  app: ProviderApp,
+  form: ProviderForm | undefined,
+  name: string,
+  id: string | undefined,
+  m: Messages = en
+): StepDescriptor {
+  const label =
+    op === "add"
+      ? m.steps.ccProviderAdd(name)
+      : op === "update"
+        ? m.steps.ccProviderUpdate(name)
+        : op === "delete"
+          ? m.steps.ccProviderDelete(name)
+          : m.steps.ccProviderSetCurrent(name)
   const settingsConfig = form ? buildSettingsConfig(form) : undefined
-  return { kind: "ccProvider", id: `cc-provider-${op}`, label, op,
-    payload: { app, id, settingsConfig, form: form ? { name: form.name, websiteUrl: form.websiteUrl, notes: form.notes } : undefined } }
+  return {
+    kind: "ccProvider",
+    id: `cc-provider-${op}`,
+    label,
+    op,
+    payload: {
+      app,
+      id,
+      settingsConfig,
+      form: form ? { name: form.name, websiteUrl: form.websiteUrl, notes: form.notes } : undefined,
+    },
+  }
 }
 ```
 
@@ -1252,13 +1434,37 @@ export function providerStep(op: "add" | "update" | "delete" | "setCurrent", app
 import { buildSteps, buildVerifySteps } from "./plan"
 import type { Paths, Plan } from "./types"
 
-const paths: Paths = { home: "/h", claudeSettings: "/h/.claude/settings.json", claudeSkillsDir: "/h/.claude/skills", codexConfig: "/h/.codex/config.toml", codexSkillsDir: "/h/.codex/skills", ccSwitchSettings: "/h/.cc-switch/settings.json", ccSwitchDb: "/h/.cc-switch/cc-switch.db", os: "mac" }
-const plan: Plan = { os: "mac", clis: ["claude-code"], skills: [{ id: "rust", targets: ["claude"] }], mcps: [{ id: "context7", targets: ["claude", "codex"] }], mcpKeys: { context7: "k" }, network: { npmRegistry: "https://m", apiBaseUrl: "https://r" } }
+const paths: Paths = {
+  home: "/h",
+  claudeSettings: "/h/.claude/settings.json",
+  claudeSkillsDir: "/h/.claude/skills",
+  codexConfig: "/h/.codex/config.toml",
+  codexSkillsDir: "/h/.codex/skills",
+  ccSwitchSettings: "/h/.cc-switch/settings.json",
+  ccSwitchDb: "/h/.cc-switch/cc-switch.db",
+  os: "mac",
+}
+const plan: Plan = {
+  os: "mac",
+  clis: ["claude-code"],
+  skills: [{ id: "rust", targets: ["claude"] }],
+  mcps: [{ id: "context7", targets: ["claude", "codex"] }],
+  mcpKeys: { context7: "k" },
+  network: { npmRegistry: "https://m", apiBaseUrl: "https://r" },
+}
 
 it("orders steps registry→install→skills→mcp→relay", () => {
   const ids = buildSteps(plan, paths).map((s) => s.id)
   expect(ids[0]).toBe("npm-registry")
-  expect(ids).toEqual(expect.arrayContaining(["cli-claude-code", "skill-rust", "mcp-claude-context7", "mcp-codex-context7", "relay-claude"]))
+  expect(ids).toEqual(
+    expect.arrayContaining([
+      "cli-claude-code",
+      "skill-rust",
+      "mcp-claude-context7",
+      "mcp-codex-context7",
+      "relay-claude",
+    ])
+  )
 })
 it("codex mcp step targets the resolved config path", () => {
   const step = buildSteps(plan, paths).find((s) => s.id === "mcp-codex-context7")!
@@ -1282,10 +1488,12 @@ git commit -m "feat(agentpack): descriptor-based plan + verify + menu-action bui
 ### Task F2: `preview.ts` — dry-run lines per descriptor
 
 **Files:**
+
 - Create: `lib/agentpack/preview.ts`
 - Test: `lib/agentpack/preview.test.ts`
 
 **Interfaces:**
+
 - Consumes: `StepDescriptor`, `Paths`, `Messages`, `commandToString`.
 - Produces: `commandToString(cmd: Command): string`; `previewLines(step: StepDescriptor, paths: Paths, messages?: Messages): string[]`.
 
@@ -1304,13 +1512,22 @@ export function commandToString(cmd: Command): string {
 export function previewLines(step: StepDescriptor, paths: Paths, m: Messages = en): string[] {
   const out = m.coreOutput
   switch (step.kind) {
-    case "command": return [`$ ${commandToString(step.command)}`, out.wouldRun(commandToString(step.command))]
+    case "command":
+      return [`$ ${commandToString(step.command)}`, out.wouldRun(commandToString(step.command))]
     case "mergeFile":
-    case "ccVisibleApps": return [out.wouldWrite(step.path)]
-    case "skillInstall": return step.targets.map((tt) =>
-      out.wouldCopy(`${paths.home}/assets/skills/${step.skillId}`, `${tt === "claude" ? paths.claudeSkillsDir : paths.codexSkillsDir}/${step.skillId}`))
-    case "skillRemove": return step.dests.map((d) => out.wouldDelete(d))
-    case "ccProvider": return [`would run: ${step.op} provider (${(step.payload as { app: string }).app})`]
+    case "ccVisibleApps":
+      return [out.wouldWrite(step.path)]
+    case "skillInstall":
+      return step.targets.map((tt) =>
+        out.wouldCopy(
+          `${paths.home}/assets/skills/${step.skillId}`,
+          `${tt === "claude" ? paths.claudeSkillsDir : paths.codexSkillsDir}/${step.skillId}`
+        )
+      )
+    case "skillRemove":
+      return step.dests.map((d) => out.wouldDelete(d))
+    case "ccProvider":
+      return [`would run: ${step.op} provider (${(step.payload as { app: string }).app})`]
   }
 }
 ```
@@ -1320,18 +1537,36 @@ export function previewLines(step: StepDescriptor, paths: Paths, m: Messages = e
 ```ts
 import { previewLines, commandToString } from "./preview"
 import type { Paths, StepDescriptor } from "./types"
-const paths = { home: "/h", claudeSkillsDir: "/h/.claude/skills", codexSkillsDir: "/h/.codex/skills" } as Paths
+const paths = {
+  home: "/h",
+  claudeSkillsDir: "/h/.claude/skills",
+  codexSkillsDir: "/h/.codex/skills",
+} as Paths
 
 it("command preview shows would run", () => {
-  const s: StepDescriptor = { kind: "command", id: "x", label: "x", command: { file: "npm", args: ["i", "-g", "x"] } }
+  const s: StepDescriptor = {
+    kind: "command",
+    id: "x",
+    label: "x",
+    command: { file: "npm", args: ["i", "-g", "x"] },
+  }
   expect(previewLines(s, paths)).toContain("would run: npm i -g x")
 })
 it("mergeFile preview shows would write path", () => {
-  const s: StepDescriptor = { kind: "mergeFile", id: "x", label: "x", path: "/h/.codex/config.toml", merge: (e) => e, writtenNote: "" }
+  const s: StepDescriptor = {
+    kind: "mergeFile",
+    id: "x",
+    label: "x",
+    path: "/h/.codex/config.toml",
+    merge: (e) => e,
+    writtenNote: "",
+  }
   expect(previewLines(s, paths)).toEqual(["would write /h/.codex/config.toml"])
 })
 it("quoting wraps args with spaces", () => {
-  expect(commandToString({ file: "claude", args: ["--header", "Authorization: Bearer k"] })).toContain('"Authorization: Bearer k"')
+  expect(
+    commandToString({ file: "claude", args: ["--header", "Authorization: Bearer k"] })
+  ).toContain('"Authorization: Bearer k"')
 })
 ```
 
@@ -1348,10 +1583,12 @@ git commit -m "feat(agentpack): dry-run preview line generator"
 ### Task F3: `runner.ts` — execute descriptors (dry vs real)
 
 **Files:**
+
 - Create: `lib/agentpack/runner.ts`
 - Test: `lib/agentpack/runner.test.ts` (mock `@/lib/tauri/commands`)
 
 **Interfaces:**
+
 - Consumes: all wrappers from `@/lib/tauri/commands`, `previewLines`, `commandToString`, `StepDescriptor`, `StepReport`, `Paths`.
 - Produces: `runSteps(steps: StepDescriptor[], opts: { dryRun: boolean; paths: Paths; messages?: Messages; signal?: AbortSignal; onUpdate?: (r: StepReport, i: number) => void }): Promise<StepReport[]>`.
 
@@ -1364,34 +1601,66 @@ import { previewLines, commandToString } from "./preview"
 import type { Paths, StepDescriptor, StepReport } from "./types"
 import * as api from "@/lib/tauri/commands"
 
-interface Opts { dryRun: boolean; paths: Paths; messages?: Messages; signal?: AbortSignal; onUpdate?: (r: StepReport, i: number) => void }
+interface Opts {
+  dryRun: boolean
+  paths: Paths
+  messages?: Messages
+  signal?: AbortSignal
+  onUpdate?: (r: StepReport, i: number) => void
+}
 
 export async function runSteps(steps: StepDescriptor[], opts: Opts): Promise<StepReport[]> {
   const m = opts.messages ?? en
-  const reports: StepReport[] = steps.map((s) => ({ id: s.id, label: s.label, status: "pending", output: [] }))
+  const reports: StepReport[] = steps.map((s) => ({
+    id: s.id,
+    label: s.label,
+    status: "pending",
+    output: [],
+  }))
   for (let i = 0; i < steps.length; i++) {
-    const step = steps[i], report = reports[i]
-    if (opts.signal?.aborted) { report.status = "skipped"; opts.onUpdate?.(report, i); continue }
-    report.status = "running"; opts.onUpdate?.(report, i)
-    const log = (l: string) => { report.output.push(l); opts.onUpdate?.(report, i) }
+    const step = steps[i],
+      report = reports[i]
+    if (opts.signal?.aborted) {
+      report.status = "skipped"
+      opts.onUpdate?.(report, i)
+      continue
+    }
+    report.status = "running"
+    opts.onUpdate?.(report, i)
+    const log = (l: string) => {
+      report.output.push(l)
+      opts.onUpdate?.(report, i)
+    }
     try {
-      if (opts.dryRun) { for (const l of previewLines(step, opts.paths, m)) log(l) }
-      else await execute(step, opts.paths, m, log)
+      if (opts.dryRun) {
+        for (const l of previewLines(step, opts.paths, m)) log(l)
+      } else await execute(step, opts.paths, m, log)
       report.status = "done"
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      if (step.kind === "command" && step.verifyOnly) { report.output.push(msg); report.status = "done" }
-      else { report.status = "error"; report.error = msg }
+      if (step.kind === "command" && step.verifyOnly) {
+        report.output.push(msg)
+        report.status = "done"
+      } else {
+        report.status = "error"
+        report.error = msg
+      }
     }
     opts.onUpdate?.(report, i)
   }
   return reports
 }
 
-async function execute(step: StepDescriptor, paths: Paths, m: Messages, log: (l: string) => void): Promise<void> {
+async function execute(
+  step: StepDescriptor,
+  paths: Paths,
+  m: Messages,
+  log: (l: string) => void
+): Promise<void> {
   switch (step.kind) {
     case "command": {
-      const printable = commandToString(step.command); log(`$ ${printable}`)
+      const printable = commandToString(step.command)
+      log(`$ ${printable}`)
       const code = await api.runCommand(step.command, log)
       if (code !== 0) throw new Error(`${printable} — ${m.coreOutput.exitedWithCode(code)}`)
       return
@@ -1409,12 +1678,27 @@ async function execute(step: StepDescriptor, paths: Paths, m: Messages, log: (l:
       return
     }
     case "skillRemove": {
-      for (const d of step.dests) { log(m.coreOutput.delete(d)); await api.removeDir(d) }
+      for (const d of step.dests) {
+        log(m.coreOutput.delete(d))
+        await api.removeDir(d)
+      }
       return
     }
     case "ccProvider": {
-      const p = step.payload as { app: "claude" | "codex"; id?: string; settingsConfig?: string; form?: { name: string; websiteUrl?: string; notes?: string } }
-      const lines = await api.ccWriteProvider({ op: step.op, dryRun: false, app: p.app, id: p.id, settingsConfig: p.settingsConfig, form: p.form })
+      const p = step.payload as {
+        app: "claude" | "codex"
+        id?: string
+        settingsConfig?: string
+        form?: { name: string; websiteUrl?: string; notes?: string }
+      }
+      const lines = await api.ccWriteProvider({
+        op: step.op,
+        dryRun: false,
+        app: p.app,
+        id: p.id,
+        settingsConfig: p.settingsConfig,
+        form: p.form,
+      })
       for (const l of lines) log(l)
       return
     }
@@ -1429,10 +1713,17 @@ jest.mock("@/lib/tauri/commands")
 import * as api from "@/lib/tauri/commands"
 import { runSteps } from "./runner"
 import type { Paths, StepDescriptor } from "./types"
-const paths = { home: "/h", codexConfig: "/h/.codex/config.toml", claudeSkillsDir: "/h/.claude/skills", codexSkillsDir: "/h/.codex/skills" } as Paths
+const paths = {
+  home: "/h",
+  codexConfig: "/h/.codex/config.toml",
+  claudeSkillsDir: "/h/.claude/skills",
+  codexSkillsDir: "/h/.codex/skills",
+} as Paths
 
 it("dry-run produces preview output and calls no mutating command", async () => {
-  const steps: StepDescriptor[] = [{ kind: "command", id: "c", label: "c", command: { file: "npm", args: ["i"] } }]
+  const steps: StepDescriptor[] = [
+    { kind: "command", id: "c", label: "c", command: { file: "npm", args: ["i"] } },
+  ]
   const reports = await runSteps(steps, { dryRun: true, paths })
   expect(reports[0].status).toBe("done")
   expect(reports[0].output).toContain("would run: npm i")
@@ -1467,10 +1758,12 @@ git commit -m "feat(agentpack): descriptor runner (dry-run safe, non-aborting)"
 ### Task G1: Zustand store
 
 **Files:**
+
 - Create: `store/app-store.ts`
 - Test: `store/app-store.test.ts`
 
 **Interfaces:**
+
 - Produces: `useAppStore` with state `{ plan: Plan; dryRun: boolean; osOverride: OS | null; paths: Paths | null; effectiveOS: () => OS }` and actions `setPaths`, `toggleDryRun`, `setOsOverride`, `setClis`, `setSkill(id, targets)`, `setMcp(id, targets)`, `setMcpKey(id, key)`, `setNetwork(patch)`, `applyPreset(presetId)`, `loadPlan(plan)`, `resetPlan`.
 
 - [ ] **Step 1: Implement**
@@ -1480,7 +1773,14 @@ import { create } from "zustand"
 import type { OS, Paths, Plan } from "@/lib/agentpack/types"
 import { findPreset } from "@/lib/agentpack/presets"
 
-const emptyPlan = (os: OS): Plan => ({ os, clis: [], skills: [], mcps: [], mcpKeys: {}, network: {} })
+const emptyPlan = (os: OS): Plan => ({
+  os,
+  clis: [],
+  skills: [],
+  mcps: [],
+  mcpKeys: {},
+  network: {},
+})
 
 interface State {
   plan: Plan
@@ -1509,28 +1809,41 @@ export const useAppStore = create<State>((set, get) => ({
   effectiveOS: () => get().osOverride ?? get().paths?.os ?? "mac",
   setPaths: (p) => set((s) => ({ paths: p, plan: { ...s.plan, os: s.osOverride ?? p.os } })),
   toggleDryRun: () => set((s) => ({ dryRun: !s.dryRun })),
-  setOsOverride: (os) => set((s) => ({ osOverride: os, plan: { ...s.plan, os: os ?? s.paths?.os ?? "mac" } })),
+  setOsOverride: (os) =>
+    set((s) => ({ osOverride: os, plan: { ...s.plan, os: os ?? s.paths?.os ?? "mac" } })),
   setClis: (clis) => set((s) => ({ plan: { ...s.plan, clis } })),
-  setSkill: (id, targets) => set((s) => {
-    const skills = s.plan.skills.filter((x) => x.id !== id)
-    if (targets.length) skills.push({ id, targets })
-    return { plan: { ...s.plan, skills } }
-  }),
-  setMcp: (id, targets) => set((s) => {
-    const mcps = s.plan.mcps.filter((x) => x.id !== id)
-    if (targets.length) mcps.push({ id, targets })
-    return { plan: { ...s.plan, mcps } }
-  }),
-  setMcpKey: (id, key) => set((s) => ({ plan: { ...s.plan, mcpKeys: { ...s.plan.mcpKeys, [id]: key } } })),
-  setNetwork: (patch) => set((s) => ({ plan: { ...s.plan, network: { ...s.plan.network, ...patch } } })),
-  applyPreset: (presetId) => set((s) => {
-    const p = findPreset(presetId)
-    if (!p) return { plan: { ...emptyPlan(s.plan.os) } }
-    return { plan: { ...emptyPlan(s.plan.os),
-      clis: p.clis as Plan["clis"],
-      skills: p.skills.map((id) => ({ id, targets: ["claude", "codex"] as const })) as Plan["skills"],
-      mcps: p.mcps.map((id) => ({ id, targets: ["claude"] as const })) as Plan["mcps"] } }
-  }),
+  setSkill: (id, targets) =>
+    set((s) => {
+      const skills = s.plan.skills.filter((x) => x.id !== id)
+      if (targets.length) skills.push({ id, targets })
+      return { plan: { ...s.plan, skills } }
+    }),
+  setMcp: (id, targets) =>
+    set((s) => {
+      const mcps = s.plan.mcps.filter((x) => x.id !== id)
+      if (targets.length) mcps.push({ id, targets })
+      return { plan: { ...s.plan, mcps } }
+    }),
+  setMcpKey: (id, key) =>
+    set((s) => ({ plan: { ...s.plan, mcpKeys: { ...s.plan.mcpKeys, [id]: key } } })),
+  setNetwork: (patch) =>
+    set((s) => ({ plan: { ...s.plan, network: { ...s.plan.network, ...patch } } })),
+  applyPreset: (presetId) =>
+    set((s) => {
+      const p = findPreset(presetId)
+      if (!p) return { plan: { ...emptyPlan(s.plan.os) } }
+      return {
+        plan: {
+          ...emptyPlan(s.plan.os),
+          clis: p.clis as Plan["clis"],
+          skills: p.skills.map((id) => ({
+            id,
+            targets: ["claude", "codex"] as const,
+          })) as Plan["skills"],
+          mcps: p.mcps.map((id) => ({ id, targets: ["claude"] as const })) as Plan["mcps"],
+        },
+      }
+    }),
   loadPlan: (plan) => set({ plan }),
   resetPlan: () => set((s) => ({ plan: emptyPlan(s.plan.os) })),
 }))
@@ -1572,11 +1885,13 @@ git commit -m "feat(store): zustand app store for plan/dry-run/os/paths"
 ### Task G2: App shell + layout providers + paths bootstrap
 
 **Files:**
+
 - Modify: `app/layout.tsx` (wrap `I18nProvider` + `next-themes` `ThemeProvider`)
 - Create: `components/agentpack/app-shell.tsx`, `components/agentpack/header.tsx`, `components/agentpack/sidebar-nav.tsx`
 - Modify: `app/page.tsx` (render `<AppShell/>`)
 
 **Interfaces:**
+
 - Consumes: `useT`, `useLocale`, `useAppStore`, `getPaths`, shadcn `Sidebar`, `Tabs` or section switch.
 - Produces: `<AppShell/>` with `activeSection` state; header controls bound to store/i18n.
 
@@ -1596,6 +1911,7 @@ import { I18nProvider } from "@/lib/i18n/provider"
   </ThemeProvider>
 </body>
 ```
+
 Add `"use client"`? No — keep layout a server component; the providers are client components (they carry `"use client"`). Update `metadata.title` to `"agentpack"`.
 
 - [ ] **Step 2: Sidebar nav + shell skeleton**
@@ -1617,7 +1933,12 @@ import { SidebarNav, type SectionKey } from "./sidebar-nav"
 export function AppShell() {
   const setPaths = useAppStore((s) => s.setPaths)
   const [section, setSection] = useState<SectionKey>("presets")
-  useEffect(() => { if (isTauri()) getPaths().then(setPaths).catch(() => {}) }, [setPaths])
+  useEffect(() => {
+    if (isTauri())
+      getPaths()
+        .then(setPaths)
+        .catch(() => {})
+  }, [setPaths])
   return (
     <div className="flex h-screen">
       <SidebarNav active={section} onSelect={setSection} />
@@ -1629,6 +1950,7 @@ export function AppShell() {
   )
 }
 ```
+
 `renderSection` switches on key → the section components (stubs returning the section title for now; filled in Phase G/H/I).
 
 - [ ] **Step 3: Header with controls**
@@ -1641,7 +1963,9 @@ Replace `app/page.tsx` body with:
 
 ```tsx
 import { AppShell } from "@/components/agentpack/app-shell"
-export default function Home() { return <AppShell /> }
+export default function Home() {
+  return <AppShell />
+}
 ```
 
 - [ ] **Step 5: Verify build + render**
@@ -1663,6 +1987,7 @@ git commit -m "feat(ui): app shell, header controls, providers, paths bootstrap"
 ### Task H1: Presets section
 
 **Files:**
+
 - Create: `components/agentpack/sections/presets.tsx`
 - Test: `components/agentpack/sections/presets.test.tsx`
 
@@ -1680,7 +2005,11 @@ import { useAppStore } from "@/store/app-store"
 import { PresetsSection } from "./presets"
 
 it("clicking Recommended fills the plan", async () => {
-  render(<I18nProvider><PresetsSection /></I18nProvider>)
+  render(
+    <I18nProvider>
+      <PresetsSection />
+    </I18nProvider>
+  )
   await userEvent.click(await screen.findByText("Recommended"))
   expect(useAppStore.getState().plan.clis).toContain("cc-switch")
 })
@@ -1699,6 +2028,7 @@ git commit -m "feat(ui): presets section"
 ### Task H2: CLIs section (env-check + install/upgrade toggles)
 
 **Files:**
+
 - Create: `components/agentpack/sections/clis.tsx`
 - Test: `components/agentpack/sections/clis.test.tsx` (mock `@/lib/tauri/commands.detectCli`)
 
@@ -1710,7 +2040,9 @@ git commit -m "feat(ui): presets section"
 
 ```tsx
 jest.mock("@/lib/tauri", () => ({ isTauri: () => true }))
-jest.mock("@/lib/tauri/commands", () => ({ detectCli: jest.fn(async () => ({ installed: true, version: "1.2.3" })) }))
+jest.mock("@/lib/tauri/commands", () => ({
+  detectCli: jest.fn(async () => ({ installed: true, version: "1.2.3" })),
+}))
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
@@ -1718,7 +2050,11 @@ import { useAppStore } from "@/store/app-store"
 import { ClisSection } from "./clis"
 
 it("shows version and toggles selection", async () => {
-  render(<I18nProvider><ClisSection /></I18nProvider>)
+  render(
+    <I18nProvider>
+      <ClisSection />
+    </I18nProvider>
+  )
   expect(await screen.findAllByText(/1\.2\.3/)).not.toHaveLength(0)
   await userEvent.click(screen.getAllByRole("checkbox")[0])
   expect(useAppStore.getState().plan.clis.length).toBeGreaterThan(0)
@@ -1738,6 +2074,7 @@ git commit -m "feat(ui): CLIs section with detection + install/upgrade toggles"
 ### Task H3: Skills section (install/uninstall with live status)
 
 **Files:**
+
 - Create: `components/agentpack/sections/skills.tsx`
 - Test: `components/agentpack/sections/skills.test.tsx`
 
@@ -1754,7 +2091,11 @@ import { I18nProvider } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SkillsSection } from "./skills"
 it("checking Claude adds skill target", async () => {
-  render(<I18nProvider><SkillsSection /></I18nProvider>)
+  render(
+    <I18nProvider>
+      <SkillsSection />
+    </I18nProvider>
+  )
   await userEvent.click(screen.getAllByRole("checkbox")[0])
   expect(useAppStore.getState().plan.skills.length).toBeGreaterThan(0)
 })
@@ -1773,6 +2114,7 @@ git commit -m "feat(ui): skills section with per-target selection"
 ### Task H4: MCP section (+ API key inputs)
 
 **Files:**
+
 - Create: `components/agentpack/sections/mcp.tsx`
 - Test: `components/agentpack/sections/mcp.test.tsx`
 
@@ -1789,7 +2131,11 @@ import { I18nProvider } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { McpSection } from "./mcp"
 it("entering a key stores it under the server id", async () => {
-  render(<I18nProvider><McpSection /></I18nProvider>)
+  render(
+    <I18nProvider>
+      <McpSection />
+    </I18nProvider>
+  )
   const ctx = await screen.findByText(/Context7/)
   await userEvent.click(ctx) // select to reveal key field, or always-visible
   const key = screen.getByLabelText(/context7/i)
@@ -1797,6 +2143,7 @@ it("entering a key stores it under the server id", async () => {
   expect(useAppStore.getState().plan.mcpKeys.context7).toBe("abc")
 })
 ```
+
 (If key fields are always visible, drop the click line.)
 
 - [ ] **Step 3: Run + commit**
@@ -1812,6 +2159,7 @@ git commit -m "feat(ui): MCP section with target toggles + key inputs"
 ### Task H5: Network section
 
 **Files:**
+
 - Create: `components/agentpack/sections/network.tsx`
 - Test: `components/agentpack/sections/network.test.tsx`
 
@@ -1828,7 +2176,11 @@ import { I18nProvider } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { NetworkSection } from "./network"
 it("writes registry into plan.network", async () => {
-  render(<I18nProvider><NetworkSection /></I18nProvider>)
+  render(
+    <I18nProvider>
+      <NetworkSection />
+    </I18nProvider>
+  )
   await userEvent.type(screen.getByLabelText(/registry/i), "https://m")
   expect(useAppStore.getState().plan.network.npmRegistry).toBe("https://m")
 })
@@ -1851,11 +2203,13 @@ git commit -m "feat(ui): network/mirrors section"
 ### Task I1: Execution panel + step log + summary
 
 **Files:**
+
 - Create: `components/agentpack/run/execution-panel.tsx`, `step-log.tsx`, `summary.tsx`
 - Create: `components/agentpack/run/use-runner.ts`
 - Test: `components/agentpack/run/use-runner.test.tsx` (mock runner)
 
 **Interfaces:**
+
 - Produces: `useRunner()` → `{ reports, running, run(steps, plan), cancel, retryFailed }`; `<ExecutionPanel/>` (shadcn `Sheet`) showing review → live `<StepLog/>` → `<Summary/>`.
 - Consumes: `runSteps`, `buildVerifySteps`, `summarize`, `useAppStore` (dryRun, paths), `useT`.
 
@@ -1878,15 +2232,29 @@ export function useRunner() {
   const [running, setRunning] = useState(false)
   const ctrl = useRef<AbortController | null>(null)
 
-  const run = useCallback(async (steps: StepDescriptor[], plan?: Plan) => {
-    if (!paths) return
-    const all = plan && !dryRun ? [...steps, ...buildVerifySteps(plan, t)] : steps
-    setRunning(true); ctrl.current = new AbortController()
-    setReports(all.map((s) => ({ id: s.id, label: s.label, status: "pending", output: [] })))
-    await runSteps(all, { dryRun, paths, messages: t, signal: ctrl.current.signal,
-      onUpdate: (r, i) => setReports((prev) => { const next = [...prev]; next[i] = { ...r }; return next }) })
-    setRunning(false)
-  }, [dryRun, paths, t])
+  const run = useCallback(
+    async (steps: StepDescriptor[], plan?: Plan) => {
+      if (!paths) return
+      const all = plan && !dryRun ? [...steps, ...buildVerifySteps(plan, t)] : steps
+      setRunning(true)
+      ctrl.current = new AbortController()
+      setReports(all.map((s) => ({ id: s.id, label: s.label, status: "pending", output: [] })))
+      await runSteps(all, {
+        dryRun,
+        paths,
+        messages: t,
+        signal: ctrl.current.signal,
+        onUpdate: (r, i) =>
+          setReports((prev) => {
+            const next = [...prev]
+            next[i] = { ...r }
+            return next
+          }),
+      })
+      setRunning(false)
+    },
+    [dryRun, paths, t]
+  )
 
   const cancel = useCallback(() => ctrl.current?.abort(), [])
   return { reports, running, run, cancel }
@@ -1898,7 +2266,14 @@ export function useRunner() {
 - [ ] **Step 3: Test the hook drives reports**
 
 ```tsx
-jest.mock("@/lib/agentpack/runner", () => ({ runSteps: jest.fn(async (steps, o) => { steps.forEach((s: { id: string; label: string }, i: number) => o.onUpdate({ id: s.id, label: s.label, status: "done", output: ["ok"] }, i)); return [] }) }))
+jest.mock("@/lib/agentpack/runner", () => ({
+  runSteps: jest.fn(async (steps, o) => {
+    steps.forEach((s: { id: string; label: string }, i: number) =>
+      o.onUpdate({ id: s.id, label: s.label, status: "done", output: ["ok"] }, i)
+    )
+    return []
+  }),
+}))
 import { renderHook, act } from "@testing-library/react"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
@@ -1907,7 +2282,11 @@ import { useRunner } from "./use-runner"
 it("run populates reports", async () => {
   useAppStore.setState({ paths: { os: "mac" } as never, dryRun: true })
   const { result } = renderHook(() => useRunner(), { wrapper: I18nProvider })
-  await act(async () => { await result.current.run([{ kind: "command", id: "a", label: "A", command: { file: "x", args: [] } }]) })
+  await act(async () => {
+    await result.current.run([
+      { kind: "command", id: "a", label: "A", command: { file: "x", args: [] } },
+    ])
+  })
   expect(result.current.reports[0].status).toBe("done")
 })
 ```
@@ -1925,6 +2304,7 @@ git commit -m "feat(ui): execution panel, step log, summary, runner hook"
 ### Task I2: Wire "Run plan" + per-section immediate actions
 
 **Files:**
+
 - Modify: `components/agentpack/header.tsx` (Run button → build steps + open panel)
 - Modify: `components/agentpack/app-shell.tsx` (mount `<ExecutionPanel/>`)
 - Modify: `components/agentpack/sections/skills.tsx` (Install/Uninstall now buttons)
@@ -1950,15 +2330,16 @@ git commit -m "feat(ui): wire Run plan + skill immediate install/uninstall"
 ### Task I3: cc-switch section (install/check, visible apps, providers)
 
 **Files:**
+
 - Create: `components/agentpack/sections/ccswitch.tsx`, `components/agentpack/provider-form.tsx`
 - Test: `components/agentpack/sections/ccswitch.test.tsx` (mock `ccLoadProviders`, `detectCli`)
 
 **Interfaces:** Consumes `useT`, `ccLoadProviders`, `detectCli`, `isProcessRunning`, `useRunner`, `visibleAppsStep`, `providerStep`, `RECOMMENDED_PROVIDERS`, `DEFAULT_VISIBLE_APPS`, `VISIBLE_APP_KEYS`, `useAppStore.paths`.
 
 - [ ] **Step 1: Implement three blocks**
-  1. *Install/check*: `detectCli("cc-switch", true)` → badge `t.ccswitch.detected/notDetected`; install button adds `cliStep`-equivalent command for cc-switch to the runner (`buildSteps` already handles it if selected, but here a direct `run([{ kind:"command", ... install cmd for effectiveOS }])`; if `install[os]` is null show `tool.manualNote`).
-  2. *Visible apps*: a `Switch` per `VISIBLE_APP_KEYS` (labels from `t.ccswitch.appLabels`), seeded from `DEFAULT_VISIBLE_APPS`; Apply → `run([visibleAppsStep(paths.ccSwitchSettings, visible, t)])`.
-  3. *Providers*: load via `ccLoadProviders()`; table of name/app/current; row actions Edit/Delete/Set-current → `run([providerStep(...)])`; "+ Add" and recommended-preset buttons open `<ProviderForm/>`. Show `t.ccswitch.setCurrentNote`. If `ccLoadProviders` returns `[]` show `t.ccswitch.empty`/`noDb`.
+  1. _Install/check_: `detectCli("cc-switch", true)` → badge `t.ccswitch.detected/notDetected`; install button adds `cliStep`-equivalent command for cc-switch to the runner (`buildSteps` already handles it if selected, but here a direct `run([{ kind:"command", ... install cmd for effectiveOS }])`; if `install[os]` is null show `tool.manualNote`).
+  2. _Visible apps_: a `Switch` per `VISIBLE_APP_KEYS` (labels from `t.ccswitch.appLabels`), seeded from `DEFAULT_VISIBLE_APPS`; Apply → `run([visibleAppsStep(paths.ccSwitchSettings, visible, t)])`.
+  3. _Providers_: load via `ccLoadProviders()`; table of name/app/current; row actions Edit/Delete/Set-current → `run([providerStep(...)])`; "+ Add" and recommended-preset buttons open `<ProviderForm/>`. Show `t.ccswitch.setCurrentNote`. If `ccLoadProviders` returns `[]` show `t.ccswitch.empty`/`noDb`.
 
 - [ ] **Step 2: ProviderForm** — fields: name, app (claude/codex radio), baseUrl, token (password), claudeAuthKind radio (only when app=claude), model, notes, website; submit builds a `ProviderForm` and calls `onSubmit(form)` (parent dispatches `providerStep("add"|"update", ...)`).
 
@@ -1968,7 +2349,9 @@ git commit -m "feat(ui): wire Run plan + skill immediate install/uninstall"
 jest.mock("@/lib/tauri", () => ({ isTauri: () => true }))
 jest.mock("@/lib/tauri/commands", () => ({
   detectCli: jest.fn(async () => ({ installed: true })),
-  ccLoadProviders: jest.fn(async () => [{ id: "1", app_type: "claude", name: "Mine", settings_config: "{}", is_current: false }]),
+  ccLoadProviders: jest.fn(async () => [
+    { id: "1", app_type: "claude", name: "Mine", settings_config: "{}", is_current: false },
+  ]),
   isProcessRunning: jest.fn(async () => false),
 }))
 import { render, screen } from "@testing-library/react"
@@ -1977,7 +2360,11 @@ import { useAppStore } from "@/store/app-store"
 import { CcSwitchSection } from "./ccswitch"
 it("lists providers from the DB", async () => {
   useAppStore.setState({ paths: { ccSwitchSettings: "/x", os: "mac" } as never })
-  render(<I18nProvider><CcSwitchSection /></I18nProvider>)
+  render(
+    <I18nProvider>
+      <CcSwitchSection />
+    </I18nProvider>
+  )
   expect(await screen.findByText("Mine")).toBeInTheDocument()
 })
 ```
@@ -1995,6 +2382,7 @@ git commit -m "feat(ui): cc-switch section (detect, visible apps, providers)"
 ### Task I4: Config import/export
 
 **Files:**
+
 - Create: `components/agentpack/config-io.tsx`
 - Modify: `src-tauri/Cargo.toml` + `lib.rs` (add `tauri-plugin-dialog` + `tauri-plugin-fs` OR a custom `pick_save_path`/`pick_open_path` command)
 - Test: `components/agentpack/config-io.test.tsx`
@@ -2033,6 +2421,7 @@ git commit -m "feat(ui): config import/export via dialog plugin"
 ### Task J1: Wire all sections into the shell + i18n strings audit
 
 **Files:**
+
 - Modify: `components/agentpack/app-shell.tsx` (`renderSection` → real components), `sidebar-nav.tsx` (config-io entry)
 
 - [ ] **Step 1:** Replace section stubs with the real components from Phases H/I. Mount `<ConfigIO/>` in the config section and `<ExecutionPanel/>` at shell root.
@@ -2052,6 +2441,7 @@ git commit -m "feat(ui): wire all sections + execution panel into shell"
 ### Task J2: Desktop smoke test + README/CLAUDE.md update
 
 **Files:**
+
 - Modify: `CLAUDE.md` (note the agentpack app + new `lib/agentpack`, `src-tauri` commands), `README.md` (brief feature list)
 
 - [ ] **Step 1: Manual desktop run** (requires a desktop session)
