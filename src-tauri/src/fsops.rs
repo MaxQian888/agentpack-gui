@@ -37,6 +37,23 @@ pub fn remove_dir(path: String) -> Result<(), String> {
   Ok(())
 }
 
+/// List the immediate child entry names of a directory (used by the dashboard to
+/// enumerate installed skills, including ones added outside agentpack). Returns
+/// an empty list when the path is missing or not a directory.
+#[tauri::command]
+pub fn list_dir(path: String) -> Result<Vec<String>, String> {
+  let p = Path::new(&path);
+  if !p.is_dir() {
+    return Ok(Vec::new());
+  }
+  let mut names = Vec::new();
+  for entry in fs::read_dir(p).map_err(|e| e.to_string())? {
+    let entry = entry.map_err(|e| e.to_string())?;
+    names.push(entry.file_name().to_string_lossy().into_owned());
+  }
+  Ok(names)
+}
+
 fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
   fs::create_dir_all(dest)?;
   for entry in fs::read_dir(src)? {

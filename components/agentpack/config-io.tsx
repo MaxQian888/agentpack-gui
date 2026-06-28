@@ -1,12 +1,21 @@
 "use client"
 
-import { Download, Upload } from "lucide-react"
+import { useCallback, useEffect, useState } from "react"
+import { Check, Download, Plus, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
 import { isTauri } from "@/lib/tauri"
 import { readTextFile, writeTextFile } from "@/lib/tauri/commands"
 import { parseConfig, serializePlan } from "@/lib/agentpack/config"
+import {
+  parseProfiles,
+  profilesPath,
+  serializeProfiles,
+  PROFILE_VERSION,
+} from "@/lib/agentpack/profile"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./sections/section-shell"
@@ -15,6 +24,66 @@ export function ConfigIO() {
   const t = useT()
   const plan = useAppStore((s) => s.plan)
   const loadPlan = useAppStore((s) => s.loadPlan)
+  const paths = useAppStore((s) => s.paths)
+  const profiles = useAppStore((s) => s.profiles)
+  const currentProfileId = useAppStore((s) => s.currentProfileId)
+  const setProfiles = useAppStore((s) => s.setProfiles)
+  const saveCurrentAsProfile = useAppStore((s) => s.saveCurrentAsProfile)
+  const applyProfile = useAppStore((s) => s.applyProfile)
+  const deleteProfile = useAppStore((s) => s.deleteProfile)
+  const renameProfile = useAppStore((s) => s.renameProfile)
+
+  const [newName, setNewName] = useState("")
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editName, setEditName] = useState("")
+
+  // Load the profile store from disk on mount.
+  useEffect(() => {
+    if (!isTauri() || !paths) return
+    readTextFile(profilesPath(paths.home))
+      .then((json) => setProfiles(parseProfiles(json).profiles))
+      .catch(() => {})
+  }, [paths, setProfiles])
+
+  // Persist whatever the store currently holds (called after each mutation).
+  const persist = useCallback(async () => {
+    if (!isTauri() || !paths) return
+    const list = useAppStore.getState().profiles
+    await writeTextFile(
+      profilesPath(paths.home),
+      serializeProfiles({ version: PROFILE_VERSION, profiles: list })
+    )
+  }, [paths])
+
+  const onSaveProfile = async () => {
+    const name = newName.trim()
+    if (!name) return toast.error(t.profiles.nameRequired)
+    saveCurrentAsProfile(name)
+    setNewName("")
+    await persist()
+    toast.success(t.profiles.saved(name))
+  }
+
+  const onApply = (id: string, name: string) => {
+    applyProfile(id)
+    toast.success(t.profiles.applied(name))
+  }
+
+  const onDelete = async (id: string, name: string) => {
+    deleteProfile(id)
+    await persist()
+    toast.success(t.profiles.deleted(name))
+  }
+
+  const onRenameCommit = async () => {
+    const name = editName.trim()
+    if (editingId && name) {
+      renameProfile(editingId, name)
+      await persist()
+    }
+    setEditingId(null)
+    setEditName("")
+  }
 
   const save = async () => {
     if (!isTauri()) return toast.error(t.shell.notInTauri)
@@ -39,7 +108,86 @@ export function ConfigIO() {
   }
 
   return (
-    <SectionShell title={t.menu.saveConfig}>
+    <SectionShell title={t.profiles.title} subtitle={t.profiles.subtitle}>
+      <Card className="gap-4 p-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder={t.profiles.namePlaceholder}
+            className="max-w-xs"
+          />
+          <Button onClick={onSaveProfile} className="gap-2">
+            <Plus className="size-4" />
+            {t.profiles.saveAs}
+          </Button>
+        </div>
+
+        {profiles.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t.profiles.empty}</p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {profiles.map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center justify-between gap-3 rounded-md border p-3 text-sm"
+              >
+                {editingId === p.id ? (
+                  <div className="flex flex-1 items-center gap-2">
+                    <Input
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      className="max-w-xs"
+                      autoFocus
+                    />
+                    <Button size="sm" variant="ghost" onClick={() => void onRenameCommit()}>
+                      <Check className="size-4" />
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>
+                      <X className="size-4" />
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{p.name}</span>
+                    {currentProfileId === p.id ? (
+                      <Badge variant="secondary" className="font-normal">
+                        {t.profiles.current}
+                      </Badge>
+                    ) : null}
+                  </div>
+                )}
+                {editingId === p.id ? null : (
+                  <div className="flex gap-1">
+                    <Button size="sm" variant="outline" onClick={() => onApply(p.id, p.name)}>
+                      {t.profiles.apply}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setEditingId(p.id)
+                        setEditName(p.name)
+                      }}
+                    >
+                      {t.profiles.rename}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-red-500"
+                      onClick={() => void onDelete(p.id, p.name)}
+                    >
+                      {t.profiles.delete}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
       <Card className="flex-row flex-wrap gap-3 p-5">
         <Button onClick={save} className="gap-2">
           <Download className="size-4" />

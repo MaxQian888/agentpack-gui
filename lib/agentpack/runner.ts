@@ -1,6 +1,7 @@
 import { en } from "@/lib/i18n/en"
 import type { Messages } from "@/lib/i18n/types"
 import { previewLines, commandToString } from "./preview"
+import { BACKUP_SUFFIX } from "./plan"
 import type { Paths, StepDescriptor, StepReport } from "./types"
 import * as api from "@/lib/tauri/commands"
 
@@ -89,8 +90,21 @@ async function execute(
     case "mergeFile":
     case "ccVisibleApps": {
       const existing = await api.readTextFile(step.path)
+      // Lightweight rollback: snapshot the file before overwriting it, so a bad
+      // merge can be reverted from the dashboard. Skip when there's nothing yet.
+      if (existing.trim()) {
+        const backup = `${step.path}${BACKUP_SUFFIX}`
+        await api.writeTextFile(backup, existing)
+        log(m.coreOutput.backup(backup))
+      }
       log(m.coreOutput.write(step.path))
       await api.writeTextFile(step.path, step.merge(existing))
+      return
+    }
+    case "fileRestore": {
+      const backup = await api.readTextFile(step.backupPath)
+      log(m.coreOutput.restore(step.backupPath, step.path))
+      await api.writeTextFile(step.path, backup)
       return
     }
     case "skillInstall": {

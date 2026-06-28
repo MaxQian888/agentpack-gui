@@ -2,6 +2,10 @@ import {
   buildSteps,
   buildVerifySteps,
   cliInstallStep,
+  cliUninstallStep,
+  fileRestoreStep,
+  mcpRemoveStep,
+  relayRemoveStep,
   skillInstallStep,
   skillRemoveStep,
   visibleAppsStep,
@@ -148,6 +152,46 @@ describe("menu-action builders", () => {
     const step = visibleAppsStep("/cfg.json", DEFAULT_VISIBLE_APPS)
     expect(step.kind).toBe("ccVisibleApps")
     expect(step.kind === "ccVisibleApps" && step.path).toBe("/cfg.json")
+  })
+
+  it("mcpRemoveStep emits a claude command and a codex mergeFile per target", () => {
+    const steps = mcpRemoveStep("context7", ["claude", "codex"], paths)
+    const claude = steps.find((s) => s.id === "mcp-remove-claude-context7")!
+    expect(claude.kind === "command" && claude.command.args).toEqual([
+      "mcp",
+      "remove",
+      "context7",
+      "--scope",
+      "user",
+    ])
+    const codex = steps.find((s) => s.id === "mcp-remove-codex-context7")!
+    expect(codex.kind === "mergeFile" && codex.path).toBe("/h/.codex/config.toml")
+  })
+
+  it("mcpRemoveStep only emits the targeted agent", () => {
+    expect(mcpRemoveStep("memory", ["claude"], paths).map((s) => s.id)).toEqual([
+      "mcp-remove-claude-memory",
+    ])
+  })
+
+  it("relayRemoveStep removes claude + codex relay config for chosen clis", () => {
+    const ids = relayRemoveStep(["claude-code", "codex"], paths).map((s) => s.id)
+    expect(ids).toEqual(["relay-remove-claude", "relay-remove-codex"])
+  })
+
+  it("cliUninstallStep uses the command when present, an info note otherwise", () => {
+    const withCmd = cliUninstallStep("claude-code", { file: "npm", args: ["uninstall"] })
+    expect(withCmd.kind).toBe("command")
+    const noCmd = cliUninstallStep("cc-switch", undefined)
+    expect(noCmd.kind).toBe("info")
+  })
+
+  it("fileRestoreStep points at the .agentpack.bak snapshot", () => {
+    const step = fileRestoreStep("/h/.codex/config.toml")
+    expect(step.kind).toBe("fileRestore")
+    expect(step.kind === "fileRestore" && step.backupPath).toBe(
+      "/h/.codex/config.toml.agentpack.bak"
+    )
   })
 
   it("providerStep labels each op and only builds settingsConfig when a form is given", () => {

@@ -98,3 +98,16 @@ it("ccProvider preview tolerates a missing app", () => {
   }
   expect(previewLines(s, paths)).toEqual(["would run: delete provider ()"])
 })
+
+it("fileRestore preview shows would restore from backup", () => {
+  const s: StepDescriptor = {
+    kind: "fileRestore",
+    id: "r",
+    label: "r",
+    path: "/h/.codex/config.toml",
+    backupPath: "/h/.codex/config.toml.agentpack.bak",
+  }
+  expect(previewLines(s, paths)).toEqual([
+    "would restore /h/.codex/config.toml.agentpack.bak -> /h/.codex/config.toml",
+  ])
+})

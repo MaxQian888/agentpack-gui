@@ -63,6 +63,14 @@ export const zhCN = {
     installedSuffix: "  (已安装)",
   },
 
+  environment: {
+    title: "运行时环境",
+    subtitle: "Agent CLI 需要 Node.js（含 npm）。Bun 是可选的更快运行时。",
+    detecting: "正在检测已安装的运行时…",
+    installHint: "缺少运行时？直接安装即可——每次安装后会重新检测。",
+    noInstaller: "本系统没有自动安装方式——请参见下方说明。",
+  },
+
   skills: {
     title: "选择要安装的领域技能",
     installsTo: (targets: string) => `安装到：${targets}`,
@@ -155,6 +163,16 @@ export const zhCN = {
         description: "管理 / 切换 Claude Code 与 Codex 的 API 供应商的桌面 GUI。",
       },
     } as Record<string, { title: string; description: string }>,
+    runtime: {
+      node: {
+        title: "Node.js",
+        description: "JavaScript 运行时 + npm —— 安装与运行 agent CLI 的必备环境。",
+      },
+      bun: {
+        title: "Bun",
+        description: "快速的一体化 JavaScript 运行时与包管理器（可选）。",
+      },
+    } as Record<string, { title: string; description: string }>,
     skills: {
       "cpp-cmake": {
         title: "C++ / CMake 工程化",
@@ -222,6 +240,7 @@ export const zhCN = {
 
   steps: {
     npmRegistry: (url: string) => `设置 npm 镜像源 → ${url}`,
+    installRuntime: (title: string) => `安装 ${title}`,
     installCli: (title: string) => `安装 ${title}`,
     upgradeCli: (title: string) => `升级 ${title}`,
     noInstaller: (title: string) => `本系统没有 ${title} 的自动安装方式。`,
@@ -242,6 +261,13 @@ export const zhCN = {
     configureCodexRelay: "配置 Codex API 端点",
     claudeSettingsUpdated: "已更新 ~/.claude/settings.json 的 env",
     codexProviderUpdated: "已更新 ~/.codex/config.toml 的 model_providers",
+    removeMcpClaude: (title: string) => `移除 MCP “${title}” ← Claude Code`,
+    removeMcpCodex: (title: string) => `移除 MCP “${title}” ← Codex`,
+    removeRelayClaude: "移除 Claude Code API 端点",
+    removeRelayCodex: "移除 Codex API 端点",
+    uninstallCli: (title: string) => `卸载 ${title}`,
+    noUninstaller: (title: string) => `本系统没有 ${title} 的自动卸载方式。`,
+    restoreFile: (path: string) => `从备份恢复 ${path}`,
   },
 
   coreOutput: {
@@ -254,13 +280,18 @@ export const zhCN = {
     wouldWrite: (path: string) => `将写入 ${path}`,
     delete: (path: string) => `删除 ${path}`,
     wouldDelete: (path: string) => `将删除 ${path}`,
+    backup: (path: string) => `备份 → ${path}`,
+    restore: (src: string, dest: string) => `恢复 ${src} -> ${dest}`,
+    wouldRestore: (src: string, dest: string) => `将恢复 ${src} -> ${dest}`,
   },
 
   menu: {
     title: "主菜单",
     hint: "↑↓ 移动 · 回车 选择 · esc 返回",
     returnHint: "按回车返回菜单。",
+    dashboard: "环境仪表盘",
     presets: "一键预设安装",
+    environment: "运行时环境",
     skills: "工程技能",
     ccswitch: "cc-switch 管理",
     clis: "安装 / 升级 CLI",
@@ -366,5 +397,51 @@ export const zhCN = {
     notInTauri: "请在桌面应用中运行（pnpm tauri dev）以执行安装。",
     configSaved: (path: string) => `已保存配置到 ${path}`,
     configLoaded: "配置已载入到你的计划。",
+  },
+
+  dashboard: {
+    title: "环境仪表盘",
+    subtitle: "从磁盘扫描出的真实安装状态。",
+    refresh: "重新扫描",
+    scanning: "正在扫描你的环境…",
+    notTauri: "请在桌面应用中运行以扫描真实环境。",
+    sectionClis: "CLI 与运行时",
+    sectionSkills: "已安装技能",
+    sectionMcp: "MCP 服务",
+    sectionRelay: "API 端点（中转）",
+    sectionCcswitch: "cc-switch 供应商",
+    sectionHealth: "配置文件",
+    updateAvailable: (version: string) => `可更新 → ${version}`,
+    custom: "自定义",
+    none: "这里还没扫描到任何内容。",
+    relayConfigured: "已配置",
+    relayNone: "未配置",
+    relayBaseUrl: (v: string) => `base URL：${v}`,
+    relayToken: "已设 token",
+    configOk: "有效",
+    configInvalid: "无法解析",
+    configMissing: "不存在",
+    hasBackup: "有备份可恢复",
+    remove: "移除",
+    uninstall: "卸载",
+    restore: "恢复备份",
+    fileClaudeSettings: "Claude settings.json",
+    fileCodexConfig: "Codex config.toml",
+  },
+
+  profiles: {
+    title: "环境档案",
+    subtitle: "保存并在多套命名配置间切换。",
+    saveAs: "将当前保存为档案",
+    namePlaceholder: "档案名称",
+    apply: "应用",
+    rename: "重命名",
+    delete: "删除",
+    current: "当前",
+    empty: "还没有保存任何档案。",
+    applied: (name: string) => `已应用档案 “${name}”`,
+    saved: (name: string) => `已保存档案 “${name}”`,
+    deleted: (name: string) => `已删除档案 “${name}”`,
+    nameRequired: "请输入档案名称。",
   },
 } satisfies Messages

@@ -25,6 +25,23 @@ export interface CliTool {
   install: Record<OS, Command | null>
   /** Optional per-OS upgrade command. */
   upgrade?: Partial<Record<OS, Command>>
+  /** Optional per-OS uninstall command (absent OS => surface a manual note). */
+  uninstall?: Partial<Record<OS, Command>>
+  /** Fallback note shown when install is null for the current OS. */
+  manualNote?: string
+}
+
+/**
+ * A language runtime / toolchain prerequisite (Node.js, Bun). Detected the same
+ * way as a non-GUI CLI (`<bin> --version`), but installed through the platform's
+ * runtime installer rather than npm. Display text lives in the i18n catalog.
+ */
+export interface Runtime {
+  id: "node" | "bun"
+  /** Binary name to probe on PATH for detection. */
+  bin: string
+  /** Per-OS install command. `null` => no automated installer on this OS. */
+  install: Record<OS, Command | null>
   /** Fallback note shown when install is null for the current OS. */
   manualNote?: string
 }
@@ -101,6 +118,7 @@ export type StepKind =
   | "skillRemove"
   | "ccProvider"
   | "ccVisibleApps"
+  | "fileRestore"
 
 interface StepBase {
   id: string
@@ -153,6 +171,13 @@ export interface CcVisibleAppsStep extends StepBase {
   merge: (existing: string) => string
 }
 
+/** Restore a config file from a previously written `.agentpack.bak` snapshot. */
+export interface FileRestoreStep extends StepBase {
+  kind: "fileRestore"
+  path: string
+  backupPath: string
+}
+
 export type StepDescriptor =
   | CommandStep
   | InfoStep
@@ -161,6 +186,7 @@ export type StepDescriptor =
   | SkillRemoveStep
   | CcProviderStep
   | CcVisibleAppsStep
+  | FileRestoreStep
 
 export interface StepReport {
   id: string

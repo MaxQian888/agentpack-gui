@@ -1,6 +1,12 @@
 import { create } from "zustand"
 import type { AgentTarget, OS, Paths, Plan } from "@/lib/agentpack/types"
+import type { Profile } from "@/lib/agentpack/profile"
 import { findPreset } from "@/lib/agentpack/presets"
+
+/** Stable-ish local id for a profile (no Date import needed at module scope). */
+function newProfileId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
 
 const emptyPlan = (os: OS): Plan => ({
   os,
@@ -21,10 +27,13 @@ interface State {
   panelOpen: boolean
   detections: Record<string, Detection>
   latestVersions: Record<string, string>
+  profiles: Profile[]
+  currentProfileId: string | null
 
   effectiveOS: () => OS
   installedClis: () => Set<string>
   setDetections: (d: Record<string, Detection>) => void
+  setDetection: (id: string, d: Detection) => void
   setLatestVersion: (id: string, version: string) => void
   setPaths: (p: Paths) => void
   toggleDryRun: () => void
@@ -40,6 +49,13 @@ interface State {
   applyPreset: (presetId: string) => void
   loadPlan: (plan: Plan) => void
   resetPlan: () => void
+
+  setProfiles: (profiles: Profile[]) => void
+  /** Snapshot the current plan as a new profile; returns it so callers persist. */
+  saveCurrentAsProfile: (name: string) => Profile
+  applyProfile: (id: string) => void
+  deleteProfile: (id: string) => void
+  renameProfile: (id: string, name: string) => void
 }
 
 export const useAppStore = create<State>((set, get) => ({
@@ -50,6 +66,8 @@ export const useAppStore = create<State>((set, get) => ({
   panelOpen: false,
   detections: {},
   latestVersions: {},
+  profiles: [],
+  currentProfileId: null,
 
   effectiveOS: () => get().osOverride ?? get().paths?.os ?? "mac",
   installedClis: () =>
@@ -59,6 +77,7 @@ export const useAppStore = create<State>((set, get) => ({
         .map(([id]) => id)
     ),
   setDetections: (d) => set({ detections: d }),
+  setDetection: (id, d) => set((s) => ({ detections: { ...s.detections, [id]: d } })),
   setLatestVersion: (id, version) =>
     set((s) => ({ latestVersions: { ...s.latestVersions, [id]: version } })),
   setPaths: (p) => set((s) => ({ paths: p, plan: { ...s.plan, os: s.osOverride ?? p.os } })),
@@ -106,4 +125,29 @@ export const useAppStore = create<State>((set, get) => ({
     }),
   loadPlan: (plan) => set({ plan }),
   resetPlan: () => set((s) => ({ plan: emptyPlan(s.plan.os) })),
+
+  setProfiles: (profiles) => set({ profiles }),
+  saveCurrentAsProfile: (name) => {
+    const profile: Profile = {
+      id: newProfileId(),
+      name,
+      createdAt: Date.now(),
+      plan: get().plan,
+    }
+    set((s) => ({ profiles: [profile, ...s.profiles], currentProfileId: profile.id }))
+    return profile
+  },
+  applyProfile: (id) =>
+    set((s) => {
+      const p = s.profiles.find((x) => x.id === id)
+      if (!p) return {}
+      return { plan: p.plan, currentProfileId: id }
+    }),
+  deleteProfile: (id) =>
+    set((s) => ({
+      profiles: s.profiles.filter((p) => p.id !== id),
+      currentProfileId: s.currentProfileId === id ? null : s.currentProfileId,
+    })),
+  renameProfile: (id, name) =>
+    set((s) => ({ profiles: s.profiles.map((p) => (p.id === id ? { ...p, name } : p)) })),
 }))

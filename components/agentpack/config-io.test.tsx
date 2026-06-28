@@ -19,6 +19,8 @@ import { toast } from "sonner"
 import { isTauri } from "@/lib/tauri"
 import { readTextFile, writeTextFile } from "@/lib/tauri/commands"
 import { serializePlan } from "@/lib/agentpack/config"
+import { serializeProfiles } from "@/lib/agentpack/profile"
+import type { Plan } from "@/lib/agentpack/types"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { ConfigIO } from "./config-io"
@@ -88,4 +90,61 @@ it("does nothing when the open dialog is cancelled", async () => {
   renderIO()
   await clickLoad()
   expect(readTextFile).not.toHaveBeenCalled()
+})
+
+describe("profiles", () => {
+  beforeEach(() => {
+    useAppStore.setState({ paths: { home: "/h" } as never, profiles: [], currentProfileId: null })
+    ;(readTextFile as jest.Mock).mockResolvedValue("")
+  })
+
+  it("saves the current plan as a named profile and persists it", async () => {
+    useAppStore.getState().toggleCli("codex")
+    renderIO()
+    await userEvent.type(screen.getByPlaceholderText(/profile name/i), "Work")
+    await userEvent.click(screen.getByRole("button", { name: /save current as profile/i }))
+    expect(screen.getByText("Work")).toBeInTheDocument()
+    expect(writeTextFile).toHaveBeenCalledWith(
+      "/h/.agentpack/profiles.json",
+      expect.stringContaining("Work")
+    )
+  })
+
+  it("warns and saves nothing when the name is blank", async () => {
+    renderIO()
+    await userEvent.click(screen.getByRole("button", { name: /save current as profile/i }))
+    expect(useAppStore.getState().profiles).toHaveLength(0)
+    expect(toast.error).toHaveBeenCalled()
+  })
+
+  it("applies a saved profile back into the plan", async () => {
+    const plan: Plan = { ...useAppStore.getState().plan, clis: ["codex"] }
+    ;(readTextFile as jest.Mock).mockResolvedValue(
+      serializeProfiles({ version: 1, profiles: [{ id: "p1", name: "Work", createdAt: 0, plan }] })
+    )
+    renderIO()
+    await userEvent.click(await screen.findByRole("button", { name: /^apply$/i }))
+    expect(useAppStore.getState().plan.clis).toContain("codex")
+  })
+
+  it("renames then deletes a profile", async () => {
+    ;(readTextFile as jest.Mock).mockResolvedValue(
+      serializeProfiles({
+        version: 1,
+        profiles: [{ id: "p1", name: "Old", createdAt: 0, plan: useAppStore.getState().plan }],
+      })
+    )
+    renderIO()
+    await screen.findByText("Old")
+    await userEvent.click(screen.getByRole("button", { name: /rename/i }))
+    const input = screen.getByDisplayValue("Old")
+    await userEvent.clear(input)
+    await userEvent.type(input, "New")
+    // Buttons in DOM order: Save-as, then the rename-commit (check) button.
+    await userEvent.click(screen.getAllByRole("button")[1])
+    expect(screen.getByText("New")).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: /delete/i }))
+    expect(useAppStore.getState().profiles).toHaveLength(0)
+  })
 })

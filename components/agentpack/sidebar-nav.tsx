@@ -1,11 +1,30 @@
 "use client"
 
-import { ArrowLeftRight, FileJson, Globe, Package, Server, Terminal, Wrench } from "lucide-react"
+import {
+  ArrowLeftRight,
+  Boxes,
+  FileJson,
+  Globe,
+  LayoutDashboard,
+  Package,
+  Server,
+  Terminal,
+  Wrench,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import type { Messages } from "@/lib/i18n/types"
 
-export type SectionKey = "presets" | "clis" | "skills" | "mcp" | "network" | "ccswitch" | "config"
+export type SectionKey =
+  | "dashboard"
+  | "presets"
+  | "environment"
+  | "clis"
+  | "skills"
+  | "mcp"
+  | "network"
+  | "ccswitch"
+  | "config"
 
 interface SectionDef {
   key: SectionKey
@@ -14,7 +33,9 @@ interface SectionDef {
 }
 
 export const SECTIONS: SectionDef[] = [
+  { key: "dashboard", icon: LayoutDashboard, label: (m) => m.menu.dashboard },
   { key: "presets", icon: Package, label: (m) => m.menu.presets },
+  { key: "environment", icon: Boxes, label: (m) => m.menu.environment },
   { key: "clis", icon: Terminal, label: (m) => m.menu.clis },
   { key: "skills", icon: Wrench, label: (m) => m.menu.skills },
   { key: "mcp", icon: Server, label: (m) => m.menu.mcp },

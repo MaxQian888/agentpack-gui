@@ -66,6 +66,14 @@ export const en = {
     installedSuffix: "  (installed)",
   },
 
+  environment: {
+    title: "Runtime environment",
+    subtitle: "The agent CLIs need Node.js (with npm). Bun is an optional faster runtime.",
+    detecting: "Detecting installed runtimes…",
+    installHint: "Missing a runtime? Install it directly — detection re-runs after each install.",
+    noInstaller: "No automated installer on this OS — see the note below.",
+  },
+
   skills: {
     title: "Select domain skills to install",
     installsTo: (targets: string) => `Installs to: ${targets}`,
@@ -163,6 +171,16 @@ export const en = {
         description: "Desktop GUI to manage/switch API providers for Claude Code & Codex.",
       },
     } as Record<string, { title: string; description: string }>,
+    runtime: {
+      node: {
+        title: "Node.js",
+        description: "JavaScript runtime + npm — required to install and run the agent CLIs.",
+      },
+      bun: {
+        title: "Bun",
+        description: "Fast all-in-one JavaScript runtime & package manager (optional).",
+      },
+    } as Record<string, { title: string; description: string }>,
     skills: {
       "cpp-cmake": {
         title: "C++ / CMake engineering",
@@ -231,6 +249,7 @@ export const en = {
   /** Step labels & output lines surfaced from core (plan.ts). */
   steps: {
     npmRegistry: (url: string) => `Set npm registry → ${url}`,
+    installRuntime: (title: string) => `Install ${title}`,
     installCli: (title: string) => `Install ${title}`,
     upgradeCli: (title: string) => `Upgrade ${title}`,
     noInstaller: (title: string) => `No automated installer for ${title} on this OS.`,
@@ -251,6 +270,13 @@ export const en = {
     configureCodexRelay: "Configure Codex API endpoint",
     claudeSettingsUpdated: "updated ~/.claude/settings.json env",
     codexProviderUpdated: "updated ~/.codex/config.toml model_providers",
+    removeMcpClaude: (title: string) => `Remove MCP "${title}" ← Claude Code`,
+    removeMcpCodex: (title: string) => `Remove MCP "${title}" ← Codex`,
+    removeRelayClaude: "Remove Claude Code API endpoint",
+    removeRelayCodex: "Remove Codex API endpoint",
+    uninstallCli: (title: string) => `Uninstall ${title}`,
+    noUninstaller: (title: string) => `No automated uninstaller for ${title} on this OS.`,
+    restoreFile: (path: string) => `Restore ${path} from backup`,
   },
 
   /** Low-level execution / file output lines from exec/skills/configfiles. */
@@ -264,6 +290,9 @@ export const en = {
     wouldWrite: (path: string) => `would write ${path}`,
     delete: (path: string) => `delete ${path}`,
     wouldDelete: (path: string) => `would delete ${path}`,
+    backup: (path: string) => `backup → ${path}`,
+    restore: (src: string, dest: string) => `restore ${src} -> ${dest}`,
+    wouldRestore: (src: string, dest: string) => `would restore ${src} -> ${dest}`,
   },
 
   /** Main menu + shared menu navigation. */
@@ -271,7 +300,9 @@ export const en = {
     title: "Main menu",
     hint: "↑↓ move · enter select · esc back",
     returnHint: "Press enter to return to the menu.",
+    dashboard: "Environment dashboard",
     presets: "Quick setup (preset)",
+    environment: "Runtime environment",
     skills: "Engineering skills",
     ccswitch: "cc-switch management",
     clis: "Install / upgrade CLIs",
@@ -379,5 +410,53 @@ export const en = {
     notInTauri: "Run the desktop app (pnpm tauri dev) to execute installs.",
     configSaved: (path: string) => `Saved config to ${path}`,
     configLoaded: "Config loaded into your plan.",
+  },
+
+  /** Environment health dashboard (real installed state scanned from disk). */
+  dashboard: {
+    title: "Environment dashboard",
+    subtitle: "Your real installed state, scanned from disk.",
+    refresh: "Rescan",
+    scanning: "Scanning your environment…",
+    notTauri: "Run the desktop app to scan your real environment.",
+    sectionClis: "CLIs & runtimes",
+    sectionSkills: "Installed skills",
+    sectionMcp: "MCP servers",
+    sectionRelay: "API endpoint (relay)",
+    sectionCcswitch: "cc-switch providers",
+    sectionHealth: "Config files",
+    updateAvailable: (version: string) => `update → ${version}`,
+    custom: "custom",
+    none: "Nothing detected here yet.",
+    relayConfigured: "Configured",
+    relayNone: "Not configured",
+    relayBaseUrl: (v: string) => `base URL: ${v}`,
+    relayToken: "token set",
+    configOk: "valid",
+    configInvalid: "unparsable",
+    configMissing: "absent",
+    hasBackup: "backup available",
+    remove: "Remove",
+    uninstall: "Uninstall",
+    restore: "Restore backup",
+    fileClaudeSettings: "Claude settings.json",
+    fileCodexConfig: "Codex config.toml",
+  },
+
+  /** Multi-profile management (save / switch named setups). */
+  profiles: {
+    title: "Profiles",
+    subtitle: "Save and switch between named setups.",
+    saveAs: "Save current as profile",
+    namePlaceholder: "Profile name",
+    apply: "Apply",
+    rename: "Rename",
+    delete: "Delete",
+    current: "current",
+    empty: "No profiles saved yet.",
+    applied: (name: string) => `Applied profile "${name}"`,
+    saved: (name: string) => `Saved profile "${name}"`,
+    deleted: (name: string) => `Deleted profile "${name}"`,
+    nameRequired: "Enter a profile name.",
   },
 }

@@ -39,5 +39,7 @@ export function previewLines(
       const app = (step.payload as { app?: string }).app ?? ""
       return [`would run: ${step.op} provider (${app})`]
     }
+    case "fileRestore":
+      return [out.wouldRestore(step.backupPath, step.path)]
   }
 }

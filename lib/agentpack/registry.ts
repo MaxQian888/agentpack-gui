@@ -1,4 +1,38 @@
-import type { CliTool, McpServer, SkillDef } from "./types"
+import type { CliTool, McpServer, Runtime, SkillDef } from "./types"
+
+/**
+ * Language runtimes the agent CLIs depend on. Node (with npm) is the base
+ * runtime every npm-installed CLI needs; Bun is an optional faster alternative.
+ *
+ * Install strategy: Node uses the OS app manager (winget/brew); Bun uses its
+ * official installer on every OS (PowerShell on Windows, `curl … | bash` on
+ * macOS/Linux). `null` => no automated path.
+ */
+export const RUNTIMES: readonly Runtime[] = [
+  {
+    id: "node",
+    bin: "node",
+    install: {
+      win: { file: "winget", args: ["install", "-e", "--id", "OpenJS.NodeJS.LTS"] },
+      mac: { file: "brew", args: ["install", "node"] },
+      linux: null,
+    },
+    manualNote:
+      "On Linux, install Node.js via your package manager or nvm — see https://nodejs.org/en/download",
+  },
+  {
+    id: "bun",
+    bin: "bun",
+    install: {
+      // PowerShell installer; the script string is quoted (it contains spaces),
+      // so the `|` stays inside quotes and cmd /c does not treat it as a pipe.
+      win: { file: "powershell", args: ["-c", "irm bun.sh/install.ps1 | iex"] },
+      mac: { file: "bash", args: ["-c", "curl -fsSL https://bun.sh/install | bash"] },
+      linux: { file: "bash", args: ["-c", "curl -fsSL https://bun.sh/install | bash"] },
+    },
+    manualNote: "See https://bun.sh for manual installation instructions.",
+  },
+]
 
 /**
  * Installable CLI tools.
@@ -22,6 +56,11 @@ export const CLI_TOOLS: readonly CliTool[] = [
       mac: { file: "npm", args: ["install", "-g", "@anthropic-ai/claude-code@latest"] },
       linux: { file: "npm", args: ["install", "-g", "@anthropic-ai/claude-code@latest"] },
     },
+    uninstall: {
+      win: { file: "npm", args: ["uninstall", "-g", "@anthropic-ai/claude-code"] },
+      mac: { file: "npm", args: ["uninstall", "-g", "@anthropic-ai/claude-code"] },
+      linux: { file: "npm", args: ["uninstall", "-g", "@anthropic-ai/claude-code"] },
+    },
   },
   {
     id: "codex",
@@ -37,6 +76,11 @@ export const CLI_TOOLS: readonly CliTool[] = [
       mac: { file: "npm", args: ["install", "-g", "@openai/codex@latest"] },
       linux: { file: "npm", args: ["install", "-g", "@openai/codex@latest"] },
     },
+    uninstall: {
+      win: { file: "npm", args: ["uninstall", "-g", "@openai/codex"] },
+      mac: { file: "npm", args: ["uninstall", "-g", "@openai/codex"] },
+      linux: { file: "npm", args: ["uninstall", "-g", "@openai/codex"] },
+    },
   },
   {
     id: "cc-switch",
@@ -46,6 +90,10 @@ export const CLI_TOOLS: readonly CliTool[] = [
       win: { file: "winget", args: ["install", "-e", "--id", "farion1231.CC-Switch"] },
       mac: { file: "brew", args: ["install", "--cask", "cc-switch"] },
       linux: null,
+    },
+    uninstall: {
+      win: { file: "winget", args: ["uninstall", "-e", "--id", "farion1231.CC-Switch"] },
+      mac: { file: "brew", args: ["uninstall", "--cask", "cc-switch"] },
     },
     manualNote:
       "On Linux, download the .deb / .AppImage from https://github.com/farion1231/cc-switch/releases",
@@ -133,6 +181,10 @@ export const MCP_SERVERS: readonly McpServer[] = [
 
 export function findCli(id: string): CliTool | undefined {
   return CLI_TOOLS.find((c) => c.id === id)
+}
+
+export function findRuntime(id: string): Runtime | undefined {
+  return RUNTIMES.find((r) => r.id === id)
 }
 
 export function findSkill(id: string): SkillDef | undefined {

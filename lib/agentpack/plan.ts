@@ -1,11 +1,23 @@
 import { en } from "@/lib/i18n/en"
 import type { Messages } from "@/lib/i18n/types"
 import { findCli, findMcp, findSkill } from "./registry"
-import { buildClaudeMcpCommand, buildCodexMcpEntry, mergeCodexMcp } from "./merge/mcp"
-import { mergeClaudeSettings, mergeCodexProvider, npmRegistryCommand } from "./merge/network"
+import {
+  buildClaudeMcpCommand,
+  buildClaudeMcpRemoveCommand,
+  buildCodexMcpEntry,
+  deleteCodexMcpEntry,
+  mergeCodexMcp,
+} from "./merge/mcp"
+import {
+  deleteClaudeRelay,
+  deleteCodexProvider,
+  mergeClaudeSettings,
+  mergeCodexProvider,
+  npmRegistryCommand,
+} from "./merge/network"
 import { mergeVisibleApps } from "./ccswitch/settings"
 import { buildSettingsConfig } from "./ccswitch/provider"
-import type { AgentTarget, CommandStep, Paths, Plan, StepDescriptor } from "./types"
+import type { AgentTarget, CommandStep, Paths, Plan, Runtime, StepDescriptor } from "./types"
 import type { ProviderApp, ProviderForm, VisibleApps } from "./ccswitch/types"
 
 /**
@@ -183,6 +195,20 @@ export function cliInstallStep(
   }
 }
 
+export function runtimeInstallStep(
+  id: Runtime["id"],
+  command: { file: string; args: string[] },
+  messages: Messages = en
+): StepDescriptor {
+  const title = messages.catalog.runtime[id]?.title ?? id
+  return {
+    kind: "command",
+    id: `runtime-install-${id}`,
+    label: messages.steps.installRuntime(title),
+    command,
+  }
+}
+
 export function skillInstallStep(
   skillId: string,
   title: string,
@@ -226,6 +252,110 @@ export function visibleAppsStep(
     label: messages.steps.ccVisibleApps,
     path,
     merge: (existing) => mergeVisibleApps(existing, visible),
+  }
+}
+
+/** Suffix for the rolling backup written before any mergeFile/ccVisibleApps write. */
+export const BACKUP_SUFFIX = ".agentpack.bak"
+
+/**
+ * Remove an MCP server from the chosen agents. Claude uses `claude mcp remove`;
+ * Codex deletes the `mcp_servers.<id>` table from config.toml. Returns one step
+ * per targeted agent (mirrors how buildSteps splits add steps).
+ */
+export function mcpRemoveStep(
+  id: string,
+  targets: AgentTarget[],
+  paths: Paths,
+  messages: Messages = en
+): StepDescriptor[] {
+  const title = messages.catalog.mcp[id]?.title ?? id
+  const steps: StepDescriptor[] = []
+  if (targets.includes("claude")) {
+    steps.push({
+      kind: "command",
+      id: `mcp-remove-claude-${id}`,
+      label: messages.steps.removeMcpClaude(title),
+      command: buildClaudeMcpRemoveCommand(id),
+    })
+  }
+  if (targets.includes("codex")) {
+    steps.push({
+      kind: "mergeFile",
+      id: `mcp-remove-codex-${id}`,
+      label: messages.steps.removeMcpCodex(title),
+      path: paths.codexConfig,
+      merge: (existing) => deleteCodexMcpEntry(existing, id),
+      writtenNote: messages.steps.codexMcpWritten(id),
+    })
+  }
+  return steps
+}
+
+/**
+ * Remove the agentpack relay config: Claude env vars from settings.json and the
+ * agentpack provider from Codex config.toml. Returns one step per chosen CLI.
+ */
+export function relayRemoveStep(
+  clis: Plan["clis"],
+  paths: Paths,
+  messages: Messages = en
+): StepDescriptor[] {
+  const steps: StepDescriptor[] = []
+  if (clis.includes("claude-code")) {
+    steps.push({
+      kind: "mergeFile",
+      id: "relay-remove-claude",
+      label: messages.steps.removeRelayClaude,
+      path: paths.claudeSettings,
+      merge: (existing) => deleteClaudeRelay(existing),
+      writtenNote: messages.steps.claudeSettingsUpdated,
+    })
+  }
+  if (clis.includes("codex")) {
+    steps.push({
+      kind: "mergeFile",
+      id: "relay-remove-codex",
+      label: messages.steps.removeRelayCodex,
+      path: paths.codexConfig,
+      merge: (existing) => deleteCodexProvider(existing),
+      writtenNote: messages.steps.codexProviderUpdated,
+    })
+  }
+  return steps
+}
+
+/** Uninstall a CLI. No automated uninstaller on this OS => an info note. */
+export function cliUninstallStep(
+  id: Plan["clis"][number],
+  command: { file: string; args: string[] } | undefined,
+  messages: Messages = en
+): StepDescriptor {
+  const title = messages.catalog.cli[id]?.title ?? id
+  if (command) {
+    return {
+      kind: "command",
+      id: `cli-uninstall-${id}`,
+      label: messages.steps.uninstallCli(title),
+      command,
+    }
+  }
+  return {
+    kind: "info",
+    id: `cli-uninstall-${id}`,
+    label: messages.steps.uninstallCli(title),
+    lines: [messages.steps.noUninstaller(title), messages.steps.manualInstall],
+  }
+}
+
+/** Restore a config file from its `.agentpack.bak` snapshot (lightweight rollback). */
+export function fileRestoreStep(path: string, messages: Messages = en): StepDescriptor {
+  return {
+    kind: "fileRestore",
+    id: `restore-${path}`,
+    label: messages.steps.restoreFile(path),
+    path,
+    backupPath: `${path}${BACKUP_SUFFIX}`,
   }
 }
 

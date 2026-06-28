@@ -1,9 +1,20 @@
-import { CLI_TOOLS, MCP_SERVERS, findCli, findMcp } from "./registry"
+import { CLI_TOOLS, MCP_SERVERS, RUNTIMES, findCli, findMcp, findRuntime } from "./registry"
 import { PRESETS, findPreset } from "./presets"
 
 it("each CLI has an install entry for every OS key", () => {
   for (const c of CLI_TOOLS)
     for (const os of ["win", "mac", "linux"] as const) expect(c.install).toHaveProperty(os)
+})
+
+it("each runtime has an install entry for every OS key", () => {
+  for (const r of RUNTIMES)
+    for (const os of ["win", "mac", "linux"] as const) expect(r.install).toHaveProperty(os)
+})
+
+it("runtime finder resolves node and bun by id", () => {
+  expect(findRuntime("node")?.bin).toBe("node")
+  expect(findRuntime("bun")?.bin).toBe("bun")
+  expect(findRuntime("nope")).toBeUndefined()
 })
 
 it("everything preset covers the whole MCP registry", () => {

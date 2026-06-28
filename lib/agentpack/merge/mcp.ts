@@ -57,3 +57,27 @@ export function mergeCodexMcp(existingToml: string, id: string, entry: CodexMcpE
   data["mcp_servers"] = servers
   return stringify(data)
 }
+
+/**
+ * Build the `claude mcp remove <id>` command (Claude Code). Symmetric to
+ * `buildClaudeMcpCommand`'s `--scope user`.
+ */
+export function buildClaudeMcpRemoveCommand(id: string): Command {
+  return { file: "claude", args: ["mcp", "remove", id, "--scope", "user"] }
+}
+
+/**
+ * Remove one `mcp_servers.<id>` table from config.toml text. Inverse of
+ * `mergeCodexMcp`; leaves the rest of the file intact and is a no-op when the
+ * id (or the table) is absent.
+ */
+export function deleteCodexMcpEntry(existingToml: string, id: string): string {
+  if (!existingToml.trim()) return existingToml
+  const data = parse(existingToml) as Record<string, unknown>
+  const servers = data["mcp_servers"] as Record<string, unknown> | undefined
+  if (servers && id in servers) {
+    delete servers[id]
+    data["mcp_servers"] = servers
+  }
+  return stringify(data)
+}

@@ -26,6 +26,7 @@ pub fn run() {
       fsops::write_text_file,
       fsops::path_exists,
       fsops::remove_dir,
+      fsops::list_dir,
       fsops::install_skill,
       ccswitch::cc_load_providers,
       ccswitch::cc_write_provider,

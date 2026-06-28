@@ -70,7 +70,7 @@ it("info step logs its lines without IPC", async () => {
   expect(reports[0].output).toEqual(["note-a", "note-b"])
 })
 
-it("mergeFile reads, transforms and writes the file", async () => {
+it("mergeFile reads, transforms and writes the file (+ backs up existing content)", async () => {
   ;(api.readTextFile as jest.Mock).mockResolvedValue("{}")
   const steps: StepDescriptor[] = [
     {
@@ -84,7 +84,45 @@ it("mergeFile reads, transforms and writes the file", async () => {
   ]
   const reports = await runSteps(steps, { dryRun: false, paths })
   expect(reports[0].status).toBe("done")
+  expect(api.writeTextFile).toHaveBeenCalledWith("/h/.codex/config.toml.agentpack.bak", "{}")
   expect(api.writeTextFile).toHaveBeenCalledWith("/h/.codex/config.toml", "{}!")
+})
+
+it("mergeFile skips the backup when the file is empty", async () => {
+  ;(api.readTextFile as jest.Mock).mockResolvedValue("")
+  const steps: StepDescriptor[] = [
+    {
+      kind: "mergeFile",
+      id: "m",
+      label: "m",
+      path: "/h/.codex/config.toml",
+      merge: () => "new",
+      writtenNote: "",
+    },
+  ]
+  await runSteps(steps, { dryRun: false, paths })
+  expect(api.writeTextFile).not.toHaveBeenCalledWith(
+    "/h/.codex/config.toml.agentpack.bak",
+    expect.anything()
+  )
+  expect(api.writeTextFile).toHaveBeenCalledWith("/h/.codex/config.toml", "new")
+})
+
+it("fileRestore reads the backup and writes it back to the target path", async () => {
+  ;(api.readTextFile as jest.Mock).mockResolvedValue("original")
+  const steps: StepDescriptor[] = [
+    {
+      kind: "fileRestore",
+      id: "r",
+      label: "r",
+      path: "/h/.codex/config.toml",
+      backupPath: "/h/.codex/config.toml.agentpack.bak",
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(api.readTextFile).toHaveBeenCalledWith("/h/.codex/config.toml.agentpack.bak")
+  expect(api.writeTextFile).toHaveBeenCalledWith("/h/.codex/config.toml", "original")
+  expect(reports[0].status).toBe("done")
 })
 
 it("ccVisibleApps reads + writes via the same merge path", async () => {

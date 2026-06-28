@@ -1,5 +1,17 @@
-import { buildClaudeMcpCommand, buildCodexMcpEntry, mergeCodexMcp } from "./mcp"
-import { mergeClaudeSettings, mergeCodexProvider, npmRegistryCommand } from "./network"
+import {
+  buildClaudeMcpCommand,
+  buildClaudeMcpRemoveCommand,
+  buildCodexMcpEntry,
+  deleteCodexMcpEntry,
+  mergeCodexMcp,
+} from "./mcp"
+import {
+  deleteClaudeRelay,
+  deleteCodexProvider,
+  mergeClaudeSettings,
+  mergeCodexProvider,
+  npmRegistryCommand,
+} from "./network"
 import { findMcp } from "../registry"
 import type { McpServer } from "../types"
 
@@ -81,6 +93,56 @@ it("mergeClaudeSettings preserves an existing env block and partial inputs", () 
 
 it("mergeCodexProvider returns the input unchanged with no apiBaseUrl", () => {
   expect(mergeCodexProvider("existing = true", { apiToken: "t" })).toBe("existing = true")
+})
+
+it("buildClaudeMcpRemoveCommand targets the id with user scope", () => {
+  expect(buildClaudeMcpRemoveCommand("context7")).toEqual({
+    file: "claude",
+    args: ["mcp", "remove", "context7", "--scope", "user"],
+  })
+})
+
+it("deleteCodexMcpEntry drops the named table and keeps the rest", () => {
+  let toml = mergeCodexMcp("", "context7", { command: "npx", args: [] })
+  toml = mergeCodexMcp(toml, "memory", { command: "npx", args: [] })
+  const out = deleteCodexMcpEntry(toml, "context7")
+  expect(out).not.toContain("context7")
+  expect(out).toContain("memory")
+})
+
+it("deleteCodexMcpEntry is a no-op for an unknown id or empty input", () => {
+  const toml = mergeCodexMcp("", "memory", { command: "npx", args: [] })
+  expect(deleteCodexMcpEntry(toml, "nope")).toContain("memory")
+  expect(deleteCodexMcpEntry("", "memory")).toBe("")
+})
+
+it("deleteClaudeRelay removes only the relay env vars", () => {
+  const existing = mergeClaudeSettings(JSON.stringify({ env: { KEEP: "1" } }), {
+    apiBaseUrl: "https://r",
+    apiToken: "t",
+  })
+  const out = JSON.parse(deleteClaudeRelay(existing))
+  expect(out.env.KEEP).toBe("1")
+  expect(out.env.ANTHROPIC_BASE_URL).toBeUndefined()
+  expect(out.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+})
+
+it("deleteClaudeRelay returns empty input unchanged", () => {
+  expect(deleteClaudeRelay("")).toBe("")
+})
+
+it("deleteCodexProvider removes the agentpack provider and clears the selector", () => {
+  const existing = mergeCodexProvider("", { apiBaseUrl: "https://r" })
+  const out = deleteCodexProvider(existing)
+  expect(out).not.toContain("agentpack")
+  expect(out).not.toMatch(/model_provider\s*=/)
+})
+
+it("deleteCodexProvider keeps other providers and a non-agentpack selector", () => {
+  const toml = 'model_provider = "other"\n\n[model_providers.other]\nname = "Other"\n'
+  const out = deleteCodexProvider(toml)
+  expect(out).toContain("other")
+  expect(out).toContain('model_provider = "other"')
 })
 
 it("tolerates servers missing url / package / keyEnv via defensive fallbacks", () => {
