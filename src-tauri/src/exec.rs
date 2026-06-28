@@ -1,15 +1,52 @@
 use serde::Serialize;
+use std::ffi::OsStr;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use tauri::ipc::Channel;
+
+/// Suppress the transient console window a spawned process would otherwise flash
+/// in a GUI app (Windows only; no-op elsewhere).
+#[cfg(windows)]
+fn apply_no_window(c: &mut Command) {
+  use std::os::windows::process::CommandExt;
+  // CREATE_NO_WINDOW
+  c.creation_flags(0x0800_0000);
+}
+#[cfg(not(windows))]
+fn apply_no_window(_c: &mut Command) {}
+
+/// Build a `Command` that can actually launch the target on every OS.
+///
+/// On Windows, npm-installed CLIs (claude, codex) and npm/npx themselves are
+/// `.cmd`/`.ps1` shims. `CreateProcess` only auto-appends `.exe`, so
+/// `Command::new("claude")` fails with "not found" even when the shim is on
+/// PATH — which is why detection and installs silently broke on Windows. Routing
+/// through `cmd /c` makes Windows honour PATHEXT and run batch shims. On Unix the
+/// binary is launched directly.
+fn build_command<I, S>(file: &str, args: I) -> Command
+where
+  I: IntoIterator<Item = S>,
+  S: AsRef<OsStr>,
+{
+  let mut c = if cfg!(windows) {
+    let mut c = Command::new("cmd");
+    c.arg("/c").arg(file).args(args);
+    c
+  } else {
+    let mut c = Command::new(file);
+    c.args(args);
+    c
+  };
+  apply_no_window(&mut c);
+  c
+}
 
 /// Run a CLI command, streaming each stdout/stderr line to the frontend through
 /// a Tauri channel. Returns the exit code (-1 if unknown). `Err` only when the
 /// process cannot be spawned at all (e.g. binary not on PATH).
 #[tauri::command]
 pub fn run_command(file: String, args: Vec<String>, on_event: Channel<String>) -> Result<i32, String> {
-  let mut child = Command::new(&file)
-    .args(&args)
+  let mut child = build_command(&file, &args)
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())
     .spawn()
@@ -43,13 +80,14 @@ pub struct DetectionResult {
 }
 
 /// Look a binary up on PATH without executing it (`where` on Windows, else `which`).
+/// `where`/`which` are real executables, so they're spawned directly (not via the
+/// `cmd /c` wrapper), just with the window suppressed.
 fn on_path(bin: &str) -> bool {
   let finder = if cfg!(windows) { "where" } else { "which" };
-  Command::new(finder)
-    .arg(bin)
-    .output()
-    .map(|o| o.status.success())
-    .unwrap_or(false)
+  let mut c = Command::new(finder);
+  c.arg(bin);
+  apply_no_window(&mut c);
+  c.output().map(|o| o.status.success()).unwrap_or(false)
 }
 
 /// Detect a CLI. GUI tools (cc-switch) are never executed — PATH + config dir only.
@@ -64,7 +102,7 @@ pub fn detect_cli(bin: String, gui: bool) -> DetectionResult {
       version: None,
     };
   }
-  match Command::new(&bin).arg("--version").output() {
+  match build_command(&bin, ["--version"]).output() {
     Ok(o) if o.status.success() => {
       let raw = if o.stdout.is_empty() { &o.stderr } else { &o.stdout };
       let v = String::from_utf8_lossy(raw);
@@ -88,7 +126,7 @@ pub fn detect_cli(bin: String, gui: bool) -> DetectionResult {
 pub fn latest_version(package: String) -> Option<String> {
   let (tx, rx) = std::sync::mpsc::channel();
   std::thread::spawn(move || {
-    let out = Command::new("npm").args(["view", &package, "version"]).output();
+    let out = build_command("npm", ["view", &package, "version"]).output();
     let _ = tx.send(out);
   });
   match rx.recv_timeout(std::time::Duration::from_secs(8)) {
@@ -105,9 +143,10 @@ pub fn latest_version(package: String) -> Option<String> {
 #[tauri::command]
 pub fn is_process_running(name: String) -> bool {
   if cfg!(windows) {
-    Command::new("tasklist")
-      .args(["/fi", &format!("imagename eq {name}.exe"), "/nh"])
-      .output()
+    let mut c = Command::new("tasklist");
+    c.args(["/fi", &format!("imagename eq {name}.exe"), "/nh"]);
+    apply_no_window(&mut c);
+    c.output()
       .map(|o| {
         String::from_utf8_lossy(&o.stdout)
           .to_lowercase()
@@ -115,11 +154,9 @@ pub fn is_process_running(name: String) -> bool {
       })
       .unwrap_or(false)
   } else {
-    Command::new("pgrep")
-      .args(["-x", &name])
-      .output()
-      .map(|o| o.status.success())
-      .unwrap_or(false)
+    let mut c = Command::new("pgrep");
+    c.args(["-x", &name]);
+    c.output().map(|o| o.status.success()).unwrap_or(false)
   }
 }
 
