@@ -36,7 +36,7 @@ export function ProviderForm({
   const [name, setName] = useState(initial?.name ?? "")
   const [app, setApp] = useState<ProviderApp>(initial?.app ?? "claude")
   const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? "")
-  const [token, setToken] = useState("")
+  const [token, setToken] = useState(initial?.token ?? "")
   const [authKind, setAuthKind] = useState(initial?.claudeAuthKind ?? "auth_token")
   const [model, setModel] = useState(initial?.model ?? "")
   const [notes, setNotes] = useState(initial?.notes ?? "")

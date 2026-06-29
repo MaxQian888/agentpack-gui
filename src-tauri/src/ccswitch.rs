@@ -232,13 +232,19 @@ fn run_op(conn: &Connection, req: &WriteReq) -> Result<Vec<String>, String> {
       let form = req.form.as_ref().ok_or("missing form")?;
       let id = req.id.as_ref().ok_or("missing id")?;
       let settings = req.settings_config.clone().ok_or("missing settings_config")?;
-      conn
+      let n = conn
         .execute(
           "UPDATE providers SET name=?1, settings_config=?2, website_url=?3, notes=?4 \
            WHERE id=?5 AND app_type=?6",
           rusqlite::params![form.name, settings, form.website_url, form.notes, id, req.app],
         )
         .map_err(|e| e.to_string())?;
+      if n == 0 {
+        return Err(
+          "provider not found — it may have been removed in cc-switch. Reload and try again."
+            .into(),
+        );
+      }
       Ok(vec![format!("updated provider \"{}\" ({})", form.name, req.app)])
     }
     "delete" => {
@@ -266,12 +272,20 @@ fn run_op(conn: &Connection, req: &WriteReq) -> Result<Vec<String>, String> {
       conn
         .execute("UPDATE providers SET is_current=0 WHERE app_type=?1", [&req.app])
         .map_err(|e| e.to_string())?;
-      conn
+      let n = conn
         .execute(
           "UPDATE providers SET is_current=1 WHERE id=?1 AND app_type=?2",
           [id, &req.app],
         )
         .map_err(|e| e.to_string())?;
+      if n == 0 {
+        // The target row vanished after we cleared the flags — abort so the
+        // transaction rolls back and no app is left without a current provider.
+        return Err(
+          "provider not found — it may have been removed in cc-switch. Reload and try again."
+            .into(),
+        );
+      }
       Ok(vec![format!("set current provider ({})", req.app)])
     }
     other => Err(format!("unknown op {other}")),
@@ -282,6 +296,11 @@ fn run_op(conn: &Connection, req: &WriteReq) -> Result<Vec<String>, String> {
 mod tests {
   use super::*;
   use rusqlite::Connection;
+  use std::sync::Mutex;
+
+  // cc_write_provider reads the DB path from a process-global env var, so the
+  // env-touching tests must not run concurrently.
+  static ENV_LOCK: Mutex<()> = Mutex::new(());
 
   fn seed(path: &str) {
     let c = Connection::open(path).unwrap();
@@ -293,8 +312,8 @@ mod tests {
     .unwrap();
   }
 
-  #[test]
-  fn add_then_load() {
+  /// Seed a fresh DB, point the env var at it, and skip the running-process check.
+  fn setup_db() -> String {
     let p = std::env::temp_dir()
       .join(format!("ccsw-{}.db", unique_id()))
       .to_string_lossy()
@@ -302,17 +321,28 @@ mod tests {
     seed(&p);
     std::env::set_var("AGENTPACK_CCSWITCH_DB", &p);
     std::env::set_var("AGENTPACK_SKIP_RUNNING_CHECK", "1");
+    p
+  }
+
+  fn form(name: &str) -> Option<ProviderForm> {
+    Some(ProviderForm {
+      name: name.into(),
+      website_url: None,
+      notes: None,
+    })
+  }
+
+  #[test]
+  fn add_then_load() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let p = setup_db();
 
     let req = WriteReq {
       op: "add".into(),
       dry_run: false,
       id: None,
       app: "claude".into(),
-      form: Some(ProviderForm {
-        name: "Test".into(),
-        website_url: None,
-        notes: None,
-      }),
+      form: form("Test"),
       settings_config: Some("{\"env\":{}}".into()),
     };
     cc_write_provider(req).unwrap();
@@ -321,6 +351,28 @@ mod tests {
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].name, "Test");
     assert!(list[0].is_current); // first provider becomes current
+
+    std::env::remove_var("AGENTPACK_CCSWITCH_DB");
+    let _ = std::fs::remove_file(&p);
+  }
+
+  #[test]
+  fn update_missing_row_errors() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let p = setup_db();
+
+    // No row with this id exists → the UPDATE touches 0 rows and must surface a
+    // stale-state error rather than reporting a phantom success.
+    let req = WriteReq {
+      op: "update".into(),
+      dry_run: false,
+      id: Some("does-not-exist".into()),
+      app: "claude".into(),
+      form: form("Ghost"),
+      settings_config: Some("{\"env\":{}}".into()),
+    };
+    let err = cc_write_provider(req).unwrap_err();
+    assert!(err.contains("not found"), "unexpected error: {err}");
 
     std::env::remove_var("AGENTPACK_CCSWITCH_DB");
     let _ = std::fs::remove_file(&p);

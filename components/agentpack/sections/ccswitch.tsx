@@ -19,6 +19,7 @@ import { CLI_TOOLS } from "@/lib/agentpack/registry"
 import { cliInstallStep, providerStep, visibleAppsStep } from "@/lib/agentpack/plan"
 import { DEFAULT_VISIBLE_APPS, VISIBLE_APP_KEYS } from "@/lib/agentpack/ccswitch/settings"
 import { RECOMMENDED_PROVIDERS } from "@/lib/agentpack/ccswitch/preset"
+import { parseSettingsConfig } from "@/lib/agentpack/ccswitch/provider"
 import type {
   Provider,
   ProviderForm as ProviderFormData,
@@ -45,6 +46,9 @@ export function CcSwitchSection() {
   const [formOpen, setFormOpen] = useState(false)
   const [formInitial, setFormInitial] = useState<Partial<ProviderFormData>>({})
   const [editingId, setEditingId] = useState<string | undefined>(undefined)
+  // Bumped on every open so <ProviderForm> remounts and re-seeds its fields from
+  // `formInitial` (useState initializers only run once per mount).
+  const [formKey, setFormKey] = useState(0)
 
   const reload = useCallback(async () => {
     if (!isTauri()) return
@@ -67,8 +71,9 @@ export function CcSwitchSection() {
   }, [])
 
   const runThen = async (steps: Parameters<typeof run>[0]) => {
-    await run(steps)
+    const reports = await run(steps)
     await reload()
+    return reports
   }
 
   const installCcSwitch = () => {
@@ -86,6 +91,7 @@ export function CcSwitchSection() {
   const openAdd = (initial: Partial<ProviderFormData> = {}) => {
     setEditingId(undefined)
     setFormInitial(initial)
+    setFormKey((k) => k + 1)
     setFormOpen(true)
   }
 
@@ -96,14 +102,26 @@ export function CcSwitchSection() {
       app: p.app_type,
       websiteUrl: p.website_url ?? undefined,
       notes: p.notes ?? undefined,
+      ...parseSettingsConfig(p.app_type, p.settings_config),
     })
+    setFormKey((k) => k + 1)
     setFormOpen(true)
   }
 
-  const submitForm = (form: ProviderFormData) => {
-    void runThen([
-      providerStep(editingId ? "update" : "add", form.app, form.name, form, editingId, t),
+  const submitForm = async (form: ProviderFormData) => {
+    const id = editingId
+    const reports = await runThen([
+      providerStep(id ? "update" : "add", form.app, form.name, form, id, t),
     ])
+    if (reports.some((r) => r.status === "error")) {
+      // The write failed (cc-switch running, stale row, …). The form already
+      // closed itself on submit; re-open it carrying the exact values the user
+      // tried so a transient failure never discards their input.
+      setEditingId(id)
+      setFormInitial(form)
+      setFormKey((k) => k + 1)
+      setFormOpen(true)
+    }
   }
 
   const tool = CLI_TOOLS.find((x) => x.id === "cc-switch")!
@@ -248,6 +266,7 @@ export function CcSwitchSection() {
       </Card>
 
       <ProviderForm
+        key={formKey}
         open={formOpen}
         onOpenChange={setFormOpen}
         initial={formInitial}

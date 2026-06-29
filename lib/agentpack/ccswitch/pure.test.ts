@@ -1,4 +1,4 @@
-import { buildSettingsConfig } from "./provider"
+import { buildSettingsConfig, parseSettingsConfig } from "./provider"
 import { readVisibleApps, mergeVisibleApps, DEFAULT_VISIBLE_APPS } from "./settings"
 
 it("claude provider uses AUTH_TOKEN by default", () => {
@@ -78,4 +78,60 @@ it("mergeVisibleApps preserves other fields in settings.json", () => {
   const out = JSON.parse(mergeVisibleApps(JSON.stringify({ theme: "dark" }), DEFAULT_VISIBLE_APPS))
   expect(out.theme).toBe("dark")
   expect(out.visibleApps.codex).toBe(true)
+})
+
+it("parseSettingsConfig round-trips a claude auth_token provider", () => {
+  const config = buildSettingsConfig({
+    name: "n",
+    app: "claude",
+    baseUrl: "https://b",
+    token: "tok",
+    claudeAuthKind: "auth_token",
+    model: "sonnet",
+  })
+  expect(parseSettingsConfig("claude", config)).toEqual({
+    baseUrl: "https://b",
+    token: "tok",
+    claudeAuthKind: "auth_token",
+    model: "sonnet",
+  })
+})
+
+it("parseSettingsConfig detects the api_key auth kind", () => {
+  const config = buildSettingsConfig({
+    name: "n",
+    app: "claude",
+    baseUrl: "https://b",
+    token: "key",
+    claudeAuthKind: "api_key",
+  })
+  const parsed = parseSettingsConfig("claude", config)
+  expect(parsed.claudeAuthKind).toBe("api_key")
+  expect(parsed.token).toBe("key")
+  expect(parsed.model).toBeUndefined()
+})
+
+it("parseSettingsConfig round-trips a codex provider", () => {
+  const config = buildSettingsConfig({
+    name: "n",
+    app: "codex",
+    baseUrl: "https://b/v1",
+    token: "sk",
+    claudeAuthKind: "auth_token",
+    model: "gpt-5",
+  })
+  expect(parseSettingsConfig("codex", config)).toMatchObject({
+    baseUrl: "https://b/v1",
+    token: "sk",
+    model: "gpt-5",
+  })
+})
+
+it("parseSettingsConfig tolerates malformed settings_config", () => {
+  expect(parseSettingsConfig("claude", "{ not json")).toEqual({
+    baseUrl: "",
+    token: "",
+    claudeAuthKind: "auth_token",
+    model: undefined,
+  })
 })

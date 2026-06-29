@@ -76,11 +76,44 @@ it("adds a provider through the form", async () => {
   )
 })
 
+it("re-opens the form with the attempted values when a write fails", async () => {
+  ;(ccWriteProvider as jest.Mock).mockRejectedValueOnce("cc-switch is running")
+  renderCc()
+  await screen.findByText("Mine")
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.addProvider }))
+  await userEvent.type(screen.getByLabelText(en.ccswitch.fieldName), "Relay")
+  await userEvent.type(screen.getByLabelText(en.ccswitch.fieldBaseUrl), "https://r")
+  await userEvent.click(screen.getByRole("button", { name: en.shell.save }))
+  // The failed write must not discard the user's input — the form comes back
+  // pre-filled with exactly what they typed so they can fix and retry.
+  await waitFor(() => expect(screen.getByLabelText(en.ccswitch.fieldName)).toHaveValue("Relay"))
+  expect(screen.getByLabelText(en.ccswitch.fieldBaseUrl)).toHaveValue("https://r")
+})
+
 it("opens the edit form for an existing provider", async () => {
   renderCc()
   await screen.findByText("Mine")
   await userEvent.click(screen.getByRole("button", { name: en.ccswitch.rowActionEdit }))
   expect(screen.getByText(en.ccswitch.formEditTitle)).toBeInTheDocument()
+})
+
+it("echoes the stored provider config back into the edit form", async () => {
+  ;(ccLoadProviders as jest.Mock).mockResolvedValueOnce([
+    {
+      id: "1",
+      app_type: "claude",
+      name: "Mine",
+      settings_config: JSON.stringify({
+        env: { ANTHROPIC_AUTH_TOKEN: "tok", ANTHROPIC_BASE_URL: "https://relay" },
+      }),
+      is_current: false,
+    },
+  ])
+  renderCc()
+  await screen.findByText("Mine")
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.rowActionEdit }))
+  expect(screen.getByLabelText(en.ccswitch.fieldName)).toHaveValue("Mine")
+  expect(screen.getByLabelText(en.ccswitch.fieldBaseUrl)).toHaveValue("https://relay")
 })
 
 it("sets a provider as current", async () => {

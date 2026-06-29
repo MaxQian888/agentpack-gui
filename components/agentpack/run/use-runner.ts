@@ -20,8 +20,11 @@ export interface RunnerState {
   running: boolean
   dryRun: boolean
   awaitingConfirm: boolean
-  /** Prepare/run a set of descriptors. */
-  run: (steps: StepDescriptor[], opts?: RunOpts) => Promise<void>
+  /**
+   * Prepare/run a set of descriptors. Resolves with the final reports so callers
+   * can react to success/failure (empty when the run was gated or bailed out).
+   */
+  run: (steps: StepDescriptor[], opts?: RunOpts) => Promise<StepReport[]>
   /** Execute the reviewed steps (after a review gate). */
   confirm: () => Promise<void>
   /** Re-run only the steps that failed. */
@@ -41,13 +44,13 @@ export function useRunner(): RunnerState {
   const pending = useRef<StepDescriptor[]>([])
 
   const execute = useCallback(
-    async (steps: StepDescriptor[]) => {
-      if (!paths) return
+    async (steps: StepDescriptor[]): Promise<StepReport[]> => {
+      if (!paths) return []
       pending.current = steps
       setReports(steps.map((s) => ({ id: s.id, label: s.label, status: "pending", output: [] })))
       setRunning(true)
       ctrl.current = new AbortController()
-      await runSteps(steps, {
+      const reports = await runSteps(steps, {
         dryRun,
         paths,
         messages: t,
@@ -60,20 +63,21 @@ export function useRunner(): RunnerState {
           }),
       })
       setRunning(false)
+      return reports
     },
     [dryRun, paths, t]
   )
 
   const run = useCallback(
-    async (steps: StepDescriptor[], opts: RunOpts = {}) => {
+    async (steps: StepDescriptor[], opts: RunOpts = {}): Promise<StepReport[]> => {
       if (!paths) {
         toast.error(t.shell.notInTauri)
-        return
+        return []
       }
       const all = opts.plan && !dryRun ? [...steps, ...buildVerifySteps(opts.plan, t)] : steps
       if (all.length === 0) {
         toast.message(t.shell.emptyPlan)
-        return
+        return []
       }
       setPanelOpen(true)
       if (opts.review && !dryRun) {
@@ -81,10 +85,10 @@ export function useRunner(): RunnerState {
         setReports(all.map((s) => ({ id: s.id, label: s.label, status: "pending", output: [] })))
         setRunning(false)
         setAwaitingConfirm(true)
-        return
+        return []
       }
       setAwaitingConfirm(false)
-      await execute(all)
+      return execute(all)
     },
     [dryRun, paths, setPanelOpen, t, execute]
   )
