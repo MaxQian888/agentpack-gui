@@ -83,7 +83,7 @@ fn assert_schema(conn: &Connection) -> Result<(), String> {
   Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cc_load_providers() -> Result<Vec<Provider>, String> {
   if !exists() {
     return Ok(vec![]);
@@ -144,7 +144,7 @@ fn unique_id() -> String {
 
 /// Add / update / delete / set-current a provider, with cc-switch's guardrails.
 /// Dry-run opens read-only and returns "would run" lines without touching the DB.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cc_write_provider(req: WriteReq) -> Result<Vec<String>, String> {
   if !exists() {
     return Err("cc-switch database not found. Launch cc-switch once, then return here.".into());

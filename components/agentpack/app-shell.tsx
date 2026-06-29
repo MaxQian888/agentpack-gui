@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { isTauri } from "@/lib/tauri"
 import { detectCli, getPaths, latestVersion } from "@/lib/tauri/commands"
 import { buildSteps } from "@/lib/agentpack/plan"
@@ -9,7 +9,7 @@ import { useAppStore } from "@/store/app-store"
 import { useT } from "@/lib/i18n/provider"
 import { Header } from "./header"
 import { SidebarNav, type SectionKey } from "./sidebar-nav"
-import { DashboardSection } from "./sections/dashboard"
+import { DashboardSection, scanEnvironment, type DashboardScan } from "./sections/dashboard"
 import { PresetsSection } from "./sections/presets"
 import { EnvironmentSection } from "./sections/environment"
 import { ClisSection } from "./sections/clis"
@@ -31,6 +31,37 @@ function ShellBody() {
   const installedClis = useAppStore((s) => s.installedClis)
   const { run } = useRunnerCtx()
   const [section, setSection] = useState<SectionKey>("dashboard")
+
+  // Dashboard scan lives here (ShellBody never unmounts) so it runs once on
+  // startup instead of re-scanning every time the user returns to the home page.
+  const [dashboardScan, setDashboardScan] = useState<DashboardScan | null>(null)
+  const [dashboardScanning, setDashboardScanning] = useState(false)
+
+  const rescanDashboard = useCallback(async () => {
+    if (!isTauri() || !paths) return
+    setDashboardScanning(true)
+    try {
+      setDashboardScan(await scanEnvironment(paths))
+    } finally {
+      setDashboardScanning(false)
+    }
+  }, [paths])
+
+  // Initial scan once paths are known. Fire-and-forget so the UI renders
+  // immediately; the (now async) Rust commands run off the main thread, and
+  // setState lives in the async continuation to avoid cascading renders.
+  useEffect(() => {
+    if (!isTauri() || !paths) return
+    let cancelled = false
+    scanEnvironment(paths)
+      .then((result) => {
+        if (!cancelled) setDashboardScan(result)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [paths])
 
   useEffect(() => {
     if (!isTauri()) return
@@ -69,7 +100,13 @@ function ShellBody() {
   const renderSection = () => {
     switch (section) {
       case "dashboard":
-        return <DashboardSection />
+        return (
+          <DashboardSection
+            scan={dashboardScan}
+            scanning={dashboardScanning}
+            rescan={rescanDashboard}
+          />
+        )
       case "presets":
         return <PresetsSection />
       case "environment":

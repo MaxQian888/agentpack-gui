@@ -44,7 +44,10 @@ where
 /// Run a CLI command, streaming each stdout/stderr line to the frontend through
 /// a Tauri channel. Returns the exit code (-1 if unknown). `Err` only when the
 /// process cannot be spawned at all (e.g. binary not on PATH).
-#[tauri::command]
+///
+/// `(async)` on a sync fn makes Tauri run it on a worker thread instead of the
+/// main thread, so waiting on a slow subprocess never freezes the UI.
+#[tauri::command(async)]
 pub fn run_command(file: String, args: Vec<String>, on_event: Channel<String>) -> Result<i32, String> {
   let mut child = build_command(&file, &args)
     .stdout(Stdio::piped())
@@ -91,7 +94,7 @@ fn on_path(bin: &str) -> bool {
 }
 
 /// Detect a CLI. GUI tools (cc-switch) are never executed — PATH + config dir only.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn detect_cli(bin: String, gui: bool) -> DetectionResult {
   if gui {
     let cc = dirs::home_dir()
@@ -122,7 +125,7 @@ pub fn detect_cli(bin: String, gui: bool) -> DetectionResult {
 /// Runs on a side thread with a hard timeout so a slow/hung registry never blocks
 /// startup. Returns `None` on any failure (no npm, offline, timeout) — the UI then
 /// hides the upgrade action because it can't confirm a newer version exists.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn latest_version(package: String) -> Option<String> {
   let (tx, rx) = std::sync::mpsc::channel();
   std::thread::spawn(move || {
@@ -140,7 +143,7 @@ pub fn latest_version(package: String) -> Option<String> {
 
 /// Whether a process with this base name is running (best-effort, used as a
 /// guardrail before writing the cc-switch DB).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn is_process_running(name: String) -> bool {
   if cfg!(windows) {
     let mut c = Command::new("tasklist");

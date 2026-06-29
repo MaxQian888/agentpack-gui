@@ -1,6 +1,5 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
 import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -48,7 +47,7 @@ interface FileHealth {
   hasBackup: boolean
 }
 
-interface DashboardScan {
+export interface DashboardScan {
   claudeMcps: ClassifiedIds
   codexMcps: ClassifiedIds
   claudeSkills: ClassifiedIds
@@ -94,7 +93,7 @@ async function scanClaudeMcps(): Promise<string[]> {
   }
 }
 
-async function scanEnvironment(paths: Paths): Promise<DashboardScan> {
+export async function scanEnvironment(paths: Paths): Promise<DashboardScan> {
   const [
     claudeJson,
     codexToml,
@@ -132,7 +131,18 @@ async function scanEnvironment(paths: Paths): Promise<DashboardScan> {
   }
 }
 
-export function DashboardSection() {
+/**
+ * The dashboard scan is owned by `ShellBody` (which never unmounts) and passed
+ * in, so navigating away and back to the home page reuses the cached result
+ * instead of re-running the slow `claude mcp list` scan every time.
+ */
+export interface DashboardSectionProps {
+  scan: DashboardScan | null
+  scanning: boolean
+  rescan: () => Promise<void>
+}
+
+export function DashboardSection({ scan, scanning, rescan }: DashboardSectionProps) {
   const t = useT()
   const d = t.dashboard
   const detections = useAppStore((s) => s.detections)
@@ -140,33 +150,6 @@ export function DashboardSection() {
   const paths = useAppStore((s) => s.paths)
   const effectiveOS = useAppStore((s) => s.effectiveOS)
   const { run } = useRunnerCtx()
-  const [scan, setScan] = useState<DashboardScan | null>(null)
-  const [scanning, setScanning] = useState(false)
-
-  const rescan = useCallback(async () => {
-    if (!isTauri() || !paths) return
-    setScanning(true)
-    try {
-      setScan(await scanEnvironment(paths))
-    } finally {
-      setScanning(false)
-    }
-  }, [paths])
-
-  // Initial scan on mount / paths change. setState lives in the async
-  // continuation (not the effect body) to avoid cascading-render warnings.
-  useEffect(() => {
-    if (!isTauri() || !paths) return
-    let cancelled = false
-    scanEnvironment(paths)
-      .then((result) => {
-        if (!cancelled) setScan(result)
-      })
-      .catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [paths])
 
   const runThen = async (steps: Parameters<typeof run>[0]) => {
     if (steps.length === 0) return

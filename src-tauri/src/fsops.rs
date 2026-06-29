@@ -5,7 +5,7 @@ use tauri::{AppHandle, Manager};
 
 /// Read a text file, returning "" when it does not exist (mirrors the TUI's
 /// readTextOrEmpty so config merges start from a blank slate).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_text_file(path: String) -> Result<String, String> {
   match fs::read_to_string(&path) {
     Ok(s) => Ok(s),
@@ -14,7 +14,7 @@ pub fn read_text_file(path: String) -> Result<String, String> {
 }
 
 /// Write a text file, creating parent directories as needed.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn write_text_file(path: String, content: String) -> Result<(), String> {
   if let Some(parent) = Path::new(&path).parent() {
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -23,13 +23,13 @@ pub fn write_text_file(path: String, content: String) -> Result<(), String> {
 }
 
 /// Whether a path exists (used to show skill install status).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn path_exists(path: String) -> bool {
   Path::new(&path).exists()
 }
 
 /// Remove a directory tree (used to uninstall a skill). No-op if absent.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_dir(path: String) -> Result<(), String> {
   if Path::new(&path).exists() {
     fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
@@ -40,7 +40,7 @@ pub fn remove_dir(path: String) -> Result<(), String> {
 /// List the immediate child entry names of a directory (used by the dashboard to
 /// enumerate installed skills, including ones added outside agentpack). Returns
 /// an empty list when the path is missing or not a directory.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_dir(path: String) -> Result<Vec<String>, String> {
   let p = Path::new(&path);
   if !p.is_dir() {
@@ -70,7 +70,7 @@ fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
 
 /// Copy a bundled skill (shipped under Tauri resources at `assets/skills/<id>`)
 /// into each requested target's skills dir. Returns the destination paths.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn install_skill(app: AppHandle, id: String, targets: Vec<String>) -> Result<Vec<String>, String> {
   let base = app
     .path()

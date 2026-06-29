@@ -1,6 +1,7 @@
 jest.mock("@/lib/tauri", () => ({ isTauri: () => true }))
 jest.mock("@/lib/tauri/commands")
 
+import { useCallback, useEffect, useState } from "react"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import * as api from "@/lib/tauri/commands"
@@ -9,7 +10,7 @@ import { I18nProvider } from "@/lib/i18n/provider"
 import { RunnerProvider } from "../run/runner-context"
 import { useAppStore } from "@/store/app-store"
 import type { Paths } from "@/lib/agentpack/types"
-import { DashboardSection } from "./dashboard"
+import { DashboardSection, scanEnvironment, type DashboardScan } from "./dashboard"
 
 const paths: Paths = {
   home: "/h",
@@ -35,11 +36,39 @@ beforeEach(() => {
   })
 })
 
+// Mirrors how ShellBody owns the scan: run it once and feed it down as props.
+function DashboardHarness() {
+  const paths = useAppStore((s) => s.paths)
+  const [scan, setScan] = useState<DashboardScan | null>(null)
+  const [scanning, setScanning] = useState(false)
+  const rescan = useCallback(async () => {
+    if (!paths) return
+    setScanning(true)
+    try {
+      setScan(await scanEnvironment(paths))
+    } finally {
+      setScanning(false)
+    }
+  }, [paths])
+  // setState in the async continuation (not the effect body) avoids cascading renders.
+  useEffect(() => {
+    if (!paths) return
+    let cancelled = false
+    scanEnvironment(paths).then((result) => {
+      if (!cancelled) setScan(result)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [paths])
+  return <DashboardSection scan={scan} scanning={scanning} rescan={rescan} />
+}
+
 function renderDashboard() {
   return render(
     <I18nProvider>
       <RunnerProvider>
-        <DashboardSection />
+        <DashboardHarness />
       </RunnerProvider>
     </I18nProvider>
   )
