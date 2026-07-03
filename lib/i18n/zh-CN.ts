@@ -118,6 +118,7 @@ export const zhCN = {
     setupComplete: "安装完成",
     counts: (ok: number, failed: number) => ` —— ${ok} 成功${failed ? `，${failed} 失败` : ""}`,
     failedSteps: "失败的步骤：",
+    warnings: "无法验证（刚安装的 CLI 可能需要重启 agentpack）：",
     pendingKeys: "设置以下环境变量以启用已跳过的 MCP 密钥：",
     nextSteps: "下一步：",
     nextRunPrefix: "  • 运行 ",

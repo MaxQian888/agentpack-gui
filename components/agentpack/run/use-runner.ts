@@ -30,6 +30,11 @@ export interface RunnerState {
   /** Re-run only the steps that failed. */
   retry: () => Promise<void>
   cancel: () => void
+  /**
+   * Register a callback fired once after each real (non-dry) run completes, so
+   * the UI can re-detect installed tools and re-scan. Returns an unsubscribe.
+   */
+  onAfterRun: (fn: () => void) => () => void
 }
 
 export function useRunner(): RunnerState {
@@ -42,6 +47,7 @@ export function useRunner(): RunnerState {
   const [awaitingConfirm, setAwaitingConfirm] = useState(false)
   const ctrl = useRef<AbortController | null>(null)
   const pending = useRef<StepDescriptor[]>([])
+  const afterRun = useRef<Set<() => void>>(new Set())
 
   const execute = useCallback(
     async (steps: StepDescriptor[]): Promise<StepReport[]> => {
@@ -63,6 +69,10 @@ export function useRunner(): RunnerState {
           }),
       })
       setRunning(false)
+      // A real run may have installed/removed a tool — let subscribers re-detect
+      // and re-scan so badges reflect reality without an app restart. Dry runs
+      // change nothing, so they don't fire.
+      if (!dryRun) afterRun.current.forEach((fn) => fn())
       return reports
     },
     [dryRun, paths, t]
@@ -107,5 +117,12 @@ export function useRunner(): RunnerState {
 
   const cancel = useCallback(() => ctrl.current?.abort(), [])
 
-  return { reports, running, dryRun, awaitingConfirm, run, confirm, retry, cancel }
+  const onAfterRun = useCallback((fn: () => void) => {
+    afterRun.current.add(fn)
+    return () => {
+      afterRun.current.delete(fn)
+    }
+  }, [])
+
+  return { reports, running, dryRun, awaitingConfirm, run, confirm, retry, cancel, onAfterRun }
 }

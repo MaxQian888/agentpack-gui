@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { CLI_TOOLS, RUNTIMES, findCli } from "@/lib/agentpack/registry"
 import {
+  cliInstallStep,
   cliUninstallStep,
   fileRestoreStep,
   mcpRemoveStep,
@@ -15,6 +16,7 @@ import {
   providerStep,
   BACKUP_SUFFIX,
 } from "@/lib/agentpack/plan"
+import { isUpgradeAvailable } from "@/lib/agentpack/version"
 import { DEFAULT_VISIBLE_APPS } from "@/lib/agentpack/ccswitch/settings"
 import {
   classifyAgainstRegistry,
@@ -151,10 +153,12 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
   const effectiveOS = useAppStore((s) => s.effectiveOS)
   const { run } = useRunnerCtx()
 
-  const runThen = async (steps: Parameters<typeof run>[0]) => {
+  const runThen = (steps: Parameters<typeof run>[0]) => {
     if (steps.length === 0) return
-    await run(steps, { review: true })
-    await rescan()
+    // `review: true` opens the confirm gate and returns *before* the steps run,
+    // so we must not rescan here. The central afterRun hook (app-shell) re-scans
+    // and re-detects once the reviewed steps actually execute.
+    void run(steps, { review: true })
   }
 
   const view = scan ?? emptyScan()
@@ -183,7 +187,10 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
             const latest = latestVersions[tool.id]
             const installed = det?.installed
             const isCli = CLI_TOOLS.some((c) => c.id === tool.id)
-            const hasUpdate = installed && latest && det?.version && !det.version.includes(latest)
+            // Same semver-aware check as the CLIs section, so the two agree.
+            const hasUpdate = !!installed && isUpgradeAvailable(det?.version, latest)
+            const upgradeCmd =
+              findCli(tool.id)?.upgrade?.[os] ?? findCli(tool.id)?.install[os] ?? undefined
             const title =
               (isCli ? t.catalog.cli[tool.id] : t.catalog.runtime[tool.id])?.title ?? tool.id
             return (
@@ -202,21 +209,41 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
                   ) : null}
                 </div>
                 {isCli && installed ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() =>
-                      void runThen([
-                        cliUninstallStep(
-                          tool.id as "claude-code" | "codex" | "cc-switch",
-                          findCli(tool.id)?.uninstall?.[os],
-                          t
-                        ),
-                      ])
-                    }
-                  >
-                    {d.uninstall}
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    {hasUpdate && upgradeCmd ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          runThen([
+                            cliInstallStep(
+                              tool.id as "claude-code" | "codex" | "cc-switch",
+                              upgradeCmd,
+                              true,
+                              t
+                            ),
+                          ])
+                        }
+                      >
+                        {t.shell.upgrade}
+                      </Button>
+                    ) : null}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        runThen([
+                          cliUninstallStep(
+                            tool.id as "claude-code" | "codex" | "cc-switch",
+                            findCli(tool.id)?.uninstall?.[os],
+                            t
+                          ),
+                        ])
+                      }
+                    >
+                      {d.uninstall}
+                    </Button>
+                  </div>
                 ) : null}
               </div>
             )

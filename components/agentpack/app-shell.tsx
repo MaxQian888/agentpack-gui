@@ -29,7 +29,7 @@ function ShellBody() {
   const setDetections = useAppStore((s) => s.setDetections)
   const setLatestVersion = useAppStore((s) => s.setLatestVersion)
   const installedClis = useAppStore((s) => s.installedClis)
-  const { run } = useRunnerCtx()
+  const { run, onAfterRun } = useRunnerCtx()
   const [section, setSection] = useState<SectionKey>("dashboard")
 
   // Dashboard scan lives here (ShellBody never unmounts) so it runs once on
@@ -63,31 +63,47 @@ function ShellBody() {
     }
   }, [paths])
 
+  // Detect every CLI + runtime and refresh latest-version info. Reused both on
+  // startup and after every real run, so install/upgrade/uninstall are reflected
+  // in the badges without an app restart.
+  const refreshDetections = useCallback(async () => {
+    if (!isTauri()) return
+    const entries = await Promise.all([
+      ...CLI_TOOLS.map(async (tool) => [tool.id, await detectCli(tool.bin, !!tool.gui)] as const),
+      ...RUNTIMES.map(async (rt) => [rt.id, await detectRuntime(rt)] as const),
+    ])
+    setDetections(Object.fromEntries(entries))
+    // Fire-and-forget: resolve the latest published version for every installed
+    // npm-based CLI so the UI can show Upgrade only when one is actually behind.
+    for (const [id, det] of entries) {
+      const tool = CLI_TOOLS.find((c) => c.id === id)
+      if (!tool?.npmPackage || !det.installed) continue
+      latestVersion(tool.npmPackage)
+        .then((v) => {
+          if (v) setLatestVersion(id, v)
+        })
+        .catch(() => {})
+    }
+  }, [setDetections, setLatestVersion])
+
   useEffect(() => {
     if (!isTauri()) return
     getPaths()
       .then(setPaths)
       .catch(() => {})
-    Promise.all([
-      ...CLI_TOOLS.map(async (tool) => [tool.id, await detectCli(tool.bin, !!tool.gui)] as const),
-      ...RUNTIMES.map(async (rt) => [rt.id, await detectRuntime(rt)] as const),
-    ])
-      .then((entries) => {
-        setDetections(Object.fromEntries(entries))
-        // Fire-and-forget: resolve the latest published version for every installed
-        // npm-based CLI so the UI can show Upgrade only when one is actually behind.
-        for (const [id, det] of entries) {
-          const tool = CLI_TOOLS.find((c) => c.id === id)
-          if (!tool?.npmPackage || !det.installed) continue
-          latestVersion(tool.npmPackage)
-            .then((v) => {
-              if (v) setLatestVersion(id, v)
-            })
-            .catch(() => {})
-        }
-      })
-      .catch(() => {})
-  }, [setPaths, setDetections, setLatestVersion])
+    void refreshDetections()
+  }, [setPaths, refreshDetections])
+
+  // After any real run (install/upgrade/uninstall/remove), re-detect tools and
+  // re-scan the dashboard once, centrally, so every surface reflects the change.
+  useEffect(
+    () =>
+      onAfterRun(() => {
+        void refreshDetections()
+        void rescanDashboard()
+      }),
+    [onAfterRun, refreshDetections, rescanDashboard]
+  )
 
   const onRun = () => {
     if (!paths) {

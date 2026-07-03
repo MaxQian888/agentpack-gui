@@ -1,6 +1,6 @@
 "use client"
 
-import { CheckCircle2, Circle, Loader2, MinusCircle, XCircle } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Circle, Loader2, MinusCircle, XCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { StepReport, StepStatus } from "@/lib/agentpack/types"
 
@@ -12,6 +12,8 @@ function StatusIcon({ status }: { status: StepStatus }) {
       return <CheckCircle2 className="size-4 text-emerald-500" />
     case "error":
       return <XCircle className="size-4 text-red-500" />
+    case "warning":
+      return <AlertTriangle className="size-4 text-amber-500" />
     case "skipped":
       return <MinusCircle className="size-4 text-muted-foreground" />
     default:
@@ -26,7 +28,15 @@ export function StepLog({ reports }: { reports: StepReport[] }) {
         <li key={r.id} className="rounded-md border bg-card p-3">
           <div className="flex items-center gap-2">
             <StatusIcon status={r.status} />
-            <span className={cn("text-sm", r.status === "error" && "text-red-500")}>{r.label}</span>
+            <span
+              className={cn(
+                "text-sm",
+                r.status === "error" && "text-red-500",
+                r.status === "warning" && "text-amber-600"
+              )}
+            >
+              {r.label}
+            </span>
             {typeof r.durationMs === "number" && r.durationMs >= 100 ? (
               <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
                 {(r.durationMs / 1000).toFixed(1)}s

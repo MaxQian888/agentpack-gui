@@ -98,7 +98,7 @@ export interface Plan {
 }
 
 /** Status of a single execution step. */
-export type StepStatus = "pending" | "running" | "done" | "error" | "skipped"
+export type StepStatus = "pending" | "running" | "done" | "error" | "skipped" | "warning"
 
 /** Absolute paths resolved by the Rust backend (get_paths). */
 export interface Paths {

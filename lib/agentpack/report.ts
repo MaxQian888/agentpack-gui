@@ -23,6 +23,7 @@ export function summarize(
 ): string[] {
   const ok = reports.filter((r) => r.status === "done").length
   const failed = reports.filter((r) => r.status === "error")
+  const warnings = reports.filter((r) => r.status === "warning")
   const s = messages.summary
   const lines: string[] = []
 
@@ -31,6 +32,11 @@ export function summarize(
   if (failed.length) {
     lines.push(s.failedSteps)
     for (const r of failed) lines.push(`  ✖ ${r.label} — ${r.error ?? ""}`)
+  }
+
+  if (warnings.length) {
+    lines.push(s.warnings)
+    for (const r of warnings) lines.push(`  ⚠ ${r.label}`)
   }
 
   const pending = pendingKeyEnvs(plan)

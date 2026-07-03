@@ -25,7 +25,14 @@ it("renders one row per report with its label", () => {
 })
 
 it("renders every status icon variant without throwing", () => {
-  const statuses: StepReport["status"][] = ["pending", "running", "done", "error", "skipped"]
+  const statuses: StepReport["status"][] = [
+    "pending",
+    "running",
+    "done",
+    "error",
+    "skipped",
+    "warning",
+  ]
   render(<StepLog reports={statuses.map((s, i) => report({ id: `s${i}`, label: s, status: s }))} />)
   for (const s of statuses) expect(screen.getByText(s)).toBeInTheDocument()
 })

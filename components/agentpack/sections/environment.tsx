@@ -5,8 +5,6 @@ import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { RUNTIMES } from "@/lib/agentpack/registry"
 import { runtimeInstallStep } from "@/lib/agentpack/plan"
-import { isTauri } from "@/lib/tauri"
-import { detectRuntime } from "@/lib/tauri/commands"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
@@ -15,17 +13,14 @@ import { useRunnerCtx } from "../run/runner-context"
 export function EnvironmentSection() {
   const t = useT()
   const detections = useAppStore((s) => s.detections)
-  const setDetection = useAppStore((s) => s.setDetection)
-  const dryRun = useAppStore((s) => s.dryRun)
   const effectiveOS = useAppStore((s) => s.effectiveOS)
   const { run } = useRunnerCtx()
 
-  const installNow = async (rt: (typeof RUNTIMES)[number]) => {
+  const installNow = (rt: (typeof RUNTIMES)[number]) => {
     const cmd = rt.install[effectiveOS()]
     if (!cmd) return
-    await run([runtimeInstallStep(rt.id, cmd, t)])
-    // Re-detect after a real install so the badge flips to "installed".
-    if (!dryRun && isTauri()) setDetection(rt.id, await detectRuntime(rt))
+    // The central afterRun hook re-detects runtimes once the install completes.
+    void run([runtimeInstallStep(rt.id, cmd, t)])
   }
 
   return (

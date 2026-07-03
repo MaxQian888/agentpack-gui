@@ -121,6 +121,7 @@ export const en = {
     setupComplete: "Setup complete",
     counts: (ok: number, failed: number) => ` — ${ok} ok${failed ? `, ${failed} failed` : ""}`,
     failedSteps: "Failed steps:",
+    warnings: "Could not verify (a freshly installed CLI may need an app restart):",
     pendingKeys: "Set these env vars to activate skipped MCP keys:",
     nextSteps: "Next steps:",
     nextRunPrefix: "  • run ",

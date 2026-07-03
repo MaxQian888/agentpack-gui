@@ -1,5 +1,6 @@
 use serde::Serialize;
-use std::ffi::OsStr;
+use std::collections::HashSet;
+use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use tauri::ipc::Channel;
@@ -14,6 +15,138 @@ fn apply_no_window(c: &mut Command) {
 }
 #[cfg(not(windows))]
 fn apply_no_window(_c: &mut Command) {}
+
+/// Expand `%VAR%` references in a Windows registry PATH string. Registry PATH
+/// values are often `REG_EXPAND_SZ` (e.g. `%SystemRoot%\system32`), so the raw
+/// string must be expanded before it is usable. Unknown / unbalanced tokens are
+/// left verbatim.
+#[cfg(windows)]
+fn expand_env_vars(s: &str) -> String {
+  let mut out = String::with_capacity(s.len());
+  let mut rest = s;
+  while let Some(start) = rest.find('%') {
+    out.push_str(&rest[..start]);
+    let after = &rest[start + 1..];
+    match after.find('%') {
+      Some(end) => {
+        let name = &after[..end];
+        if name.is_empty() {
+          out.push('%'); // "%%" -> literal percent
+        } else if let Some(val) = std::env::var_os(name) {
+          out.push_str(&val.to_string_lossy());
+        } else {
+          out.push('%');
+          out.push_str(name);
+          out.push('%');
+        }
+        rest = &after[end + 1..];
+      }
+      None => {
+        out.push('%');
+        out.push_str(after);
+        rest = "";
+      }
+    }
+  }
+  out.push_str(rest);
+  out
+}
+
+/// Directories the running process's PATH may be missing but freshly-installed
+/// tools live in. On Windows this is the *live* persisted PATH from the registry
+/// (what a new `cmd` window would inherit) plus npm's global shim dir.
+#[cfg(windows)]
+fn extra_path_dirs() -> Vec<String> {
+  use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+  use winreg::RegKey;
+
+  let mut dirs = Vec::new();
+  let sources = [
+    (HKEY_CURRENT_USER, "Environment"),
+    (
+      HKEY_LOCAL_MACHINE,
+      r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+    ),
+  ];
+  for (hive, subkey) in sources {
+    if let Ok(key) = RegKey::predef(hive).open_subkey(subkey) {
+      if let Ok(path) = key.get_value::<String, _>("Path") {
+        for dir in expand_env_vars(&path).split(';') {
+          let d = dir.trim();
+          if !d.is_empty() {
+            dirs.push(d.to_string());
+          }
+        }
+      }
+    }
+  }
+  // `npm i -g` drops claude/codex `.cmd` shims here; not always on the stale PATH.
+  if let Some(appdata) = std::env::var_os("APPDATA") {
+    let mut p = std::path::PathBuf::from(appdata);
+    p.push("npm");
+    dirs.push(p.to_string_lossy().into_owned());
+  }
+  dirs
+}
+
+/// GUI apps launched from Finder/Dock inherit a minimal PATH that usually omits
+/// the dirs Homebrew, npm, cargo and per-user installs use — add them back.
+#[cfg(not(windows))]
+fn extra_path_dirs() -> Vec<String> {
+  let mut dirs = vec![
+    "/usr/local/bin".to_string(),
+    "/opt/homebrew/bin".to_string(),
+    "/opt/homebrew/sbin".to_string(),
+  ];
+  if let Some(home) = dirs::home_dir() {
+    for sub in [".local/bin", ".npm-global/bin", ".bun/bin", ".cargo/bin"] {
+      dirs.push(home.join(sub).to_string_lossy().into_owned());
+    }
+  }
+  dirs
+}
+
+/// Rebuild PATH from the live persisted sources on every spawn.
+///
+/// A GUI process inherits PATH at launch. When a runtime or CLI is installed
+/// mid-session — Node via winget, claude via `npm i -g` — the installer updates
+/// the *persisted* PATH (the Windows registry / a shell rc), but this already
+/// running process keeps its stale copy, so the new binary can't be found until
+/// the app restarts. Recomputing here (never cached) means detection and the
+/// next install step see freshly-installed tools immediately.
+fn augmented_path() -> OsString {
+  let mut parts: Vec<String> = Vec::new();
+  let mut seen: HashSet<String> = HashSet::new();
+  let mut add = |dir: String| {
+    if dir.is_empty() {
+      return;
+    }
+    // Windows paths are case-insensitive; dedup accordingly (keep first casing).
+    let key = if cfg!(windows) { dir.to_lowercase() } else { dir.clone() };
+    if seen.insert(key) {
+      parts.push(dir);
+    }
+  };
+
+  // Current process PATH first — tools already resolvable keep resolving fast.
+  if let Some(p) = std::env::var_os("PATH") {
+    for dir in std::env::split_paths(&p) {
+      add(dir.to_string_lossy().into_owned());
+    }
+  }
+  for dir in extra_path_dirs() {
+    add(dir);
+  }
+
+  std::env::join_paths(parts.iter())
+    .unwrap_or_else(|_| std::env::var_os("PATH").unwrap_or_default())
+}
+
+/// Give a spawned process the freshly-rebuilt PATH so session-installed tools
+/// are visible without an app restart.
+fn apply_env(c: &mut Command) {
+  c.env("PATH", augmented_path());
+}
 
 /// Build a `Command` that can actually launch the target on every OS.
 ///
@@ -38,6 +171,7 @@ where
     c
   };
   apply_no_window(&mut c);
+  apply_env(&mut c);
   c
 }
 
@@ -50,6 +184,12 @@ where
 #[tauri::command(async)]
 pub fn run_command(file: String, args: Vec<String>, on_event: Channel<String>) -> Result<i32, String> {
   let mut child = build_command(&file, &args)
+    // Detach stdin so an installer that prompts (e.g. a Y/N) gets EOF and fails
+    // fast instead of hanging forever on a GUI process with no console to answer.
+    .stdin(Stdio::null())
+    // Force non-interactive behaviour where tools honour it.
+    .env("CI", "1")
+    .env("npm_config_yes", "true")
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())
     .spawn()
@@ -105,6 +245,7 @@ fn on_path(bin: &str) -> bool {
   let mut c = Command::new(finder);
   c.arg(bin);
   apply_no_window(&mut c);
+  apply_env(&mut c);
   c.output().map(|o| o.status.success()).unwrap_or(false)
 }
 
@@ -164,6 +305,7 @@ pub fn is_process_running(name: String) -> bool {
     let mut c = Command::new("tasklist");
     c.args(["/fi", &format!("imagename eq {name}.exe"), "/nh"]);
     apply_no_window(&mut c);
+    apply_env(&mut c);
     c.output()
       .map(|o| {
         String::from_utf8_lossy(&o.stdout)
@@ -174,6 +316,7 @@ pub fn is_process_running(name: String) -> bool {
   } else {
     let mut c = Command::new("pgrep");
     c.args(["-x", &name]);
+    apply_env(&mut c);
     c.output().map(|o| o.status.success()).unwrap_or(false)
   }
 }
@@ -191,5 +334,19 @@ mod tests {
   #[test]
   fn missing_binary_not_installed() {
     assert!(!detect_cli("definitely-not-a-real-bin-xyz".into(), false).installed);
+  }
+
+  #[test]
+  fn augmented_path_preserves_base_entries() {
+    let aug = augmented_path();
+    assert!(!aug.is_empty());
+    let aug_dirs: Vec<_> = std::env::split_paths(&aug).collect();
+    if let Some(base) = std::env::var_os("PATH") {
+      for d in std::env::split_paths(&base) {
+        if !d.as_os_str().is_empty() {
+          assert!(aug_dirs.contains(&d), "augmented PATH dropped base dir {d:?}");
+        }
+      }
+    }
   }
 }

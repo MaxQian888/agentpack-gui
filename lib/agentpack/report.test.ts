@@ -72,6 +72,11 @@ describe("summarize", () => {
     expect(lines.join("\n")).toContain("✖ boom —")
   })
 
+  it("lists verification warnings under their own header", () => {
+    const lines = summarize([report({ status: "warning", label: "verify claude" })], basePlan)
+    expect(lines.join("\n")).toContain("⚠ verify claude")
+  })
+
   it("warns about MCP keys left pending", () => {
     const plan: Plan = { ...basePlan, mcps: [{ id: "context7", targets: ["claude"] }] }
     const lines = summarize([], plan)

@@ -14,7 +14,20 @@ export const RUNTIMES: readonly Runtime[] = [
     id: "node",
     bin: "node",
     install: {
-      win: { file: "winget", args: ["install", "-e", "--id", "OpenJS.NodeJS.LTS"] },
+      win: {
+        file: "winget",
+        args: [
+          "install",
+          "-e",
+          "--id",
+          "OpenJS.NodeJS.LTS",
+          // Non-interactive: skip winget's first-run source/package agreement
+          // prompts (a Y/N on stdin the windowless GUI child can't answer).
+          "--accept-source-agreements",
+          "--accept-package-agreements",
+          "--disable-interactivity",
+        ],
+      },
       mac: { file: "brew", args: ["install", "node"] },
       linux: null,
     },
@@ -39,7 +52,18 @@ export const RUNTIMES: readonly Runtime[] = [
     // macOS/Linux usually expose only `python3`.
     altBin: "python3",
     install: {
-      win: { file: "winget", args: ["install", "-e", "--id", "Python.Python.3.13"] },
+      win: {
+        file: "winget",
+        args: [
+          "install",
+          "-e",
+          "--id",
+          "Python.Python.3.13",
+          "--accept-source-agreements",
+          "--accept-package-agreements",
+          "--disable-interactivity",
+        ],
+      },
       mac: { file: "brew", args: ["install", "python"] },
       linux: null,
     },
@@ -111,12 +135,33 @@ export const CLI_TOOLS: readonly CliTool[] = [
     bin: "cc-switch",
     gui: true,
     install: {
-      win: { file: "winget", args: ["install", "-e", "--id", "farion1231.CC-Switch"] },
+      win: {
+        file: "winget",
+        args: [
+          "install",
+          "-e",
+          "--id",
+          "farion1231.CC-Switch",
+          "--accept-source-agreements",
+          "--accept-package-agreements",
+          "--disable-interactivity",
+        ],
+      },
       mac: { file: "brew", args: ["install", "--cask", "cc-switch"] },
       linux: null,
     },
     uninstall: {
-      win: { file: "winget", args: ["uninstall", "-e", "--id", "farion1231.CC-Switch"] },
+      win: {
+        file: "winget",
+        args: [
+          "uninstall",
+          "-e",
+          "--id",
+          "farion1231.CC-Switch",
+          "--accept-source-agreements",
+          "--disable-interactivity",
+        ],
+      },
       mac: { file: "brew", args: ["uninstall", "--cask", "cc-switch"] },
     },
     manualNote:

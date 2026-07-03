@@ -74,8 +74,13 @@ export async function runSteps(steps: StepDescriptor[], opts: RunOptions): Promi
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (step.kind === "command" && step.verifyOnly) {
+        // A failed verification doesn't abort the run, but it must not read as a
+        // green success either — surface it as a warning with an actionable hint.
         report.output.push(msg)
-        report.status = "done"
+        if (/command not found/i.test(msg)) {
+          report.output.push(m.coreOutput.notOnPathHint(step.command.file))
+        }
+        report.status = "warning"
       } else {
         report.status = "error"
         report.error = msg

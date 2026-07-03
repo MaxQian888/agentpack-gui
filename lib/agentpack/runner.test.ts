@@ -22,7 +22,7 @@ it("dry-run produces preview output and calls no mutating command", async () => 
   expect(api.runCommand).not.toHaveBeenCalled()
 })
 
-it("real command failure marks error but continues; verifyOnly swallows", async () => {
+it("real command failure marks error but continues; verifyOnly warns", async () => {
   ;(api.runCommand as jest.Mock).mockResolvedValue(1)
   const steps: StepDescriptor[] = [
     { kind: "command", id: "a", label: "a", command: { file: "x", args: [] } },
@@ -30,7 +30,8 @@ it("real command failure marks error but continues; verifyOnly swallows", async 
   ]
   const reports = await runSteps(steps, { dryRun: false, paths })
   expect(reports[0].status).toBe("error")
-  expect(reports[1].status).toBe("done")
+  // A failed verify no longer reads as a green success — it's a warning.
+  expect(reports[1].status).toBe("warning")
 })
 
 it("aborted signal skips remaining steps", async () => {
