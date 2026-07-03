@@ -19,6 +19,11 @@ import {
   pathExists,
   installSkill,
   ccLoadProviders,
+  launchApp,
+  listDir,
+  backupSnapshot,
+  backupList,
+  backupRestore,
 } from "./commands"
 import { invoke } from "@tauri-apps/api/core"
 
@@ -93,4 +98,19 @@ it("simple wrappers forward their arguments to the right command", async () => {
 
   await ccLoadProviders()
   expect(invoke).toHaveBeenCalledWith("cc_load_providers")
+
+  await launchApp({ file: "cc-switch", args: [] })
+  expect(invoke).toHaveBeenCalledWith("launch_app", { file: "cc-switch", args: [] })
+
+  await listDir("/d")
+  expect(invoke).toHaveBeenCalledWith("list_dir", { path: "/d" })
+
+  await backupSnapshot("provider write")
+  expect(invoke).toHaveBeenCalledWith("backup_snapshot", { reason: "provider write" })
+
+  await backupList()
+  expect(invoke).toHaveBeenCalledWith("backup_list")
+
+  await backupRestore("snapshot-1")
+  expect(invoke).toHaveBeenCalledWith("backup_restore", { id: "snapshot-1" })
 })
