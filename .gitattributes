@@ -1,0 +1,5 @@
+# Normalize line endings: git stores LF and checks out LF on every platform,
+# so Prettier's endOfLine:"lf" passes on Windows checkouts (core.autocrlf
+# would otherwise yield CRLF and fail `pnpm format:check`). Binary files are
+# auto-detected by `text=auto` and left untouched.
+* text=auto eol=lf
