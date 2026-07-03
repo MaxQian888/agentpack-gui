@@ -75,6 +75,21 @@ pub fn run_command(file: String, args: Vec<String>, on_event: Channel<String>) -
   Ok(status.code().unwrap_or(-1))
 }
 
+/// Launch a (usually GUI) app and return immediately without waiting for it to
+/// exit. Used to start cc-switch once so it self-initializes its SQLite database;
+/// `run_command` can't be reused because it blocks until the process ends, which
+/// a GUI app never does. stdio is detached so no pipes are held open.
+#[tauri::command(async)]
+pub fn launch_app(file: String, args: Vec<String>) -> Result<(), String> {
+  build_command(&file, &args)
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .spawn()
+    .map(|_| ())
+    .map_err(|e| format!("could not launch {file}: {e}"))
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DetectionResult {

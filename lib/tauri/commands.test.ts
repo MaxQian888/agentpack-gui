@@ -8,6 +8,7 @@ jest.mock("@tauri-apps/api/core", () => ({
 import {
   getPaths,
   detectCli,
+  detectRuntime,
   latestVersion,
   ccWriteProvider,
   runCommand,
@@ -28,6 +29,24 @@ it("getPaths invokes get_paths", async () => {
 it("detectCli passes bin + gui", async () => {
   await detectCli("claude", false)
   expect(invoke).toHaveBeenCalledWith("detect_cli", { bin: "claude", gui: false })
+})
+
+it("detectRuntime falls back to altBin when the primary bin is missing", async () => {
+  ;(invoke as jest.Mock)
+    .mockResolvedValueOnce({ installed: false })
+    .mockResolvedValueOnce({ installed: true, version: "Python 3.13.1" })
+  const d = await detectRuntime({ bin: "python", altBin: "python3" })
+  expect(d).toEqual({ installed: true, version: "Python 3.13.1" })
+  expect(invoke).toHaveBeenCalledWith("detect_cli", { bin: "python", gui: false })
+  expect(invoke).toHaveBeenCalledWith("detect_cli", { bin: "python3", gui: false })
+})
+
+it("detectRuntime stops at the primary bin when it is installed", async () => {
+  ;(invoke as jest.Mock).mockResolvedValueOnce({ installed: true, version: "1.0" })
+  const calls = (invoke as jest.Mock).mock.calls.length
+  const d = await detectRuntime({ bin: "uv" })
+  expect(d.installed).toBe(true)
+  expect((invoke as jest.Mock).mock.calls.length).toBe(calls + 1)
 })
 
 it("latestVersion passes the package under `package`", async () => {

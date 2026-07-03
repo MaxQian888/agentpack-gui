@@ -37,9 +37,11 @@ export interface CliTool {
  * runtime installer rather than npm. Display text lives in the i18n catalog.
  */
 export interface Runtime {
-  id: "node" | "bun"
+  id: "node" | "bun" | "python" | "uv"
   /** Binary name to probe on PATH for detection. */
   bin: string
+  /** Fallback binary name to probe when `bin` is absent (e.g. python3 vs python). */
+  altBin?: string
   /** Per-OS install command. `null` => no automated installer on this OS. */
   install: Record<OS, Command | null>
   /** Fallback note shown when install is null for the current OS. */
@@ -104,6 +106,7 @@ export interface Paths {
   claudeSettings: string
   claudeSkillsDir: string
   codexConfig: string
+  codexAuth: string
   codexSkillsDir: string
   ccSwitchSettings: string
   ccSwitchDb: string
@@ -119,10 +122,13 @@ export type StepKind =
   | "ccProvider"
   | "ccVisibleApps"
   | "fileRestore"
+  | "snapshot"
 
 interface StepBase {
   id: string
   label: string
+  /** Ids of earlier steps this one needs; if any of them failed, this step is skipped. */
+  dependsOn?: string[]
 }
 
 /** Run a CLI command. `verifyOnly` steps swallow failures into output. */
@@ -178,6 +184,12 @@ export interface FileRestoreStep extends StepBase {
   backupPath: string
 }
 
+/** Snapshot the cc-switch DB + live configs into the listable backup history. */
+export interface SnapshotStep extends StepBase {
+  kind: "snapshot"
+  reason: string
+}
+
 export type StepDescriptor =
   | CommandStep
   | InfoStep
@@ -187,6 +199,7 @@ export type StepDescriptor =
   | CcProviderStep
   | CcVisibleAppsStep
   | FileRestoreStep
+  | SnapshotStep
 
 export interface StepReport {
   id: string
@@ -194,4 +207,6 @@ export interface StepReport {
   status: StepStatus
   output: string[]
   error?: string
+  /** Wall-clock execution time, set once the step finishes (done or error). */
+  durationMs?: number
 }

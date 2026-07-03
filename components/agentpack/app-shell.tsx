@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { isTauri } from "@/lib/tauri"
-import { detectCli, getPaths, latestVersion } from "@/lib/tauri/commands"
+import { detectCli, detectRuntime, getPaths, latestVersion } from "@/lib/tauri/commands"
 import { buildSteps } from "@/lib/agentpack/plan"
 import { CLI_TOOLS, RUNTIMES } from "@/lib/agentpack/registry"
 import { useAppStore } from "@/store/app-store"
@@ -70,7 +70,7 @@ function ShellBody() {
       .catch(() => {})
     Promise.all([
       ...CLI_TOOLS.map(async (tool) => [tool.id, await detectCli(tool.bin, !!tool.gui)] as const),
-      ...RUNTIMES.map(async (rt) => [rt.id, await detectCli(rt.bin, false)] as const),
+      ...RUNTIMES.map(async (rt) => [rt.id, await detectRuntime(rt)] as const),
     ])
       .then((entries) => {
         setDetections(Object.fromEntries(entries))

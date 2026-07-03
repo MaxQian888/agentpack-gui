@@ -17,6 +17,7 @@ const paths: Paths = {
   claudeSettings: "/h/.claude/settings.json",
   claudeSkillsDir: "/h/.claude/skills",
   codexConfig: "/h/.codex/config.toml",
+  codexAuth: "/h/.codex/auth.json",
   codexSkillsDir: "/h/.codex/skills",
   ccSwitchSettings: "/h/.cc-switch/settings.json",
   ccSwitchDb: "/h/.cc-switch/cc-switch.db",

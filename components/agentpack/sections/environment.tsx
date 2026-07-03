@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { RUNTIMES } from "@/lib/agentpack/registry"
 import { runtimeInstallStep } from "@/lib/agentpack/plan"
 import { isTauri } from "@/lib/tauri"
-import { detectCli } from "@/lib/tauri/commands"
+import { detectRuntime } from "@/lib/tauri/commands"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
@@ -25,7 +25,7 @@ export function EnvironmentSection() {
     if (!cmd) return
     await run([runtimeInstallStep(rt.id, cmd, t)])
     // Re-detect after a real install so the badge flips to "installed".
-    if (!dryRun && isTauri()) setDetection(rt.id, await detectCli(rt.bin, false))
+    if (!dryRun && isTauri()) setDetection(rt.id, await detectRuntime(rt))
   }
 
   return (

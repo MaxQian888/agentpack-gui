@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Progress } from "@/components/ui/progress"
 import {
   Sheet,
   SheetContent,
@@ -23,6 +24,7 @@ export function ExecutionPanel() {
   const { reports, running, dryRun, awaitingConfirm, confirm, retry, cancel } = useRunnerCtx()
   const finished = !running && !awaitingConfirm && reports.length > 0
   const hasErrors = reports.some((r) => r.status === "error")
+  const doneCount = reports.filter((r) => r.status !== "pending" && r.status !== "running").length
 
   return (
     <Sheet open={open} onOpenChange={setPanelOpen}>
@@ -40,6 +42,15 @@ export function ExecutionPanel() {
             {awaitingConfirm ? t.review.title : dryRun ? t.review.dryRunSuffix.trim() : t.brand}
           </SheetDescription>
         </SheetHeader>
+
+        {reports.length > 0 && !awaitingConfirm ? (
+          <div className="flex items-center gap-3 px-4 pb-3">
+            <Progress value={(doneCount / reports.length) * 100} className="h-1.5 flex-1" />
+            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+              {doneCount}/{reports.length}
+            </span>
+          </div>
+        ) : null}
 
         <div className="flex-1 space-y-4 overflow-auto px-4">
           {finished ? <Summary reports={reports} dryRun={dryRun} /> : null}

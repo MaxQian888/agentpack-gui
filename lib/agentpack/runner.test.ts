@@ -7,6 +7,7 @@ import type { Paths, StepDescriptor } from "./types"
 const paths = {
   home: "/h",
   codexConfig: "/h/.codex/config.toml",
+  codexAuth: "/h/.codex/auth.json",
   claudeSkillsDir: "/h/.claude/skills",
   codexSkillsDir: "/h/.codex/skills",
 } as Paths
@@ -40,6 +41,8 @@ it("aborted signal skips remaining steps", async () => {
   ]
   const reports = await runSteps(steps, { dryRun: false, paths, signal: ctrl.signal })
   expect(reports[0].status).toBe("skipped")
+  // The step log says why it was skipped instead of showing an empty entry.
+  expect(reports[0].output.join("\n")).toContain("cancelled")
 })
 
 it("successful command logs the printable line and streams output", async () => {
@@ -185,4 +188,68 @@ it("a non-verify command throwing is recorded as error", async () => {
   const reports = await runSteps(steps, { dryRun: false, paths })
   expect(reports[0].status).toBe("error")
   expect(reports[0].error).toBe("network down")
+})
+
+it("skips dependents (transitively) when a required step fails", async () => {
+  ;(api.runCommand as jest.Mock).mockResolvedValue(1)
+  const steps: StepDescriptor[] = [
+    { kind: "command", id: "a", label: "Install Node.js", command: { file: "winget", args: [] } },
+    {
+      kind: "command",
+      id: "b",
+      label: "b",
+      command: { file: "npm", args: [] },
+      dependsOn: ["a"],
+    },
+    {
+      kind: "command",
+      id: "c",
+      label: "c",
+      command: { file: "claude", args: [] },
+      dependsOn: ["b"],
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(reports[0].status).toBe("error")
+  expect(reports[1].status).toBe("skipped")
+  expect(reports[1].output.join("\n")).toContain("Install Node.js")
+  expect(reports[2].status).toBe("skipped")
+  // Only the failing step actually ran.
+  expect(api.runCommand).toHaveBeenCalledTimes(1)
+})
+
+it("dependsOn is ignored in dry-run (nothing can fail)", async () => {
+  const steps: StepDescriptor[] = [
+    { kind: "command", id: "a", label: "a", command: { file: "x", args: [] } },
+    { kind: "command", id: "b", label: "b", command: { file: "y", args: [] }, dependsOn: ["a"] },
+  ]
+  const reports = await runSteps(steps, { dryRun: true, paths })
+  expect(reports.map((r) => r.status)).toEqual(["done", "done"])
+})
+
+it("appends an actionable hint when the binary cannot be spawned", async () => {
+  ;(api.runCommand as jest.Mock).mockRejectedValue(new Error("command not found: npm (os error 2)"))
+  const npmStep: StepDescriptor[] = [
+    { kind: "command", id: "n", label: "n", command: { file: "npm", args: ["i"] } },
+  ]
+  const npmReports = await runSteps(npmStep, { dryRun: false, paths })
+  expect(npmReports[0].output.join("\n")).toMatch(/Node\.js/)
+  ;(api.runCommand as jest.Mock).mockRejectedValue(
+    new Error("command not found: claude (os error 2)")
+  )
+  const cliStep: StepDescriptor[] = [
+    { kind: "command", id: "c", label: "c", command: { file: "claude", args: [] } },
+  ]
+  const cliReports = await runSteps(cliStep, { dryRun: false, paths })
+  expect(cliReports[0].output.join("\n")).toMatch(/"claude" is not on PATH/)
+})
+
+it("records the step duration once it finishes", async () => {
+  ;(api.runCommand as jest.Mock).mockResolvedValue(0)
+  const steps: StepDescriptor[] = [
+    { kind: "command", id: "c", label: "c", command: { file: "echo", args: [] } },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(typeof reports[0].durationMs).toBe("number")
+  expect(reports[0].durationMs!).toBeGreaterThanOrEqual(0)
 })

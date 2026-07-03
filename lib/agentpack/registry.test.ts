@@ -17,6 +17,13 @@ it("runtime finder resolves node and bun by id", () => {
   expect(findRuntime("nope")).toBeUndefined()
 })
 
+it("python probes python3 as a fallback; uv installs on every OS", () => {
+  expect(findRuntime("python")?.altBin).toBe("python3")
+  for (const os of ["win", "mac", "linux"] as const) {
+    expect(findRuntime("uv")?.install[os]).not.toBeNull()
+  }
+})
+
 it("everything preset covers the whole MCP registry", () => {
   const e = findPreset("everything")!
   expect(e.mcps.length).toBe(MCP_SERVERS.length)

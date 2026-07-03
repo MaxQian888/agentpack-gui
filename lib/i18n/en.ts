@@ -68,7 +68,8 @@ export const en = {
 
   environment: {
     title: "Runtime environment",
-    subtitle: "The agent CLIs need Node.js (with npm). Bun is an optional faster runtime.",
+    subtitle:
+      "The agent CLIs need Node.js (with npm). Bun is an optional faster runtime; Python and uv power Python-based MCP servers and tooling.",
     detecting: "Detecting installed runtimes…",
     installHint: "Missing a runtime? Install it directly — detection re-runs after each install.",
     noInstaller: "No automated installer on this OS — see the note below.",
@@ -180,6 +181,14 @@ export const en = {
         title: "Bun",
         description: "Fast all-in-one JavaScript runtime & package manager (optional).",
       },
+      python: {
+        title: "Python",
+        description: "Python 3 — needed by Python-based MCP servers, scripts and tooling.",
+      },
+      uv: {
+        title: "uv",
+        description: "Fast Python package & project manager — runs Python MCP servers via uvx.",
+      },
     } as Record<string, { title: string; description: string }>,
     skills: {
       "cpp-cmake": {
@@ -277,6 +286,10 @@ export const en = {
     uninstallCli: (title: string) => `Uninstall ${title}`,
     noUninstaller: (title: string) => `No automated uninstaller for ${title} on this OS.`,
     restoreFile: (path: string) => `Restore ${path} from backup`,
+    snapshot: "Back up cc-switch DB and live configs",
+    syncClaude: "Sync provider → Claude Code settings.json",
+    syncCodex: "Sync provider → Codex config.toml",
+    syncCodexAuth: "Sync provider → Codex auth.json",
   },
 
   /** Low-level execution / file output lines from exec/skills/configfiles. */
@@ -293,6 +306,14 @@ export const en = {
     backup: (path: string) => `backup → ${path}`,
     restore: (src: string, dest: string) => `restore ${src} -> ${dest}`,
     wouldRestore: (src: string, dest: string) => `would restore ${src} -> ${dest}`,
+    snapshot: (id: string) => `backed up → ${id}`,
+    wouldSnapshot: "would back up cc-switch DB and live configs",
+    skippedDependency: (label: string) => `skipped — required step "${label}" failed`,
+    skippedCancelled: "skipped — run cancelled",
+    notOnPathHint: (file: string) =>
+      `"${file}" is not on PATH — install it first, or restart agentpack if it was just installed.`,
+    npmMissingHint:
+      "npm is missing — install Node.js (Runtime environment section), restart agentpack, then retry.",
   },
 
   /** Main menu + shared menu navigation. */
@@ -353,7 +374,27 @@ export const en = {
     providersTitle: "cc-switch providers",
     runtimeWarning: (current: string, min: string) =>
       `Provider management needs Node ≥ ${min} (node:sqlite); current Node is ${current}. Upgrade Node, or use the standalone binary.`,
-    noDb: "cc-switch database not found. Launch cc-switch once, then return here.",
+    noDb: "cc-switch database not found. Initialize it below, then return here.",
+    initDb: "Initialize database",
+    initDbHint:
+      "cc-switch stores providers in a SQLite database it creates on first launch. Click to launch cc-switch once so agentpack can manage providers.",
+    initializing: "Launching cc-switch and waiting for its database…",
+    initTimeout:
+      "Timed out waiting for the database. Make sure cc-switch finished launching, then refresh.",
+    dbReady: "Database ready. Close cc-switch before editing providers here.",
+    refresh: "Refresh",
+    checking: "Checking cc-switch…",
+    loading: "Loading…",
+    runningTitle: "cc-switch is running",
+    runningHint:
+      "Close cc-switch before editing providers here — changes are blocked while it's open. Then click Refresh.",
+    deleteConfirm:
+      "Delete this provider from cc-switch? A snapshot is taken first, but this removes it.",
+    setCurrentConfirm:
+      "Set as current and overwrite the live config (Claude settings.json / Codex config.toml)? A snapshot is taken first.",
+    restoreFailed: "Restore failed. See the logs for details.",
+    initLaunchFailed: "Couldn't launch cc-switch. Make sure it's installed, then try again.",
+    loadFailed: "Couldn't read the cc-switch state. Click Refresh to retry.",
     empty: "No providers yet.",
     addProvider: "+ Add provider",
     addRecommended: (label: string) => `★ Add recommended: ${label}`,
@@ -363,7 +404,18 @@ export const en = {
     rowActionSetCurrent: "Set as current",
     rowActionBack: "Back",
     setCurrentNote:
-      "Note: this only flips the cc-switch DB flag — open cc-switch to sync it to the live config.",
+      "Setting a provider as current also syncs its env into the live config (Claude settings.json / Codex config.toml).",
+    syncCurrent: "Sync current to live config",
+    syncHint:
+      "Write each app's current provider into ~/.claude/settings.json and ~/.codex/config.toml.",
+    syncNoCurrent: "No current provider to sync.",
+    backupsTitle: "Backups & restore",
+    backupsHint: "Every provider change and sync snapshots the DB and live configs here.",
+    noBackups: "No backups yet.",
+    restore: "Restore",
+    restoreConfirm: "Restore this backup? Current DB and live configs are snapshotted first.",
+    restored: "Restored from backup.",
+    backupFiles: (n: number) => `${n} file${n === 1 ? "" : "s"}`,
     formAddTitle: "Add provider",
     formEditTitle: "Edit provider",
     fieldName: "Name:",

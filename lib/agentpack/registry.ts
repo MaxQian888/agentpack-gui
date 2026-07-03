@@ -3,10 +3,11 @@ import type { CliTool, McpServer, Runtime, SkillDef } from "./types"
 /**
  * Language runtimes the agent CLIs depend on. Node (with npm) is the base
  * runtime every npm-installed CLI needs; Bun is an optional faster alternative.
+ * Python (+ uv) powers Python-based MCP servers and tooling.
  *
- * Install strategy: Node uses the OS app manager (winget/brew); Bun uses its
- * official installer on every OS (PowerShell on Windows, `curl … | bash` on
- * macOS/Linux). `null` => no automated path.
+ * Install strategy: Node/Python use the OS app manager (winget/brew); Bun and
+ * uv use their official installers on every OS (PowerShell on Windows,
+ * `curl … | sh` on macOS/Linux). `null` => no automated path.
  */
 export const RUNTIMES: readonly Runtime[] = [
   {
@@ -31,6 +32,29 @@ export const RUNTIMES: readonly Runtime[] = [
       linux: { file: "bash", args: ["-c", "curl -fsSL https://bun.sh/install | bash"] },
     },
     manualNote: "See https://bun.sh for manual installation instructions.",
+  },
+  {
+    id: "python",
+    bin: "python",
+    // macOS/Linux usually expose only `python3`.
+    altBin: "python3",
+    install: {
+      win: { file: "winget", args: ["install", "-e", "--id", "Python.Python.3.13"] },
+      mac: { file: "brew", args: ["install", "python"] },
+      linux: null,
+    },
+    manualNote:
+      "On Linux, install Python 3 via your package manager (apt/dnf/pacman) — see https://www.python.org/downloads/",
+  },
+  {
+    id: "uv",
+    bin: "uv",
+    install: {
+      win: { file: "powershell", args: ["-c", "irm https://astral.sh/uv/install.ps1 | iex"] },
+      mac: { file: "bash", args: ["-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"] },
+      linux: { file: "bash", args: ["-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"] },
+    },
+    manualNote: "See https://docs.astral.sh/uv/getting-started/installation/ for manual install.",
   },
 ]
 

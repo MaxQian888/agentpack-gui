@@ -15,8 +15,10 @@ export interface RunOptions {
 
 /**
  * Run descriptors sequentially. A failing step is recorded but does NOT abort
- * the rest (verifyOnly steps swallow errors into output). Cancellation is
- * checked between steps only — a running step always finishes.
+ * the rest (verifyOnly steps swallow errors into output) — except steps whose
+ * `dependsOn` names a failed step, which are skipped instead of failing with a
+ * confusing follow-on error. Cancellation is checked between steps only — a
+ * running step always finishes.
  *
  * Dry-run is structural: it renders preview lines locally and NEVER calls a
  * mutating Rust command.
@@ -29,6 +31,8 @@ export async function runSteps(steps: StepDescriptor[], opts: RunOptions): Promi
     status: "pending",
     output: [],
   }))
+  // Ids of steps that failed or were skipped — dependents of these are skipped.
+  const unmet = new Set<string>()
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i]
@@ -36,6 +40,18 @@ export async function runSteps(steps: StepDescriptor[], opts: RunOptions): Promi
 
     if (opts.signal?.aborted) {
       report.status = "skipped"
+      report.output.push(m.coreOutput.skippedCancelled)
+      opts.onUpdate?.(report, i)
+      continue
+    }
+
+    // Dry-run never fails, so dependencies only gate real runs.
+    const failedDep = !opts.dryRun && step.dependsOn?.find((d) => unmet.has(d))
+    if (failedDep) {
+      const depLabel = reports.find((r) => r.id === failedDep)?.label ?? failedDep
+      report.status = "skipped"
+      report.output.push(m.coreOutput.skippedDependency(depLabel))
+      unmet.add(step.id)
       opts.onUpdate?.(report, i)
       continue
     }
@@ -47,6 +63,7 @@ export async function runSteps(steps: StepDescriptor[], opts: RunOptions): Promi
       opts.onUpdate?.(report, i)
     }
 
+    const startedAt = Date.now()
     try {
       if (opts.dryRun) {
         for (const line of previewLines(step, opts.paths, m)) log(line)
@@ -62,8 +79,20 @@ export async function runSteps(steps: StepDescriptor[], opts: RunOptions): Promi
       } else {
         report.status = "error"
         report.error = msg
+        unmet.add(step.id)
+        // A spawn failure means the binary is missing — tell the user what to
+        // do instead of leaving them with a raw OS error.
+        if (step.kind === "command" && /command not found/i.test(msg)) {
+          const file = step.command.file
+          report.output.push(
+            file === "npm" || file === "npx"
+              ? m.coreOutput.npmMissingHint
+              : m.coreOutput.notOnPathHint(file)
+          )
+        }
       }
     }
+    report.durationMs = Date.now() - startedAt
     opts.onUpdate?.(report, i)
   }
 
@@ -117,6 +146,11 @@ async function execute(
         log(m.coreOutput.delete(d))
         await api.removeDir(d)
       }
+      return
+    }
+    case "snapshot": {
+      const entry = await api.backupSnapshot(step.reason)
+      log(m.coreOutput.snapshot(entry.id))
       return
     }
     case "ccProvider": {

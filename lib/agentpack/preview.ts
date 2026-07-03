@@ -41,5 +41,7 @@ export function previewLines(
     }
     case "fileRestore":
       return [out.wouldRestore(step.backupPath, step.path)]
+    case "snapshot":
+      return [out.wouldSnapshot]
   }
 }

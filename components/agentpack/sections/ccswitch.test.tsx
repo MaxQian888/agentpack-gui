@@ -1,4 +1,7 @@
 jest.mock("@/lib/tauri", () => ({ isTauri: () => true }))
+jest.mock("sonner", () => ({
+  toast: { success: jest.fn(), error: jest.fn(), message: jest.fn() },
+}))
 jest.mock("@/lib/tauri/commands", () => ({
   detectCli: jest.fn(async () => ({ installed: false })),
   ccLoadProviders: jest.fn(async () => [
@@ -11,21 +14,48 @@ jest.mock("@/lib/tauri/commands", () => ({
   readTextFile: jest.fn(async () => "{}"),
   writeTextFile: jest.fn(async () => undefined),
   ccWriteProvider: jest.fn(async () => ["ok"]),
+  launchApp: jest.fn(async () => undefined),
+  isProcessRunning: jest.fn(async () => false),
+  pathExists: jest.fn(async () => true),
+  backupList: jest.fn(async () => [] as unknown[]),
+  backupSnapshot: jest.fn(async () => ({ id: "snapshot-1", ts: 1, reason: "x", files: [] })),
+  backupRestore: jest.fn(async () => ["/h/.claude/settings.json"]),
 }))
 
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { RunnerProvider } from "../run/runner-context"
 import { useAppStore } from "@/store/app-store"
-import { ccWriteProvider, runCommand, writeTextFile, ccLoadProviders } from "@/lib/tauri/commands"
+import { toast } from "sonner"
+import {
+  ccWriteProvider,
+  runCommand,
+  writeTextFile,
+  ccLoadProviders,
+  readTextFile,
+  isProcessRunning,
+  backupList,
+  backupRestore,
+} from "@/lib/tauri/commands"
 import { CcSwitchSection } from "./ccswitch"
 import { en } from "@/lib/i18n/en"
 
 const CC_SETTINGS = "/h/.cc-switch/settings.json"
-const paths = { ccSwitchSettings: CC_SETTINGS, os: "mac" } as never
+const paths = {
+  ccSwitchSettings: CC_SETTINGS,
+  ccSwitchDb: "/h/.cc-switch/cc-switch.db",
+  claudeSettings: "/h/.claude/settings.json",
+  codexConfig: "/h/.codex/config.toml",
+  codexAuth: "/h/.codex/auth.json",
+  os: "mac",
+} as never
 
 beforeEach(() => {
+  jest.clearAllMocks()
+  // clearAllMocks keeps implementations, so restore the running=false default that
+  // the "while running" test overrides with a persistent mockResolvedValue(true).
+  ;(isProcessRunning as jest.Mock).mockResolvedValue(false)
   useAppStore.setState({ paths, dryRun: false, panelOpen: false, osOverride: null })
 })
 
@@ -59,10 +89,11 @@ it("applies the visible-apps selection", async () => {
 
 it("toggles a visible-app switch", async () => {
   renderCc()
-  const geminiSwitch = screen.getByLabelText(en.ccswitch.appLabels.gemini)
-  expect(geminiSwitch).not.toBeChecked()
+  const geminiSwitch = await screen.findByLabelText(en.ccswitch.appLabels.gemini)
+  // "{}" on disk → cc-switch treats absent apps as shown → the switch loads checked.
+  await waitFor(() => expect(geminiSwitch).toBeChecked())
   await userEvent.click(geminiSwitch)
-  expect(geminiSwitch).toBeChecked()
+  expect(geminiSwitch).not.toBeChecked()
 })
 
 it("adds a provider through the form", async () => {
@@ -120,15 +151,21 @@ it("sets a provider as current", async () => {
   renderCc()
   await screen.findByText("Mine")
   await userEvent.click(screen.getByRole("button", { name: en.ccswitch.rowActionSetCurrent }))
+  const dialog = await screen.findByRole("alertdialog")
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: en.ccswitch.rowActionSetCurrent })
+  )
   await waitFor(() =>
     expect(ccWriteProvider).toHaveBeenCalledWith(expect.objectContaining({ op: "setCurrent" }))
   )
 })
 
-it("deletes a non-current provider", async () => {
+it("deletes a non-current provider after confirmation", async () => {
   renderCc()
   await screen.findByText("Mine")
   await userEvent.click(screen.getByRole("button", { name: en.ccswitch.rowActionDelete }))
+  const dialog = await screen.findByRole("alertdialog")
+  await userEvent.click(within(dialog).getByRole("button", { name: en.ccswitch.rowActionDelete }))
   await waitFor(() =>
     expect(ccWriteProvider).toHaveBeenCalledWith(expect.objectContaining({ op: "delete" }))
   )
@@ -144,4 +181,151 @@ it("falls back to the no-db message when the list is empty", async () => {
   ;(ccLoadProviders as jest.Mock).mockResolvedValueOnce([])
   renderCc()
   expect(await screen.findByText(en.ccswitch.empty)).toBeInTheDocument()
+})
+
+it("reflects the visible-apps selection read from disk", async () => {
+  // A gemini=true settings.json on disk must flip the switch on load, instead of
+  // always showing the DEFAULT_VISIBLE_APPS (gemini=false).
+  ;(readTextFile as jest.Mock).mockResolvedValueOnce(
+    JSON.stringify({ visibleApps: { gemini: true } })
+  )
+  renderCc()
+  await waitFor(() => expect(screen.getByLabelText(en.ccswitch.appLabels.gemini)).toBeChecked())
+})
+
+it("syncs the live config when setting a provider as current", async () => {
+  renderCc()
+  await screen.findByText("Mine")
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.rowActionSetCurrent }))
+  const dialog = await screen.findByRole("alertdialog")
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: en.ccswitch.rowActionSetCurrent })
+  )
+  await waitFor(() =>
+    expect(ccWriteProvider).toHaveBeenCalledWith(expect.objectContaining({ op: "setCurrent" }))
+  )
+  // The claude provider's env is written into the live settings.json too.
+  await waitFor(() =>
+    expect(writeTextFile).toHaveBeenCalledWith("/h/.claude/settings.json", expect.any(String))
+  )
+})
+
+it("syncs the live config after editing the current provider", async () => {
+  ;(ccLoadProviders as jest.Mock).mockResolvedValueOnce([
+    { id: "1", app_type: "claude", name: "Mine", settings_config: "{}", is_current: true },
+  ])
+  renderCc()
+  await screen.findByText("Mine")
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.rowActionEdit }))
+  await userEvent.type(screen.getByLabelText(en.ccswitch.fieldToken), "new-token")
+  await userEvent.click(screen.getByRole("button", { name: en.shell.save }))
+  await waitFor(() =>
+    expect(ccWriteProvider).toHaveBeenCalledWith(expect.objectContaining({ op: "update" }))
+  )
+  // The edit lands on the live provider, so settings.json is rewritten with it.
+  await waitFor(() =>
+    expect(writeTextFile).toHaveBeenCalledWith(
+      "/h/.claude/settings.json",
+      expect.stringContaining("new-token")
+    )
+  )
+})
+
+it("does not sync when editing a provider that is not current", async () => {
+  renderCc()
+  await screen.findByText("Mine")
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.rowActionEdit }))
+  await userEvent.type(screen.getByLabelText(en.ccswitch.fieldToken), "new-token")
+  await userEvent.click(screen.getByRole("button", { name: en.shell.save }))
+  await waitFor(() =>
+    expect(ccWriteProvider).toHaveBeenCalledWith(expect.objectContaining({ op: "update" }))
+  )
+  expect(writeTextFile).not.toHaveBeenCalledWith("/h/.claude/settings.json", expect.any(String))
+})
+
+it("skips the live-config sync when the provider write fails", async () => {
+  ;(ccLoadProviders as jest.Mock).mockResolvedValueOnce([
+    { id: "1", app_type: "claude", name: "Mine", settings_config: "{}", is_current: true },
+  ])
+  ;(ccWriteProvider as jest.Mock).mockRejectedValueOnce("cc-switch is running")
+  renderCc()
+  await screen.findByText("Mine")
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.rowActionEdit }))
+  await userEvent.click(screen.getByRole("button", { name: en.shell.save }))
+  await waitFor(() => expect(ccWriteProvider).toHaveBeenCalled())
+  // The DB write failed, so the live config must stay untouched.
+  expect(writeTextFile).not.toHaveBeenCalledWith("/h/.claude/settings.json", expect.any(String))
+})
+
+it("syncs the first provider of an app live (the DB marks it current)", async () => {
+  renderCc()
+  await screen.findByText("Mine") // claude provider exists but is not current
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.addProvider }))
+  await userEvent.type(screen.getByLabelText(en.ccswitch.fieldName), "First")
+  await userEvent.type(screen.getByLabelText(en.ccswitch.fieldToken), "tok-1")
+  await userEvent.click(screen.getByRole("button", { name: en.shell.save }))
+  await waitFor(() =>
+    expect(ccWriteProvider).toHaveBeenCalledWith(expect.objectContaining({ op: "add" }))
+  )
+  await waitFor(() =>
+    expect(writeTextFile).toHaveBeenCalledWith(
+      "/h/.claude/settings.json",
+      expect.stringContaining("tok-1")
+    )
+  )
+})
+
+it("renders the backup history and restores an entry", async () => {
+  ;(backupList as jest.Mock).mockResolvedValue([
+    { id: "snapshot-9", ts: 1700000000000, reason: "provider write", files: [{}, {}] },
+  ])
+  renderCc()
+  expect(await screen.findByText("provider write")).toBeInTheDocument()
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.restore }))
+  const dialog = await screen.findByRole("alertdialog")
+  await userEvent.click(within(dialog).getByRole("button", { name: en.ccswitch.restore }))
+  await waitFor(() => expect(backupRestore).toHaveBeenCalledWith("snapshot-9"))
+  await waitFor(() => expect(toast.success).toHaveBeenCalledWith(en.ccswitch.restored))
+})
+
+it("toasts an error when a restore fails", async () => {
+  ;(backupList as jest.Mock).mockResolvedValue([
+    { id: "snapshot-9", ts: 1700000000000, reason: "provider write", files: [{}, {}] },
+  ])
+  ;(backupRestore as jest.Mock).mockRejectedValueOnce("cc-switch is running")
+  renderCc()
+  await screen.findByText("provider write")
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.restore }))
+  const dialog = await screen.findByRole("alertdialog")
+  await userEvent.click(within(dialog).getByRole("button", { name: en.ccswitch.restore }))
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith(en.ccswitch.restoreFailed))
+})
+
+it("blocks editing and warns while cc-switch is running", async () => {
+  ;(isProcessRunning as jest.Mock).mockResolvedValue(true)
+  renderCc()
+  await screen.findByText("Mine")
+  expect(await screen.findByText(en.ccswitch.runningTitle)).toBeInTheDocument()
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: en.ccswitch.rowActionEdit })).toBeDisabled()
+  )
+  expect(screen.getByRole("button", { name: en.ccswitch.addProvider })).toBeDisabled()
+  expect(ccWriteProvider).not.toHaveBeenCalled()
+})
+
+it("toasts and stops loading when the initial scan fails", async () => {
+  ;(ccLoadProviders as jest.Mock).mockRejectedValueOnce(new Error("db locked"))
+  renderCc()
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith(en.ccswitch.loadFailed))
+  // The failure must not wedge the UI in a permanent loading state.
+  await waitFor(() => expect(screen.queryByText(en.ccswitch.loading)).not.toBeInTheDocument())
+})
+
+it("shows a loading indicator before the first scan resolves", async () => {
+  renderCc()
+  // Synchronously after mount the async reload() has not resolved yet, so the
+  // providers/backups areas show a spinner rather than "database not found".
+  expect(screen.getAllByText(en.ccswitch.loading).length).toBeGreaterThan(0)
+  // Let the whole scan settle so its state updates don't fire outside act().
+  await waitFor(() => expect(screen.queryByText(en.ccswitch.loading)).not.toBeInTheDocument())
 })

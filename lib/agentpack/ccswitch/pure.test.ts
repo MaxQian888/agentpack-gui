@@ -1,5 +1,7 @@
 import { buildSettingsConfig, parseSettingsConfig } from "./provider"
 import { readVisibleApps, mergeVisibleApps, DEFAULT_VISIBLE_APPS } from "./settings"
+import { claudeSettingsFromProvider, codexAuthFromProvider, codexConfigFromProvider } from "./sync"
+import { parse } from "smol-toml"
 
 it("claude provider uses AUTH_TOKEN by default", () => {
   const json = JSON.parse(
@@ -134,4 +136,88 @@ it("parseSettingsConfig tolerates malformed settings_config", () => {
     claudeAuthKind: "auth_token",
     model: undefined,
   })
+})
+
+it("claudeSettingsFromProvider merges provider env and preserves other keys", () => {
+  const cfg = buildSettingsConfig({
+    name: "n",
+    app: "claude",
+    baseUrl: "https://b",
+    token: "tok",
+    claudeAuthKind: "auth_token",
+  })
+  const existing = JSON.stringify({ env: { FOO: "bar" }, theme: "dark" })
+  const out = JSON.parse(claudeSettingsFromProvider(existing, cfg))
+  expect(out.env.ANTHROPIC_AUTH_TOKEN).toBe("tok")
+  expect(out.env.ANTHROPIC_BASE_URL).toBe("https://b")
+  expect(out.env.FOO).toBe("bar") // unrelated env preserved
+  expect(out.theme).toBe("dark") // unrelated top-level field preserved
+})
+
+it("claudeSettingsFromProvider clears stale api_key when switching to auth_token", () => {
+  const cfg = buildSettingsConfig({
+    name: "n",
+    app: "claude",
+    baseUrl: "https://b",
+    token: "tok",
+    claudeAuthKind: "auth_token",
+  })
+  const existing = JSON.stringify({ env: { ANTHROPIC_API_KEY: "old-key" } })
+  const out = JSON.parse(claudeSettingsFromProvider(existing, cfg))
+  expect(out.env.ANTHROPIC_API_KEY).toBeUndefined()
+  expect(out.env.ANTHROPIC_AUTH_TOKEN).toBe("tok")
+})
+
+it("claudeSettingsFromProvider leaves the config untouched on malformed input", () => {
+  const existing = JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: "keep" } })
+  expect(claudeSettingsFromProvider(existing, "{ not json")).toBe(existing)
+})
+
+it("codexConfigFromProvider merges the provider TOML and preserves other tables", () => {
+  const cfg = buildSettingsConfig({
+    name: "prov",
+    app: "codex",
+    baseUrl: "https://b/v1",
+    token: "sk",
+    claudeAuthKind: "auth_token",
+    model: "gpt-5",
+  })
+  const existing = 'model_provider = "old"\n[mcp_servers.keep]\ncommand = "x"\n'
+  const out = parse(codexConfigFromProvider(existing, cfg)) as {
+    model_provider?: string
+    model?: string
+    model_providers?: { custom?: { base_url?: string } }
+    mcp_servers?: { keep?: unknown }
+  }
+  expect(out.model_provider).toBe("custom")
+  expect(out.model).toBe("gpt-5")
+  expect(out.model_providers?.custom?.base_url).toBe("https://b/v1")
+  expect(out.mcp_servers?.keep).toBeDefined() // unrelated table preserved
+})
+
+it("codexConfigFromProvider clears a stale model when the provider pins none", () => {
+  const cfg = buildSettingsConfig({
+    name: "prov",
+    app: "codex",
+    baseUrl: "https://b/v1",
+    token: "sk",
+    claudeAuthKind: "auth_token",
+    // no model
+  })
+  const existing = 'model = "left-by-previous-provider"\nmodel_provider = "old"\n'
+  const out = parse(codexConfigFromProvider(existing, cfg)) as { model?: string }
+  expect(out.model).toBeUndefined()
+})
+
+it("codexAuthFromProvider writes OPENAI_API_KEY and preserves other keys", () => {
+  const cfg = buildSettingsConfig({
+    name: "n",
+    app: "codex",
+    baseUrl: "https://b/v1",
+    token: "sk-123",
+    claudeAuthKind: "auth_token",
+  })
+  const out = JSON.parse(codexAuthFromProvider(JSON.stringify({ other: 1 }), cfg))
+  expect(out.OPENAI_API_KEY).toBe("sk-123")
+  expect(out.other).toBe(1)
 })

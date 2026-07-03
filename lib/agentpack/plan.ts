@@ -1,6 +1,6 @@
 import { en } from "@/lib/i18n/en"
 import type { Messages } from "@/lib/i18n/types"
-import { findCli, findMcp, findSkill } from "./registry"
+import { findCli, findMcp, findRuntime, findSkill } from "./registry"
 import {
   buildClaudeMcpCommand,
   buildClaudeMcpRemoveCommand,
@@ -17,14 +17,24 @@ import {
 } from "./merge/network"
 import { mergeVisibleApps } from "./ccswitch/settings"
 import { buildSettingsConfig } from "./ccswitch/provider"
+import {
+  claudeSettingsFromProvider,
+  codexAuthFromProvider,
+  codexConfigFromProvider,
+} from "./ccswitch/sync"
 import type { AgentTarget, CommandStep, Paths, Plan, Runtime, StepDescriptor } from "./types"
-import type { ProviderApp, ProviderForm, VisibleApps } from "./ccswitch/types"
+import type { Provider, ProviderApp, ProviderForm, VisibleApps } from "./ccswitch/types"
 
 /**
  * Materialize a Plan into ordered, declarative StepDescriptors.
- * Order: npm mirror → CLI installs → skills → MCP servers → relay config.
- * Closures (merge transforms) stay in TS; only their read/write primitives
- * cross IPC at run time. `messages` localizes labels (defaults to English).
+ * Order: npm mirror → runtime prerequisites → CLI installs → skills →
+ * MCP servers → relay config. Closures (merge transforms) stay in TS; only
+ * their read/write primitives cross IPC at run time. `messages` localizes
+ * labels (defaults to English). `installed` holds detected tool/runtime ids
+ * (from the dashboard scan) and drives upgrade-vs-install and prerequisites.
+ *
+ * Steps that can only succeed after an earlier step carry `dependsOn`, so the
+ * runner skips them (instead of failing noisily) when the prerequisite failed.
  */
 export function buildSteps(
   plan: Plan,
@@ -46,7 +56,34 @@ export function buildSteps(
     })
   }
 
-  // 2. CLI installs — already-installed tools upgrade; missing ones install.
+  // 2. Runtime prerequisite — npm-installed CLIs need Node.js (npm). When Node
+  // isn't detected, install it first and make the CLI installs depend on it.
+  const nodeStepId = "runtime-node"
+  let nodeStepIsCommand = false
+  const needsNode = plan.clis.some((id) => findCli(id)?.npmPackage)
+  if (needsNode && !installed.has("node")) {
+    const node = findRuntime("node")
+    const cmd = node?.install[plan.os]
+    const title = cat.runtime["node"]?.title ?? "Node.js"
+    if (node && cmd) {
+      nodeStepIsCommand = true
+      steps.push({
+        kind: "command",
+        id: nodeStepId,
+        label: t.installRuntime(title),
+        command: cmd,
+      })
+    } else {
+      steps.push({
+        kind: "info",
+        id: nodeStepId,
+        label: t.installRuntime(title),
+        lines: [node?.manualNote ?? t.noInstaller(title), t.manualInstall],
+      })
+    }
+  }
+
+  // 3. CLI installs — already-installed tools upgrade; missing ones install.
   for (const id of plan.clis) {
     const tool = findCli(id)
     if (!tool) continue
@@ -59,6 +96,8 @@ export function buildSteps(
         id: `cli-${id}`,
         label: upgrade ? t.upgradeCli(title) : t.installCli(title),
         command: cmd,
+        // Skip an npm install cleanly when the Node install itself failed.
+        dependsOn: tool.npmPackage && nodeStepIsCommand ? [nodeStepId] : undefined,
       })
     } else {
       // No automated installer on this OS — surface the manual note instead of silently skipping.
@@ -71,7 +110,14 @@ export function buildSteps(
     }
   }
 
-  // 3. Skills.
+  // Later steps that shell out to a CLI installed earlier in this same run
+  // depend on that install step (freshly-installed => not in `installed`).
+  const claudeDep =
+    plan.clis.includes("claude-code") && !installed.has("claude-code")
+      ? ["cli-claude-code"]
+      : undefined
+
+  // 4. Skills.
   for (const sk of plan.skills) {
     const def = findSkill(sk.id)
     if (!def || sk.targets.length === 0) continue
@@ -85,7 +131,7 @@ export function buildSteps(
     })
   }
 
-  // 4. MCP servers.
+  // 5. MCP servers.
   for (const m of plan.mcps) {
     const server = findMcp(m.id)
     if (!server || m.targets.length === 0) continue
@@ -98,6 +144,8 @@ export function buildSteps(
         id: `mcp-claude-${m.id}`,
         label: t.addMcpClaude(title),
         command: buildClaudeMcpCommand(server, key),
+        // `claude mcp add` needs the claude binary that step installs.
+        dependsOn: claudeDep,
       })
     }
     if (m.targets.includes("codex")) {
@@ -113,7 +161,7 @@ export function buildSteps(
     }
   }
 
-  // 5. Relay / API endpoint config.
+  // 6. Relay / API endpoint config.
   const net = plan.network
   if (net.apiBaseUrl || net.apiToken) {
     if (plan.clis.includes("claude-code")) {
@@ -388,4 +436,65 @@ export function providerStep(
       form: form ? { name: form.name, websiteUrl: form.websiteUrl, notes: form.notes } : undefined,
     },
   }
+}
+
+/** Snapshot the cc-switch DB + live configs into the listable backup history. */
+export function snapshotStep(reason: string, messages: Messages = en): StepDescriptor {
+  return {
+    kind: "snapshot",
+    id: "backup-snapshot",
+    label: messages.steps.snapshot,
+    reason,
+  }
+}
+
+/**
+ * Write a provider's `settings_config` into the live agent config so switching it
+ * actually takes effect. claude → settings.json; codex → config.toml + auth.json.
+ * Reuses the `mergeFile` machinery (read → `.agentpack.bak` → write).
+ *
+ * `dependsOn` should name the DB-write step these syncs follow, so a failed DB
+ * write never leaves the live config pointing at a provider that isn't current.
+ */
+export function syncLiveConfigSteps(
+  provider: Provider,
+  paths: Paths,
+  messages: Messages = en,
+  dependsOn?: string[]
+): StepDescriptor[] {
+  const s = messages.steps
+  const cfg = provider.settings_config
+  if (provider.app_type === "claude") {
+    return [
+      {
+        kind: "mergeFile",
+        id: "cc-sync-claude",
+        label: s.syncClaude,
+        path: paths.claudeSettings,
+        merge: (existing) => claudeSettingsFromProvider(existing, cfg),
+        writtenNote: s.claudeSettingsUpdated,
+        dependsOn,
+      },
+    ]
+  }
+  return [
+    {
+      kind: "mergeFile",
+      id: "cc-sync-codex-config",
+      label: s.syncCodex,
+      path: paths.codexConfig,
+      merge: (existing) => codexConfigFromProvider(existing, cfg),
+      writtenNote: s.codexProviderUpdated,
+      dependsOn,
+    },
+    {
+      kind: "mergeFile",
+      id: "cc-sync-codex-auth",
+      label: s.syncCodexAuth,
+      path: paths.codexAuth,
+      merge: (existing) => codexAuthFromProvider(existing, cfg),
+      writtenNote: s.codexProviderUpdated,
+      dependsOn,
+    },
+  ]
 }

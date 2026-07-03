@@ -65,7 +65,8 @@ export const zhCN = {
 
   environment: {
     title: "运行时环境",
-    subtitle: "Agent CLI 需要 Node.js（含 npm）。Bun 是可选的更快运行时。",
+    subtitle:
+      "Agent CLI 需要 Node.js（含 npm）。Bun 是可选的更快运行时；Python 与 uv 用于 Python 系 MCP 服务与工具。",
     detecting: "正在检测已安装的运行时…",
     installHint: "缺少运行时？直接安装即可——每次安装后会重新检测。",
     noInstaller: "本系统没有自动安装方式——请参见下方说明。",
@@ -172,6 +173,14 @@ export const zhCN = {
         title: "Bun",
         description: "快速的一体化 JavaScript 运行时与包管理器（可选）。",
       },
+      python: {
+        title: "Python",
+        description: "Python 3 —— Python 系 MCP 服务、脚本与工具的运行环境。",
+      },
+      uv: {
+        title: "uv",
+        description: "快速的 Python 包与项目管理器 —— 通过 uvx 运行 Python MCP 服务。",
+      },
     } as Record<string, { title: string; description: string }>,
     skills: {
       "cpp-cmake": {
@@ -268,6 +277,10 @@ export const zhCN = {
     uninstallCli: (title: string) => `卸载 ${title}`,
     noUninstaller: (title: string) => `本系统没有 ${title} 的自动卸载方式。`,
     restoreFile: (path: string) => `从备份恢复 ${path}`,
+    snapshot: "备份 cc-switch 数据库与实际配置",
+    syncClaude: "同步供应商 → Claude Code settings.json",
+    syncCodex: "同步供应商 → Codex config.toml",
+    syncCodexAuth: "同步供应商 → Codex auth.json",
   },
 
   coreOutput: {
@@ -283,6 +296,13 @@ export const zhCN = {
     backup: (path: string) => `备份 → ${path}`,
     restore: (src: string, dest: string) => `恢复 ${src} -> ${dest}`,
     wouldRestore: (src: string, dest: string) => `将恢复 ${src} -> ${dest}`,
+    snapshot: (id: string) => `已备份 → ${id}`,
+    wouldSnapshot: "将备份 cc-switch 数据库与实际配置",
+    skippedDependency: (label: string) => `已跳过 —— 依赖的步骤 “${label}” 失败了`,
+    skippedCancelled: "已跳过 —— 运行已取消",
+    notOnPathHint: (file: string) =>
+      `“${file}” 不在 PATH 中 —— 请先安装；如果刚刚安装过，请重启 agentpack。`,
+    npmMissingHint: "缺少 npm —— 请先在“运行时环境”里安装 Node.js，重启 agentpack 后重试。",
   },
 
   menu: {
@@ -341,7 +361,24 @@ export const zhCN = {
     providersTitle: "cc-switch 供应商",
     runtimeWarning: (current: string, min: string) =>
       `供应商管理需要 Node ≥ ${min}（node:sqlite）；当前 Node 为 ${current}。请升级 Node，或使用独立二进制版本。`,
-    noDb: "未找到 cc-switch 数据库。请先启动一次 cc-switch，再回到这里。",
+    noDb: "未找到 cc-switch 数据库。请在下方初始化，再回到这里。",
+    initDb: "初始化数据库",
+    initDbHint:
+      "cc-switch 首次启动时会创建用于存放供应商的 SQLite 数据库。点击启动一次 cc-switch，agentpack 便可管理供应商。",
+    initializing: "正在启动 cc-switch 并等待其生成数据库…",
+    initTimeout: "等待数据库超时。请确认 cc-switch 已完成启动，然后点击刷新。",
+    dbReady: "数据库已就绪。请关闭 cc-switch 后再在此编辑供应商。",
+    refresh: "刷新",
+    checking: "正在检测 cc-switch…",
+    loading: "加载中…",
+    runningTitle: "cc-switch 正在运行",
+    runningHint: "请先关闭 cc-switch 再在此编辑供应商——运行期间会阻止修改。关闭后点击刷新。",
+    deleteConfirm: "从 cc-switch 删除此供应商？会先快照，但此操作会将其移除。",
+    setCurrentConfirm:
+      "设为当前并覆盖实际生效配置（Claude settings.json / Codex config.toml）？会先快照。",
+    restoreFailed: "恢复失败。详情请查看日志。",
+    initLaunchFailed: "无法启动 cc-switch。请确认已安装后重试。",
+    loadFailed: "读取 cc-switch 状态失败。请点击“刷新”重试。",
     empty: "暂无供应商。",
     addProvider: "+ 添加供应商",
     addRecommended: (label: string) => `★ 添加推荐供应商：${label}`,
@@ -351,7 +388,17 @@ export const zhCN = {
     rowActionSetCurrent: "设为当前",
     rowActionBack: "返回",
     setCurrentNote:
-      "提示：仅修改 cc-switch 数据库标记 —— 需打开 cc-switch 才能同步到实际生效配置。",
+      "设为当前会同时把该供应商的 env 同步到实际生效配置（Claude settings.json / Codex config.toml）。",
+    syncCurrent: "同步当前供应商到实际配置",
+    syncHint: "把每个应用当前的供应商写入 ~/.claude/settings.json 与 ~/.codex/config.toml。",
+    syncNoCurrent: "没有可同步的当前供应商。",
+    backupsTitle: "备份与恢复",
+    backupsHint: "每次修改供应商或同步都会在此快照数据库与实际配置。",
+    noBackups: "暂无备份。",
+    restore: "恢复",
+    restoreConfirm: "恢复此备份？会先快照当前数据库与实际配置。",
+    restored: "已从备份恢复。",
+    backupFiles: (n: number) => `${n} 个文件`,
     formAddTitle: "添加供应商",
     formEditTitle: "编辑供应商",
     fieldName: "名称：",

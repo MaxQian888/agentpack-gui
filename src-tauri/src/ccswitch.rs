@@ -49,7 +49,9 @@ pub struct WriteReq {
   settings_config: Option<String>,
 }
 
-fn db_path() -> PathBuf {
+/// Location of the cc-switch SQLite DB. `pub(crate)` so the backup module
+/// snapshots the exact same file agentpack writes (no path divergence).
+pub(crate) fn db_path() -> PathBuf {
   if let Ok(p) = std::env::var("AGENTPACK_CCSWITCH_DB") {
     return PathBuf::from(p);
   }
@@ -123,17 +125,6 @@ fn is_running() -> bool {
   crate::exec::is_process_running("cc-switch".into())
 }
 
-fn backup() -> Result<String, String> {
-  let p = db_path();
-  let stamp = SystemTime::now()
-    .duration_since(UNIX_EPOCH)
-    .map_err(|e| e.to_string())?
-    .as_millis();
-  let dest = format!("{}.bak-{}", p.to_string_lossy(), stamp);
-  std::fs::copy(&p, &dest).map_err(|e| e.to_string())?;
-  Ok(dest)
-}
-
 fn unique_id() -> String {
   let n = SystemTime::now()
     .duration_since(UNIX_EPOCH)
@@ -161,7 +152,10 @@ pub fn cc_write_provider(req: WriteReq) -> Result<Vec<String>, String> {
   if is_running() {
     return Err("cc-switch is running — close it before changing providers.".into());
   }
-  log.push(format!("backed up database → {}", backup()?));
+  // Snapshot the DB (and live configs) into the listable backup history before
+  // any mutation, so a bad write can be rolled back from the dashboard.
+  let snap = crate::backup::snapshot("provider write")?;
+  log.push(format!("backed up → {}", snap.id));
 
   let conn = Connection::open(db_path()).map_err(|e| e.to_string())?;
   assert_schema(&conn)?;
@@ -296,11 +290,11 @@ fn run_op(conn: &Connection, req: &WriteReq) -> Result<Vec<String>, String> {
 mod tests {
   use super::*;
   use rusqlite::Connection;
-  use std::sync::Mutex;
 
   // cc_write_provider reads the DB path from a process-global env var, so the
-  // env-touching tests must not run concurrently.
-  static ENV_LOCK: Mutex<()> = Mutex::new(());
+  // env-touching tests must not run concurrently — with each other or with the
+  // backup tests (both mutate the same vars). Use the crate-wide lock.
+  use crate::TEST_ENV_LOCK as ENV_LOCK;
 
   fn seed(path: &str) {
     let c = Connection::open(path).unwrap();
@@ -321,6 +315,8 @@ mod tests {
     seed(&p);
     std::env::set_var("AGENTPACK_CCSWITCH_DB", &p);
     std::env::set_var("AGENTPACK_SKIP_RUNNING_CHECK", "1");
+    // Keep the pre-write snapshot (crate::backup::snapshot) out of the real home.
+    std::env::set_var("AGENTPACK_BACKUP_ROOT", format!("{p}.backups"));
     p
   }
 

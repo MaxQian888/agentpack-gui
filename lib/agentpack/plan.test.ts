@@ -10,16 +10,18 @@ import {
   skillRemoveStep,
   visibleAppsStep,
   providerStep,
+  syncLiveConfigSteps,
 } from "./plan"
 import { DEFAULT_VISIBLE_APPS } from "./ccswitch/settings"
 import type { Paths, Plan } from "./types"
-import type { ProviderForm } from "./ccswitch/types"
+import type { Provider, ProviderForm } from "./ccswitch/types"
 
 const paths: Paths = {
   home: "/h",
   claudeSettings: "/h/.claude/settings.json",
   claudeSkillsDir: "/h/.claude/skills",
   codexConfig: "/h/.codex/config.toml",
+  codexAuth: "/h/.codex/auth.json",
   codexSkillsDir: "/h/.codex/skills",
   ccSwitchSettings: "/h/.cc-switch/settings.json",
   ccSwitchDb: "/h/.cc-switch/cc-switch.db",
@@ -47,6 +49,40 @@ it("orders steps registry→install→skills→mcp→relay", () => {
       "relay-claude",
     ])
   )
+})
+
+it("prepends a Node.js install before npm CLIs when node is not detected", () => {
+  const steps = buildSteps(plan, paths)
+  const ids = steps.map((s) => s.id)
+  expect(ids.indexOf("runtime-node")).toBeLessThan(ids.indexOf("cli-claude-code"))
+  const cli = steps.find((s) => s.id === "cli-claude-code")!
+  expect(cli.dependsOn).toEqual(["runtime-node"])
+})
+
+it("skips the Node prerequisite when node is already installed", () => {
+  const ids = buildSteps(plan, paths, undefined, new Set(["node"])).map((s) => s.id)
+  expect(ids).not.toContain("runtime-node")
+})
+
+it("uses an info note for the Node prerequisite when the OS has no installer", () => {
+  const linuxPlan = { ...plan, os: "linux" as const }
+  const steps = buildSteps(linuxPlan, { ...paths, os: "linux" })
+  const node = steps.find((s) => s.id === "runtime-node")!
+  expect(node.kind).toBe("info")
+  // No dependency on a manual note — the CLI install still gets attempted.
+  expect(steps.find((s) => s.id === "cli-claude-code")!.dependsOn).toBeUndefined()
+})
+
+it("claude mcp steps depend on the claude install from the same run", () => {
+  const step = buildSteps(plan, paths).find((s) => s.id === "mcp-claude-context7")!
+  expect(step.dependsOn).toEqual(["cli-claude-code"])
+})
+
+it("claude mcp steps carry no dependency when claude is already installed", () => {
+  const step = buildSteps(plan, paths, undefined, new Set(["claude-code", "node"])).find(
+    (s) => s.id === "mcp-claude-context7"
+  )!
+  expect(step.dependsOn).toBeUndefined()
 })
 
 it("codex mcp step targets the resolved config path", () => {
@@ -211,5 +247,18 @@ describe("menu-action builders", () => {
       expect(s.kind === "ccProvider" && s.op).toBe(op)
       expect((s as { payload: { settingsConfig?: string } }).payload.settingsConfig).toBeUndefined()
     }
+  })
+
+  it("syncLiveConfigSteps threads dependsOn onto every sync step", () => {
+    const provider: Provider = {
+      id: "1",
+      app_type: "codex",
+      name: "prov",
+      settings_config: "{}",
+      is_current: true,
+    }
+    const steps = syncLiveConfigSteps(provider, paths, undefined, ["cc-provider-setCurrent"])
+    expect(steps.map((s) => s.id)).toEqual(["cc-sync-codex-config", "cc-sync-codex-auth"])
+    for (const s of steps) expect(s.dependsOn).toEqual(["cc-provider-setCurrent"])
   })
 })

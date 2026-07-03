@@ -17,8 +17,22 @@ export async function runCommand(cmd: Command, onLine: (line: string) => void): 
   return invoke<number>("run_command", { file: cmd.file, args: cmd.args, onEvent })
 }
 
+/** Launch a GUI app (e.g. cc-switch) detached; resolves once spawned, not on exit. */
+export const launchApp = (cmd: Command) =>
+  invoke<void>("launch_app", { file: cmd.file, args: cmd.args })
+
 export const detectCli = (bin: string, gui: boolean) =>
   invoke<{ installed: boolean; version?: string }>("detect_cli", { bin, gui })
+
+/** Detect a runtime, falling back to its alternate binary name (python → python3). */
+export async function detectRuntime(rt: {
+  bin: string
+  altBin?: string
+}): Promise<{ installed: boolean; version?: string }> {
+  const d = await detectCli(rt.bin, false)
+  if (d.installed || !rt.altBin) return d
+  return detectCli(rt.altBin, false)
+}
 
 /** Latest published version of an npm package, or null if it can't be determined. */
 export const latestVersion = (pkg: string) =>
@@ -53,3 +67,23 @@ export interface CcWriteReq {
 }
 
 export const ccWriteProvider = (req: CcWriteReq) => invoke<string[]>("cc_write_provider", { req })
+
+/** One backed-up file within a snapshot (mirrors Rust `BackupFile`). */
+export interface BackupFile {
+  originalPath: string
+  storedName: string
+}
+
+/** A timestamped snapshot of the cc-switch DB + live configs (mirrors Rust `BackupEntry`). */
+export interface BackupEntry {
+  id: string
+  ts: number
+  reason: string
+  files: BackupFile[]
+}
+
+export const backupSnapshot = (reason: string) => invoke<BackupEntry>("backup_snapshot", { reason })
+
+export const backupList = () => invoke<BackupEntry[]>("backup_list")
+
+export const backupRestore = (id: string) => invoke<string[]>("backup_restore", { id })

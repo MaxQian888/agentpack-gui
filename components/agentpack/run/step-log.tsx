@@ -27,6 +27,11 @@ export function StepLog({ reports }: { reports: StepReport[] }) {
           <div className="flex items-center gap-2">
             <StatusIcon status={r.status} />
             <span className={cn("text-sm", r.status === "error" && "text-red-500")}>{r.label}</span>
+            {typeof r.durationMs === "number" && r.durationMs >= 100 ? (
+              <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
+                {(r.durationMs / 1000).toFixed(1)}s
+              </span>
+            ) : null}
           </div>
           {r.output.length > 0 || r.error ? (
             <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-muted/60 p-2 font-mono text-xs text-muted-foreground">
