@@ -8,7 +8,7 @@
     "start": "next start -p 3001"
   },
   "dependencies": {
-    "fumadocs-ui": "^16.8.9",
+    "fumadocs-ui": "^16.10.7",
     "fumadocs-core": "^16.10.7",
     "fumadocs-mdx": "^15.0.2",
     "next": "^16.2.7",
