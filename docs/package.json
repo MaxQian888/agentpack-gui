@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "fumadocs-ui": "^16.8.9",
-    "fumadocs-core": "^16.8.9",
+    "fumadocs-core": "^16.10.7",
     "fumadocs-mdx": "^15.0.2",
     "next": "^16.2.7",
     "react": "^19.2.7",
