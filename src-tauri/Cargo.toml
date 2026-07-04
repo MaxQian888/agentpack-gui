@@ -27,7 +27,7 @@ thiserror = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
 rusqlite = { version = "0.40", features = ["bundled"] }
-dirs = "5"
+dirs = "6"
 
 # Read the live persisted PATH from the registry so tools installed mid-session
 # (Node via winget, claude via `npm i -g`) are found without an app restart.
