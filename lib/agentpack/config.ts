@@ -1,4 +1,4 @@
-import { findCli, findMcp, findSkill } from "./registry"
+import { findCli, findMcp, findSkill, installMethodsFor } from "./registry"
 import { en } from "@/lib/i18n/en"
 import type { Messages } from "@/lib/i18n/types"
 import type { Plan } from "./types"
@@ -22,6 +22,8 @@ export function serializePlan(plan: Plan, opts: SerializeOptions = {}): string {
     version: CONFIG_VERSION,
     os: plan.os,
     clis: plan.clis,
+    // Chosen install channel per CLI (undefined omitted by JSON.stringify).
+    cliMethods: plan.cliMethods,
     skills: plan.skills,
     mcps: plan.mcps,
     mcpKeys: opts.includeSecrets ? plan.mcpKeys : {},
@@ -52,6 +54,22 @@ export function parseConfig(json: string, messages: Messages = en): Plan {
     if (!findCli(id)) throw new Error(messages.errors.unknownCli(String(id)))
   }
 
+  // Validate the chosen install method per CLI: the CLI must be known and the
+  // method id must be one this tool actually offers on the config's OS.
+  const rawCliMethods =
+    data["cliMethods"] && typeof data["cliMethods"] === "object"
+      ? (data["cliMethods"] as Record<string, string>)
+      : undefined
+  if (rawCliMethods) {
+    for (const [cliId, methodId] of Object.entries(rawCliMethods)) {
+      const tool = findCli(cliId)
+      if (!tool) throw new Error(messages.errors.unknownCli(String(cliId)))
+      if (!installMethodsFor(tool, os).some((mth) => mth.id === methodId)) {
+        throw new Error(messages.errors.unknownMethod(String(methodId)))
+      }
+    }
+  }
+
   const rawSkills = Array.isArray(data["skills"]) ? (data["skills"] as Plan["skills"]) : []
   for (const s of rawSkills) {
     if (!findSkill(s?.id)) throw new Error(messages.errors.unknownSkill(String(s?.id)))
@@ -71,7 +89,15 @@ export function parseConfig(json: string, messages: Messages = en): Plan {
       ? (data["network"] as Plan["network"])
       : {}
 
-  return { os, clis: clis as Plan["clis"], skills: rawSkills, mcps: rawMcps, mcpKeys, network }
+  return {
+    os,
+    clis: clis as Plan["clis"],
+    cliMethods: rawCliMethods,
+    skills: rawSkills,
+    mcps: rawMcps,
+    mcpKeys,
+    network,
+  }
 }
 
 /**

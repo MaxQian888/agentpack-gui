@@ -1,4 +1,17 @@
-import type { CliTool, McpServer, Runtime, SkillDef } from "./types"
+import type { CliTool, InstallMethod, McpServer, OS, Runtime, SkillDef } from "./types"
+
+/**
+ * The three package-manager install methods for an npm-published global CLI.
+ * npm is the cross-platform default; pnpm/bun are npm-compatible alternatives
+ * for users who prefer them (the same published package, different installer).
+ */
+function pmMethods(pkg: string): InstallMethod[] {
+  return [
+    { id: "npm", command: { file: "npm", args: ["install", "-g", pkg] } },
+    { id: "pnpm", command: { file: "pnpm", args: ["add", "-g", pkg] } },
+    { id: "bun", command: { file: "bun", args: ["add", "-g", pkg] } },
+  ]
+}
 
 /**
  * Language runtimes the agent CLIs depend on. Node (with npm) is the base
@@ -30,6 +43,30 @@ export const RUNTIMES: readonly Runtime[] = [
       },
       mac: { file: "brew", args: ["install", "node"] },
       linux: null,
+    },
+    // winget installs Node machine-wide and needs admin (UAC); scoop is a
+    // user-scope alternative that never triggers elevation. Offer both so a
+    // non-admin user isn't stuck when winget's install is declined/blocked.
+    methods: {
+      win: [
+        {
+          id: "winget",
+          command: {
+            file: "winget",
+            args: [
+              "install",
+              "-e",
+              "--id",
+              "OpenJS.NodeJS.LTS",
+              "--accept-source-agreements",
+              "--accept-package-agreements",
+              "--disable-interactivity",
+            ],
+          },
+          requiresElevation: true,
+        },
+        { id: "scoop", command: { file: "scoop", args: ["install", "nodejs-lts"] } },
+      ],
     },
     manualNote:
       "On Linux, install Node.js via your package manager or nvm — see https://nodejs.org/en/download",
@@ -99,6 +136,32 @@ export const CLI_TOOLS: readonly CliTool[] = [
       mac: { file: "npm", args: ["install", "-g", "@anthropic-ai/claude-code"] },
       linux: { file: "npm", args: ["install", "-g", "@anthropic-ai/claude-code"] },
     },
+    // Package-manager choice (npm default) plus Anthropic's official native
+    // installer as a fallback for machines without Node. Native URLs are the
+    // documented ones at code.claude.com/docs/en/setup.
+    methods: {
+      win: [
+        ...pmMethods("@anthropic-ai/claude-code"),
+        {
+          id: "native",
+          command: { file: "powershell", args: ["-c", "irm https://claude.ai/install.ps1 | iex"] },
+        },
+      ],
+      mac: [
+        ...pmMethods("@anthropic-ai/claude-code"),
+        {
+          id: "native",
+          command: { file: "bash", args: ["-c", "curl -fsSL https://claude.ai/install.sh | bash"] },
+        },
+      ],
+      linux: [
+        ...pmMethods("@anthropic-ai/claude-code"),
+        {
+          id: "native",
+          command: { file: "bash", args: ["-c", "curl -fsSL https://claude.ai/install.sh | bash"] },
+        },
+      ],
+    },
     upgrade: {
       win: { file: "npm", args: ["install", "-g", "@anthropic-ai/claude-code@latest"] },
       mac: { file: "npm", args: ["install", "-g", "@anthropic-ai/claude-code@latest"] },
@@ -118,6 +181,45 @@ export const CLI_TOOLS: readonly CliTool[] = [
       win: { file: "npm", args: ["install", "-g", "@openai/codex"] },
       mac: { file: "npm", args: ["install", "-g", "@openai/codex"] },
       linux: { file: "npm", args: ["install", "-g", "@openai/codex"] },
+    },
+    // Package-manager choice (npm default) plus OpenAI's official native
+    // installer (chatgpt.com/codex/install.*) for machines without Node.
+    methods: {
+      win: [
+        ...pmMethods("@openai/codex"),
+        {
+          id: "native",
+          command: {
+            file: "powershell",
+            args: [
+              "-ExecutionPolicy",
+              "ByPass",
+              "-c",
+              "irm https://chatgpt.com/codex/install.ps1 | iex",
+            ],
+          },
+        },
+      ],
+      mac: [
+        ...pmMethods("@openai/codex"),
+        {
+          id: "native",
+          command: {
+            file: "bash",
+            args: ["-c", "curl -fsSL https://chatgpt.com/codex/install.sh | sh"],
+          },
+        },
+      ],
+      linux: [
+        ...pmMethods("@openai/codex"),
+        {
+          id: "native",
+          command: {
+            file: "bash",
+            args: ["-c", "curl -fsSL https://chatgpt.com/codex/install.sh | sh"],
+          },
+        },
+      ],
     },
     upgrade: {
       win: { file: "npm", args: ["install", "-g", "@openai/codex@latest"] },
@@ -247,6 +349,22 @@ export const MCP_SERVERS: readonly McpServer[] = [
     npmPackage: "@playwright/mcp",
   },
 ]
+
+/**
+ * The install methods available for a tool on the given OS, most-recommended
+ * first. Uses the tool's explicit `methods[os]` when present; otherwise wraps
+ * its single `install[os]` command as one "default" method (so tools that only
+ * have one way to install keep working). Empty when there's no automated path.
+ */
+export function installMethodsFor(
+  tool: Pick<CliTool, "install" | "methods">,
+  os: OS
+): InstallMethod[] {
+  const explicit = tool.methods?.[os]
+  if (explicit && explicit.length > 0) return explicit
+  const cmd = tool.install[os]
+  return cmd ? [{ id: "default", command: cmd }] : []
+}
 
 export function findCli(id: string): CliTool | undefined {
   return CLI_TOOLS.find((c) => c.id === id)

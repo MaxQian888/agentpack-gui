@@ -1,8 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "desktop-extras",
-  "description": "Desktop-only permissions. Uncomment entries below as you adopt plugins (e.g., clipboard-manager, fs, dialog). Keep default.json minimal; put feature-scoped permissions here.",
+  "description": "Desktop-only permissions. Feature-scoped plugin permissions live here; default.json stays minimal.",
   "platforms": ["linux", "macOS", "windows"],
   "windows": ["main"],
-  "permissions": []
+  "permissions": [
+    "updater:default",
+    "process:default",
+    "store:default",
+    "opener:default",
+    "notification:default"
+  ]
 }

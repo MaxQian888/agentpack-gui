@@ -18,15 +18,26 @@ pub fn run() {
 
   #[cfg(desktop)]
   {
-    builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    builder = builder
+      .plugin(tauri_plugin_updater::Builder::new().build())
+      // Persist and restore the window's size/position across launches.
+      .plugin(tauri_plugin_window_state::Builder::new().build());
   }
 
   builder
     .plugin(tauri_plugin_dialog::init())
+    // Self-update support: `process` for relaunch after install; `store` for
+    // persisted app settings; `opener` for release-notes/config-folder links;
+    // `notification` for background update alerts.
+    .plugin(tauri_plugin_process::init())
+    .plugin(tauri_plugin_store::Builder::new().build())
+    .plugin(tauri_plugin_opener::init())
+    .plugin(tauri_plugin_notification::init())
     .invoke_handler(tauri::generate_handler![
       commands::greet,
       paths::get_paths,
       exec::run_command,
+      exec::cancel_command,
       exec::launch_app,
       exec::detect_cli,
       exec::latest_version,

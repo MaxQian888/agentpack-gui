@@ -141,6 +141,7 @@ export const zhCN = {
     unknownCli: (id: string) => `配置中的 CLI id 未知：${id}`,
     unknownSkill: (id: string) => `配置中的技能 id 未知：${id}`,
     unknownMcp: (id: string) => `配置中的 MCP id 未知：${id}`,
+    unknownMethod: (id: string) => `配置中的安装方式未知：${id}`,
     configReadFailed: (path: string) => `无法读取配置文件：${path}`,
     needYes: "加 --yes 执行，或加 --dry-run 预览。",
   },
@@ -246,6 +247,18 @@ export const zhCN = {
         purpose: "浏览器自动化与 DOM 检查。",
       },
     } as Record<string, { title: string; purpose: string }>,
+    /** 安装方式标签，按注册表中的 method id 索引。 */
+    methods: {
+      npm: { title: "npm", description: "用 npm 全局安装（需要 Node.js）。" },
+      pnpm: { title: "pnpm", description: "用 pnpm 全局安装。" },
+      bun: { title: "bun", description: "用 Bun 全局安装。" },
+      native: { title: "官方安装器", description: "独立安装脚本 —— 无需 Node.js。" },
+      winget: { title: "winget", description: "Windows 包管理器（可能需要管理员权限）。" },
+      scoop: { title: "Scoop", description: "用户级安装，无需管理员权限。" },
+      brew: { title: "Homebrew", description: "macOS 包管理器。" },
+      fnm: { title: "fnm", description: "快速 Node 版本管理器（用户级）。" },
+      default: { title: "默认", description: "推荐的安装方式。" },
+    } as Record<string, { title: string; description: string }>,
   },
 
   steps: {
@@ -304,6 +317,9 @@ export const zhCN = {
     notOnPathHint: (file: string) =>
       `“${file}” 不在 PATH 中 —— 请先安装；如果刚刚安装过，请重启 agentpack。`,
     npmMissingHint: "缺少 npm —— 请先在“运行时环境”里安装 Node.js，重启 agentpack 后重试。",
+    elevationHint: (cmd: string) => `此操作需要管理员权限。请以管理员身份打开终端并运行：  ${cmd}`,
+    timedOut: (mins: number) =>
+      `超过 ${mins} 分钟未完成，已终止 —— 请检查网络或手动执行该命令后重试。`,
   },
 
   menu: {
@@ -319,6 +335,7 @@ export const zhCN = {
     mcp: "MCP 服务",
     network: "网络 / 镜像",
     saveConfig: "将当前配置导出为文件",
+    about: "关于与更新",
     exit: "退出",
     progress: (done: number, total: number, secs: number) =>
       `已完成 ${done}/${total} · 用时 ${secs}s`,
@@ -435,6 +452,7 @@ export const zhCN = {
     upgrade: "升级",
     installNow: "立即安装",
     uninstallNow: "立即卸载",
+    installMethod: "安装方式",
     apply: "应用",
     add: "添加",
     edit: "编辑",
@@ -475,6 +493,32 @@ export const zhCN = {
     restore: "恢复备份",
     fileClaudeSettings: "Claude settings.json",
     fileCodexConfig: "Codex config.toml",
+  },
+
+  about: {
+    title: "关于与更新",
+    subtitle: "应用版本与应用内自更新。",
+    currentVersion: (v: string) => `版本 ${v}`,
+    versionUnknown: "请在桌面应用中运行以查看版本并检查更新。",
+    checkNow: "检查更新",
+    checking: "正在检查…",
+    upToDate: "已是最新版本。",
+    updateAvailable: (v: string) => `有可用更新：${v}`,
+    releaseNotes: "更新说明",
+    downloading: "正在下载…",
+    installAndRestart: "安装并重启",
+    installing: "正在安装…",
+    skipVersion: "跳过此版本",
+    viewOnGitHub: "在 GitHub 查看",
+    checkFailed: "检查更新失败，请稍后重试。",
+    autoCheckLabel: "启动时检查更新",
+    lastChecked: (when: string) => `上次检查：${when}`,
+    never: "从未",
+    configFolders: "配置目录",
+    openClaudeFolder: "打开 Claude 目录",
+    openCodexFolder: "打开 Codex 目录",
+    notifyTitle: "有可用更新",
+    notifyBody: (v: string) => `agentpack ${v} 已就绪，可安装。`,
   },
 
   profiles: {

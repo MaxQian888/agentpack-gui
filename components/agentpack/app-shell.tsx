@@ -1,8 +1,11 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { isTauri } from "@/lib/tauri"
 import { detectCli, detectRuntime, getPaths, latestVersion } from "@/lib/tauri/commands"
+import { checkForUpdate, getAppVersion } from "@/lib/tauri/updater"
+import { loadSettings } from "@/lib/tauri/settings"
+import { notify } from "@/lib/tauri/system"
 import { buildSteps } from "@/lib/agentpack/plan"
 import { CLI_TOOLS, RUNTIMES } from "@/lib/agentpack/registry"
 import { useAppStore } from "@/store/app-store"
@@ -17,6 +20,7 @@ import { SkillsSection } from "./sections/skills"
 import { McpSection } from "./sections/mcp"
 import { NetworkSection } from "./sections/network"
 import { CcSwitchSection } from "./sections/ccswitch"
+import { AboutSection } from "./sections/about"
 import { ConfigIO } from "./config-io"
 import { RunnerProvider, useRunnerCtx } from "./run/runner-context"
 import { ExecutionPanel } from "./run/execution-panel"
@@ -29,6 +33,10 @@ function ShellBody() {
   const setDetections = useAppStore((s) => s.setDetections)
   const setLatestVersion = useAppStore((s) => s.setLatestVersion)
   const installedClis = useAppStore((s) => s.installedClis)
+  const setAppVersion = useAppStore((s) => s.setAppVersion)
+  const setUpdateState = useAppStore((s) => s.setUpdateState)
+  const setUpdateInfo = useAppStore((s) => s.setUpdateInfo)
+  const setSettings = useAppStore((s) => s.setSettings)
   const { run, onAfterRun } = useRunnerCtx()
   const [section, setSection] = useState<SectionKey>("dashboard")
 
@@ -94,6 +102,36 @@ function ShellBody() {
     void refreshDetections()
   }, [setPaths, refreshDetections])
 
+  // Hydrate persisted settings + app version once on startup, then (if enabled)
+  // silently check for an app update — surfaced via the header/sidebar badge and
+  // a desktop notification. Guarded so React StrictMode / re-renders don't re-check.
+  const updateInitRef = useRef(false)
+  useEffect(() => {
+    if (!isTauri() || updateInitRef.current) return
+    updateInitRef.current = true
+    let cancelled = false
+    void (async () => {
+      const settings = await loadSettings()
+      if (cancelled) return
+      setSettings(settings)
+      const version = await getAppVersion()
+      if (!cancelled && version) setAppVersion(version)
+      if (!settings.autoCheckUpdates) return
+      try {
+        const info = await checkForUpdate()
+        if (cancelled || !info || info.version === settings.skippedVersion) return
+        setUpdateInfo(info)
+        setUpdateState("available")
+        void notify(t.about.notifyTitle, t.about.notifyBody(info.version))
+      } catch {
+        // Silent on startup; the About section offers a manual retry.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [t, setSettings, setAppVersion, setUpdateInfo, setUpdateState])
+
   // After any real run (install/upgrade/uninstall/remove), re-detect tools and
   // re-scan the dashboard once, centrally, so every surface reflects the change.
   useEffect(
@@ -139,6 +177,8 @@ function ShellBody() {
         return <CcSwitchSection />
       case "config":
         return <ConfigIO />
+      case "about":
+        return <AboutSection />
     }
   }
 
@@ -146,7 +186,7 @@ function ShellBody() {
     <div className="flex h-screen bg-background text-foreground">
       <SidebarNav active={section} onSelect={setSection} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <Header onRun={onRun} />
+        <Header onRun={onRun} onShowUpdates={() => setSection("about")} />
         <main className="flex-1 overflow-auto p-6">{renderSection()}</main>
       </div>
       <ExecutionPanel />

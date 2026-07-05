@@ -76,6 +76,7 @@ it("info step logs its lines without IPC", async () => {
 
 it("mergeFile reads, transforms and writes the file (+ backs up existing content)", async () => {
   ;(api.readTextFile as jest.Mock).mockResolvedValue("{}")
+  ;(api.pathExists as jest.Mock).mockResolvedValue(false) // no prior backup yet
   const steps: StepDescriptor[] = [
     {
       kind: "mergeFile",
@@ -89,6 +90,30 @@ it("mergeFile reads, transforms and writes the file (+ backs up existing content
   const reports = await runSteps(steps, { dryRun: false, paths })
   expect(reports[0].status).toBe("done")
   expect(api.writeTextFile).toHaveBeenCalledWith("/h/.codex/config.toml.agentpack.bak", "{}")
+  expect(api.writeTextFile).toHaveBeenCalledWith("/h/.codex/config.toml", "{}!")
+})
+
+it("mergeFile keeps the original backup instead of overwriting it on a second write", async () => {
+  ;(api.readTextFile as jest.Mock).mockResolvedValue("{}")
+  ;(api.pathExists as jest.Mock).mockResolvedValue(true) // a backup already exists
+  const steps: StepDescriptor[] = [
+    {
+      kind: "mergeFile",
+      id: "m",
+      label: "m",
+      path: "/h/.codex/config.toml",
+      merge: (e) => e + "!",
+      writtenNote: "",
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(reports[0].status).toBe("done")
+  // The pre-existing .bak (the true original) must NOT be clobbered...
+  expect(api.writeTextFile).not.toHaveBeenCalledWith(
+    "/h/.codex/config.toml.agentpack.bak",
+    expect.anything()
+  )
+  // ...but the merged content is still written to the target.
   expect(api.writeTextFile).toHaveBeenCalledWith("/h/.codex/config.toml", "{}!")
 })
 
@@ -243,6 +268,71 @@ it("appends an actionable hint when the binary cannot be spawned", async () => {
   ]
   const cliReports = await runSteps(cliStep, { dryRun: false, paths })
   expect(cliReports[0].output.join("\n")).toMatch(/"claude" is not on PATH/)
+})
+
+it("a manual info note reports as a warning, not a green success", async () => {
+  const steps: StepDescriptor[] = [
+    { kind: "info", id: "i", label: "i", lines: ["install manually"], manual: true },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(reports[0].status).toBe("warning")
+})
+
+it("appends an elevation hint when a requiresElevation command fails", async () => {
+  ;(api.runCommand as jest.Mock).mockResolvedValue(1)
+  const steps: StepDescriptor[] = [
+    {
+      kind: "command",
+      id: "c",
+      label: "c",
+      command: { file: "winget", args: ["install", "-e", "--id", "OpenJS.NodeJS.LTS"] },
+      requiresElevation: true,
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(reports[0].status).toBe("error")
+  expect(reports[0].output.join("\n")).toMatch(/administrator/i)
+})
+
+it("maps the timeout sentinel to a friendly 'timed out' error", async () => {
+  ;(api as unknown as { TIMEOUT_ERR: string }).TIMEOUT_ERR = "agentpack:timeout"
+  ;(api.runCommand as jest.Mock).mockRejectedValue(new Error("agentpack:timeout"))
+  const steps: StepDescriptor[] = [
+    { kind: "command", id: "c", label: "c", command: { file: "npm", args: ["i"] } },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(reports[0].status).toBe("error")
+  expect(reports[0].error).toMatch(/timed out/i)
+  // the raw sentinel must not leak to the user
+  expect(reports[0].error).not.toBe("agentpack:timeout")
+})
+
+it("shows a command killed by cancellation as skipped, not an error", async () => {
+  const ctrl = new AbortController()
+  // Simulate the user cancelling mid-command: abort, then the killed process rejects.
+  ;(api.runCommand as jest.Mock).mockImplementation(async () => {
+    ctrl.abort()
+    throw new Error("killed")
+  })
+  const steps: StepDescriptor[] = [
+    { kind: "command", id: "c", label: "c", command: { file: "npm", args: ["i"] } },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths, signal: ctrl.signal })
+  expect(reports[0].status).toBe("skipped")
+  expect(reports[0].output.join("\n")).toContain("cancelled")
+})
+
+it("passes an opId and timeout so the command can be cancelled / time-limited", async () => {
+  ;(api.runCommand as jest.Mock).mockResolvedValue(0)
+  const steps: StepDescriptor[] = [
+    { kind: "command", id: "c", label: "c", command: { file: "npm", args: ["i"] } },
+  ]
+  await runSteps(steps, { dryRun: false, paths })
+  expect(api.runCommand).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.any(Function),
+    expect.objectContaining({ opId: expect.any(String), timeoutSecs: expect.any(Number) })
+  )
 })
 
 it("records the step duration once it finishes", async () => {

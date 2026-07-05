@@ -73,6 +73,44 @@ it("uses an info note for the Node prerequisite when the OS has no installer", (
   expect(steps.find((s) => s.id === "cli-claude-code")!.dependsOn).toBeUndefined()
 })
 
+it("a chosen non-npm method uses that command and skips the Node prerequisite", () => {
+  const winPlan: Plan = {
+    ...plan,
+    os: "win",
+    skills: [],
+    mcps: [],
+    network: {},
+    cliMethods: { "claude-code": "native" },
+  }
+  const steps = buildSteps(winPlan, { ...paths, os: "win" })
+  const ids = steps.map((s) => s.id)
+  // Native install brings its own runtime — no Node step, no Node dependency.
+  expect(ids).not.toContain("runtime-node")
+  const cli = steps.find((s) => s.id === "cli-claude-code")!
+  expect(cli.dependsOn).toBeUndefined()
+  expect(cli.kind === "command" && cli.command.file).toBe("powershell")
+})
+
+it("the npm method still installs + depends on Node", () => {
+  const winPlan: Plan = {
+    ...plan,
+    os: "win",
+    skills: [],
+    mcps: [],
+    network: {},
+    cliMethods: { "claude-code": "npm" },
+  }
+  const steps = buildSteps(winPlan, { ...paths, os: "win" })
+  expect(steps.map((s) => s.id)).toContain("runtime-node")
+  expect(steps.find((s) => s.id === "cli-claude-code")!.dependsOn).toEqual(["runtime-node"])
+})
+
+it("carries requiresElevation from the Node winget default on Windows", () => {
+  const winPlan: Plan = { ...plan, os: "win", skills: [], mcps: [], network: {} }
+  const node = buildSteps(winPlan, { ...paths, os: "win" }).find((s) => s.id === "runtime-node")!
+  expect(node.kind === "command" && node.requiresElevation).toBe(true)
+})
+
 it("claude mcp steps depend on the claude install from the same run", () => {
   const step = buildSteps(plan, paths).find((s) => s.id === "mcp-claude-context7")!
   expect(step.dependsOn).toEqual(["cli-claude-code"])

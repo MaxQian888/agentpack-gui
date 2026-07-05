@@ -42,8 +42,10 @@
   },
   "plugins": {
     "updater": {
-      "active": false,
-      "endpoints": [],
+      "active": true,
+      "endpoints": [
+        "https://github.com/Arxtect/agentpack-gui/releases/latest/download/latest.json"
+      ],
       "pubkey": ""
     }
   }

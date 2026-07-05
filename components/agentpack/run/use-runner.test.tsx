@@ -9,7 +9,7 @@ jest.mock("@/lib/agentpack/runner", () => ({
           {
             id: s.id,
             label: s.label,
-            status: s.label === "FAIL" ? "error" : "done",
+            status: s.label === "FAIL" ? "error" : s.label === "SKIP" ? "skipped" : "done",
             output: ["ok"],
           },
           i
@@ -101,6 +101,22 @@ it("retry re-runs only the failed steps", async () => {
   // Only the failed step is re-submitted.
   const reRun = (runSteps as jest.Mock).mock.calls[0][0] as StepDescriptor[]
   expect(reRun.map((s) => s.id)).toEqual(["bad"])
+})
+
+it("retry also re-runs steps skipped due to a failed dependency", async () => {
+  const { result } = renderHook(() => useRunner(), { wrapper })
+  await act(async () => {
+    await result.current.run([cmd("dep", "FAIL"), cmd("child", "SKIP")])
+  })
+  expect(result.current.reports.find((r) => r.id === "child")?.status).toBe("skipped")
+  ;(runSteps as jest.Mock).mockClear()
+
+  await act(async () => {
+    await result.current.retry()
+  })
+  // Both the failed prerequisite and its skipped dependent are re-submitted.
+  const reRun = (runSteps as jest.Mock).mock.calls[0][0] as StepDescriptor[]
+  expect(reRun.map((s) => s.id)).toEqual(["dep", "child"])
 })
 
 it("retry is a no-op when nothing failed", async () => {

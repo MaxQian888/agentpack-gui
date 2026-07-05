@@ -109,8 +109,14 @@ export function useRunner(): RunnerState {
   }, [execute])
 
   const retry = useCallback(async () => {
-    const failed = new Set(reports.filter((r) => r.status === "error").map((r) => r.id))
-    const steps = pending.current.filter((s) => failed.has(s.id))
+    // Re-run failed steps AND steps skipped because a prerequisite failed: once
+    // the prerequisite is fixed, its dependents must run too. runSteps
+    // re-evaluates dependsOn within the retry batch, so a still-failing
+    // prerequisite simply re-skips them.
+    const retryable = new Set(
+      reports.filter((r) => r.status === "error" || r.status === "skipped").map((r) => r.id)
+    )
+    const steps = pending.current.filter((s) => retryable.has(s.id))
     if (steps.length === 0) return
     await execute(steps)
   }, [reports, execute])

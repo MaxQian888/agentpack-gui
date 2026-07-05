@@ -144,6 +144,7 @@ export const en = {
     unknownCli: (id: string) => `Unknown CLI id in config: ${id}`,
     unknownSkill: (id: string) => `Unknown skill id in config: ${id}`,
     unknownMcp: (id: string) => `Unknown MCP id in config: ${id}`,
+    unknownMethod: (id: string) => `Unknown install method in config: ${id}`,
     configReadFailed: (path: string) => `Could not read config file: ${path}`,
     needYes: "Pass --yes to execute, or --dry-run to preview.",
   },
@@ -254,6 +255,24 @@ export const en = {
         purpose: "Browser automation & DOM inspection.",
       },
     } as Record<string, { title: string; purpose: string }>,
+    /** Install-method labels, keyed by the method id in the registry. */
+    methods: {
+      npm: { title: "npm", description: "Install globally with npm (needs Node.js)." },
+      pnpm: { title: "pnpm", description: "Install globally with pnpm." },
+      bun: { title: "bun", description: "Install globally with Bun." },
+      native: {
+        title: "Official installer",
+        description: "Standalone installer script — no Node.js required.",
+      },
+      winget: {
+        title: "winget",
+        description: "Windows Package Manager (may require administrator).",
+      },
+      scoop: { title: "Scoop", description: "User-scope install, no administrator needed." },
+      brew: { title: "Homebrew", description: "macOS package manager." },
+      fnm: { title: "fnm", description: "Fast Node manager (user scope)." },
+      default: { title: "Default", description: "Recommended install method." },
+    } as Record<string, { title: string; description: string }>,
   },
 
   /** Step labels & output lines surfaced from core (plan.ts). */
@@ -315,6 +334,10 @@ export const en = {
       `"${file}" is not on PATH — install it first, or restart agentpack if it was just installed.`,
     npmMissingHint:
       "npm is missing — install Node.js (Runtime environment section), restart agentpack, then retry.",
+    elevationHint: (cmd: string) =>
+      `This needs administrator rights. Open an elevated terminal (Run as administrator) and run:  ${cmd}`,
+    timedOut: (mins: number) =>
+      `timed out after ${mins} min and was stopped — check your network or run the command manually, then retry.`,
   },
 
   /** Main menu + shared menu navigation. */
@@ -331,6 +354,7 @@ export const en = {
     mcp: "MCP servers",
     network: "Network / mirrors",
     saveConfig: "Save current setup as config",
+    about: "About & updates",
     exit: "Exit",
     progress: (done: number, total: number, secs: number) => `${done}/${total} done · ${secs}s`,
     cancelHint: "Press ESC again to cancel remaining steps.",
@@ -453,6 +477,7 @@ export const en = {
     upgrade: "Upgrade",
     installNow: "Install now",
     uninstallNow: "Uninstall now",
+    installMethod: "Install method",
     apply: "Apply",
     add: "Add",
     edit: "Edit",
@@ -494,6 +519,33 @@ export const en = {
     restore: "Restore backup",
     fileClaudeSettings: "Claude settings.json",
     fileCodexConfig: "Codex config.toml",
+  },
+
+  /** About & self-update section (app version, check/download/install). */
+  about: {
+    title: "About & updates",
+    subtitle: "App version and in-app updates.",
+    currentVersion: (v: string) => `Version ${v}`,
+    versionUnknown: "Run the desktop app to see the version and check for updates.",
+    checkNow: "Check for updates",
+    checking: "Checking…",
+    upToDate: "You're on the latest version.",
+    updateAvailable: (v: string) => `Update available: ${v}`,
+    releaseNotes: "Release notes",
+    downloading: "Downloading…",
+    installAndRestart: "Install & restart",
+    installing: "Installing…",
+    skipVersion: "Skip this version",
+    viewOnGitHub: "View on GitHub",
+    checkFailed: "Update check failed. Please try again later.",
+    autoCheckLabel: "Check for updates on startup",
+    lastChecked: (when: string) => `Last checked: ${when}`,
+    never: "never",
+    configFolders: "Config folders",
+    openClaudeFolder: "Open Claude folder",
+    openCodexFolder: "Open Codex folder",
+    notifyTitle: "Update available",
+    notifyBody: (v: string) => `agentpack ${v} is ready to install.`,
   },
 
   /** Multi-profile management (save / switch named setups). */

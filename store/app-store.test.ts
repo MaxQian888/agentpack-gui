@@ -1,4 +1,5 @@
 import { useAppStore } from "./app-store"
+import { DEFAULT_SETTINGS } from "@/lib/tauri/settings"
 
 beforeEach(() => {
   useAppStore.setState({ osOverride: null, paths: null, profiles: [], currentProfileId: null })
@@ -17,6 +18,19 @@ it("toggleCli adds and removes", () => {
   expect(useAppStore.getState().plan.clis).toContain("codex")
   useAppStore.getState().toggleCli("codex")
   expect(useAppStore.getState().plan.clis).not.toContain("codex")
+})
+
+it("setCliMethod sets/clears a method; deselecting the cli clears it", () => {
+  const s = useAppStore.getState()
+  s.toggleCli("claude-code")
+  s.setCliMethod("claude-code", "native")
+  expect(useAppStore.getState().plan.cliMethods).toEqual({ "claude-code": "native" })
+  s.setCliMethod("claude-code", undefined)
+  expect(useAppStore.getState().plan.cliMethods).toEqual({})
+  // A stale method choice is dropped when the CLI is deselected.
+  s.setCliMethod("claude-code", "bun")
+  useAppStore.getState().toggleCli("claude-code")
+  expect(useAppStore.getState().plan.cliMethods).toEqual({})
 })
 
 it("applyPreset recommended fills clis", () => {
@@ -64,4 +78,65 @@ it("setProfiles replaces the list", () => {
     .getState()
     .setProfiles([{ id: "x", name: "X", createdAt: 0, plan: useAppStore.getState().plan }])
   expect(useAppStore.getState().profiles.map((p) => p.id)).toEqual(["x"])
+})
+
+describe("app updates", () => {
+  const info = { version: "2.0.0", currentVersion: "1.0.0" }
+
+  beforeEach(() => {
+    useAppStore.setState({
+      appVersion: null,
+      updateState: "idle",
+      updateInfo: null,
+      downloadProgress: 0,
+      settings: { ...DEFAULT_SETTINGS },
+    })
+  })
+
+  it("update setters assign their fields; setSettings merges", () => {
+    const s = useAppStore.getState()
+    s.setAppVersion("1.2.3")
+    s.setUpdateState("checking")
+    s.setUpdateInfo(info)
+    s.setDownloadProgress(55)
+    s.setSettings({ autoCheckUpdates: false })
+
+    const next = useAppStore.getState()
+    expect(next.appVersion).toBe("1.2.3")
+    expect(next.updateState).toBe("checking")
+    expect(next.updateInfo).toEqual(info)
+    expect(next.downloadProgress).toBe(55)
+    expect(next.settings).toEqual({ ...DEFAULT_SETTINGS, autoCheckUpdates: false })
+  })
+
+  it("hasUpdate is false when idle", () => {
+    expect(useAppStore.getState().hasUpdate()).toBe(false)
+  })
+
+  it("hasUpdate is false when available without update info", () => {
+    useAppStore.getState().setUpdateState("available")
+    expect(useAppStore.getState().hasUpdate()).toBe(false)
+  })
+
+  it("hasUpdate is true when available and not skipped", () => {
+    const s = useAppStore.getState()
+    s.setUpdateState("available")
+    s.setUpdateInfo(info)
+    expect(useAppStore.getState().hasUpdate()).toBe(true)
+  })
+
+  it("hasUpdate is true when the update is downloaded (ready)", () => {
+    const s = useAppStore.getState()
+    s.setUpdateState("ready")
+    s.setUpdateInfo(info)
+    expect(useAppStore.getState().hasUpdate()).toBe(true)
+  })
+
+  it("hasUpdate is false when the available version was skipped", () => {
+    const s = useAppStore.getState()
+    s.setUpdateState("available")
+    s.setUpdateInfo(info)
+    s.setSettings({ skippedVersion: "2.0.0" })
+    expect(useAppStore.getState().hasUpdate()).toBe(false)
+  })
 })

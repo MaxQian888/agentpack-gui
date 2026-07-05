@@ -5,6 +5,7 @@ import {
   Boxes,
   FileJson,
   Globe,
+  Info,
   LayoutDashboard,
   Package,
   Server,
@@ -14,6 +15,7 @@ import {
 import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import type { Messages } from "@/lib/i18n/types"
+import { useAppStore } from "@/store/app-store"
 
 export type SectionKey =
   | "dashboard"
@@ -25,6 +27,7 @@ export type SectionKey =
   | "network"
   | "ccswitch"
   | "config"
+  | "about"
 
 interface SectionDef {
   key: SectionKey
@@ -42,6 +45,7 @@ export const SECTIONS: SectionDef[] = [
   { key: "network", icon: Globe, label: (m) => m.menu.network },
   { key: "ccswitch", icon: ArrowLeftRight, label: (m) => m.menu.ccswitch },
   { key: "config", icon: FileJson, label: (m) => m.menu.saveConfig },
+  { key: "about", icon: Info, label: (m) => m.menu.about },
 ]
 
 export function SidebarNav({
@@ -52,6 +56,7 @@ export function SidebarNav({
   onSelect: (key: SectionKey) => void
 }) {
   const t = useT()
+  const hasUpdate = useAppStore((s) => s.hasUpdate())
   return (
     <nav className="flex w-60 shrink-0 flex-col gap-1 border-r bg-sidebar p-3">
       <div className="px-2 pb-3 pt-1">
@@ -74,6 +79,12 @@ export function SidebarNav({
           >
             <Icon className="size-4 shrink-0" />
             <span className="truncate">{s.label(t)}</span>
+            {s.key === "about" && hasUpdate ? (
+              <span
+                className="ml-auto size-2 shrink-0 rounded-full bg-primary"
+                aria-hidden="true"
+              />
+            ) : null}
           </button>
         )
       })}

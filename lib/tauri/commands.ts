@@ -7,15 +7,49 @@ import type { Provider, ProviderApp } from "@/lib/agentpack/ccswitch/types"
 
 export const getPaths = () => invoke<Paths>("get_paths")
 
+export interface RunCommandOpts {
+  /** Operation id so this run can be cancelled mid-flight via `cancelCommand`. */
+  opId?: string
+  /** Hard timeout; the backend kills the process tree if it's exceeded. */
+  timeoutSecs?: number
+  /** When it aborts, the running process (and its children) is killed. */
+  signal?: AbortSignal
+}
+
 /**
  * Run a command, streaming each output line to `onLine` via a Tauri channel.
- * Resolves with the process exit code.
+ * Resolves with the process exit code. Rejects with `TIMEOUT_ERR` if the backend
+ * killed it on timeout, or "command not found: …" if the binary isn't on PATH.
+ *
+ * When `opId` + `signal` are given, aborting the signal kills the process tree
+ * (the backend looks the child up by `opId`).
  */
-export async function runCommand(cmd: Command, onLine: (line: string) => void): Promise<number> {
+export async function runCommand(
+  cmd: Command,
+  onLine: (line: string) => void,
+  opts: RunCommandOpts = {}
+): Promise<number> {
   const onEvent = new Channel<string>()
   onEvent.onmessage = onLine
-  return invoke<number>("run_command", { file: cmd.file, args: cmd.args, onEvent })
+  const { opId, timeoutSecs, signal } = opts
+  if (opId && signal) {
+    if (signal.aborted) void cancelCommand(opId)
+    else signal.addEventListener("abort", () => void cancelCommand(opId), { once: true })
+  }
+  return invoke<number>("run_command", {
+    file: cmd.file,
+    args: cmd.args,
+    onEvent,
+    opId: opId ?? null,
+    timeoutSecs: timeoutSecs ?? null,
+  })
 }
+
+/** Kill a running `runCommand` (and its child tree) by its operation id. */
+export const cancelCommand = (opId: string) => invoke<void>("cancel_command", { opId })
+
+/** Sentinel the backend rejects with when a command is killed on timeout. */
+export const TIMEOUT_ERR = "agentpack:timeout"
 
 /** Launch a GUI app (e.g. cc-switch) detached; resolves once spawned, not on exit. */
 export const launchApp = (cmd: Command) =>

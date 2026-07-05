@@ -14,6 +14,19 @@ export interface RunOptions {
 }
 
 /**
+ * Hard cap for a single install command. Installs are network-bound but should
+ * never hang forever (a stalled registry, a tool that ignores CI=1 and waits on
+ * a prompt); past this the backend kills the process tree and the step fails
+ * with a "timed out" message instead of spinning as "running" indefinitely.
+ */
+const COMMAND_TIMEOUT_SECS = 600
+
+/** Monotonic id so each command run can be cancelled independently. */
+let opSeq = 0
+
+const isNotFound = (msg: string) => /command not found/i.test(msg)
+
+/**
  * Run descriptors sequentially. A failing step is recorded but does NOT abort
  * the rest (verifyOnly steps swallow errors into output) — except steps whose
  * `dependsOn` names a failed step, which are skipped instead of failing with a
@@ -68,32 +81,50 @@ export async function runSteps(steps: StepDescriptor[], opts: RunOptions): Promi
       if (opts.dryRun) {
         for (const line of previewLines(step, opts.paths, m)) log(line)
       } else {
-        await execute(step, m, log)
+        await execute(step, m, log, opts.signal)
       }
-      report.status = "done"
+      // A manual-action note isn't a real success — nothing was installed — so
+      // it reports as a warning, not a green "done".
+      report.status = step.kind === "info" && step.manual ? "warning" : "done"
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      if (step.kind === "command" && step.verifyOnly) {
+      if (opts.signal?.aborted) {
+        // The user cancelled: the in-flight command was killed. Show it as
+        // cancelled, not a scary error. (Remaining steps are skipped by the
+        // aborted check at the top of the loop.)
+        report.status = "skipped"
+        report.output.push(m.coreOutput.skippedCancelled)
+      } else if (step.kind === "command" && step.verifyOnly) {
         // A failed verification doesn't abort the run, but it must not read as a
         // green success either — surface it as a warning with an actionable hint.
         report.output.push(msg)
-        if (/command not found/i.test(msg)) {
+        if (isNotFound(msg)) {
           report.output.push(m.coreOutput.notOnPathHint(step.command.file))
         }
         report.status = "warning"
       } else {
         report.status = "error"
-        report.error = msg
+        // A killed-on-timeout command rejects with the timeout sentinel — show a
+        // friendly localized message rather than the raw sentinel.
+        const timedOut = msg === api.TIMEOUT_ERR
+        report.error = timedOut ? m.coreOutput.timedOut(Math.round(COMMAND_TIMEOUT_SECS / 60)) : msg
         unmet.add(step.id)
-        // A spawn failure means the binary is missing — tell the user what to
-        // do instead of leaving them with a raw OS error.
-        if (step.kind === "command" && /command not found/i.test(msg)) {
-          const file = step.command.file
-          report.output.push(
-            file === "npm" || file === "npx"
-              ? m.coreOutput.npmMissingHint
-              : m.coreOutput.notOnPathHint(file)
-          )
+        if (step.kind === "command") {
+          // A spawn failure means the binary is missing — tell the user what to
+          // do instead of leaving them with a raw OS error.
+          if (isNotFound(msg)) {
+            const file = step.command.file
+            report.output.push(
+              file === "npm" || file === "npx"
+                ? m.coreOutput.npmMissingHint
+                : m.coreOutput.notOnPathHint(file)
+            )
+          }
+          // A tool that needs admin can exit non-zero when UAC is declined /
+          // unavailable — point the user at running it in an elevated terminal.
+          if (step.requiresElevation && !timedOut) {
+            report.output.push(m.coreOutput.elevationHint(commandToString(step.command)))
+          }
         }
       }
     }
@@ -107,13 +138,18 @@ export async function runSteps(steps: StepDescriptor[], opts: RunOptions): Promi
 async function execute(
   step: StepDescriptor,
   m: Messages,
-  log: (line: string) => void
+  log: (line: string) => void,
+  signal?: AbortSignal
 ): Promise<void> {
   switch (step.kind) {
     case "command": {
       const printable = commandToString(step.command)
       log(`$ ${printable}`)
-      const code = await api.runCommand(step.command, log)
+      const code = await api.runCommand(step.command, log, {
+        opId: `op-${++opSeq}`,
+        timeoutSecs: COMMAND_TIMEOUT_SECS,
+        signal,
+      })
       if (code !== 0) throw new Error(`${printable} — ${m.coreOutput.exitedWithCode(code)}`)
       return
     }
@@ -124,12 +160,18 @@ async function execute(
     case "mergeFile":
     case "ccVisibleApps": {
       const existing = await api.readTextFile(step.path)
-      // Lightweight rollback: snapshot the file before overwriting it, so a bad
-      // merge can be reverted from the dashboard. Skip when there's nothing yet.
+      // Lightweight rollback: back up the ORIGINAL file the first time agentpack
+      // touches it, so a bad merge can be reverted from the dashboard. Only write
+      // the backup when one doesn't exist yet — otherwise a later step (or a
+      // re-run) writing the same file would overwrite the snapshot with
+      // already-merged content and the true original would be lost. Skip when
+      // there's nothing to back up yet.
       if (existing.trim()) {
         const backup = `${step.path}${BACKUP_SUFFIX}`
-        await api.writeTextFile(backup, existing)
-        log(m.coreOutput.backup(backup))
+        if (!(await api.pathExists(backup))) {
+          await api.writeTextFile(backup, existing)
+          log(m.coreOutput.backup(backup))
+        }
       }
       log(m.coreOutput.write(step.path))
       await api.writeTextFile(step.path, step.merge(existing))

@@ -2,6 +2,8 @@ import { create } from "zustand"
 import type { AgentTarget, OS, Paths, Plan } from "@/lib/agentpack/types"
 import type { Profile } from "@/lib/agentpack/profile"
 import { findPreset } from "@/lib/agentpack/presets"
+import type { UpdateInfo } from "@/lib/tauri/updater"
+import { type AppSettings, DEFAULT_SETTINGS } from "@/lib/tauri/settings"
 
 /** Stable-ish local id for a profile (no Date import needed at module scope). */
 function newProfileId(): string {
@@ -19,6 +21,16 @@ const emptyPlan = (os: OS): Plan => ({
 
 export type Detection = { installed: boolean; version?: string }
 
+/** Lifecycle of the app self-update flow (About section + header badge). */
+export type UpdateState =
+  | "idle"
+  | "checking"
+  | "upToDate"
+  | "available"
+  | "downloading"
+  | "ready"
+  | "error"
+
 interface State {
   plan: Plan
   dryRun: boolean
@@ -30,7 +42,21 @@ interface State {
   profiles: Profile[]
   currentProfileId: string | null
 
+  // App self-update + persisted settings.
+  appVersion: string | null
+  updateState: UpdateState
+  updateInfo: UpdateInfo | null
+  downloadProgress: number
+  settings: AppSettings
+
   effectiveOS: () => OS
+  /** True when a not-skipped update is available or downloaded (drives the badge). */
+  hasUpdate: () => boolean
+  setAppVersion: (version: string | null) => void
+  setUpdateState: (state: UpdateState) => void
+  setUpdateInfo: (info: UpdateInfo | null) => void
+  setDownloadProgress: (pct: number) => void
+  setSettings: (patch: Partial<AppSettings>) => void
   installedClis: () => Set<string>
   setDetections: (d: Record<string, Detection>) => void
   setDetection: (id: string, d: Detection) => void
@@ -42,6 +68,8 @@ interface State {
 
   setClis: (clis: Plan["clis"]) => void
   toggleCli: (id: Plan["clis"][number]) => void
+  /** Choose which install method a CLI uses (undefined => back to the default). */
+  setCliMethod: (id: string, methodId: string | undefined) => void
   setSkill: (id: string, targets: AgentTarget[]) => void
   setMcp: (id: string, targets: AgentTarget[]) => void
   setMcpKey: (id: string, key: string) => void
@@ -69,7 +97,23 @@ export const useAppStore = create<State>((set, get) => ({
   profiles: [],
   currentProfileId: null,
 
+  appVersion: null,
+  updateState: "idle",
+  updateInfo: null,
+  downloadProgress: 0,
+  settings: { ...DEFAULT_SETTINGS },
+
   effectiveOS: () => get().osOverride ?? get().paths?.os ?? "mac",
+  hasUpdate: () => {
+    const s = get()
+    if (s.updateState !== "available" && s.updateState !== "ready") return false
+    return !!s.updateInfo && s.updateInfo.version !== s.settings.skippedVersion
+  },
+  setAppVersion: (version) => set({ appVersion: version }),
+  setUpdateState: (updateState) => set({ updateState }),
+  setUpdateInfo: (updateInfo) => set({ updateInfo }),
+  setDownloadProgress: (downloadProgress) => set({ downloadProgress }),
+  setSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
   installedClis: () =>
     new Set(
       Object.entries(get().detections)
@@ -89,10 +133,19 @@ export const useAppStore = create<State>((set, get) => ({
   setClis: (clis) => set((s) => ({ plan: { ...s.plan, clis } })),
   toggleCli: (id) =>
     set((s) => {
-      const clis = s.plan.clis.includes(id)
-        ? s.plan.clis.filter((c) => c !== id)
-        : [...s.plan.clis, id]
-      return { plan: { ...s.plan, clis } }
+      const removing = s.plan.clis.includes(id)
+      const clis = removing ? s.plan.clis.filter((c) => c !== id) : [...s.plan.clis, id]
+      // Drop a stale method choice when the CLI is deselected.
+      const cliMethods = { ...(s.plan.cliMethods ?? {}) }
+      if (removing) delete cliMethods[id]
+      return { plan: { ...s.plan, clis, cliMethods } }
+    }),
+  setCliMethod: (id, methodId) =>
+    set((s) => {
+      const cliMethods = { ...(s.plan.cliMethods ?? {}) }
+      if (methodId) cliMethods[id] = methodId
+      else delete cliMethods[id]
+      return { plan: { ...s.plan, cliMethods } }
     }),
   setSkill: (id, targets) =>
     set((s) => {

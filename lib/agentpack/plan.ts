@@ -1,6 +1,6 @@
 import { en } from "@/lib/i18n/en"
 import type { Messages } from "@/lib/i18n/types"
-import { findCli, findMcp, findRuntime, findSkill } from "./registry"
+import { findCli, findMcp, findRuntime, findSkill, installMethodsFor } from "./registry"
 import {
   buildClaudeMcpCommand,
   buildClaudeMcpRemoveCommand,
@@ -22,7 +22,16 @@ import {
   codexAuthFromProvider,
   codexConfigFromProvider,
 } from "./ccswitch/sync"
-import type { AgentTarget, CommandStep, Paths, Plan, Runtime, StepDescriptor } from "./types"
+import type {
+  AgentTarget,
+  CliTool,
+  Command,
+  CommandStep,
+  Paths,
+  Plan,
+  Runtime,
+  StepDescriptor,
+} from "./types"
 import type { Provider, ProviderApp, ProviderForm, VisibleApps } from "./ccswitch/types"
 
 /**
@@ -56,22 +65,50 @@ export function buildSteps(
     })
   }
 
+  // Resolve the install command + method for a CLI. An upgrade always uses the
+  // npm `@latest` command; a fresh install uses the user's chosen method (or the
+  // tool's default). `methodId` lets us tell whether Node is actually needed —
+  // only npm-based methods do; a native-script or bun install does not.
+  const resolveCli = (tool: CliTool) => {
+    const upgrade = installed.has(tool.id)
+    if (upgrade) {
+      const cmd: Command | null | undefined = tool.upgrade?.[plan.os] ?? tool.install[plan.os]
+      return { upgrade, cmd, methodId: "npm", requiresElevation: false }
+    }
+    const methods = installMethodsFor(tool, plan.os)
+    const chosen = methods.find((mth) => mth.id === plan.cliMethods?.[tool.id]) ?? methods[0]
+    return {
+      upgrade,
+      cmd: chosen?.command as Command | undefined,
+      methodId: chosen?.id,
+      requiresElevation: chosen?.requiresElevation ?? false,
+    }
+  }
+  // A CLI needs the Node prerequisite only when it will be installed via npm
+  // (npm ships with Node). pnpm/bun/native methods bring their own runtime.
+  const isNpmBased = (methodId: string | undefined) => methodId === "npm" || methodId === "default"
+
   // 2. Runtime prerequisite — npm-installed CLIs need Node.js (npm). When Node
-  // isn't detected, install it first and make the CLI installs depend on it.
+  // isn't detected, install it first and make the npm CLI installs depend on it.
   const nodeStepId = "runtime-node"
   let nodeStepIsCommand = false
-  const needsNode = plan.clis.some((id) => findCli(id)?.npmPackage)
+  const needsNode = plan.clis.some((id) => {
+    const tool = findCli(id)
+    return tool?.npmPackage && isNpmBased(resolveCli(tool).methodId)
+  })
   if (needsNode && !installed.has("node")) {
     const node = findRuntime("node")
-    const cmd = node?.install[plan.os]
     const title = cat.runtime["node"]?.title ?? "Node.js"
-    if (node && cmd) {
+    // Auto-install Node with its default (recommended) method.
+    const method = node ? installMethodsFor(node, plan.os)[0] : undefined
+    if (method) {
       nodeStepIsCommand = true
       steps.push({
         kind: "command",
         id: nodeStepId,
         label: t.installRuntime(title),
-        command: cmd,
+        command: method.command,
+        requiresElevation: method.requiresElevation || undefined,
       })
     } else {
       steps.push({
@@ -79,6 +116,7 @@ export function buildSteps(
         id: nodeStepId,
         label: t.installRuntime(title),
         lines: [node?.manualNote ?? t.noInstaller(title), t.manualInstall],
+        manual: true,
       })
     }
   }
@@ -88,8 +126,8 @@ export function buildSteps(
     const tool = findCli(id)
     if (!tool) continue
     const title = cat.cli[id]?.title ?? id
-    const upgrade = installed.has(id)
-    const cmd = upgrade ? (tool.upgrade?.[plan.os] ?? tool.install[plan.os]) : tool.install[plan.os]
+    const { upgrade, cmd, methodId, requiresElevation } = resolveCli(tool)
+    const npmBased = Boolean(tool.npmPackage) && isNpmBased(methodId)
     if (cmd) {
       steps.push({
         kind: "command",
@@ -97,7 +135,8 @@ export function buildSteps(
         label: upgrade ? t.upgradeCli(title) : t.installCli(title),
         command: cmd,
         // Skip an npm install cleanly when the Node install itself failed.
-        dependsOn: tool.npmPackage && nodeStepIsCommand ? [nodeStepId] : undefined,
+        dependsOn: npmBased && nodeStepIsCommand ? [nodeStepId] : undefined,
+        requiresElevation: requiresElevation || undefined,
       })
     } else {
       // No automated installer on this OS — surface the manual note instead of silently skipping.
@@ -106,6 +145,7 @@ export function buildSteps(
         id: `cli-${id}`,
         label: t.installCli(title),
         lines: [tool.manualNote ?? t.noInstaller(title), t.manualInstall],
+        manual: true,
       })
     }
   }
@@ -232,7 +272,8 @@ export function cliInstallStep(
   id: Plan["clis"][number],
   command: { file: string; args: string[] },
   upgrade: boolean,
-  messages: Messages = en
+  messages: Messages = en,
+  requiresElevation = false
 ): StepDescriptor {
   const title = messages.catalog.cli[id]?.title ?? id
   return {
@@ -240,13 +281,15 @@ export function cliInstallStep(
     id: `cli-${upgrade ? "upgrade" : "install"}-${id}`,
     label: upgrade ? messages.steps.upgradeCli(title) : messages.steps.installCli(title),
     command,
+    requiresElevation: requiresElevation || undefined,
   }
 }
 
 export function runtimeInstallStep(
   id: Runtime["id"],
   command: { file: string; args: string[] },
-  messages: Messages = en
+  messages: Messages = en,
+  requiresElevation = false
 ): StepDescriptor {
   const title = messages.catalog.runtime[id]?.title ?? id
   return {
@@ -254,6 +297,7 @@ export function runtimeInstallStep(
     id: `runtime-install-${id}`,
     label: messages.steps.installRuntime(title),
     command,
+    requiresElevation: requiresElevation || undefined,
   }
 }
 
@@ -393,6 +437,7 @@ export function cliUninstallStep(
     id: `cli-uninstall-${id}`,
     label: messages.steps.uninstallCli(title),
     lines: [messages.steps.noUninstaller(title), messages.steps.manualInstall],
+    manual: true,
   }
 }
 

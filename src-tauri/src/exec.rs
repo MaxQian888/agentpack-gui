@@ -1,9 +1,50 @@
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::ipc::Channel;
+
+/// Registry of in-flight `run_command` child PIDs keyed by a caller-supplied
+/// operation id, so a separate `cancel_command` invocation can find and kill a
+/// running install. Only populated when the caller passes an `op_id`.
+fn running_children() -> &'static Mutex<HashMap<String, u32>> {
+  static CHILDREN: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
+  CHILDREN.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Forcibly terminate a process *and its descendants*. Installs spawn children
+/// (`cmd /c npm` → node, or a shell → curl), so killing only the direct child
+/// would orphan the real work; we tear down the whole tree.
+#[cfg(windows)]
+fn kill_tree(pid: u32) {
+  let mut c = Command::new("taskkill");
+  c.args(["/PID", &pid.to_string(), "/T", "/F"]);
+  apply_no_window(&mut c);
+  let _ = c.output();
+}
+#[cfg(not(windows))]
+fn kill_tree(pid: u32) {
+  // The child is spawned in its own process group (see `apply_process_group`),
+  // so a negative pid signals the whole group — killing descendants too.
+  let _ = Command::new("kill")
+    .arg("-9")
+    .arg(format!("-{pid}"))
+    .output();
+}
+
+/// Put the spawned child in its own process group so `kill_tree` can signal the
+/// entire group at once (Unix only; Windows uses `taskkill /T`).
+#[cfg(not(windows))]
+fn apply_process_group(c: &mut Command) {
+  use std::os::unix::process::CommandExt;
+  c.process_group(0);
+}
+#[cfg(windows)]
+fn apply_process_group(_c: &mut Command) {}
 
 /// Suppress the transient console window a spawned process would otherwise flash
 /// in a GUI app (Windows only; no-op elsewhere).
@@ -175,25 +216,100 @@ where
   c
 }
 
+/// Read `reader` line by line, decoding each line lossily so an invalid byte
+/// becomes the replacement char instead of aborting the stream.
+///
+/// `BufRead::lines()` yields an `Err` on the first non-UTF-8 byte, so the old
+/// `lines().map_while(Result::ok)` idiom silently truncated the rest of a
+/// subprocess's output — common on Windows, where npm / winget / powershell emit
+/// OEM/ANSI code-page bytes. This drains to real EOF regardless of encoding.
+fn stream_lines<R: std::io::Read>(reader: R, mut sink: impl FnMut(String)) {
+  let mut buf = BufReader::new(reader);
+  let mut bytes = Vec::new();
+  loop {
+    bytes.clear();
+    match buf.read_until(b'\n', &mut bytes) {
+      Ok(0) => break, // EOF
+      Ok(_) => {
+        while matches!(bytes.last(), Some(b'\n') | Some(b'\r')) {
+          bytes.pop();
+        }
+        sink(String::from_utf8_lossy(&bytes).into_owned());
+      }
+      Err(_) => break, // genuine IO error — stop reading this stream
+    }
+  }
+}
+
+/// Sentinel error returned when a command was killed by the timeout monitor, so
+/// the frontend can render a localized "timed out" message instead of a raw code.
+pub const TIMEOUT_ERR: &str = "agentpack:timeout";
+
 /// Run a CLI command, streaming each stdout/stderr line to the frontend through
-/// a Tauri channel. Returns the exit code (-1 if unknown). `Err` only when the
-/// process cannot be spawned at all (e.g. binary not on PATH).
+/// a Tauri channel. Returns the exit code (-1 if unknown). `Err` when the process
+/// cannot be spawned (binary not on PATH) or was killed by the timeout.
+///
+/// `op_id` (optional) registers the child so `cancel_command(op_id)` can kill it
+/// mid-run; `timeout_secs` (optional) auto-kills a process that never exits.
 ///
 /// `(async)` on a sync fn makes Tauri run it on a worker thread instead of the
 /// main thread, so waiting on a slow subprocess never freezes the UI.
 #[tauri::command(async)]
-pub fn run_command(file: String, args: Vec<String>, on_event: Channel<String>) -> Result<i32, String> {
-  let mut child = build_command(&file, &args)
-    // Detach stdin so an installer that prompts (e.g. a Y/N) gets EOF and fails
-    // fast instead of hanging forever on a GUI process with no console to answer.
+pub fn run_command(
+  file: String,
+  args: Vec<String>,
+  on_event: Channel<String>,
+  op_id: Option<String>,
+  timeout_secs: Option<u64>,
+) -> Result<i32, String> {
+  // Resolve the target up front. On Windows every command is wrapped in `cmd /c`,
+  // so a missing binary would otherwise spawn `cmd` fine and merely exit non-zero
+  // — hiding the real "not found" cause the frontend keys its hints off. Probing
+  // PATH here makes all three platforms report the same clean error.
+  if !on_path(&file) {
+    return Err(format!("command not found: {file}"));
+  }
+
+  let mut cmd = build_command(&file, &args);
+  // Detach stdin so an installer that prompts (e.g. a Y/N) gets EOF and fails
+  // fast instead of hanging forever on a GUI process with no console to answer.
+  cmd
     .stdin(Stdio::null())
     // Force non-interactive behaviour where tools honour it.
     .env("CI", "1")
     .env("npm_config_yes", "true")
     .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
+    .stderr(Stdio::piped());
+  apply_process_group(&mut cmd);
+
+  let mut child = cmd
     .spawn()
     .map_err(|e| format!("command not found: {file} ({e})"))?;
+
+  let pid = child.id();
+  if let Some(id) = &op_id {
+    if let Ok(mut map) = running_children().lock() {
+      map.insert(id.clone(), pid);
+    }
+  }
+
+  // Timeout monitor: a background thread that kills the tree once the deadline
+  // passes. `done` lets the main path stop the monitor cleanly on normal exit.
+  let done = Arc::new(AtomicBool::new(false));
+  let monitor = timeout_secs.map(|secs| {
+    let done = done.clone();
+    std::thread::spawn(move || {
+      let deadline = Instant::now() + Duration::from_secs(secs);
+      while !done.load(Ordering::Relaxed) {
+        if Instant::now() >= deadline {
+          kill_tree(pid);
+          return true; // timed out
+        }
+        std::thread::sleep(Duration::from_millis(200));
+      }
+      false
+    })
+  });
 
   let stdout = child.stdout.take().ok_or("no stdout handle")?;
   let stderr = child.stderr.take().ok_or("no stderr handle")?;
@@ -201,18 +317,44 @@ pub fn run_command(file: String, args: Vec<String>, on_event: Channel<String>) -
   // Drain stderr on a side thread so stdout/stderr interleave without deadlock.
   let tx = on_event.clone();
   let stderr_thread = std::thread::spawn(move || {
-    for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+    stream_lines(stderr, |line| {
       let _ = tx.send(line);
-    }
+    });
   });
 
-  for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+  stream_lines(stdout, |line| {
     let _ = on_event.send(line);
-  }
+  });
   let _ = stderr_thread.join();
 
   let status = child.wait().map_err(|e| e.to_string())?;
+
+  // Stop the monitor and learn whether it was the one that killed us.
+  done.store(true, Ordering::Relaxed);
+  let timed_out = monitor.map(|h| h.join().unwrap_or(false)).unwrap_or(false);
+  if let Some(id) = &op_id {
+    if let Ok(mut map) = running_children().lock() {
+      map.remove(id);
+    }
+  }
+
+  if timed_out {
+    return Err(TIMEOUT_ERR.to_string());
+  }
   Ok(status.code().unwrap_or(-1))
+}
+
+/// Kill a running `run_command` (and its child tree) by the operation id the
+/// caller registered it under. No-op if the op already finished or never ran.
+#[tauri::command(async)]
+pub fn cancel_command(op_id: String) {
+  let pid = running_children()
+    .lock()
+    .ok()
+    .and_then(|map| map.get(&op_id).copied());
+  if let Some(pid) = pid {
+    kill_tree(pid);
+  }
 }
 
 /// Launch a (usually GUI) app and return immediately without waiting for it to
@@ -326,6 +468,19 @@ mod tests {
   use super::*;
 
   #[test]
+  fn stream_lines_survives_invalid_utf8() {
+    // A non-UTF-8 byte on the middle line must NOT truncate the rest of the
+    // stream. The old `lines().map_while(Result::ok)` idiom stopped at the first
+    // decode error; all three lines should arrive, the bad one lossy-decoded.
+    let data: &[u8] = b"first\n\xff\xfebad\nlast\n";
+    let mut out: Vec<String> = Vec::new();
+    stream_lines(data, |line| out.push(line));
+    assert_eq!(out.len(), 3, "invalid UTF-8 truncated the stream: {out:?}");
+    assert_eq!(out[0], "first");
+    assert_eq!(out[2], "last");
+  }
+
+  #[test]
   fn detects_a_real_binary() {
     let bin = if cfg!(windows) { "cmd" } else { "sh" };
     assert!(on_path(bin));
@@ -334,6 +489,45 @@ mod tests {
   #[test]
   fn missing_binary_not_installed() {
     assert!(!detect_cli("definitely-not-a-real-bin-xyz".into(), false).installed);
+  }
+
+  #[test]
+  fn run_command_reports_missing_binary_on_all_platforms() {
+    // On Windows the `cmd /c` wrapper hides a missing binary behind exit code 1;
+    // the on_path pre-check makes it a clean, cross-platform "command not found".
+    let channel = Channel::new(|_| Ok(()));
+    let res = run_command(
+      "definitely-not-a-real-bin-xyz".into(),
+      vec![],
+      channel,
+      None,
+      None,
+    );
+    let err = res.expect_err("missing binary must be an error");
+    assert!(err.contains("command not found"), "got: {err}");
+  }
+
+  #[test]
+  fn cancel_unknown_op_is_a_noop() {
+    // Cancelling an op that was never registered must not panic or block.
+    cancel_command("no-such-op".into());
+  }
+
+  #[test]
+  fn run_command_times_out_and_reports_the_sentinel() {
+    let channel = Channel::new(|_| Ok(()));
+    let (file, args): (&str, Vec<String>) = if cfg!(windows) {
+      ("ping", vec!["-n".into(), "20".into(), "127.0.0.1".into()])
+    } else {
+      ("sleep", vec!["20".into()])
+    };
+    let res = run_command(file.into(), args, channel, Some("test-timeout".into()), Some(1));
+    assert_eq!(res, Err(TIMEOUT_ERR.to_string()));
+    // The child must be deregistered once the call returns.
+    assert!(running_children()
+      .lock()
+      .map(|m| !m.contains_key("test-timeout"))
+      .unwrap_or(true));
   }
 
   #[test]

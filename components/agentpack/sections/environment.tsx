@@ -1,9 +1,17 @@
 "use client"
 
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { RUNTIMES } from "@/lib/agentpack/registry"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { RUNTIMES, installMethodsFor } from "@/lib/agentpack/registry"
 import { runtimeInstallStep } from "@/lib/agentpack/plan"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
@@ -15,12 +23,16 @@ export function EnvironmentSection() {
   const detections = useAppStore((s) => s.detections)
   const effectiveOS = useAppStore((s) => s.effectiveOS)
   const { run } = useRunnerCtx()
+  // Chosen install method per runtime (runtimes are installed directly, not via
+  // the plan, so the choice is local UI state rather than store state).
+  const [methodChoice, setMethodChoice] = useState<Record<string, string>>({})
 
   const installNow = (rt: (typeof RUNTIMES)[number]) => {
-    const cmd = rt.install[effectiveOS()]
-    if (!cmd) return
+    const methods = installMethodsFor(rt, effectiveOS())
+    const chosen = methods.find((m) => m.id === methodChoice[rt.id]) ?? methods[0]
+    if (!chosen) return
     // The central afterRun hook re-detects runtimes once the install completes.
-    void run([runtimeInstallStep(rt.id, cmd, t)])
+    void run([runtimeInstallStep(rt.id, chosen.command, t, chosen.requiresElevation)])
   }
 
   return (
@@ -30,7 +42,12 @@ export function EnvironmentSection() {
         {RUNTIMES.map((rt) => {
           const meta = t.catalog.runtime[rt.id]
           const d = detections[rt.id]
-          const installable = !!rt.install[effectiveOS()]
+          const methods = installMethodsFor(rt, effectiveOS())
+          const installable = methods.length > 0
+          const selectedMethodId = methodChoice[rt.id] ?? methods[0]?.id
+          const selectedMethod = methods.find((m) => m.id === selectedMethodId)
+          // Offer a chooser only for missing runtimes that have >1 channel.
+          const showMethodPicker = !!d && !d.installed && methods.length > 1
           return (
             <Card key={rt.id} className="flex-col items-stretch gap-2 p-4">
               <div className="flex items-center gap-3">
@@ -61,6 +78,35 @@ export function EnvironmentSection() {
                   )
                 ) : null}
               </div>
+              {showMethodPicker ? (
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-muted-foreground">
+                      {t.shell.installMethod}
+                    </span>
+                    <Select
+                      value={selectedMethodId}
+                      onValueChange={(v) => setMethodChoice((prev) => ({ ...prev, [rt.id]: v }))}
+                    >
+                      <SelectTrigger className="h-8 w-[220px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {methods.map((m) => (
+                          <SelectItem key={m.id} value={m.id}>
+                            {t.catalog.methods[m.id]?.title ?? m.id}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {selectedMethod ? (
+                    <p className="text-xs text-muted-foreground">
+                      {t.catalog.methods[selectedMethod.id]?.description}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               {d && !d.installed && !installable ? (
                 <p className="text-xs text-muted-foreground">
                   {rt.manualNote ?? t.environment.noInstaller}

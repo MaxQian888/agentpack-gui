@@ -62,6 +62,23 @@ it("parse tolerates missing/invalid arrays and objects", () => {
   })
 })
 
+it("serialize + parse round-trips the chosen install method", () => {
+  const p: Plan = { ...plan, cliMethods: { "claude-code": "native" } }
+  const back = parseConfig(serializePlan(p))
+  expect(back.cliMethods).toEqual({ "claude-code": "native" })
+})
+
+it("parse rejects an unknown install method or a method on an unknown cli", () => {
+  expect(() =>
+    parseConfig(
+      JSON.stringify({ os: "mac", clis: ["claude-code"], cliMethods: { "claude-code": "ghost" } })
+    )
+  ).toThrow(/ghost/)
+  expect(() => parseConfig(JSON.stringify({ os: "mac", cliMethods: { nope: "npm" } }))).toThrow(
+    /nope/
+  )
+})
+
 it("fillSecrets leaves the plan untouched when no secrets match", () => {
   const filled = fillSecrets(plan, {})
   expect(filled.mcpKeys.context7).toBe("secret")

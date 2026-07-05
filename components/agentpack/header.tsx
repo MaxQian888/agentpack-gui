@@ -1,6 +1,6 @@
 "use client"
 
-import { Moon, Play, Sun } from "lucide-react"
+import { Download, Moon, Play, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -19,7 +19,13 @@ import { useAppStore } from "@/store/app-store"
 
 const OS_OPTIONS: OS[] = ["win", "mac", "linux"]
 
-export function Header({ onRun }: { onRun: () => void }) {
+export function Header({
+  onRun,
+  onShowUpdates,
+}: {
+  onRun: () => void
+  onShowUpdates?: () => void
+}) {
   const t = useT()
   const { lang, setLang } = useLocale()
   const { resolvedTheme, setTheme } = useTheme()
@@ -27,6 +33,8 @@ export function Header({ onRun }: { onRun: () => void }) {
   const toggleDryRun = useAppStore((s) => s.toggleDryRun)
   const osOverride = useAppStore((s) => s.osOverride)
   const setOsOverride = useAppStore((s) => s.setOsOverride)
+  const hasUpdate = useAppStore((s) => s.hasUpdate())
+  const updateVersion = useAppStore((s) => s.updateInfo?.version)
 
   return (
     <header className="flex items-center gap-4 border-b px-6 py-3">
@@ -67,6 +75,19 @@ export function Header({ onRun }: { onRun: () => void }) {
             <SelectItem value="zh-CN">中文</SelectItem>
           </SelectContent>
         </Select>
+
+        {hasUpdate && onShowUpdates ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="relative"
+            aria-label={updateVersion ? t.about.updateAvailable(updateVersion) : t.menu.about}
+            onClick={onShowUpdates}
+          >
+            <Download className="size-4" />
+            <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-primary" />
+          </Button>
+        ) : null}
 
         <Button
           variant="ghost"

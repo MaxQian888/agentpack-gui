@@ -78,47 +78,88 @@ jobs:
     needs: verify-version
     uses: ./.github/workflows/test.yml
 
-  # Build Tauri apps for all platforms
-  build-tauri:
-    name: Build Tauri
+  # Build every platform and publish the GitHub release via the official
+  # tauri-action. With the signing secrets set and createUpdaterArtifacts enabled
+  # (via --config, so unsigned CI in build-tauri.yml stays green), each matrix job
+  # uploads its installers + `.sig` to the tag; tauri-action merges the platform
+  # signatures into a single `latest.json` served at
+  # `releases/latest/download/latest.json` (the updater endpoint).
+  release:
+    name: Release (${{ matrix.target }})
     needs: [verify-version, quality, test]
-    uses: ./.github/workflows/build-tauri.yml
-
-  # Create the GitHub release
-  create-release:
-    name: Create Release
-    needs: [verify-version, quality, test, build-tauri]
-    runs-on: ubuntu-latest
-
     permissions:
       contents: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+
+    runs-on: ${{ matrix.platform }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Download all artifacts
-        uses: actions/download-artifact@v8
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
         with:
-          path: artifacts/
+          version: 10.30.3
 
-      - name: Display structure of downloaded files
-        run: ls -R artifacts/
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v3
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
         with:
-          name: agentpack ${{ github.ref_name }}
-          draft: false
-          # Tags containing a hyphen (e.g. v1.0.0-beta) are published as pre-releases.
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          generate_release_notes: true
-          fail_on_unmatched_files: false
-          files: |
-            artifacts/**/*.AppImage
-            artifacts/**/*.deb
-            artifacts/**/*.msi
-            artifacts/**/*.exe
-            artifacts/**/*.dmg
+          node-version: 20
+          cache: "pnpm"
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          cache-on-failure: true
+
+      - name: Install system dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build & publish release (signed + updater artifacts)
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Required for the in-app updater. Set these repo secrets to the
+          # base64 private key and its password (see src-tauri/UPDATER.md).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: agentpack ${{ github.ref_name }}
+          releaseBody: "See the assets below to download and install this version."
+          releaseDraft: false
+          # Tags containing a hyphen (e.g. v1.0.0-beta) are published as pre-releases.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          includeUpdaterJson: true
+          args: '--target ${{ matrix.target }} --config {"bundle":{"createUpdaterArtifacts":true}}'
