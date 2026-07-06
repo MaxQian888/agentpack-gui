@@ -131,6 +131,18 @@ jobs:
           workspaces: "./src-tauri -> target"
           cache-on-failure: true
 
+      # src-tauri/rust-toolchain.toml pins the toolchain, and `tauri build` runs
+      # cargo from src-tauri, so the release target must be added to THAT
+      # toolchain — not the default `stable` that dtolnay/rust-toolchain set up.
+      # Matters for cross builds (e.g. Intel macOS on an Apple-Silicon runner);
+      # a no-op when the matrix target is the runner's own host target.
+      - name: Add the release target to the pinned toolchain
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          rustup show
+          rustup target add ${{ matrix.target }}
+
       - name: Install system dependencies (Ubuntu only)
         if: matrix.platform == 'ubuntu-latest'
         run: |
@@ -146,14 +158,15 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build & publish release (signed + updater artifacts)
+      # Ships plain installers only. The signed in-app updater is wired but
+      # OFF until the signing secrets exist (src-tauri/UPDATER.md): with no
+      # TAURI_SIGNING_PRIVATE_KEY, `createUpdaterArtifacts` fails every platform
+      # at bundling. To re-enable later, add the two repo secrets + the pubkey,
+      # then restore `includeUpdaterJson` and the `createUpdaterArtifacts` config.
+      - name: Build & publish release (installers)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Required for the in-app updater. Set these repo secrets to the
-          # base64 private key and its password (see src-tauri/UPDATER.md).
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: agentpack ${{ github.ref_name }}
@@ -161,5 +174,4 @@ jobs:
           releaseDraft: false
           # Tags containing a hyphen (e.g. v1.0.0-beta) are published as pre-releases.
           prerelease: ${{ contains(github.ref_name, '-') }}
-          includeUpdaterJson: true
-          args: '--target ${{ matrix.target }} --config {"bundle":{"createUpdaterArtifacts":true}}'
+          args: "--target ${{ matrix.target }}"
