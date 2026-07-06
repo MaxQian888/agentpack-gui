@@ -48,6 +48,17 @@ function stepNeedsElevation(step: StepDescriptor): boolean {
  */
 const WINGET_NO_OP_CODES = new Set([-1978335189])
 
+/**
+ * winget `0x8A150014` (-1978335212) — "No installed package found matching input
+ * criteria". On an UPGRADE this means the runtime IS installed but not via winget
+ * (e.g. Node from nodejs.org / nvm on Windows 10), so winget can't update it in
+ * place. Surfaced as a warning with guidance rather than a red failure.
+ */
+const WINGET_NOT_INSTALLED_CODE = -1978335212
+
+/** A non-fatal step outcome: it didn't fully succeed, but must not read as a red error. */
+class StepWarning extends Error {}
+
 /** Windows `ERROR_CANCELLED` — the backend returns this when the user dismisses the UAC prompt. */
 const ELEVATION_DECLINED_CODE = 1223
 
@@ -119,6 +130,11 @@ export async function runSteps(steps: StepDescriptor[], opts: RunOptions): Promi
         // aborted check at the top of the loop.)
         report.status = "skipped"
         report.output.push(m.coreOutput.skippedCancelled)
+      } else if (err instanceof StepWarning) {
+        // A non-fatal outcome (e.g. winget can't update a non-winget install):
+        // surface the guidance as a warning, and don't block any dependents.
+        report.output.push(msg)
+        report.status = "warning"
       } else if (step.kind === "command" && step.verifyOnly) {
         // A failed verification doesn't abort the run, but it must not read as a
         // green success either — surface it as a warning with an actionable hint.
@@ -187,6 +203,17 @@ async function execute(
       if (step.command.file === "winget" && WINGET_NO_OP_CODES.has(code)) {
         log(m.coreOutput.alreadyCurrent)
         return
+      }
+      // A winget UPGRADE that finds no winget-managed package: the runtime is
+      // installed but came from another source, so winget can't update it in
+      // place. Warn with guidance instead of failing red (common on Windows 10
+      // where Node/Python came from an installer or a version manager).
+      if (
+        step.command.file === "winget" &&
+        step.command.args[0] === "upgrade" &&
+        code === WINGET_NOT_INSTALLED_CODE
+      ) {
+        throw new StepWarning(m.coreOutput.wingetUpdateNotManaged)
       }
       // The user dismissed the UAC prompt — a clean cancellation, not a crash.
       if (elevated && code === ELEVATION_DECLINED_CODE) {

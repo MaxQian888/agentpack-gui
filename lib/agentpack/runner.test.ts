@@ -348,6 +348,40 @@ it("treats winget 'already installed / up to date' as success, not an error", as
   expect(reports[0].output.join("\n")).toMatch(/up to date/i)
 })
 
+it("warns (not errors) when a winget upgrade finds no winget-managed install", async () => {
+  // 0x8A150014 — "No installed package found matching input criteria": the
+  // runtime exists but was installed outside winget (nodejs.org / nvm on
+  // Windows 10), so winget can't update it in place. That's a warning, not a
+  // red failure — and it must not read as a "1 failed" in the summary.
+  ;(api.runCommand as jest.Mock).mockResolvedValue(-1978335212)
+  const steps: StepDescriptor[] = [
+    {
+      kind: "command",
+      id: "c",
+      label: "Update Node.js",
+      command: { file: "winget", args: ["upgrade", "-e", "--id", "OpenJS.NodeJS.LTS"] },
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(reports[0].status).toBe("warning")
+  expect(reports[0].output.join("\n")).toMatch(/wasn't installed through winget/i)
+})
+
+it("still errors on the no-matching-package code for a winget INSTALL", async () => {
+  // The graceful warning is scoped to `upgrade`; a failing install stays an error.
+  ;(api.runCommand as jest.Mock).mockResolvedValue(-1978335212)
+  const steps: StepDescriptor[] = [
+    {
+      kind: "command",
+      id: "c",
+      label: "Install Node.js",
+      command: { file: "winget", args: ["install", "-e", "--id", "OpenJS.NodeJS.LTS"] },
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(reports[0].status).toBe("error")
+})
+
 it("reports a dismissed UAC prompt as a clear cancellation, not a raw code", async () => {
   ;(api.runCommand as jest.Mock).mockResolvedValue(1223) // Windows ERROR_CANCELLED
   const steps: StepDescriptor[] = [

@@ -45,6 +45,13 @@ interface State {
   latestVersions: Record<string, string>
   /** How each installed CLI was installed (npm vs native), for in-place upgrades. */
   cliManagers: Record<string, CliInstallManager>
+  /**
+   * Whether each installed runtime is owned by the OS package manager (winget/
+   * brew) its update/reinstall uses. Absent id => unknown (still probing, or the
+   * runtime self-updates) — the UI keeps the normal actions until it's a
+   * confirmed `false`, then swaps them for a download link.
+   */
+  runtimeOwned: Record<string, boolean>
   profiles: Profile[]
   currentProfileId: string | null
 
@@ -68,6 +75,7 @@ interface State {
   setDetection: (id: string, d: Detection) => void
   setLatestVersion: (id: string, version: string) => void
   setCliManager: (id: string, manager: CliInstallManager) => void
+  setRuntimeOwned: (id: string, owned: boolean) => void
   setPaths: (p: Paths) => void
   toggleDryRun: () => void
   setOsOverride: (os: OS | null) => void
@@ -106,6 +114,7 @@ export const useAppStore = create<State>((set, get) => ({
   detections: {},
   latestVersions: {},
   cliManagers: {},
+  runtimeOwned: {},
   profiles: [],
   currentProfileId: null,
 
@@ -138,6 +147,8 @@ export const useAppStore = create<State>((set, get) => ({
     set((s) => ({ latestVersions: { ...s.latestVersions, [id]: version } })),
   setCliManager: (id, manager) =>
     set((s) => ({ cliManagers: { ...s.cliManagers, [id]: manager } })),
+  setRuntimeOwned: (id, owned) =>
+    set((s) => ({ runtimeOwned: { ...s.runtimeOwned, [id]: owned } })),
   setPaths: (p) => set((s) => ({ paths: p, plan: { ...s.plan, os: s.osOverride ?? p.os } })),
   toggleDryRun: () => set((s) => ({ dryRun: !s.dryRun })),
   setOsOverride: (os) =>

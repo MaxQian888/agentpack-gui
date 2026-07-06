@@ -10,12 +10,13 @@ import {
   historyListSessions,
   latestVersion,
   npmOwns,
+  pkgManagerOwns,
 } from "@/lib/tauri/commands"
 import { checkForUpdate, getAppVersion } from "@/lib/tauri/updater"
 import { loadSettings, saveSettings } from "@/lib/tauri/settings"
 import { notify } from "@/lib/tauri/system"
 import { buildSteps, type InstalledState } from "@/lib/agentpack/plan"
-import { CLI_TOOLS, RUNTIMES } from "@/lib/agentpack/registry"
+import { CLI_TOOLS, RUNTIMES, runtimePkgManager } from "@/lib/agentpack/registry"
 import { useAppStore } from "@/store/app-store"
 import { useT } from "@/lib/i18n/provider"
 import { Header } from "./header"
@@ -44,6 +45,7 @@ function ShellBody() {
   const setDetections = useAppStore((s) => s.setDetections)
   const setLatestVersion = useAppStore((s) => s.setLatestVersion)
   const setCliManager = useAppStore((s) => s.setCliManager)
+  const setRuntimeOwned = useAppStore((s) => s.setRuntimeOwned)
   const setAppVersion = useAppStore((s) => s.setAppVersion)
   const setUpdateState = useAppStore((s) => s.setUpdateState)
   const setUpdateInfo = useAppStore((s) => s.setUpdateInfo)
@@ -114,9 +116,20 @@ function ShellBody() {
   // in the badges without an app restart.
   const refreshDetections = useCallback(async () => {
     if (!isTauri()) return
+    // Each probe is isolated: a single failing detection must not reject the
+    // whole batch and blank every badge / install button in the UI — it just
+    // marks that one tool "not installed" so the rest still render their actions.
     const entries = await Promise.all([
-      ...CLI_TOOLS.map(async (tool) => [tool.id, await detectCli(tool.bin, !!tool.gui)] as const),
-      ...RUNTIMES.map(async (rt) => [rt.id, await detectRuntime(rt)] as const),
+      ...CLI_TOOLS.map(
+        async (tool) =>
+          [
+            tool.id,
+            await detectCli(tool.bin, !!tool.gui).catch(() => ({ installed: false })),
+          ] as const
+      ),
+      ...RUNTIMES.map(
+        async (rt) => [rt.id, await detectRuntime(rt).catch(() => ({ installed: false }))] as const
+      ),
     ])
     setDetections(Object.fromEntries(entries))
     // Fire-and-forget: resolve the latest published version for every installed
@@ -135,7 +148,21 @@ function ShellBody() {
         .then((owned) => setCliManager(id, owned ? "npm" : "native"))
         .catch(() => {})
     }
-  }, [setDetections, setLatestVersion, setCliManager])
+    // For a winget/brew-managed runtime, learn whether that manager actually owns
+    // the install. When it doesn't (Node from nodejs.org / nvm, etc.) the
+    // Environment section swaps its Update/Reinstall buttons for a download link,
+    // since winget/brew can't update a copy they didn't install.
+    const os = useAppStore.getState().effectiveOS()
+    for (const [id, det] of entries) {
+      const rt = RUNTIMES.find((r) => r.id === id)
+      if (!rt || !det.installed) continue
+      const pm = runtimePkgManager(rt, os)
+      if (!pm) continue
+      pkgManagerOwns(pm.manager, pm.id)
+        .then((owned) => setRuntimeOwned(id, owned))
+        .catch(() => {})
+    }
+  }, [setDetections, setLatestVersion, setCliManager, setRuntimeOwned])
 
   useEffect(() => {
     if (!isTauri()) return
@@ -315,9 +342,9 @@ function ShellBody() {
           />
         )
       case "presets":
-        return <PresetsSection />
+        return <PresetsSection onCustomize={() => setCustomizeOpen(true)} />
       case "environment":
-        return <EnvironmentSection />
+        return <EnvironmentSection refresh={refreshDetections} />
       case "clis":
         return <ClisSection />
       case "skills":

@@ -1,6 +1,8 @@
 "use client"
 
 import { useState } from "react"
+import { ExternalLink, RefreshCw } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -11,22 +13,42 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { RUNTIMES, installMethodsFor, runtimeUpgradeCommandFor } from "@/lib/agentpack/registry"
+import {
+  RUNTIMES,
+  installMethodsFor,
+  runtimePkgManager,
+  runtimeUpgradeCommandFor,
+} from "@/lib/agentpack/registry"
 import { runtimeInstallStep, runtimeUpgradeStep } from "@/lib/agentpack/plan"
+import { openUrl } from "@/lib/tauri/system"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
 import { HelpTip } from "../help-tip"
 import { useRunnerCtx } from "../run/runner-context"
 
-export function EnvironmentSection() {
+export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> }) {
   const t = useT()
   const detections = useAppStore((s) => s.detections)
+  const runtimeOwned = useAppStore((s) => s.runtimeOwned)
   const effectiveOS = useAppStore((s) => s.effectiveOS)
   const { run } = useRunnerCtx()
   // Chosen install method per runtime (runtimes are installed directly, not via
   // the plan, so the choice is local UI state rather than store state).
   const [methodChoice, setMethodChoice] = useState<Record<string, string>>({})
+  // A run auto-re-detects (the app-shell afterRun hook), but expose a manual
+  // re-detect too — a freshly installed runtime that isn't yet on this process's
+  // PATH, or an install done outside agentpack, only shows up after a fresh scan.
+  const [refreshing, setRefreshing] = useState(false)
+  const recheck = async () => {
+    if (!refresh || refreshing) return
+    setRefreshing(true)
+    try {
+      await refresh()
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   const installNow = (rt: (typeof RUNTIMES)[number]) => {
     const methods = installMethodsFor(rt, effectiveOS())
@@ -50,7 +72,21 @@ export function EnvironmentSection() {
       subtitle={t.environment.subtitle}
       help={<HelpTip text={t.help.runtime} />}
     >
-      <p className="-mt-2 text-xs text-muted-foreground">{t.environment.installHint}</p>
+      <div className="-mt-2 flex items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">{t.environment.installHint}</p>
+        {refresh ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0 gap-2"
+            onClick={() => void recheck()}
+            disabled={refreshing}
+          >
+            <RefreshCw className={cn("size-4", refreshing && "animate-spin")} />
+            {t.environment.recheck}
+          </Button>
+        ) : null}
+      </div>
       <div className="flex flex-col gap-3">
         {RUNTIMES.map((rt) => {
           const meta = t.catalog.runtime[rt.id]
@@ -62,6 +98,12 @@ export function EnvironmentSection() {
           const selectedMethod = methods.find((m) => m.id === selectedMethodId)
           // Offer a chooser only for missing runtimes that have >1 channel.
           const showMethodPicker = !!d && !d.installed && methods.length > 1
+          // A winget/brew-managed runtime the manager DOESN'T own can't be updated
+          // or reinstalled in place — offer its official download page instead.
+          // Only once ownership is a confirmed `false` (unknown/pending keeps the
+          // normal actions; the runner still warns if winget can't update).
+          const pm = runtimePkgManager(rt, effectiveOS())
+          const notManaged = !!pm && runtimeOwned[rt.id] === false && !!rt.downloadUrl
           return (
             <Card key={rt.id} className="flex-col items-stretch gap-2 p-4">
               <div className="flex items-center gap-3">
@@ -76,16 +118,30 @@ export function EnvironmentSection() {
                         {t.envcheck.installed}
                         {d.version ? ` · ${d.version}` : ""}
                       </Badge>
-                      {updatable ? (
-                        <Button variant="outline" size="sm" onClick={() => void updateNow(rt)}>
-                          {t.shell.update}
+                      {notManaged ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5"
+                          onClick={() => void openUrl(rt.downloadUrl!)}
+                        >
+                          {t.shell.downloadLatest}
+                          <ExternalLink className="size-3.5" />
                         </Button>
-                      ) : null}
-                      {installable ? (
-                        <Button variant="ghost" size="sm" onClick={() => void installNow(rt)}>
-                          {t.shell.reinstall}
-                        </Button>
-                      ) : null}
+                      ) : (
+                        <>
+                          {updatable ? (
+                            <Button variant="outline" size="sm" onClick={() => void updateNow(rt)}>
+                              {t.shell.update}
+                            </Button>
+                          ) : null}
+                          {installable ? (
+                            <Button variant="ghost" size="sm" onClick={() => void installNow(rt)}>
+                              {t.shell.reinstall}
+                            </Button>
+                          ) : null}
+                        </>
+                      )}
                     </>
                   ) : (
                     <>
@@ -136,6 +192,11 @@ export function EnvironmentSection() {
               {d && !d.installed && !installable ? (
                 <p className="text-xs text-muted-foreground">
                   {rt.manualNote ?? t.environment.noInstaller}
+                </p>
+              ) : null}
+              {notManaged && pm ? (
+                <p className="text-xs text-muted-foreground">
+                  {t.environment.notManaged(pm.manager)}
                 </p>
               ) : null}
             </Card>

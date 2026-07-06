@@ -89,6 +89,14 @@ export interface Runtime {
    * update, so the UI hides the Update action there.
    */
   upgrade?: Partial<Record<OS, Command>>
+  /**
+   * The vendor's official "latest version" download page. Shown as a fallback
+   * when the runtime is installed but NOT owned by the OS package manager its
+   * update/reinstall uses (winget/brew) — those commands can't touch a copy that
+   * came from an installer, nvm/fnm, scoop, etc., so we link the user to the
+   * official installer instead of running a command that would fail or duplicate.
+   */
+  downloadUrl?: string
   /** Fallback note shown when install is null for the current OS. */
   manualNote?: string
 }

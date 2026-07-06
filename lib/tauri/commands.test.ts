@@ -10,6 +10,7 @@ import {
   detectCli,
   detectRuntime,
   latestVersion,
+  pkgManagerOwns,
   ccWriteProvider,
   runCommand,
   isProcessRunning,
@@ -19,7 +20,7 @@ import {
   pathExists,
   installSkill,
   ccLoadProviders,
-  launchApp,
+  launchCcSwitch,
   listSkills,
   backupSnapshot,
   backupList,
@@ -59,6 +60,14 @@ it("detectRuntime stops at the primary bin when it is installed", async () => {
 it("latestVersion passes the package under `package`", async () => {
   await latestVersion("@openai/codex")
   expect(invoke).toHaveBeenCalledWith("latest_version", { package: "@openai/codex" })
+})
+
+it("pkgManagerOwns forwards the manager + id to pkg_manager_owns", async () => {
+  await pkgManagerOwns("winget", "OpenJS.NodeJS.LTS")
+  expect(invoke).toHaveBeenCalledWith("pkg_manager_owns", {
+    manager: "winget",
+    id: "OpenJS.NodeJS.LTS",
+  })
 })
 
 it("ccWriteProvider wraps the request under `req`", async () => {
@@ -101,8 +110,8 @@ it("simple wrappers forward their arguments to the right command", async () => {
   await ccLoadProviders()
   expect(invoke).toHaveBeenCalledWith("cc_load_providers")
 
-  await launchApp({ file: "cc-switch", args: [] })
-  expect(invoke).toHaveBeenCalledWith("launch_app", { file: "cc-switch", args: [] })
+  await launchCcSwitch()
+  expect(invoke).toHaveBeenCalledWith("launch_cc_switch")
 
   await listSkills("/d")
   expect(invoke).toHaveBeenCalledWith("list_skills", { path: "/d" })

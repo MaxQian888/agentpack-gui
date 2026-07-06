@@ -54,7 +54,7 @@ import {
   ccLoadProviders,
   detectCli,
   isProcessRunning,
-  launchApp,
+  launchCcSwitch,
   pathExists,
   readTextFile,
   type BackupEntry,
@@ -166,13 +166,18 @@ export function CcSwitchSection() {
 
   // Launch cc-switch once so it self-creates its SQLite DB, then poll until the
   // file appears (cc-switch keeps running; the user closes it before editing).
-  const initDb = async () => {
-    if (!paths || initializing) return
+  // A ref (not the `initializing` state) guards re-entry so the auto-trigger
+  // effect and the manual button can't launch twice — the memoized callback would
+  // otherwise read a stale `initializing`.
+  const initInFlight = useRef(false)
+  const initDb = useCallback(async () => {
+    if (!paths || initInFlight.current) return
+    initInFlight.current = true
     setInitializing(true)
     setInitTimedOut(false)
     try {
       try {
-        await launchApp({ file: "cc-switch", args: [] })
+        await launchCcSwitch()
       } catch {
         if (mounted.current) toast.error(c.initLaunchFailed)
         return
@@ -186,10 +191,23 @@ export function CcSwitchSection() {
       }
       if (mounted.current) setInitTimedOut(true)
     } finally {
+      initInFlight.current = false
       if (mounted.current) setInitializing(false)
       await reload()
     }
-  }
+  }, [paths, reload, c.initLaunchFailed])
+
+  // Detected as installed but no DB yet → automatically launch cc-switch once so
+  // it self-creates the database, without waiting for a manual click. Single-shot
+  // per mount so a launch that times out doesn't relaunch in a loop; the button
+  // below stays available for an explicit retry.
+  const autoInitAttempted = useRef(false)
+  useEffect(() => {
+    if (detected === true && dbReady === false && !autoInitAttempted.current) {
+      autoInitAttempted.current = true
+      void initDb()
+    }
+  }, [detected, dbReady, initDb])
 
   const applyVisible = () => {
     if (!paths) return

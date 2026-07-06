@@ -26,3 +26,14 @@ it("Custom resets the plan", async () => {
   await userEvent.click(await screen.findByText("Custom"))
   expect(useAppStore.getState().plan.clis).toHaveLength(0)
 })
+
+it("Custom opens the customize dialog when a handler is provided", async () => {
+  const onCustomize = jest.fn()
+  render(
+    <I18nProvider>
+      <PresetsSection onCustomize={onCustomize} />
+    </I18nProvider>
+  )
+  await userEvent.click(await screen.findByText("Custom"))
+  expect(onCustomize).toHaveBeenCalled()
+})

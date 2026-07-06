@@ -58,9 +58,12 @@ export const cancelCommand = (opId: string) => invoke<void>("cancel_command", { 
 /** Sentinel the backend rejects with when a command is killed on timeout. */
 export const TIMEOUT_ERR = "agentpack:timeout"
 
-/** Launch a GUI app (e.g. cc-switch) detached; resolves once spawned, not on exit. */
-export const launchApp = (cmd: Command) =>
-  invoke<void>("launch_app", { file: cmd.file, args: cmd.args })
+/**
+ * Launch the cc-switch desktop app detached so it self-creates its SQLite DB on
+ * first run; resolves once spawned, not on exit. The backend resolves its real
+ * install path (winget/brew install it off PATH), so no path is passed here.
+ */
+export const launchCcSwitch = () => invoke<void>("launch_cc_switch")
 
 export const detectCli = (bin: string, gui: boolean) =>
   invoke<{ installed: boolean; version?: string }>("detect_cli", { bin, gui })
@@ -85,6 +88,15 @@ export const latestVersion = (pkg: string) =>
  * installer), which decides how to upgrade it without leaving a duplicate.
  */
 export const npmOwns = (pkg: string) => invoke<boolean>("npm_owns", { package: pkg })
+
+/**
+ * Whether the OS package manager (`winget` on Windows, `brew` on macOS) owns an
+ * installed package — i.e. it can be updated/reinstalled in place. False means it
+ * was put on PATH some other way (a vendor installer, nvm/fnm, scoop…), so the UI
+ * offers a download link instead of an update that would fail or duplicate.
+ */
+export const pkgManagerOwns = (manager: "winget" | "brew", id: string) =>
+  invoke<boolean>("pkg_manager_owns", { manager, id })
 
 export const isProcessRunning = (name: string) => invoke<boolean>("is_process_running", { name })
 

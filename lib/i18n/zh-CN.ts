@@ -179,6 +179,9 @@ export const zhCN = {
     detecting: "正在检测已安装的运行时…",
     installHint: "缺少运行时？直接安装即可——每次安装后会重新检测。",
     noInstaller: "本系统没有自动安装方式——请参见下方说明。",
+    recheck: "重新检测",
+    notManaged: (manager: string) =>
+      `它不是通过 ${manager} 安装的，无法在此更新或重装——请改从官方页面下载最新版本。`,
   },
 
   skills: {
@@ -457,6 +460,8 @@ export const zhCN = {
       "正在申请管理员权限 —— 请在弹出的 Windows (UAC) 提示中点击“是”以继续安装。",
     elevationDeclined: "已拒绝管理员授权 —— 操作已取消。",
     alreadyCurrent: "已安装且为最新版本 —— 无需重复安装。",
+    wingetUpdateNotManaged:
+      "winget 无法更新它 —— 它不是通过 winget 安装的。请用你当初的安装方式更新（例如工具官网的安装包，或 nvm/fnm 等版本管理器）。",
     elevationHint: (cmd: string) =>
       `安装未完成。如果是权限问题，请以管理员身份打开终端并手动运行：  ${cmd}`,
     timedOut: (mins: number) =>
@@ -524,7 +529,7 @@ export const zhCN = {
     noDb: "未找到 cc-switch 数据库。请在下方初始化，再回到这里。",
     initDb: "初始化数据库",
     initDbHint:
-      "cc-switch 首次启动时会创建用于存放供应商的 SQLite 数据库。点击启动一次 cc-switch，agentpack 便可管理供应商。",
+      "cc-switch 首次启动时会创建用于存放供应商的 SQLite 数据库。正在自动启动 cc-switch 完成初始化；如未成功可点此重试。",
     initializing: "正在启动 cc-switch 并等待其生成数据库…",
     initTimeout: "等待数据库超时。请确认 cc-switch 已完成启动，然后点击刷新。",
     dbReady: "数据库已就绪。请关闭 cc-switch 后再在此编辑供应商。",
@@ -596,6 +601,7 @@ export const zhCN = {
     upgrade: "升级",
     update: "更新",
     reinstall: "重装",
+    downloadLatest: "下载最新版",
     installNow: "立即安装",
     uninstallNow: "立即卸载",
     installMethod: "安装方式",

@@ -26,6 +26,7 @@ jest.mock("@/lib/tauri/commands", () => ({
   detectRuntime: jest.fn(async () => ({ installed: true, version: "1.0.0" })),
   latestVersion: jest.fn(async () => "1.0.0"),
   npmOwns: jest.fn(async () => true),
+  pkgManagerOwns: jest.fn(async () => true),
   readTextFile: jest.fn(async (p: string) =>
     p.includes(".claude.json") ? JSON.stringify({ mcpServers: { memory: {} } }) : ""
   ),

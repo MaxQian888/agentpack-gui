@@ -191,6 +191,9 @@ export const en = {
     detecting: "Detecting installed runtimes…",
     installHint: "Missing a runtime? Install it directly — detection re-runs after each install.",
     noInstaller: "No automated installer on this OS — see the note below.",
+    recheck: "Re-detect",
+    notManaged: (manager: string) =>
+      `Not installed via ${manager}, so it can't be updated or reinstalled here — download the latest version from the official site instead.`,
   },
 
   skills: {
@@ -484,6 +487,8 @@ export const en = {
       "Requesting administrator permission — approve the Windows (UAC) prompt to continue.",
     elevationDeclined: "Administrator permission was declined — the operation was cancelled.",
     alreadyCurrent: "Already installed and up to date — nothing to do.",
+    wingetUpdateNotManaged:
+      "winget can't update this — it wasn't installed through winget. Update it the way you installed it (the installer from the tool's website, or a version manager like nvm/fnm).",
     elevationHint: (cmd: string) =>
       `The install didn't complete. If it's a permissions issue, open a terminal as administrator and run it yourself:  ${cmd}`,
     timedOut: (mins: number) =>
@@ -553,7 +558,7 @@ export const en = {
     noDb: "cc-switch database not found. Initialize it below, then return here.",
     initDb: "Initialize database",
     initDbHint:
-      "cc-switch stores providers in a SQLite database it creates on first launch. Click to launch cc-switch once so agentpack can manage providers.",
+      "cc-switch stores providers in a SQLite database it creates on first launch. Launching cc-switch automatically to set that up; click to retry if needed.",
     initializing: "Launching cc-switch and waiting for its database…",
     initTimeout:
       "Timed out waiting for the database. Make sure cc-switch finished launching, then refresh.",
@@ -630,6 +635,7 @@ export const en = {
     upgrade: "Upgrade",
     update: "Update",
     reinstall: "Reinstall",
+    downloadLatest: "Download latest",
     installNow: "Install now",
     uninstallNow: "Uninstall now",
     installMethod: "Install method",

@@ -12,7 +12,7 @@ import { HelpTip } from "../help-tip"
 
 const OPTIONS = ["custom", ...PRESETS.map((p) => p.id)] as const
 
-export function PresetsSection() {
+export function PresetsSection({ onCustomize }: { onCustomize?: () => void }) {
   const t = useT()
   const applyPreset = useAppStore((s) => s.applyPreset)
   const resetPlan = useAppStore((s) => s.resetPlan)
@@ -20,8 +20,12 @@ export function PresetsSection() {
 
   const choose = (id: string) => {
     setSelected(id)
-    if (id === "custom") resetPlan()
-    else applyPreset(id)
+    // "Custom" clears the plan and opens the one-page customize dialog (the same
+    // component the header Run ▾ menu uses) so the user can hand-pick items.
+    if (id === "custom") {
+      resetPlan()
+      onCustomize?.()
+    } else applyPreset(id)
   }
 
   return (

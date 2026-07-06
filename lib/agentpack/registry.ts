@@ -95,6 +95,7 @@ export const RUNTIMES: readonly Runtime[] = [
       },
       mac: { file: "brew", args: ["upgrade", "node"] },
     },
+    downloadUrl: "https://nodejs.org/en/download",
     manualNote:
       "On Linux, install Node.js via your package manager or nvm — see https://nodejs.org/en/download",
   },
@@ -142,9 +143,15 @@ export const RUNTIMES: readonly Runtime[] = [
         file: "winget",
         args: [
           "upgrade",
-          "-e",
+          // Match the installed Python by FAMILY, not the pinned install minor:
+          // winget publishes each minor as its own package (Python.Python.3.14),
+          // so `-e --id Python.Python.3.13` would refuse to update a 3.14 install
+          // ("no installed package found"). A substring `--id Python.Python.3`
+          // (no `-e`) targets whatever 3.x is installed. This same id drives the
+          // ownership check (runtimePkgManager reads it), so a winget-installed
+          // 3.14 is correctly recognized as updatable instead of unmanaged.
           "--id",
-          "Python.Python.3.13",
+          "Python.Python.3",
           "--accept-source-agreements",
           "--accept-package-agreements",
           "--disable-interactivity",
@@ -152,6 +159,7 @@ export const RUNTIMES: readonly Runtime[] = [
       },
       mac: { file: "brew", args: ["upgrade", "python"] },
     },
+    downloadUrl: "https://www.python.org/downloads/",
     manualNote:
       "On Linux, install Python 3 via your package manager (apt/dnf/pacman) — see https://www.python.org/downloads/",
   },
@@ -484,6 +492,33 @@ export function upgradeCommandFor(
  */
 export function runtimeUpgradeCommandFor(rt: Runtime, os: OS): Command | undefined {
   return rt.upgrade?.[os]
+}
+
+/**
+ * The OS-package-manager identity (manager + package id) a runtime's in-place
+ * UPDATE goes through, or undefined when it doesn't use one — bun/uv self-update,
+ * or no update path on this OS. Derived from the upgrade command so it stays in
+ * sync with the actual update path. Only a winget/brew-managed install can be
+ * updated or reinstalled in place, so this drives the ownership check that
+ * decides whether to offer those actions or a download link instead.
+ */
+export function runtimePkgManager(
+  rt: Runtime,
+  os: OS
+): { manager: "winget" | "brew"; id: string } | undefined {
+  const cmd = rt.upgrade?.[os]
+  if (!cmd) return undefined
+  if (cmd.file === "winget") {
+    const i = cmd.args.indexOf("--id")
+    const id = i >= 0 ? cmd.args[i + 1] : undefined
+    return id ? { manager: "winget", id } : undefined
+  }
+  if (cmd.file === "brew") {
+    // `brew upgrade <formula>` — the first non-flag arg after the subcommand.
+    const id = cmd.args.slice(1).find((a) => !a.startsWith("-"))
+    return id ? { manager: "brew", id } : undefined
+  }
+  return undefined
 }
 
 export function findCli(id: string): CliTool | undefined {

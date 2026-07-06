@@ -14,7 +14,7 @@ jest.mock("@/lib/tauri/commands", () => ({
   readTextFile: jest.fn(async () => "{}"),
   writeTextFile: jest.fn(async () => undefined),
   ccWriteProvider: jest.fn(async () => ["ok"]),
-  launchApp: jest.fn(async () => undefined),
+  launchCcSwitch: jest.fn(async () => undefined),
   isProcessRunning: jest.fn(async () => false),
   pathExists: jest.fn(async () => true),
   backupList: jest.fn(async () => [] as unknown[]),
@@ -35,6 +35,9 @@ import {
   ccLoadProviders,
   readTextFile,
   isProcessRunning,
+  detectCli,
+  pathExists,
+  launchCcSwitch,
   backupList,
   backupRestore,
 } from "@/lib/tauri/commands"
@@ -53,9 +56,12 @@ const paths = {
 
 beforeEach(() => {
   jest.clearAllMocks()
-  // clearAllMocks keeps implementations, so restore the running=false default that
-  // the "while running" test overrides with a persistent mockResolvedValue(true).
+  // clearAllMocks keeps implementations, so restore the defaults that individual
+  // tests override with a persistent mockResolvedValue (running=false, and
+  // cc-switch detected=false + DB present so the auto-init flow stays dormant).
   ;(isProcessRunning as jest.Mock).mockResolvedValue(false)
+  ;(detectCli as jest.Mock).mockResolvedValue({ installed: false })
+  ;(pathExists as jest.Mock).mockResolvedValue(true)
   useAppStore.setState({ paths, dryRun: false, panelOpen: false, osOverride: null })
 })
 
@@ -181,6 +187,18 @@ it("falls back to the no-db message when the list is empty", async () => {
   ;(ccLoadProviders as jest.Mock).mockResolvedValueOnce([])
   renderCc()
   expect(await screen.findByText(en.ccswitch.empty)).toBeInTheDocument()
+})
+
+it("auto-launches cc-switch to create the DB when detected but the DB is missing", async () => {
+  ;(detectCli as jest.Mock).mockResolvedValue({ installed: true })
+  // No DB on the initial scan → needsDb → auto-launch (no click); the launch
+  // creates it, so the first poll tick finds it and the section flips to ready.
+  ;(pathExists as jest.Mock).mockResolvedValueOnce(false).mockResolvedValue(true)
+  renderCc()
+  await waitFor(() => expect(launchCcSwitch).toHaveBeenCalledTimes(1))
+  expect(
+    await screen.findByText(en.ccswitch.dbReady, undefined, { timeout: 3000 })
+  ).toBeInTheDocument()
 })
 
 it("reflects the visible-apps selection read from disk", async () => {

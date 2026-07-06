@@ -7,6 +7,7 @@ import {
   findMcp,
   findRuntime,
   installMethodsFor,
+  runtimePkgManager,
   runtimeUpgradeCommandFor,
   upgradeCommandFor,
 } from "./registry"
@@ -146,5 +147,45 @@ describe("runtimeUpgradeCommandFor", () => {
 
   it("has no automated update path for Node on Linux", () => {
     expect(runtimeUpgradeCommandFor(findRuntime("node")!, "linux")).toBeUndefined()
+  })
+})
+
+describe("runtimePkgManager", () => {
+  it("extracts the winget id from Node's Windows upgrade command", () => {
+    expect(runtimePkgManager(findRuntime("node")!, "win")).toEqual({
+      manager: "winget",
+      id: "OpenJS.NodeJS.LTS",
+    })
+  })
+
+  it("uses Python's winget FAMILY id (not the pinned minor) so any 3.x install matches", () => {
+    // winget ships each Python minor as its own package; the ownership check +
+    // update must match the family (Python.Python.3), not the pinned install
+    // version (…3.13), or a winget-installed 3.14 reads as unmanaged.
+    const pm = runtimePkgManager(findRuntime("python")!, "win")
+    expect(pm).toEqual({ manager: "winget", id: "Python.Python.3" })
+    expect(pm!.id).not.toContain("3.13")
+  })
+
+  it("extracts the brew formula from Python's macOS upgrade command", () => {
+    expect(runtimePkgManager(findRuntime("python")!, "mac")).toEqual({
+      manager: "brew",
+      id: "python",
+    })
+  })
+
+  it("is undefined for self-updating runtimes (bun/uv) — no package manager owns them", () => {
+    expect(runtimePkgManager(findRuntime("bun")!, "win")).toBeUndefined()
+    expect(runtimePkgManager(findRuntime("uv")!, "mac")).toBeUndefined()
+  })
+
+  it("is undefined where a runtime has no update path on this OS (Node on Linux)", () => {
+    expect(runtimePkgManager(findRuntime("node")!, "linux")).toBeUndefined()
+  })
+
+  it("only winget/brew-managed runtimes carry a downloadUrl fallback", () => {
+    // node/python (winget/brew) need the download-link fallback; bun/uv self-update.
+    expect(findRuntime("node")!.downloadUrl).toMatch(/^https?:\/\//)
+    expect(findRuntime("python")!.downloadUrl).toMatch(/^https?:\/\//)
   })
 })

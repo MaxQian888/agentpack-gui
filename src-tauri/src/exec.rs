@@ -472,19 +472,118 @@ pub fn cancel_command(op_id: String) {
   }
 }
 
-/// Launch a (usually GUI) app and return immediately without waiting for it to
-/// exit. Used to start cc-switch once so it self-initializes its SQLite database;
-/// `run_command` can't be reused because it blocks until the process ends, which
-/// a GUI app never does. stdio is detached so no pipes are held open.
+/// Resolve the cc-switch desktop app's launch target. winget (Windows) and
+/// brew-cask (macOS) install it OUTSIDE PATH, so a plain `cc-switch` lookup
+/// misses it — which is why detection and the DB-init launch used to fail on a
+/// fresh install. Returns the path to spawn, or None when it isn't installed by
+/// those managers (the caller then falls back to a PATH launch).
+#[cfg(windows)]
+fn cc_switch_exe() -> Option<std::path::PathBuf> {
+  use std::path::PathBuf;
+  use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+  use winreg::RegKey;
+
+  // winget registers the app under an Uninstall key carrying InstallLocation and
+  // usually DisplayIcon (→ the exe). The exe name is stable: cc-switch.exe.
+  let roots = [
+    (HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+    (HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+    (
+      HKEY_LOCAL_MACHINE,
+      r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+    ),
+  ];
+  for (hive, sub) in roots {
+    let Ok(uninstall) = RegKey::predef(hive).open_subkey(sub) else {
+      continue;
+    };
+    for name in uninstall.enum_keys().flatten() {
+      let Ok(entry) = uninstall.open_subkey(&name) else {
+        continue;
+      };
+      let display: String = entry.get_value("DisplayName").unwrap_or_default();
+      // Normalize "CC Switch" / "CC-Switch" / "cc-switch" → "ccswitch".
+      let norm: String = display.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase();
+      if !norm.contains("ccswitch") {
+        continue;
+      }
+      // Prefer DisplayIcon when it points at a real .exe; else InstallLocation.
+      if let Ok(icon) = entry.get_value::<String, _>("DisplayIcon") {
+        let raw = icon.trim().trim_matches('"');
+        let exe = PathBuf::from(raw.split(',').next().unwrap_or(raw).trim());
+        if exe.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")) && exe.exists() {
+          return Some(exe);
+        }
+      }
+      if let Ok(loc) = entry.get_value::<String, _>("InstallLocation") {
+        let exe = PathBuf::from(loc).join("cc-switch.exe");
+        if exe.exists() {
+          return Some(exe);
+        }
+      }
+    }
+  }
+  None
+}
+
+#[cfg(target_os = "macos")]
+fn cc_switch_exe() -> Option<std::path::PathBuf> {
+  // brew --cask cc-switch drops the bundle in /Applications (or ~/Applications);
+  // we hand the .app to `open` rather than exec its inner binary.
+  let mut candidates = vec![std::path::PathBuf::from("/Applications/cc-switch.app")];
+  if let Some(home) = dirs::home_dir() {
+    candidates.push(home.join("Applications/cc-switch.app"));
+  }
+  candidates.into_iter().find(|p| p.exists())
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn cc_switch_exe() -> Option<std::path::PathBuf> {
+  None
+}
+
+/// Whether the cc-switch desktop app is actually installed right now. It's a GUI
+/// app winget/brew install OFF PATH, so a PATH lookup alone under-reports it —
+/// hence the resolved install-location check (which requires the real exe/bundle
+/// to exist on disk). We deliberately do NOT treat a leftover ~/.cc-switch config
+/// dir as "installed": it survives an uninstall, so keying off it would report a
+/// removed app as still present.
+fn cc_switch_installed() -> bool {
+  on_path("cc-switch") || cc_switch_exe().is_some()
+}
+
+/// Launch the cc-switch desktop app so it self-creates its SQLite database on
+/// first run (`run_command` can't be reused: it blocks until exit, which a GUI
+/// app never does). Resolves the real install path — winget/brew put it off
+/// PATH — and spawns it directly; falls back to a PATH launch when unresolved.
+/// stdio is detached so no pipes are held open.
 #[tauri::command(async)]
-pub fn launch_app(file: String, args: Vec<String>) -> Result<(), String> {
-  build_command(&file, &args)
+pub fn launch_cc_switch() -> Result<(), String> {
+  let target = cc_switch_exe();
+  let mut cmd = match &target {
+    // macOS ships a .app bundle → launch via `open -n`.
+    #[cfg(target_os = "macos")]
+    Some(app) => {
+      let mut c = Command::new("open");
+      c.arg("-n").arg(app);
+      c
+    }
+    // Windows: spawn the resolved .exe directly (no `cmd /c` → no PATHEXT or
+    // quoting hazards with a spaced install path like "…\CC Switch\").
+    #[cfg(not(target_os = "macos"))]
+    Some(exe) => Command::new(exe),
+    // Unresolved (Linux, or an unusual install) → try the bare name on PATH.
+    None => Command::new("cc-switch"),
+  };
+  apply_no_window(&mut cmd);
+  apply_env(&mut cmd);
+  cmd
     .stdin(Stdio::null())
     .stdout(Stdio::null())
     .stderr(Stdio::null())
     .spawn()
     .map(|_| ())
-    .map_err(|e| format!("could not launch {file}: {e}"))
+    .map_err(|e| format!("could not launch cc-switch: {e}"))
 }
 
 #[derive(Serialize)]
@@ -506,15 +605,20 @@ fn on_path(bin: &str) -> bool {
   c.output().map(|o| o.status.success()).unwrap_or(false)
 }
 
-/// Detect a CLI. GUI tools (cc-switch) are never executed — PATH + config dir only.
+/// Detect a CLI. GUI tools (cc-switch) are never executed — PATH + resolved
+/// install location only, so a winget/brew install that isn't on PATH is still
+/// detected before its first launch, and a removed one stops being detected even
+/// if its ~/.cc-switch config dir lingers.
 #[tauri::command(async)]
 pub fn detect_cli(bin: String, gui: bool) -> DetectionResult {
   if gui {
-    let cc = dirs::home_dir()
-      .map(|h| h.join(".cc-switch").exists())
-      .unwrap_or(false);
+    let installed = if bin == "cc-switch" {
+      cc_switch_installed()
+    } else {
+      on_path(&bin)
+    };
     return DetectionResult {
-      installed: on_path(&bin) || (bin == "cc-switch" && cc),
+      installed,
       version: None,
     };
   }
@@ -571,6 +675,45 @@ pub fn npm_owns(package: String) -> bool {
     .unwrap_or(false)
 }
 
+/// Whether the OS package manager (`winget` on Windows, `brew` on macOS) owns an
+/// installed package matching `id`.
+///
+/// Used to decide whether a runtime can be UPDATED / REINSTALLED in place: only a
+/// winget/brew-managed install can be. A runtime put on PATH some other way — the
+/// vendor's installer (nodejs.org / python.org), a version manager (nvm/fnm), or
+/// scoop / a portable unzip — is invisible to winget/brew, so `winget upgrade`
+/// fails (0x8A150014) and `winget install` would drop a shadowing second copy.
+/// A `false` result tells the UI to point at the tool's download page instead.
+///
+/// `id` is matched as a SUBSTRING (winget `--id` without `-e`), so a family
+/// prefix like `Python.Python.3` matches whatever minor is installed
+/// (`Python.Python.3.14`) — winget ships Python as a separate package per minor,
+/// so an exact match on a pinned `…3.13` would wrongly report a winget-installed
+/// 3.14 as unmanaged. Ownership keys off the EXIT CODE only: `--id` with no match
+/// exits 0x8A150014, and winget truncates its printed table (so the id may not
+/// even appear in full) — parsing the text would be both unnecessary and fragile.
+///
+/// Returns false when the manager is absent or lists nothing — both mean "not
+/// managed by it", the safe default that only errs toward showing a link.
+#[tauri::command(async)]
+pub fn pkg_manager_owns(manager: String, id: String) -> bool {
+  match manager.as_str() {
+    "winget" => build_command(
+      "winget",
+      ["list", "--id", &id, "--accept-source-agreements"],
+    )
+    .output()
+    .map(|o| o.status.success())
+    .unwrap_or(false),
+    // `brew list --versions <formula>` exits 0 only when the formula is installed.
+    "brew" => build_command("brew", ["list", "--versions", &id])
+      .output()
+      .map(|o| o.status.success())
+      .unwrap_or(false),
+    _ => false,
+  }
+}
+
 /// Whether a process with this base name is running (best-effort, used as a
 /// guardrail before writing the cc-switch DB).
 #[tauri::command(async)]
@@ -624,6 +767,14 @@ mod tests {
   }
 
   #[test]
+  fn detect_cc_switch_gui_is_infallible() {
+    // The GUI detection path walks PATH and the Windows Uninstall registry —
+    // neither guaranteed to hold cc-switch on the test machine. It must return a
+    // bool without panicking regardless.
+    let _ = detect_cli("cc-switch".into(), true).installed;
+  }
+
+  #[test]
   fn run_command_reports_missing_binary_on_all_platforms() {
     // On Windows the `cmd /c` wrapper hides a missing binary behind exit code 1;
     // the on_path pre-check makes it a clean, cross-platform "command not found".
@@ -646,6 +797,24 @@ mod tests {
     // must report as not-owned (absent npm → spawn fails → false; present npm →
     // `ls -g` exits non-zero → false). Guards the "fall back to native" default.
     assert!(!npm_owns("definitely-not-a-real-package-xyz-123".into()));
+  }
+
+  #[test]
+  fn pkg_manager_owns_is_false_for_unknown_manager_or_missing_package() {
+    // An unrecognized manager never claims ownership.
+    assert!(!pkg_manager_owns("apt".into(), "OpenJS.NodeJS.LTS".into()));
+    // A package the OS manager never installed reports not-owned regardless of
+    // whether winget/brew is even present (absent → spawn fails → false; present
+    // → no matching row / non-zero exit → false). Drives the "show the download
+    // link" fallback, so erring toward false is the safe default.
+    assert!(!pkg_manager_owns(
+      "winget".into(),
+      "Definitely.Not.A.Real.Package.Xyz123".into()
+    ));
+    assert!(!pkg_manager_owns(
+      "brew".into(),
+      "definitely-not-a-real-formula-xyz-123".into()
+    ));
   }
 
   #[test]
