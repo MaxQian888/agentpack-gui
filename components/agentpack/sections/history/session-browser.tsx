@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react"
 import { format } from "date-fns"
 import { Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Dialog,
@@ -32,6 +31,8 @@ import {
 import { formatCost, formatTokens } from "@/lib/history/format"
 import { matchesQuery, sessionCost } from "@/lib/history/stats"
 import { SOURCE_COLORS } from "@/lib/history/display"
+import { detailCacheKey, getCachedDetail, setCachedDetail } from "@/lib/history/detail-cache"
+import { useIncremental } from "@/hooks/use-incremental"
 import { Transcript } from "./transcript"
 
 type SortKey = "recent" | "tokens" | "messages"
@@ -85,18 +86,22 @@ function SessionCard({ session, onOpen }: { session: SessionSummary; onOpen: () 
 
 /**
  * Fetches and renders one transcript. Mounted with a `key` per session so
- * switching sessions gives a fresh instance (state resets without a synchronous
- * setState in an effect); state is only set in the async continuation.
+ * switching sessions gives a fresh instance. A previously-viewed transcript is
+ * served straight from the LRU cache (lazy initial state, no spinner flash); the
+ * effect only hits Rust on a cache miss and stores the result for next time.
  */
 function TranscriptBody({ session }: { session: SessionSummary }) {
   const t = useT().history
-  const [detail, setDetail] = useState<SessionDetail | null>(null)
+  const key = detailCacheKey(session.source, session.path)
+  const [detail, setDetail] = useState<SessionDetail | null>(() => getCachedDetail(key) ?? null)
   const [error, setError] = useState(false)
 
   useEffect(() => {
+    if (getCachedDetail(key)) return
     let cancelled = false
     historyGetSession(session.source, session.path)
       .then((d) => {
+        setCachedDetail(key, d)
         if (!cancelled) setDetail(d)
       })
       .catch(() => {
@@ -105,7 +110,7 @@ function TranscriptBody({ session }: { session: SessionSummary }) {
     return () => {
       cancelled = true
     }
-  }, [session])
+  }, [session, key])
 
   if (error) {
     return <p className="p-10 text-center text-sm text-muted-foreground">{t.loadFailed}</p>
@@ -155,11 +160,15 @@ function TranscriptDialog({
           </DialogTitle>
           <DialogDescription className="truncate">{meta}</DialogDescription>
         </DialogHeader>
-        <ScrollArea className="min-h-0 flex-1">
+        {/* Plain native scroll — Radix ScrollArea wraps content in a
+            display:table element that widens to its widest child, overflowing
+            the dialog. overflow-x-hidden keeps wide code blocks scrolling inside
+            their own <pre> instead of stretching the layout. */}
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
           {session ? (
             <TranscriptBody key={`${session.source}:${session.id}`} session={session} />
           ) : null}
-        </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
   )
@@ -188,6 +197,14 @@ export function SessionBrowser({ sessions }: { sessions: SessionSummary[] }) {
     else sorted.sort((a, b) => b.updatedAt - a.updatedAt)
     return sorted
   }, [sessions, source, query, sort])
+
+  // Render the list in windows so a few thousand sessions don't all mount at
+  // once. Window resets whenever the filter/sort changes.
+  const { visible, sentinelRef, hasMore } = useIncremental(
+    filtered.length,
+    `${source}|${query}|${sort}`,
+    50
+  )
 
   return (
     <div className="flex flex-col gap-4">
@@ -243,9 +260,10 @@ export function SessionBrowser({ sessions }: { sessions: SessionSummary[] }) {
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {filtered.map((s) => (
+          {filtered.slice(0, visible).map((s) => (
             <SessionCard key={`${s.source}:${s.id}`} session={s} onOpen={() => setSelected(s)} />
           ))}
+          {hasMore ? <div ref={sentinelRef} className="h-1" aria-hidden /> : null}
         </div>
       )}
 

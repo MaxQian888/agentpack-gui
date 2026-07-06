@@ -33,6 +33,21 @@ if (typeof globalThis.ResizeObserver === "undefined") {
     disconnect() {}
   }
 }
+// jsdom lacks IntersectionObserver (used by useIncremental for windowed lists).
+// A no-op stub never fires, so tests just render the initial window.
+if (typeof globalThis.IntersectionObserver === "undefined") {
+  globalThis.IntersectionObserver = class {
+    root = null
+    rootMargin = ""
+    thresholds = []
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return []
+    }
+  } as unknown as typeof IntersectionObserver
+}
 if (typeof Element !== "undefined") {
   Element.prototype.scrollIntoView = Element.prototype.scrollIntoView || jest.fn()
   Element.prototype.hasPointerCapture = Element.prototype.hasPointerCapture || jest.fn()

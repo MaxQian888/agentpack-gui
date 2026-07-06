@@ -1,6 +1,6 @@
 "use client"
 
-import { Fragment } from "react"
+import { Fragment, useMemo } from "react"
 import { parseMarkdown, type InlineToken, type MdBlock } from "@/lib/history/markdown"
 import { cn } from "@/lib/utils"
 
@@ -38,7 +38,7 @@ function Inline({ tokens }: { tokens: InlineToken[] }) {
                 href={tok.href}
                 target="_blank"
                 rel="noreferrer"
-                className="text-primary underline underline-offset-2"
+                className="text-primary underline underline-offset-2 break-words"
               >
                 {tok.value}
               </a>
@@ -100,9 +100,9 @@ function Block({ block }: { block: MdBlock }) {
 
 /** Render Markdown text as a safe React tree (no HTML injection). */
 export function MarkdownView({ text, className }: { text: string; className?: string }) {
-  const blocks = parseMarkdown(text)
+  const blocks = useMemo(() => parseMarkdown(text), [text])
   return (
-    <div className={cn("space-y-2 text-sm leading-relaxed", className)}>
+    <div className={cn("min-w-0 space-y-2 text-sm leading-relaxed", className)}>
       {blocks.map((b, i) => (
         <Block key={i} block={b} />
       ))}

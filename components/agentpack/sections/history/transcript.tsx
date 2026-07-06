@@ -1,5 +1,6 @@
 "use client"
 
+import { memo } from "react"
 import { Brain, ChevronRight, FileDiff, Globe, ImageIcon, Terminal, Wrench } from "lucide-react"
 import { format } from "date-fns"
 import { cn } from "@/lib/utils"
@@ -7,6 +8,7 @@ import { useT } from "@/lib/i18n/provider"
 import type { Message, Part, SessionDetail } from "@/lib/history/types"
 import { formatTokens } from "@/lib/history/format"
 import { modelColor } from "@/lib/history/display"
+import { useIncremental } from "@/hooks/use-incremental"
 import { MarkdownView } from "./markdown-view"
 
 /** A collapsible section built on native <details> — no state, fully testable. */
@@ -114,7 +116,16 @@ function roleLabel(role: Message["role"], t: ReturnType<typeof useT>["history"])
   return t.roleUser
 }
 
-function MessageView({ message, fallbackModel }: { message: Message; fallbackModel: string }) {
+// Memoized so growing the transcript window (or any parent re-render) doesn't
+// re-run markdown parsing for messages already on screen — `message` refs are
+// stable across renders.
+const MessageView = memo(function MessageView({
+  message,
+  fallbackModel,
+}: {
+  message: Message
+  fallbackModel: string
+}) {
   const t = useT().history
   const isUser = message.role === "user"
   const model = message.model ?? fallbackModel
@@ -127,35 +138,48 @@ function MessageView({ message, fallbackModel }: { message: Message; fallbackMod
           style={{ backgroundColor: dot }}
           aria-hidden
         />
-        <span className="font-medium">{roleLabel(message.role, t)}</span>
-        {!isUser && model ? <span className="text-muted-foreground">· {model}</span> : null}
-        <span className="ml-auto flex items-center gap-2 text-muted-foreground">
+        <span className="shrink-0 font-medium">{roleLabel(message.role, t)}</span>
+        {!isUser && model ? (
+          <span className="min-w-0 truncate text-muted-foreground">· {model}</span>
+        ) : null}
+        <span className="ml-auto flex shrink-0 items-center gap-2 text-muted-foreground">
           {message.usage && message.usage.total > 0 ? (
             <span>{formatTokens(message.usage.total)}</span>
           ) : null}
           {message.ts ? <span>{format(new Date(message.ts), "HH:mm")}</span> : null}
         </span>
       </div>
-      <div className="space-y-2">
+      <div className="min-w-0 space-y-2">
         {message.parts.map((p, i) => (
           <PartView key={i} part={p} />
         ))}
       </div>
     </div>
   )
-}
+})
 
-/** Render a full session transcript as an ordered list of turns. */
+/** Render a session transcript as an ordered list of turns, windowed so long
+ *  sessions mount incrementally as the reader scrolls instead of all at once. */
 export function Transcript({ detail }: { detail: SessionDetail }) {
   const t = useT().history
+  const { visible, sentinelRef, hasMore } = useIncremental(
+    detail.messages.length,
+    detail.summary.id,
+    30
+  )
   if (detail.messages.length === 0) {
     return <p className="p-6 text-center text-sm text-muted-foreground">{t.transcriptEmpty}</p>
   }
   return (
-    <div className="space-y-3 p-4">
-      {detail.messages.map((m) => (
+    <div className="min-w-0 space-y-3 p-4">
+      {detail.messages.slice(0, visible).map((m) => (
         <MessageView key={m.id} message={m} fallbackModel={detail.summary.model} />
       ))}
+      {hasMore ? (
+        <div ref={sentinelRef} className="flex justify-center py-2 text-xs text-muted-foreground">
+          {t.loading}
+        </div>
+      ) : null}
     </div>
   )
 }

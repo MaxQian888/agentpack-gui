@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { ListResult } from "@/lib/history/types"
+import { clearDetailCache } from "@/lib/history/detail-cache"
 import { isTauri } from "@/lib/tauri"
 import {
   detectCli,
@@ -60,6 +61,9 @@ function ShellBody() {
 
   const loadHistory = useCallback(async () => {
     if (!isTauri()) return
+    // Explicit Rescan: drop cached transcripts too, since an active session's
+    // on-disk file may have grown since it was last opened.
+    clearDetailCache()
     setHistoryLoading(true)
     try {
       setHistoryResult(await historyListSessions())
