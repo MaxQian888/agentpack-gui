@@ -17,18 +17,20 @@
 //! webview renders one model instead of three. Everything here is read-only.
 
 use rusqlite::{Connection, OpenFlags};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::history_cache::{CachedEntry, SummaryCache};
 use crate::paths::codex_home;
 
 /// Unified token accounting. Component fields are the disjoint parts that make up
 /// `total` for a given source (see `finish_total`), so summing `total` across
 /// sessions never double-counts. Cached / reasoning subsets are surfaced for
 /// context but are already accounted for within the source's own `total`.
-#[derive(Serialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TokenUsage {
   input: u64,
@@ -52,7 +54,7 @@ impl TokenUsage {
 
 /// Lightweight per-session record for the history list + usage stats. Built by
 /// streaming a whole session once (JSONL) or one SQL row (OpenCode).
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
   id: String,
@@ -206,6 +208,9 @@ fn iso_to_epoch_ms(t: &str) -> Option<i64> {
 }
 
 /// Read a JSONL file into parsed values, silently dropping unparsable lines.
+/// Used by the *detail* path (a single session, reopened on demand). The *scan*
+/// path uses the streaming `*_summary_from_file` readers instead, so it never
+/// holds a whole file's parsed tree in memory.
 fn read_jsonl(path: &Path) -> Result<Vec<Value>, String> {
   let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
   Ok(
@@ -215,6 +220,122 @@ fn read_jsonl(path: &Path) -> Result<Vec<Value>, String> {
       .filter_map(|l| serde_json::from_str::<Value>(l).ok())
       .collect(),
   )
+}
+
+/// Feed each non-empty JSONL line of `path`, parsed one at a time and dropped
+/// immediately, to `push`. Peak memory is a single line's `Value`, not the whole
+/// file — the streaming counterpart to `read_jsonl` for summary scanning.
+fn stream_jsonl<F: FnMut(&Value)>(path: &Path, mut push: F) -> Option<()> {
+  let text = fs::read_to_string(path).ok()?;
+  for line in text.lines() {
+    let line = line.trim();
+    if line.is_empty() {
+      continue;
+    }
+    if let Ok(v) = serde_json::from_str::<Value>(line) {
+      push(&v);
+    }
+  }
+  Some(())
+}
+
+// ── incremental-scan plumbing ────────────────────────────────────────────────
+
+/// A candidate history file plus a cheap change-signature (a `stat`, no read).
+/// The signature is what the summary cache keys on: an unchanged `(mtime, size)`
+/// means the file's parsed summary can be reused verbatim.
+struct FileSig {
+  path: PathBuf,
+  mtime_ms: i64,
+  size: u64,
+}
+
+/// Signature for one path, or `None` if it can't be `stat`ed.
+fn file_sig(path: PathBuf) -> Option<FileSig> {
+  let md = fs::metadata(&path).ok()?;
+  let size = md.len();
+  let mtime_ms = md
+    .modified()
+    .ok()
+    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+    .map(|d| d.as_millis() as i64)
+    .unwrap_or(0);
+  Some(FileSig { path, mtime_ms, size })
+}
+
+/// Map `f` over `items` across up to one thread per CPU core (contiguous
+/// chunks), falling back to a serial map for tiny inputs. Result order is not
+/// preserved — callers here don't depend on it (the session list is re-sorted).
+fn parallel_map<T, R, F>(items: Vec<T>, f: F) -> Vec<R>
+where
+  T: Send + Sync,
+  R: Send,
+  F: Fn(&T) -> R + Sync,
+{
+  let len = items.len();
+  let workers = std::thread::available_parallelism()
+    .map(|n| n.get())
+    .unwrap_or(1)
+    .min(len.max(1));
+  if workers <= 1 {
+    return items.iter().map(&f).collect();
+  }
+  let chunk = len.div_ceil(workers);
+  let mut out: Vec<R> = Vec::with_capacity(len);
+  std::thread::scope(|scope| {
+    let handles: Vec<_> = items
+      .chunks(chunk)
+      .map(|c| scope.spawn(|| c.iter().map(&f).collect::<Vec<R>>()))
+      .collect();
+    for h in handles {
+      out.extend(h.join().unwrap());
+    }
+  });
+  out
+}
+
+/// Cache-aware, parallel scan shared by the file-based sources. Files whose
+/// `(mtime, size)` matches `cache` are reused without re-reading; the rest are
+/// parsed in parallel via `parse`. Every current file's entry lands in
+/// `new_cache` (so vanished files are pruned for free), and summaries with at
+/// least one message are appended to `out`.
+fn scan_files<F>(
+  cache: &SummaryCache,
+  new_cache: &mut SummaryCache,
+  out: &mut Vec<SessionSummary>,
+  sigs: Vec<FileSig>,
+  parse: F,
+) where
+  F: Fn(&Path) -> Option<SessionSummary> + Sync,
+{
+  let mut misses = Vec::new();
+  for sig in sigs {
+    let key = sig.path.to_string_lossy().into_owned();
+    if let Some(hit) = cache.entries.get(&key) {
+      if hit.mtime_ms == sig.mtime_ms && hit.size == sig.size {
+        if hit.summary.message_count > 0 {
+          out.push(hit.summary.clone());
+        }
+        new_cache.entries.insert(key, hit.clone());
+        continue;
+      }
+    }
+    misses.push(sig);
+  }
+  let parsed = parallel_map(misses, |sig| {
+    parse(&sig.path).map(|summary| {
+      (
+        sig.path.to_string_lossy().into_owned(),
+        CachedEntry { mtime_ms: sig.mtime_ms, size: sig.size, summary },
+      )
+    })
+  });
+  for (key, entry) in parsed.into_iter().flatten() {
+    if entry.summary.message_count > 0 {
+      out.push(entry.summary.clone());
+    }
+    new_cache.entries.insert(key, entry);
+  }
 }
 
 // ── Claude Code ──────────────────────────────────────────────────────────────
@@ -263,54 +384,59 @@ fn claude_content_text(content: &Value) -> String {
   }
 }
 
-fn claude_summary(path: &Path, lines: &[Value]) -> Option<SessionSummary> {
-  let id = path.file_stem()?.to_string_lossy().into_owned();
-  let mut title: Option<String> = None;
-  let mut first_user: Option<String> = None;
-  let mut cwd = String::new();
-  let mut git_branch: Option<String> = None;
-  let mut models: Vec<String> = Vec::new();
-  let mut usage = TokenUsage::default();
-  let mut started: Option<i64> = None;
-  let mut updated: Option<i64> = None;
-  let mut count: u64 = 0;
+/// Streaming fold over a Claude session's lines. `push` absorbs one record at a
+/// time so a summary can be built without materializing the whole file; `finish`
+/// turns the accumulated state into a `SessionSummary`.
+#[derive(Default)]
+struct ClaudeAcc {
+  title: Option<String>,
+  first_user: Option<String>,
+  cwd: String,
+  git_branch: Option<String>,
+  models: Vec<String>,
+  usage: TokenUsage,
+  started: Option<i64>,
+  updated: Option<i64>,
+  count: u64,
+}
 
-  for line in lines {
+impl ClaudeAcc {
+  fn push(&mut self, line: &Value) {
     let ty = s(line, "type").unwrap_or("");
     if let Some(t) = s(line, "aiTitle") {
       if !t.trim().is_empty() {
-        title = Some(truncate_title(t));
+        self.title = Some(truncate_title(t));
       }
     }
     if ty == "ai-title" {
-      continue;
+      return;
     }
-    if cwd.is_empty() {
+    if self.cwd.is_empty() {
       if let Some(c) = s(line, "cwd") {
-        cwd = c.to_string();
+        self.cwd = c.to_string();
       }
     }
-    if git_branch.is_none() {
+    if self.git_branch.is_none() {
       if let Some(b) = s(line, "gitBranch").filter(|b| !b.is_empty()) {
-        git_branch = Some(b.to_string());
+        self.git_branch = Some(b.to_string());
       }
     }
     if let Some(ms) = s(line, "timestamp").and_then(iso_to_epoch_ms) {
-      started = Some(started.map_or(ms, |v: i64| v.min(ms)));
-      updated = Some(updated.map_or(ms, |v: i64| v.max(ms)));
+      self.started = Some(self.started.map_or(ms, |v: i64| v.min(ms)));
+      self.updated = Some(self.updated.map_or(ms, |v: i64| v.max(ms)));
     }
     if ty == "user" || ty == "assistant" {
       let msg = line.get("message");
       let has_body = msg.map(|m| m.get("content").is_some()).unwrap_or(false);
       if has_body {
-        count += 1;
+        self.count += 1;
       }
-      if ty == "user" && first_user.is_none() {
+      if ty == "user" && self.first_user.is_none() {
         if let Some(m) = msg {
           let txt = claude_content_text(m.get("content").unwrap_or(&Value::Null));
           let txt = txt.trim();
           if !txt.is_empty() && !txt.starts_with('<') {
-            first_user = Some(truncate_title(txt));
+            self.first_user = Some(truncate_title(txt));
           }
         }
       }
@@ -319,34 +445,53 @@ fn claude_summary(path: &Path, lines: &[Value]) -> Option<SessionSummary> {
           // Skip Claude Code's `<synthetic>` marker (hook/injected turns) so the
           // session's primary model and pricing reflect the real model.
           if let Some(model) = s(m, "model").filter(|m| !m.is_empty() && *m != "<synthetic>") {
-            if !models.iter().any(|x| x == model) {
-              models.push(model.to_string());
+            if !self.models.iter().any(|x| x == model) {
+              self.models.push(model.to_string());
             }
           }
           if let Some(us) = m.get("usage") {
-            usage.add(&claude_usage(us));
+            self.usage.add(&claude_usage(us));
           }
         }
       }
     }
   }
 
-  Some(SessionSummary {
-    id,
-    source: "claude".into(),
-    title: title.or(first_user).unwrap_or_else(|| "Untitled session".into()),
-    project_name: if cwd.is_empty() { "—".into() } else { basename(&cwd) },
-    cwd,
-    model: models.last().cloned().unwrap_or_default(),
-    models,
-    message_count: count,
-    usage,
-    cost: None,
-    started_at: started.unwrap_or(0),
-    updated_at: updated.unwrap_or(0),
-    path: path.to_string_lossy().into_owned(),
-    git_branch,
-  })
+  fn finish(self, id: String, path: &Path) -> SessionSummary {
+    SessionSummary {
+      id,
+      source: "claude".into(),
+      title: self.title.or(self.first_user).unwrap_or_else(|| "Untitled session".into()),
+      project_name: if self.cwd.is_empty() { "—".into() } else { basename(&self.cwd) },
+      cwd: self.cwd,
+      model: self.models.last().cloned().unwrap_or_default(),
+      models: self.models,
+      message_count: self.count,
+      usage: self.usage,
+      cost: None,
+      started_at: self.started.unwrap_or(0),
+      updated_at: self.updated.unwrap_or(0),
+      path: path.to_string_lossy().into_owned(),
+      git_branch: self.git_branch,
+    }
+  }
+}
+
+fn claude_summary(path: &Path, lines: &[Value]) -> Option<SessionSummary> {
+  let id = path.file_stem()?.to_string_lossy().into_owned();
+  let mut acc = ClaudeAcc::default();
+  for line in lines {
+    acc.push(line);
+  }
+  Some(acc.finish(id, path))
+}
+
+/// Streaming summary read straight from disk — the scan path's entry point.
+fn claude_summary_from_file(path: &Path) -> Option<SessionSummary> {
+  let id = path.file_stem()?.to_string_lossy().into_owned();
+  let mut acc = ClaudeAcc::default();
+  stream_jsonl(path, |line| acc.push(line))?;
+  Some(acc.finish(id, path))
 }
 
 fn claude_detail(path: &Path, lines: &[Value]) -> SessionDetail {
@@ -448,11 +593,16 @@ fn claude_detail(path: &Path, lines: &[Value]) -> SessionDetail {
   SessionDetail { summary, messages }
 }
 
-fn scan_claude(out: &mut Vec<SessionSummary>) -> Result<(), String> {
+fn scan_claude(
+  cache: &SummaryCache,
+  new_cache: &mut SummaryCache,
+  out: &mut Vec<SessionSummary>,
+) -> Result<(), String> {
   let Some(root) = claude_root() else { return Ok(()) };
   if !root.is_dir() {
     return Ok(());
   }
+  let mut sigs = Vec::new();
   for proj in fs::read_dir(&root).map_err(|e| e.to_string())?.flatten() {
     if !proj.path().is_dir() {
       continue;
@@ -462,15 +612,12 @@ fn scan_claude(out: &mut Vec<SessionSummary>) -> Result<(), String> {
       if p.extension().and_then(|e| e.to_str()) != Some("jsonl") {
         continue;
       }
-      if let Ok(lines) = read_jsonl(&p) {
-        if let Some(sum) = claude_summary(&p, &lines) {
-          if sum.message_count > 0 {
-            out.push(sum);
-          }
-        }
+      if let Some(sig) = file_sig(p) {
+        sigs.push(sig);
       }
     }
   }
+  scan_files(cache, new_cache, out, sigs, claude_summary_from_file);
   Ok(())
 }
 
@@ -530,56 +677,62 @@ fn codex_token_usage(info: &Value) -> Option<TokenUsage> {
   })
 }
 
-fn codex_summary(path: &Path, lines: &[Value], titles: &std::collections::HashMap<String, String>) -> Option<SessionSummary> {
-  let mut id = path.file_stem()?.to_string_lossy().into_owned();
-  let mut cwd = String::new();
-  let mut models: Vec<String> = Vec::new();
-  let mut title: Option<String> = None;
-  let mut usage = TokenUsage::default();
-  let mut started: Option<i64> = None;
-  let mut updated: Option<i64> = None;
-  let mut count: u64 = 0;
+/// Streaming fold over a Codex rollout's lines (mirrors `ClaudeAcc`). The
+/// session id can be overridden by a `session_meta` record, so `finish` takes
+/// the file-stem fallback and resolves the display title against `titles`.
+#[derive(Default)]
+struct CodexAcc {
+  meta_id: Option<String>,
+  cwd: String,
+  models: Vec<String>,
+  title: Option<String>,
+  usage: TokenUsage,
+  started: Option<i64>,
+  updated: Option<i64>,
+  count: u64,
+}
 
-  for line in lines {
+impl CodexAcc {
+  fn push(&mut self, line: &Value) {
     let ty = s(line, "type").unwrap_or("");
     if let Some(ms) = s(line, "timestamp").and_then(iso_to_epoch_ms) {
-      started = Some(started.map_or(ms, |v: i64| v.min(ms)));
-      updated = Some(updated.map_or(ms, |v: i64| v.max(ms)));
+      self.started = Some(self.started.map_or(ms, |v: i64| v.min(ms)));
+      self.updated = Some(self.updated.map_or(ms, |v: i64| v.max(ms)));
     }
     let payload = line.get("payload").unwrap_or(&Value::Null);
     match ty {
       "session_meta" => {
         if let Some(mid) = s(payload, "id") {
-          id = mid.to_string();
+          self.meta_id = Some(mid.to_string());
         }
         if let Some(c) = s(payload, "cwd") {
-          cwd = c.to_string();
+          self.cwd = c.to_string();
         }
       }
       "turn_context" => {
         if let Some(model) = s(payload, "model") {
-          if !models.iter().any(|x| x == model) {
-            models.push(model.to_string());
+          if !self.models.iter().any(|x| x == model) {
+            self.models.push(model.to_string());
           }
         }
       }
       "event_msg" => match s(payload, "type") {
         Some("user_message") => {
-          count += 1;
-          if title.is_none() {
+          self.count += 1;
+          if self.title.is_none() {
             if let Some(msg) = s(payload, "message") {
               let msg = msg.trim();
               if !msg.is_empty() && !msg.starts_with('#') && !msg.starts_with('<') {
-                title = Some(truncate_title(msg));
+                self.title = Some(truncate_title(msg));
               }
             }
           }
         }
-        Some("agent_message") => count += 1,
+        Some("agent_message") => self.count += 1,
         Some("token_count") => {
           if let Some(info) = payload.get("info").filter(|i| !i.is_null()) {
             if let Some(us) = codex_token_usage(info) {
-              usage = us; // total_token_usage is cumulative → keep the latest.
+              self.usage = us; // total_token_usage is cumulative → keep the latest.
             }
           }
         }
@@ -589,28 +742,47 @@ fn codex_summary(path: &Path, lines: &[Value], titles: &std::collections::HashMa
     }
   }
 
-  let title = titles
-    .get(&id)
-    .map(|t| truncate_title(t))
-    .or(title)
-    .unwrap_or_else(|| "Untitled session".into());
+  fn finish(self, fallback_id: String, path: &Path, titles: &HashMap<String, String>) -> SessionSummary {
+    let id = self.meta_id.unwrap_or(fallback_id);
+    let title = titles
+      .get(&id)
+      .map(|t| truncate_title(t))
+      .or(self.title)
+      .unwrap_or_else(|| "Untitled session".into());
+    SessionSummary {
+      id,
+      source: "codex".into(),
+      title,
+      project_name: if self.cwd.is_empty() { "—".into() } else { basename(&self.cwd) },
+      cwd: self.cwd,
+      model: self.models.last().cloned().unwrap_or_default(),
+      models: self.models,
+      message_count: self.count,
+      usage: self.usage,
+      cost: None,
+      started_at: self.started.unwrap_or(0),
+      updated_at: self.updated.unwrap_or(0),
+      path: path.to_string_lossy().into_owned(),
+      git_branch: None,
+    }
+  }
+}
 
-  Some(SessionSummary {
-    id,
-    source: "codex".into(),
-    title,
-    project_name: if cwd.is_empty() { "—".into() } else { basename(&cwd) },
-    cwd,
-    model: models.last().cloned().unwrap_or_default(),
-    models,
-    message_count: count,
-    usage,
-    cost: None,
-    started_at: started.unwrap_or(0),
-    updated_at: updated.unwrap_or(0),
-    path: path.to_string_lossy().into_owned(),
-    git_branch: None,
-  })
+fn codex_summary(path: &Path, lines: &[Value], titles: &HashMap<String, String>) -> Option<SessionSummary> {
+  let fallback_id = path.file_stem()?.to_string_lossy().into_owned();
+  let mut acc = CodexAcc::default();
+  for line in lines {
+    acc.push(line);
+  }
+  Some(acc.finish(fallback_id, path, titles))
+}
+
+/// Streaming summary read straight from disk — the scan path's entry point.
+fn codex_summary_from_file(path: &Path, titles: &HashMap<String, String>) -> Option<SessionSummary> {
+  let fallback_id = path.file_stem()?.to_string_lossy().into_owned();
+  let mut acc = CodexAcc::default();
+  stream_jsonl(path, |line| acc.push(line))?;
+  Some(acc.finish(fallback_id, path, titles))
 }
 
 /// Flatten a Codex `content` array (input_text / output_text blocks) to text.
@@ -735,7 +907,11 @@ fn codex_detail(path: &Path, lines: &[Value], titles: &std::collections::HashMap
   SessionDetail { summary, messages }
 }
 
-fn scan_codex(out: &mut Vec<SessionSummary>) -> Result<(), String> {
+fn scan_codex(
+  cache: &SummaryCache,
+  new_cache: &mut SummaryCache,
+  out: &mut Vec<SessionSummary>,
+) -> Result<(), String> {
   let Some(root) = codex_sessions_root() else { return Ok(()) };
   if !root.is_dir() {
     return Ok(());
@@ -743,15 +919,8 @@ fn scan_codex(out: &mut Vec<SessionSummary>) -> Result<(), String> {
   let titles = codex_titles();
   let mut files = Vec::new();
   collect_jsonl(&root, &mut files);
-  for p in files {
-    if let Ok(lines) = read_jsonl(&p) {
-      if let Some(sum) = codex_summary(&p, &lines, &titles) {
-        if sum.message_count > 0 {
-          out.push(sum);
-        }
-      }
-    }
-  }
+  let sigs: Vec<FileSig> = files.into_iter().filter_map(file_sig).collect();
+  scan_files(cache, new_cache, out, sigs, |p| codex_summary_from_file(p, &titles));
   Ok(())
 }
 
@@ -799,60 +968,64 @@ fn opencode_model_id(raw: Option<String>) -> String {
     .unwrap_or_default()
 }
 
+/// The session columns both the list scan and the single-session detail select,
+/// in the fixed order `opencode_row_to_summary` reads them by index. The
+/// `msg_count` correlated subquery references `s.id`, valid in either query.
+const OPENCODE_COLS: &str = "s.id, s.title, s.slug, s.directory, s.model, s.cost, \
+   s.tokens_input, s.tokens_output, s.tokens_reasoning, s.tokens_cache_read, \
+   s.tokens_cache_write, s.time_created, s.time_updated, \
+   (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) AS msg_count";
+
+/// Map one `SELECT OPENCODE_COLS …` row into a `SessionSummary`. Shared by the
+/// full scan and by `opencode_detail` (which selects a single row by id).
+fn opencode_row_to_summary(r: &rusqlite::Row) -> rusqlite::Result<SessionSummary> {
+  let input: i64 = r.get::<_, Option<i64>>(6)?.unwrap_or(0);
+  let output: i64 = r.get::<_, Option<i64>>(7)?.unwrap_or(0);
+  let reasoning: i64 = r.get::<_, Option<i64>>(8)?.unwrap_or(0);
+  let cache_read: i64 = r.get::<_, Option<i64>>(9)?.unwrap_or(0);
+  let cache_write: i64 = r.get::<_, Option<i64>>(10)?.unwrap_or(0);
+  let title: Option<String> = r.get(1)?;
+  let slug: Option<String> = r.get(2)?;
+  let directory: String = r.get::<_, Option<String>>(3)?.unwrap_or_default();
+  let model = opencode_model_id(r.get::<_, Option<String>>(4)?);
+  let usage = TokenUsage {
+    input: input as u64,
+    output: output as u64,
+    cache_read: cache_read as u64,
+    cache_write: cache_write as u64,
+    reasoning: reasoning as u64,
+    total: (input + output + cache_read + cache_write) as u64,
+  };
+  Ok(SessionSummary {
+    id: r.get(0)?,
+    source: "opencode".into(),
+    title: title
+      .filter(|t| !t.trim().is_empty())
+      .or(slug)
+      .unwrap_or_else(|| "Untitled session".into()),
+    project_name: if directory.is_empty() { "—".into() } else { basename(&directory) },
+    cwd: directory,
+    models: if model.is_empty() { Vec::new() } else { vec![model.clone()] },
+    model,
+    message_count: r.get::<_, Option<i64>>(13)?.unwrap_or(0) as u64,
+    usage,
+    cost: r.get::<_, Option<f64>>(5)?,
+    started_at: r.get::<_, Option<i64>>(11)?.unwrap_or(0),
+    updated_at: r.get::<_, Option<i64>>(12)?.unwrap_or(0),
+    path: r.get(0)?,
+    git_branch: None,
+  })
+}
+
 fn scan_opencode(out: &mut Vec<SessionSummary>) -> Result<(), String> {
   if opencode_db().is_none() {
     return Ok(()); // Not installed → absent, not an error.
   }
   let conn = opencode_conn()?;
   let mut stmt = conn
-    .prepare(
-      "SELECT s.id, s.title, s.slug, s.directory, s.model, s.cost, \
-       s.tokens_input, s.tokens_output, s.tokens_reasoning, s.tokens_cache_read, \
-       s.tokens_cache_write, s.time_created, s.time_updated, \
-       (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) AS msg_count \
-       FROM session s ORDER BY s.time_updated DESC",
-    )
+    .prepare(&format!("SELECT {OPENCODE_COLS} FROM session s ORDER BY s.time_updated DESC"))
     .map_err(|e| e.to_string())?;
-  let rows = stmt
-    .query_map([], |r| {
-      let input: i64 = r.get::<_, Option<i64>>(6)?.unwrap_or(0);
-      let output: i64 = r.get::<_, Option<i64>>(7)?.unwrap_or(0);
-      let reasoning: i64 = r.get::<_, Option<i64>>(8)?.unwrap_or(0);
-      let cache_read: i64 = r.get::<_, Option<i64>>(9)?.unwrap_or(0);
-      let cache_write: i64 = r.get::<_, Option<i64>>(10)?.unwrap_or(0);
-      let title: Option<String> = r.get(1)?;
-      let slug: Option<String> = r.get(2)?;
-      let directory: String = r.get::<_, Option<String>>(3)?.unwrap_or_default();
-      let model = opencode_model_id(r.get::<_, Option<String>>(4)?);
-      let usage = TokenUsage {
-        input: input as u64,
-        output: output as u64,
-        cache_read: cache_read as u64,
-        cache_write: cache_write as u64,
-        reasoning: reasoning as u64,
-        total: (input + output + cache_read + cache_write) as u64,
-      };
-      Ok(SessionSummary {
-        id: r.get(0)?,
-        source: "opencode".into(),
-        title: title
-          .filter(|t| !t.trim().is_empty())
-          .or(slug)
-          .unwrap_or_else(|| "Untitled session".into()),
-        project_name: if directory.is_empty() { "—".into() } else { basename(&directory) },
-        cwd: directory,
-        models: if model.is_empty() { Vec::new() } else { vec![model.clone()] },
-        model,
-        message_count: r.get::<_, Option<i64>>(13)?.unwrap_or(0) as u64,
-        usage,
-        cost: r.get::<_, Option<f64>>(5)?,
-        started_at: r.get::<_, Option<i64>>(11)?.unwrap_or(0),
-        updated_at: r.get::<_, Option<i64>>(12)?.unwrap_or(0),
-        path: r.get(0)?,
-        git_branch: None,
-      })
-    })
-    .map_err(|e| e.to_string())?;
+  let rows = stmt.query_map([], opencode_row_to_summary).map_err(|e| e.to_string())?;
   for sum in rows.flatten() {
     out.push(sum);
   }
@@ -861,12 +1034,17 @@ fn scan_opencode(out: &mut Vec<SessionSummary>) -> Result<(), String> {
 
 fn opencode_detail(id: &str) -> Result<SessionDetail, String> {
   let conn = opencode_conn()?;
-  let mut summaries = Vec::new();
-  scan_opencode(&mut summaries).ok();
-  let summary = summaries
-    .into_iter()
-    .find(|s| s.id == id)
-    .ok_or("session not found")?;
+  // The session's summary in one indexed lookup (no full-table rescan).
+  let summary = conn
+    .query_row(
+      &format!("SELECT {OPENCODE_COLS} FROM session s WHERE s.id = ?1"),
+      [id],
+      opencode_row_to_summary,
+    )
+    .map_err(|e| match e {
+      rusqlite::Error::QueryReturnedNoRows => "session not found".to_string(),
+      other => other.to_string(),
+    })?;
 
   let mut stmt = conn
     .prepare("SELECT id, data FROM message WHERE session_id = ?1 ORDER BY time_created")
@@ -877,9 +1055,26 @@ fn opencode_detail(id: &str) -> Result<SessionDetail, String> {
     .filter_map(Result::ok)
     .collect();
 
+  // All parts for the session in a single query, grouped by message id — turns
+  // the former N+1 (one query per message) into two queries total. The ORDER BY
+  // keeps each message's parts in their original time order.
   let mut part_stmt = conn
-    .prepare("SELECT data FROM part WHERE message_id = ?1 ORDER BY time_created")
+    .prepare(
+      "SELECT p.message_id, p.data FROM part p \
+       JOIN message m ON p.message_id = m.id \
+       WHERE m.session_id = ?1 ORDER BY m.time_created, p.time_created",
+    )
     .map_err(|e| e.to_string())?;
+  let mut parts_by_msg: HashMap<String, Vec<Value>> = HashMap::new();
+  for row in part_stmt
+    .query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+    .map_err(|e| e.to_string())?
+    .filter_map(Result::ok)
+  {
+    if let Ok(v) = serde_json::from_str::<Value>(&row.1) {
+      parts_by_msg.entry(row.0).or_default().push(v);
+    }
+  }
 
   let mut messages = Vec::new();
   for (mid, mdata) in msg_rows {
@@ -907,13 +1102,7 @@ fn opencode_detail(id: &str) -> Result<SessionDetail, String> {
       });
     }
 
-    let parts: Vec<Value> = part_stmt
-      .query_map([&mid], |r| r.get::<_, String>(0))
-      .map_err(|e| e.to_string())?
-      .filter_map(Result::ok)
-      .filter_map(|d| serde_json::from_str::<Value>(&d).ok())
-      .collect();
-    for p in &parts {
+    for p in parts_by_msg.get(&mid).map(Vec::as_slice).unwrap_or(&[]) {
       match s(p, "type") {
         Some("text") => {
           if let Some(t) = s(p, "text").filter(|t| !t.trim().is_empty()) {
@@ -979,19 +1168,41 @@ fn opencode_detail(id: &str) -> Result<SessionDetail, String> {
 /// per-source read errors (a *missing* source is silently absent, not an error).
 #[tauri::command(async)]
 pub fn history_list_sessions() -> ListResult {
+  // Load the persisted summary cache; unchanged Claude/Codex files are reused
+  // from it and only new/grown ones are re-parsed (in parallel). `new_cache`
+  // collects exactly the files seen this scan, so vanished files are pruned.
+  let cache = crate::history_cache::load();
+  let mut new_cache = SummaryCache::default();
   let mut sessions = Vec::new();
   let mut errors = Vec::new();
-  if let Err(e) = scan_claude(&mut sessions) {
+  if let Err(e) = scan_claude(&cache, &mut new_cache, &mut sessions) {
     errors.push(SourceError { source: "claude".into(), message: e });
   }
-  if let Err(e) = scan_codex(&mut sessions) {
+  if let Err(e) = scan_codex(&cache, &mut new_cache, &mut sessions) {
     errors.push(SourceError { source: "codex".into(), message: e });
   }
   if let Err(e) = scan_opencode(&mut sessions) {
     errors.push(SourceError { source: "opencode".into(), message: e });
   }
+  // Persist only when the file-based cache actually changed — a pure all-hit
+  // rescan (same set, same signatures) writes nothing.
+  if cache_changed(&cache, &new_cache) {
+    crate::history_cache::save(&new_cache);
+  }
   sessions.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
   ListResult { sessions, errors }
+}
+
+/// Whether `new_cache` differs from `old` in its set of files or any file's
+/// signature (an addition, a prune, or a re-parsed change).
+fn cache_changed(old: &SummaryCache, new_cache: &SummaryCache) -> bool {
+  new_cache.entries.len() != old.entries.len()
+    || new_cache.entries.iter().any(|(k, e)| {
+      old
+        .entries
+        .get(k)
+        .map_or(true, |prev| prev.mtime_ms != e.mtime_ms || prev.size != e.size)
+    })
 }
 
 /// Load one session's full transcript. `path` is the file path (Claude/Codex) or
@@ -1105,5 +1316,149 @@ mod tests {
     assert_eq!(d.messages[0].role, "user");
     assert_eq!(d.messages[1].role, "assistant");
     assert_eq!(d.messages[1].parts.len(), 2); // thinking + text
+  }
+
+  // ── scan machinery: streaming, parallelism, cache ──────────────────────────
+
+  use std::sync::atomic::{AtomicU32, Ordering};
+
+  static TMP_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+  /// Write `contents` to a uniquely-named temp `.jsonl` and return its path.
+  fn write_temp(tag: &str, contents: &str) -> PathBuf {
+    let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let p = std::env::temp_dir().join(format!("agentpack-hist-{tag}-{}-{n}.jsonl", std::process::id()));
+    fs::write(&p, contents).unwrap();
+    p
+  }
+
+  /// A minimal `SessionSummary` for cache-plumbing tests (fields are private, so
+  /// build it through serde like the reader does off the wire).
+  fn sample_summary(path: &str) -> SessionSummary {
+    serde_json::from_value(serde_json::json!({
+      "id": "s", "source": "claude", "title": "t", "cwd": "/p", "projectName": "p",
+      "model": "m", "models": ["m"], "messageCount": 5,
+      "usage": serde_json::to_value(TokenUsage::default()).unwrap(),
+      "cost": null, "startedAt": 0, "updatedAt": 0, "path": path, "gitBranch": null,
+    }))
+    .unwrap()
+  }
+
+  #[test]
+  fn parallel_map_matches_serial() {
+    // Empty and single-element inputs take the serial fallback.
+    assert_eq!(parallel_map(Vec::<u32>::new(), |x| *x), Vec::<u32>::new());
+    assert_eq!(parallel_map(vec![5u32], |x| x + 1), vec![6]);
+    // A large input fans out across chunks; result set must match serial map.
+    let items: Vec<u32> = (0..1000).collect();
+    let mut out = parallel_map(items.clone(), |x| x * 2);
+    out.sort_unstable();
+    let expected: Vec<u32> = items.iter().map(|x| x * 2).collect();
+    assert_eq!(out, expected);
+  }
+
+  #[test]
+  fn claude_summary_from_file_matches_in_memory() {
+    let lines: Vec<Value> = vec![
+      serde_json::from_str(r#"{"type":"user","timestamp":"2026-01-01T00:00:00Z","cwd":"/proj","gitBranch":"main","message":{"role":"user","content":"hello there"}}"#).unwrap(),
+      serde_json::from_str(r#"{"type":"assistant","timestamp":"2026-01-01T00:00:01Z","message":{"role":"assistant","model":"claude-opus-4-8","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":3,"output_tokens":4}}}"#).unwrap(),
+    ];
+    let text = lines.iter().map(|v| v.to_string()).collect::<Vec<_>>().join("\n");
+    let path = write_temp("claude-parity", &text);
+    let streamed = claude_summary_from_file(&path).unwrap();
+    let in_mem = claude_summary(&path, &lines).unwrap();
+    assert_eq!(
+      serde_json::to_value(&streamed).unwrap(),
+      serde_json::to_value(&in_mem).unwrap()
+    );
+    let _ = fs::remove_file(&path);
+  }
+
+  #[test]
+  fn codex_summary_from_file_matches_in_memory() {
+    let lines: Vec<Value> = vec![
+      serde_json::from_str(r#"{"type":"session_meta","timestamp":"2026-01-01T00:00:00Z","payload":{"id":"sess1","cwd":"/proj"}}"#).unwrap(),
+      serde_json::from_str(r#"{"type":"turn_context","timestamp":"2026-01-01T00:00:00Z","payload":{"model":"gpt-5-codex"}}"#).unwrap(),
+      serde_json::from_str(r#"{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{"type":"user_message","message":"do it"}}"#).unwrap(),
+      serde_json::from_str(r#"{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}}"#).unwrap(),
+    ];
+    let titles = std::collections::HashMap::new();
+    let text = lines.iter().map(|v| v.to_string()).collect::<Vec<_>>().join("\n");
+    let path = write_temp("codex-parity", &text);
+    let streamed = codex_summary_from_file(&path, &titles).unwrap();
+    let in_mem = codex_summary(&path, &lines, &titles).unwrap();
+    assert_eq!(
+      serde_json::to_value(&streamed).unwrap(),
+      serde_json::to_value(&in_mem).unwrap()
+    );
+    let _ = fs::remove_file(&path);
+  }
+
+  #[test]
+  fn scan_files_reuses_cache_on_matching_signature() {
+    let path = write_temp("cachehit", "{}\n");
+    let key = path.to_string_lossy().into_owned();
+    let sig = file_sig(path.clone()).unwrap();
+
+    // Pre-seed the cache with this file's current signature and a marker summary
+    // that a re-parse of `{}` could never produce.
+    let mut cache = SummaryCache::default();
+    cache.entries.insert(
+      key.clone(),
+      CachedEntry { mtime_ms: sig.mtime_ms, size: sig.size, summary: sample_summary(&key) },
+    );
+
+    let mut new_cache = SummaryCache::default();
+    let mut out = Vec::new();
+    scan_files(&cache, &mut new_cache, &mut out, vec![sig], |_p: &Path| -> Option<SessionSummary> {
+      panic!("parse must not run on a cache hit")
+    });
+
+    assert_eq!(out.len(), 1);
+    // The cached (marker) summary was reused, not a fresh parse.
+    assert_eq!(serde_json::to_value(&out[0]).unwrap()["title"], "t");
+    assert!(new_cache.entries.contains_key(&key));
+    let _ = fs::remove_file(&path);
+  }
+
+  #[test]
+  fn scan_files_parses_on_miss_and_fills_new_cache() {
+    let text = concat!(
+      r#"{"type":"user","timestamp":"2026-01-01T00:00:00Z","cwd":"/proj","message":{"role":"user","content":"hi"}}"#,
+      "\n",
+      r#"{"type":"assistant","timestamp":"2026-01-01T00:00:01Z","message":{"role":"assistant","model":"claude-opus-4-8","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}}"#,
+    );
+    let path = write_temp("miss", text);
+    let key = path.to_string_lossy().into_owned();
+    let sig = file_sig(path.clone()).unwrap();
+
+    let cache = SummaryCache::default(); // empty → guaranteed miss
+    let mut new_cache = SummaryCache::default();
+    let mut out = Vec::new();
+    scan_files(&cache, &mut new_cache, &mut out, vec![sig], claude_summary_from_file);
+
+    assert_eq!(out.len(), 1);
+    assert!(new_cache.entries.contains_key(&key));
+    let _ = fs::remove_file(&path);
+  }
+
+  #[test]
+  fn cache_changed_detects_add_edit_and_prune() {
+    let entry = |m: i64, s: u64| CachedEntry { mtime_ms: m, size: s, summary: sample_summary("k") };
+    let mut a = SummaryCache::default();
+    let mut b = SummaryCache::default();
+    assert!(!cache_changed(&a, &b)); // both empty
+
+    b.entries.insert("k".into(), entry(1, 2));
+    assert!(cache_changed(&a, &b)); // addition
+
+    a.entries.insert("k".into(), entry(1, 2));
+    assert!(!cache_changed(&a, &b)); // identical set + signatures
+
+    b.entries.get_mut("k").unwrap().mtime_ms = 9;
+    assert!(cache_changed(&a, &b)); // same key, changed signature
+
+    b.entries.clear();
+    assert!(cache_changed(&a, &b)); // prune
   }
 }

@@ -92,7 +92,7 @@ function SessionCard({ session, onOpen }: { session: SessionSummary; onOpen: () 
  */
 function TranscriptBody({ session }: { session: SessionSummary }) {
   const t = useT().history
-  const key = detailCacheKey(session.source, session.path)
+  const key = detailCacheKey(session.source, session.path, session.updatedAt)
   const [detail, setDetail] = useState<SessionDetail | null>(() => getCachedDetail(key) ?? null)
   const [error, setError] = useState(false)
 

@@ -4,12 +4,14 @@ mod commands;
 mod exec;
 mod fsops;
 mod history;
+mod history_cache;
 mod paths;
 
 /// One process-wide lock shared by every test that mutates the global env vars
-/// (`AGENTPACK_CCSWITCH_DB`, `AGENTPACK_BACKUP_ROOT`, `AGENTPACK_SKIP_RUNNING_CHECK`).
-/// ccswitch and backup tests both touch these, so a per-module lock isn't enough —
-/// they'd race across modules. Holding this serializes them.
+/// (`AGENTPACK_CCSWITCH_DB`, `AGENTPACK_BACKUP_ROOT`, `AGENTPACK_SKIP_RUNNING_CHECK`,
+/// `AGENTPACK_HISTORY_CACHE`). ccswitch, backup and history_cache tests all touch
+/// these, so a per-module lock isn't enough — they'd race across modules. Holding
+/// this serializes them.
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 

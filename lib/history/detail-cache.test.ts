@@ -33,9 +33,15 @@ const detail = (id: string): SessionDetail => ({
 describe("detail-cache", () => {
   beforeEach(() => clearDetailCache())
 
-  it("builds a source-scoped key", () => {
-    expect(detailCacheKey("claude", "a.jsonl")).toBe("claude:a.jsonl")
-    expect(detailCacheKey("codex", "a.jsonl")).not.toBe(detailCacheKey("claude", "a.jsonl"))
+  it("builds a source-, path- and version-scoped key", () => {
+    expect(detailCacheKey("claude", "a.jsonl", 100)).toBe("claude:a.jsonl:100")
+    expect(detailCacheKey("codex", "a.jsonl", 100)).not.toBe(
+      detailCacheKey("claude", "a.jsonl", 100)
+    )
+    // A newer updatedAt is a distinct key, so a grown session misses and refetches.
+    expect(detailCacheKey("claude", "a.jsonl", 200)).not.toBe(
+      detailCacheKey("claude", "a.jsonl", 100)
+    )
   })
 
   it("returns undefined on a miss and the value on a hit", () => {
