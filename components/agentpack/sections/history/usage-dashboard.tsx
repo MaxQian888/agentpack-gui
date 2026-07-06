@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo } from "react"
-import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, XAxis } from "recharts"
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, XAxis } from "recharts"
 import { Card } from "@/components/ui/card"
 import {
   Table,
@@ -28,6 +28,8 @@ import { SOURCE_COLORS, modelColor } from "@/lib/history/display"
 
 const INPUT_COLOR = "#3b82f6"
 const OUTPUT_COLOR = "#10b981"
+const COST_COLOR = "#f59e0b"
+const HOUR_COLOR = "#6366f1"
 
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -53,12 +55,15 @@ export function UsageDashboard({ sessions }: { sessions: SessionSummary[] }) {
     )
   }
 
-  const { totals, byDay, bySource, byModel, byProject, estimatedCost } = stats
+  const { totals, averages, byDay, byHour, bySource, byModel, byProject, estimatedCost } = stats
 
   const dayConfig: ChartConfig = {
     input: { label: t.statInput, color: INPUT_COLOR },
     output: { label: t.statOutput, color: OUTPUT_COLOR },
   }
+  const costConfig: ChartConfig = { cost: { label: t.statCost, color: COST_COLOR } }
+  const hourConfig: ChartConfig = { sessions: { label: t.colSessions, color: HOUR_COLOR } }
+  const hasCostByDay = byDay.some((d) => d.cost > 0)
 
   const sourceConfig: ChartConfig = Object.fromEntries(
     bySource.map((s) => [
@@ -94,6 +99,22 @@ export function UsageDashboard({ sessions }: { sessions: SessionSummary[] }) {
           value={formatCost(totals.cost)}
           sub={estimatedCost > 0 ? t.costEstimatedSub(formatCost(estimatedCost)) : undefined}
         />
+      </div>
+
+      {/* Derived insights */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Stat
+          label={t.statCache}
+          value={formatTokens(totals.usage.cacheRead)}
+          sub={formatNumber(totals.usage.cacheRead)}
+        />
+        <Stat
+          label={t.statReasoning}
+          value={formatTokens(totals.usage.reasoning)}
+          sub={formatNumber(totals.usage.reasoning)}
+        />
+        <Stat label={t.statAvgTokens} value={formatTokens(averages.tokensPerSession)} />
+        <Stat label={t.statAvgCost} value={formatCost(averages.costPerSession)} />
       </div>
 
       {/* Tokens by day */}
@@ -139,6 +160,71 @@ export function UsageDashboard({ sessions }: { sessions: SessionSummary[] }) {
           </AreaChart>
         </ChartContainer>
       </Card>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* Cost by day */}
+        {hasCostByDay ? (
+          <Card className="gap-3 p-4">
+            <h3 className="text-sm font-medium">{t.chartCostByDay}</h3>
+            <ChartContainer config={costConfig} className="h-[220px] w-full">
+              <BarChart data={byDay} margin={{ left: 4, right: 4, top: 4 }}>
+                <CartesianGrid vertical={false} />
+                <XAxis
+                  dataKey="day"
+                  tickLine={false}
+                  axisLine={false}
+                  tickMargin={8}
+                  minTickGap={24}
+                  tickFormatter={(v: string) => v.slice(5)}
+                />
+                <ChartTooltip
+                  content={
+                    <ChartTooltipContent
+                      formatter={(value) => (
+                        <span className="font-mono font-medium tabular-nums">
+                          {formatCost(Number(value))}
+                        </span>
+                      )}
+                    />
+                  }
+                />
+                <Bar dataKey="cost" fill={COST_COLOR} radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ChartContainer>
+          </Card>
+        ) : null}
+
+        {/* Activity by hour of day */}
+        <Card className={`gap-3 p-4${hasCostByDay ? "" : " lg:col-span-2"}`}>
+          <div>
+            <h3 className="text-sm font-medium">{t.chartByHour}</h3>
+            <p className="text-xs text-muted-foreground">{t.chartByHourSub}</p>
+          </div>
+          <ChartContainer config={hourConfig} className="h-[220px] w-full">
+            <BarChart data={byHour} margin={{ left: 4, right: 4, top: 4 }}>
+              <CartesianGrid vertical={false} />
+              <XAxis
+                dataKey="hour"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                interval={2}
+                tickFormatter={(v: number) => String(v).padStart(2, "0")}
+              />
+              <ChartTooltip
+                content={
+                  <ChartTooltipContent
+                    labelFormatter={(_, payload) =>
+                      `${String(payload?.[0]?.payload?.hour ?? "").padStart(2, "0")}:00`
+                    }
+                  />
+                }
+              />
+              <Bar dataKey="sessions" fill={HOUR_COLOR} radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ChartContainer>
+        </Card>
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         {/* By tool */}

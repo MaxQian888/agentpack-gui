@@ -52,16 +52,32 @@ export interface ProjectStat {
   cost: number
 }
 
+/** Session count + tokens bucketed by local hour of day (0–23) of session start. */
+export interface HourStat {
+  hour: number
+  sessions: number
+  total: number
+}
+
+/** Per-session derived averages (0 when there are no sessions/messages). */
+export interface Averages {
+  tokensPerSession: number
+  costPerSession: number
+}
+
 export interface UsageStats {
   totals: Totals
   /** Sum of real (OpenCode) costs. */
   actualCost: number
   /** Sum of estimated (Claude Code / Codex) costs. */
   estimatedCost: number
+  averages: Averages
   bySource: SourceStat[]
   byModel: ModelStat[]
   byDay: DayStat[]
   byProject: ProjectStat[]
+  /** Always length 24, hour 0 → 23, zero-filled where there was no activity. */
+  byHour: HourStat[]
 }
 
 /**
@@ -75,6 +91,11 @@ export function computeUsageStats(sessions: SessionSummary[]): UsageStats {
   const byModel = new Map<string, ModelStat>()
   const byDay = new Map<string, DayStat>()
   const byProject = new Map<string, ProjectStat>()
+  const byHour: HourStat[] = Array.from({ length: 24 }, (_, hour) => ({
+    hour,
+    sessions: 0,
+    total: 0,
+  }))
   let actualCost = 0
   let estimatedCost = 0
 
@@ -129,16 +150,28 @@ export function computeUsageStats(sessions: SessionSummary[]): UsageStats {
     p.sessions += 1
     p.total += s.usage.total
     p.cost += cost
+
+    // Bucket by the local hour the session was started (work-time pattern).
+    const hour = new Date(s.startedAt).getHours()
+    byHour[hour].sessions += 1
+    byHour[hour].total += s.usage.total
+  }
+
+  const averages: Averages = {
+    tokensPerSession: totals.sessions > 0 ? totals.usage.total / totals.sessions : 0,
+    costPerSession: totals.sessions > 0 ? totals.cost / totals.sessions : 0,
   }
 
   return {
     totals,
     actualCost,
     estimatedCost,
+    averages,
     bySource: [...bySource.values()].sort((a, b) => b.usage.total - a.usage.total),
     byModel: [...byModel.values()].sort((a, b) => b.usage.total - a.usage.total),
     byDay: [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day)),
     byProject: [...byProject.values()].sort((a, b) => b.total - a.total),
+    byHour,
   }
 }
 

@@ -44,6 +44,10 @@ describe("computeUsageStats", () => {
     expect(st.byModel).toEqual([])
     expect(st.byDay).toEqual([])
     expect(st.byProject).toEqual([])
+    expect(st.averages).toEqual({ tokensPerSession: 0, costPerSession: 0 })
+    // byHour is always a 24-slot zero-filled scaffold, even with no sessions.
+    expect(st.byHour).toHaveLength(24)
+    expect(st.byHour.every((h) => h.sessions === 0 && h.total === 0)).toBe(true)
   })
 
   it("sums totals across sources, splitting real vs estimated cost", () => {
@@ -117,6 +121,29 @@ describe("computeUsageStats", () => {
     expect(st.byProject[1].project).toBe("a")
     expect(st.byProject[1].sessions).toBe(2)
     expect(st.byProject[1].total).toBe(7)
+  })
+
+  it("computes per-session averages over total tokens and cost", () => {
+    const st = computeUsageStats([
+      session({ usage: usage({ total: 100 }), cost: 0.2 }),
+      session({ usage: usage({ total: 300 }), cost: 0.6 }),
+    ])
+    expect(st.averages.tokensPerSession).toBe(200)
+    expect(st.averages.costPerSession).toBeCloseTo(0.4)
+  })
+
+  it("buckets session activity by local start hour into 24 slots", () => {
+    const st = computeUsageStats([
+      // Local hour 14, twice.
+      session({ startedAt: new Date(2026, 2, 10, 14).getTime(), usage: usage({ total: 5 }) }),
+      session({ startedAt: new Date(2026, 2, 11, 14).getTime(), usage: usage({ total: 7 }) }),
+      // Local hour 9, once.
+      session({ startedAt: new Date(2026, 2, 10, 9).getTime(), usage: usage({ total: 3 }) }),
+    ])
+    expect(st.byHour).toHaveLength(24)
+    expect(st.byHour[14]).toEqual({ hour: 14, sessions: 2, total: 12 })
+    expect(st.byHour[9]).toEqual({ hour: 9, sessions: 1, total: 3 })
+    expect(st.byHour[0].sessions).toBe(0)
   })
 })
 

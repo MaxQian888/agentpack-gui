@@ -85,6 +85,31 @@ describe("UsageDashboard", () => {
     expect(screen.getByText(h.costNote)).toBeInTheDocument()
   })
 
+  it("renders the derived-insight cards and the new cost/activity charts", () => {
+    renderDash([
+      session({
+        source: "claude",
+        usage: usage({ input: 100, output: 40, cacheRead: 500, reasoning: 20, total: 660 }),
+      }),
+      session({ source: "opencode", model: "deepseek-v4-pro", cost: 0.5 }),
+    ])
+    expect(screen.getByText(h.statCache)).toBeInTheDocument()
+    expect(screen.getByText(h.statReasoning)).toBeInTheDocument()
+    expect(screen.getByText(h.statAvgTokens)).toBeInTheDocument()
+    expect(screen.getByText(h.statAvgCost)).toBeInTheDocument()
+    // New charts (cost-by-day renders because a session carries a real cost).
+    expect(screen.getByText(h.chartCostByDay)).toBeInTheDocument()
+    expect(screen.getByText(h.chartByHour)).toBeInTheDocument()
+  })
+
+  it("hides the cost-by-day chart when no session has any cost", () => {
+    // A model with no known rate → estimated cost is null → 0 everywhere.
+    renderDash([session({ source: "codex", model: "mystery-model", cost: null })])
+    expect(screen.queryByText(h.chartCostByDay)).not.toBeInTheDocument()
+    // Activity chart still renders.
+    expect(screen.getByText(h.chartByHour)).toBeInTheDocument()
+  })
+
   it("labels a model-less session's usage as 'unknown' in the model breakdown", () => {
     renderDash([session({ model: "", models: [], usage: usage({ total: 10 }) })])
     // stats folds an empty model id into the literal "unknown" bucket.
