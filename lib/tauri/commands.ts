@@ -84,8 +84,8 @@ export const removeDir = (path: string) => invoke<void>("remove_dir", { path })
 
 export const pathExists = (path: string) => invoke<boolean>("path_exists", { path })
 
-/** Immediate child entry names of a directory ([] when missing / not a dir). */
-export const listDir = (path: string) => invoke<string[]>("list_dir", { path })
+/** Installed skill ids in a skills dir — sub-dirs with a `SKILL.md` ([] when missing). */
+export const listSkills = (path: string) => invoke<string[]>("list_skills", { path })
 
 export const installSkill = (id: string, targets: AgentTarget[]) =>
   invoke<string[]>("install_skill", { id, targets })

@@ -1,6 +1,6 @@
 import {
   classifyAgainstRegistry,
-  parseClaudeMcpList,
+  parseClaudeMcpConfig,
   parseClaudeRelay,
   parseCodexConfig,
 } from "./scan"
@@ -34,19 +34,19 @@ it("parseCodexConfig tolerates empty / malformed input", () => {
   expect(parseCodexConfig("= = =")).toEqual({ mcpServers: [], hasRelayProvider: false })
 })
 
-it("parseClaudeMcpList extracts ids before the colon and skips noise", () => {
-  const stdout = [
-    "context7: npx -y @upstash/context7-mcp",
-    "memory: npx -y server",
-    "",
-    "garbage",
-  ].join("\n")
-  expect(parseClaudeMcpList(stdout)).toEqual(["context7", "memory"])
+it("parseClaudeMcpConfig lists user-scope mcpServers ids from ~/.claude.json", () => {
+  const json = JSON.stringify({
+    mcpServers: { context7: { command: "npx" }, memory: { command: "npx" } },
+    projects: { "/some/proj": { mcpServers: { other: {} } } },
+  })
+  expect(parseClaudeMcpConfig(json).sort()).toEqual(["context7", "memory"])
 })
 
-it("parseClaudeMcpList strips status glyphs / ANSI prefixes", () => {
-  const stdout = "[32m✓[0m context7: connected"
-  expect(parseClaudeMcpList(stdout)).toEqual(["context7"])
+it("parseClaudeMcpConfig tolerates empty / malformed / server-less input", () => {
+  expect(parseClaudeMcpConfig("")).toEqual([])
+  expect(parseClaudeMcpConfig("{not json")).toEqual([])
+  expect(parseClaudeMcpConfig("{}")).toEqual([])
+  expect(parseClaudeMcpConfig(JSON.stringify({ mcpServers: null }))).toEqual([])
 })
 
 it("classifyAgainstRegistry separates known from custom", () => {

@@ -19,6 +19,7 @@ import type { Provider, ProviderForm } from "./ccswitch/types"
 const paths: Paths = {
   home: "/h",
   claudeSettings: "/h/.claude/settings.json",
+  claudeConfig: "/h/.claude.json",
   claudeSkillsDir: "/h/.claude/skills",
   codexConfig: "/h/.codex/config.toml",
   codexAuth: "/h/.codex/auth.json",

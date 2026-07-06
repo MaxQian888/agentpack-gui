@@ -8,6 +8,7 @@ use std::path::PathBuf;
 pub struct Paths {
   home: String,
   claude_settings: String,
+  claude_config: String,
   claude_skills_dir: String,
   codex_config: String,
   codex_auth: String,
@@ -48,6 +49,9 @@ pub fn get_paths() -> Result<Paths, String> {
   Ok(Paths {
     home: s(home.clone()),
     claude_settings: s(claude.join("settings.json")),
+    // User-scope MCP servers live in ~/.claude.json (not settings.json); read
+    // directly instead of the 45s-slow, health-checking `claude mcp list`.
+    claude_config: s(home.join(".claude.json")),
     claude_skills_dir: s(claude.join("skills")),
     codex_config: s(codex.join("config.toml")),
     codex_auth: s(codex.join("auth.json")),

@@ -15,6 +15,7 @@ import { DashboardSection, scanEnvironment, type DashboardScan } from "./dashboa
 const paths: Paths = {
   home: "/h",
   claudeSettings: "/h/.claude/settings.json",
+  claudeConfig: "/h/.claude.json",
   claudeSkillsDir: "/h/.claude/skills",
   codexConfig: "/h/.codex/config.toml",
   codexAuth: "/h/.codex/auth.json",
@@ -27,14 +28,14 @@ const paths: Paths = {
 beforeEach(() => {
   useAppStore.getState().resetPlan()
   useAppStore.setState({ detections: {}, paths, panelOpen: false, dryRun: true })
-  ;(api.readTextFile as jest.Mock).mockResolvedValue("")
-  ;(api.listDir as jest.Mock).mockResolvedValue([])
+  // User-scope MCP servers are now read from ~/.claude.json (not `claude mcp list`);
+  // a non-registry id there should classify as custom.
+  ;(api.readTextFile as jest.Mock).mockImplementation(async (p: string) =>
+    p === paths.claudeConfig ? JSON.stringify({ mcpServers: { "my-custom": {} } }) : ""
+  )
+  ;(api.listSkills as jest.Mock).mockResolvedValue([])
   ;(api.ccLoadProviders as jest.Mock).mockResolvedValue([])
   ;(api.pathExists as jest.Mock).mockResolvedValue(false)
-  ;(api.runCommand as jest.Mock).mockImplementation(async (_cmd, onLine) => {
-    onLine("my-custom: npx -y my-custom-mcp")
-    return 0
-  })
 })
 
 // Mirrors how ShellBody owns the scan: run it once and feed it down as props.
@@ -91,7 +92,7 @@ it("shows a detected CLI version from the store", async () => {
 
 it("scans real config and flags a registry-external MCP as custom", async () => {
   renderDashboard()
-  // claude mcp list returned a non-registry id → classified as custom.
+  // ~/.claude.json listed a non-registry id → classified as custom.
   expect(await screen.findByText("my-custom")).toBeInTheDocument()
   expect(screen.getAllByText(/custom/i).length).toBeGreaterThan(0)
 })
@@ -109,7 +110,7 @@ it("renders rich state and runs uninstall / remove / restore actions", async () 
       return '[mcp_servers.memory]\ncommand = "npx"\n[model_providers.agentpack]\nname = "x"\n'
     return ""
   })
-  ;(api.listDir as jest.Mock).mockImplementation(async (p: string) =>
+  ;(api.listSkills as jest.Mock).mockImplementation(async (p: string) =>
     p === paths.claudeSkillsDir ? ["rust"] : []
   )
   ;(api.ccLoadProviders as jest.Mock).mockResolvedValue([

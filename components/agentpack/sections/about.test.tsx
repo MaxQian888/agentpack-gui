@@ -106,6 +106,7 @@ it("reveals config folders when paths are known", async () => {
     paths: {
       home: "/home",
       claudeSettings: "/home/.claude/settings.json",
+      claudeConfig: "/home/.claude.json",
       claudeSkillsDir: "/home/.claude/skills",
       codexConfig: "/home/.codex/config.toml",
       codexAuth: "/home/.codex/auth.json",

@@ -94,11 +94,16 @@ pub fn remove_dir(path: String) -> Result<(), String> {
   Ok(())
 }
 
-/// List the immediate child entry names of a directory (used by the dashboard to
-/// enumerate installed skills, including ones added outside agentpack). Returns
-/// an empty list when the path is missing or not a directory.
+/// Enumerate installed skills in a skills directory (used by the dashboard),
+/// including ones added outside agentpack. A skill is a sub-directory containing
+/// a `SKILL.md`; that marker is what makes the CLI recognize it, so filtering on
+/// it keeps out non-skill clutter the old blanket listing surfaced — Codex's
+/// hidden `.system` dir, scratch dirs like `tmp` / `*-workspace`, and stray
+/// files — which would otherwise show a destructive ✕ remove button. Symlinked
+/// skills count too (the `SKILL.md` check resolves through the link). Returns an
+/// empty list when the path is missing or not a directory.
 #[tauri::command(async)]
-pub fn list_dir(path: String) -> Result<Vec<String>, String> {
+pub fn list_skills(path: String) -> Result<Vec<String>, String> {
   let p = Path::new(&path);
   if !p.is_dir() {
     return Ok(Vec::new());
@@ -106,7 +111,11 @@ pub fn list_dir(path: String) -> Result<Vec<String>, String> {
   let mut names = Vec::new();
   for entry in fs::read_dir(p).map_err(|e| e.to_string())? {
     let entry = entry.map_err(|e| e.to_string())?;
-    names.push(entry.file_name().to_string_lossy().into_owned());
+    let child = entry.path();
+    // `is_dir` / `is_file` follow symlinks, so a symlinked skill dir counts.
+    if child.is_dir() && child.join("SKILL.md").is_file() {
+      names.push(entry.file_name().to_string_lossy().into_owned());
+    }
   }
   Ok(names)
 }
@@ -275,6 +284,29 @@ mod tests {
     // The staging sibling used during the atomic swap must be cleaned up.
     assert!(!base.join("dest.agentpack.tmp").exists());
     let _ = fs::remove_dir_all(&base);
+  }
+
+  #[test]
+  fn list_skills_returns_only_dirs_with_a_skill_md() {
+    let root = temp_dir("skills");
+    fs::create_dir_all(&root).unwrap();
+    // A real skill: dir with SKILL.md.
+    fs::create_dir_all(root.join("rust")).unwrap();
+    fs::write(root.join("rust").join("SKILL.md"), b"# rust").unwrap();
+    // Not skills: a dir without the marker, a hidden system dir, a stray file.
+    fs::create_dir_all(root.join("tmp")).unwrap();
+    fs::create_dir_all(root.join(".system")).unwrap();
+    fs::write(root.join("README.md"), b"noise").unwrap();
+
+    let mut got = list_skills(root.to_string_lossy().into_owned()).unwrap();
+    got.sort();
+    assert_eq!(got, vec!["rust".to_string()]);
+
+    // A missing path is simply empty, never an error.
+    assert!(list_skills(root.join("nope").to_string_lossy().into_owned())
+      .unwrap()
+      .is_empty());
+    let _ = fs::remove_dir_all(&root);
   }
 
   #[test]

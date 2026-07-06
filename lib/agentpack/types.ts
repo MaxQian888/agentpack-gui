@@ -140,6 +140,8 @@ export type StepStatus = "pending" | "running" | "done" | "error" | "skipped" | 
 export interface Paths {
   home: string
   claudeSettings: string
+  /** `~/.claude.json` — holds user-scope MCP servers (distinct from settings.json). */
+  claudeConfig: string
   claudeSkillsDir: string
   codexConfig: string
   codexAuth: string

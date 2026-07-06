@@ -20,7 +20,7 @@ import {
   installSkill,
   ccLoadProviders,
   launchApp,
-  listDir,
+  listSkills,
   backupSnapshot,
   backupList,
   backupRestore,
@@ -104,8 +104,8 @@ it("simple wrappers forward their arguments to the right command", async () => {
   await launchApp({ file: "cc-switch", args: [] })
   expect(invoke).toHaveBeenCalledWith("launch_app", { file: "cc-switch", args: [] })
 
-  await listDir("/d")
-  expect(invoke).toHaveBeenCalledWith("list_dir", { path: "/d" })
+  await listSkills("/d")
+  expect(invoke).toHaveBeenCalledWith("list_skills", { path: "/d" })
 
   await backupSnapshot("provider write")
   expect(invoke).toHaveBeenCalledWith("backup_snapshot", { reason: "provider write" })

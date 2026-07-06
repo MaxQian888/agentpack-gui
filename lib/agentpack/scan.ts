@@ -60,25 +60,26 @@ export function parseCodexConfig(toml: string): CodexConfigState {
 }
 
 /**
- * Parse `claude mcp list` stdout into server ids. Each entry looks like
- * `name: <command>` (and may be prefixed with status glyphs / ANSI); we take
- * the token before the first colon. Lines without a colon are ignored.
+ * List user-scope Claude Code MCP server ids from `~/.claude.json`.
+ *
+ * Reads the top-level `mcpServers` object directly — the same place
+ * `claude mcp add --scope user` writes and `claude mcp remove --scope user`
+ * deletes, so it stays in lockstep with what the dashboard installs/removes.
+ * Replaces the old `claude mcp list` scan, which health-checked every server
+ * (~45s, and could hang forever on an unreachable one). Defensive: malformed /
+ * empty input degrades to an empty list, never throws.
  */
-export function parseClaudeMcpList(stdout: string): string[] {
-  const ids: string[] = []
-  for (const raw of stdout.split(/\r?\n/)) {
-    // Strip ANSI escapes and leading status glyphs / whitespace.
-    const line = raw.replace(/\[[0-9;]*m/g, "").trim()
-    if (!line) continue
-    const colon = line.indexOf(":")
-    if (colon <= 0) continue
-    const id = line
-      .slice(0, colon)
-      .replace(/^[^\w@-]+/, "")
-      .trim()
-    if (id && !/\s/.test(id)) ids.push(id)
+export function parseClaudeMcpConfig(json: string): string[] {
+  if (!json.trim()) return []
+  let data: Record<string, unknown>
+  try {
+    data = JSON.parse(json) as Record<string, unknown>
+  } catch {
+    return []
   }
-  return ids
+  const servers = data["mcpServers"]
+  if (!servers || typeof servers !== "object") return []
+  return Object.keys(servers as Record<string, unknown>)
 }
 
 /** Split ids into ones present in `registryIds` (known) and the rest (custom). */

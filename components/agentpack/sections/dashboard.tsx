@@ -21,23 +21,18 @@ import { DEFAULT_VISIBLE_APPS } from "@/lib/agentpack/ccswitch/settings"
 import {
   classifyAgainstRegistry,
   MCP_REGISTRY_IDS,
-  parseClaudeMcpList,
+  parseClaudeMcpConfig,
   parseClaudeRelay,
   parseCodexConfig,
   SKILL_REGISTRY_IDS,
   type ClassifiedIds,
   type ClaudeRelayState,
 } from "@/lib/agentpack/scan"
-import {
-  ccLoadProviders,
-  listDir,
-  pathExists,
-  readTextFile,
-  runCommand,
-} from "@/lib/tauri/commands"
+import { ccLoadProviders, listSkills, pathExists, readTextFile } from "@/lib/tauri/commands"
 import type { AgentTarget, Paths } from "@/lib/agentpack/types"
 import type { Provider } from "@/lib/agentpack/ccswitch/types"
 import { isTauri } from "@/lib/tauri"
+import { useMounted } from "@/hooks/use-mounted"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
@@ -84,33 +79,24 @@ function jsonHealth(text: string): FileStatus {
   }
 }
 
-/** Collect `claude mcp list` ids; empty when claude is absent / errors. */
-async function scanClaudeMcps(): Promise<string[]> {
-  try {
-    const lines: string[] = []
-    await runCommand({ file: "claude", args: ["mcp", "list"] }, (l) => lines.push(l))
-    return parseClaudeMcpList(lines.join("\n"))
-  } catch {
-    return []
-  }
-}
-
 export async function scanEnvironment(paths: Paths): Promise<DashboardScan> {
   const [
     claudeJson,
+    claudeConfig,
     codexToml,
     claudeSkillNames,
     codexSkillNames,
     providers,
-    claudeMcpIds,
     codexBak,
   ] = await Promise.all([
     readTextFile(paths.claudeSettings).catch(() => ""),
+    // User-scope MCP servers live in ~/.claude.json; read it directly instead of
+    // the ~45s health-checking `claude mcp list`, which also risks hanging.
+    readTextFile(paths.claudeConfig).catch(() => ""),
     readTextFile(paths.codexConfig).catch(() => ""),
-    listDir(paths.claudeSkillsDir).catch(() => [] as string[]),
-    listDir(paths.codexSkillsDir).catch(() => [] as string[]),
+    listSkills(paths.claudeSkillsDir).catch(() => [] as string[]),
+    listSkills(paths.codexSkillsDir).catch(() => [] as string[]),
     ccLoadProviders().catch(() => [] as Provider[]),
-    scanClaudeMcps(),
     pathExists(`${paths.codexConfig}${BACKUP_SUFFIX}`).catch(() => false),
   ])
 
@@ -118,7 +104,7 @@ export async function scanEnvironment(paths: Paths): Promise<DashboardScan> {
   const claudeBak = await pathExists(`${paths.claudeSettings}${BACKUP_SUFFIX}`).catch(() => false)
 
   return {
-    claudeMcps: classifyAgainstRegistry(claudeMcpIds, MCP_REGISTRY_IDS),
+    claudeMcps: classifyAgainstRegistry(parseClaudeMcpConfig(claudeConfig), MCP_REGISTRY_IDS),
     codexMcps: classifyAgainstRegistry(codex.mcpServers, MCP_REGISTRY_IDS),
     claudeSkills: classifyAgainstRegistry(claudeSkillNames, SKILL_REGISTRY_IDS),
     codexSkills: classifyAgainstRegistry(codexSkillNames, SKILL_REGISTRY_IDS),
@@ -152,6 +138,10 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
   const paths = useAppStore((s) => s.paths)
   const effectiveOS = useAppStore((s) => s.effectiveOS)
   const { run } = useRunnerCtx()
+  // `isTauri()` is false in the pre-rendered HTML but true inside the desktop
+  // webview; gate the runtime-only branch on mount so the first client render
+  // matches the server and we don't trip a hydration mismatch.
+  const mounted = useMounted()
 
   const runThen = (steps: Parameters<typeof run>[0]) => {
     if (steps.length === 0) return
@@ -167,7 +157,7 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
   return (
     <SectionShell title={d.title} subtitle={d.subtitle}>
       <div className="flex items-center justify-between">
-        {!isTauri() ? (
+        {mounted && !isTauri() ? (
           <p className="text-sm text-muted-foreground">{d.notTauri}</p>
         ) : (
           <p className="text-sm text-muted-foreground">{scanning ? d.scanning : ""}</p>
