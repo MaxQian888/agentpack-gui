@@ -23,6 +23,22 @@ if (typeof window !== "undefined" && !window.matchMedia) {
   })
 }
 
+// jsdom lacks ResizeObserver (recharts' ResponsiveContainer) and the pointer-
+// capture / scrollIntoView methods Radix Dialog & Select call. Stub them so the
+// history charts and transcript dialog can render under jsdom.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+}
+if (typeof Element !== "undefined") {
+  Element.prototype.scrollIntoView = Element.prototype.scrollIntoView || jest.fn()
+  Element.prototype.hasPointerCapture = Element.prototype.hasPointerCapture || jest.fn()
+  Element.prototype.releasePointerCapture = Element.prototype.releasePointerCapture || jest.fn()
+}
+
 type MockNextImageProps = React.ComponentPropsWithoutRef<"img"> & {
   priority?: boolean
   fill?: boolean

@@ -24,6 +24,8 @@ import {
   backupSnapshot,
   backupList,
   backupRestore,
+  historyListSessions,
+  historyGetSession,
 } from "./commands"
 import { invoke } from "@tauri-apps/api/core"
 
@@ -113,4 +115,13 @@ it("simple wrappers forward their arguments to the right command", async () => {
 
   await backupRestore("snapshot-1")
   expect(invoke).toHaveBeenCalledWith("backup_restore", { id: "snapshot-1" })
+
+  await historyListSessions()
+  expect(invoke).toHaveBeenCalledWith("history_list_sessions")
+
+  await historyGetSession("codex", "/x/rollout.jsonl")
+  expect(invoke).toHaveBeenCalledWith("history_get_session", {
+    source: "codex",
+    path: "/x/rollout.jsonl",
+  })
 })

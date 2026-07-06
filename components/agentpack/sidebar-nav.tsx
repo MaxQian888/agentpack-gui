@@ -7,6 +7,7 @@ import {
   Globe,
   Info,
   LayoutDashboard,
+  MessagesSquare,
   Package,
   Server,
   Terminal,
@@ -19,6 +20,7 @@ import { useAppStore } from "@/store/app-store"
 
 export type SectionKey =
   | "dashboard"
+  | "history"
   | "presets"
   | "environment"
   | "clis"
@@ -37,6 +39,7 @@ interface SectionDef {
 
 export const SECTIONS: SectionDef[] = [
   { key: "dashboard", icon: LayoutDashboard, label: (m) => m.menu.dashboard },
+  { key: "history", icon: MessagesSquare, label: (m) => m.menu.history },
   { key: "presets", icon: Package, label: (m) => m.menu.presets },
   { key: "environment", icon: Boxes, label: (m) => m.menu.environment },
   { key: "clis", icon: Terminal, label: (m) => m.menu.clis },

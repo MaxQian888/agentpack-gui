@@ -1,6 +1,7 @@
 import { invoke, Channel } from "@tauri-apps/api/core"
 import type { AgentTarget, Command, Paths } from "@/lib/agentpack/types"
 import type { Provider, ProviderApp } from "@/lib/agentpack/ccswitch/types"
+import type { HistorySource, ListResult, SessionDetail } from "@/lib/history/types"
 
 // Typed wrappers around the custom Rust commands (src-tauri/src/*.rs). Keep this
 // file as the SOLE caller of `invoke` for agentpack — UI/runner import these.
@@ -121,3 +122,14 @@ export const backupSnapshot = (reason: string) => invoke<BackupEntry>("backup_sn
 export const backupList = () => invoke<BackupEntry[]>("backup_list")
 
 export const backupRestore = (id: string) => invoke<string[]>("backup_restore", { id })
+
+/**
+ * Scan Claude Code / Codex / OpenCode for chat sessions and return normalized
+ * summaries plus any per-source read errors. A source that isn't installed is
+ * simply absent (no error). Runs off the main thread in Rust.
+ */
+export const historyListSessions = () => invoke<ListResult>("history_list_sessions")
+
+/** Load one session's full transcript. `path` is the summary's `path` handle. */
+export const historyGetSession = (source: HistorySource, path: string) =>
+  invoke<SessionDetail>("history_get_session", { source, path })

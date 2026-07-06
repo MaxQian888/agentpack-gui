@@ -1,8 +1,15 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import type { ListResult } from "@/lib/history/types"
 import { isTauri } from "@/lib/tauri"
-import { detectCli, detectRuntime, getPaths, latestVersion } from "@/lib/tauri/commands"
+import {
+  detectCli,
+  detectRuntime,
+  getPaths,
+  historyListSessions,
+  latestVersion,
+} from "@/lib/tauri/commands"
 import { checkForUpdate, getAppVersion } from "@/lib/tauri/updater"
 import { loadSettings } from "@/lib/tauri/settings"
 import { notify } from "@/lib/tauri/system"
@@ -13,6 +20,7 @@ import { useT } from "@/lib/i18n/provider"
 import { Header } from "./header"
 import { SidebarNav, type SectionKey } from "./sidebar-nav"
 import { DashboardSection, scanEnvironment, type DashboardScan } from "./sections/dashboard"
+import { HistorySection } from "./sections/history"
 import { PresetsSection } from "./sections/presets"
 import { EnvironmentSection } from "./sections/environment"
 import { ClisSection } from "./sections/clis"
@@ -44,6 +52,23 @@ function ShellBody() {
   // startup instead of re-scanning every time the user returns to the home page.
   const [dashboardScan, setDashboardScan] = useState<DashboardScan | null>(null)
   const [dashboardScanning, setDashboardScanning] = useState(false)
+
+  // Chat-history scan is lazy (it reads every JSONL + the OpenCode DB, too slow
+  // to run on startup) and cached here so returning to History reuses it.
+  const [historyResult, setHistoryResult] = useState<ListResult | null>(null)
+  const [historyLoading, setHistoryLoading] = useState(false)
+
+  const loadHistory = useCallback(async () => {
+    if (!isTauri()) return
+    setHistoryLoading(true)
+    try {
+      setHistoryResult(await historyListSessions())
+    } catch {
+      setHistoryResult({ sessions: [], errors: [] })
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [])
 
   const rescanDashboard = useCallback(async () => {
     if (!isTauri() || !paths) return
@@ -132,6 +157,25 @@ function ShellBody() {
     }
   }, [t, setSettings, setAppVersion, setUpdateInfo, setUpdateState])
 
+  // Lazily scan chat history the first time the user opens that section. Set
+  // state only in the async continuation (like the dashboard scan above) so no
+  // setState runs synchronously inside the effect. `loadHistory` (with its
+  // loading flag) still backs the manual Rescan button.
+  useEffect(() => {
+    if (!isTauri() || section !== "history" || historyResult !== null) return
+    let cancelled = false
+    historyListSessions()
+      .then((r) => {
+        if (!cancelled) setHistoryResult(r)
+      })
+      .catch(() => {
+        if (!cancelled) setHistoryResult({ sessions: [], errors: [] })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [section, historyResult])
+
   // After any real run (install/upgrade/uninstall/remove), re-detect tools and
   // re-scan the dashboard once, centrally, so every surface reflects the change.
   useEffect(
@@ -159,6 +203,14 @@ function ShellBody() {
             scan={dashboardScan}
             scanning={dashboardScanning}
             rescan={rescanDashboard}
+          />
+        )
+      case "history":
+        return (
+          <HistorySection
+            result={historyResult}
+            loading={historyLoading}
+            refresh={() => void loadHistory()}
           />
         )
       case "presets":

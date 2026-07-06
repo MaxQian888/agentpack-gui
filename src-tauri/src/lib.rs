@@ -3,6 +3,7 @@ mod ccswitch;
 mod commands;
 mod exec;
 mod fsops;
+mod history;
 mod paths;
 
 /// One process-wide lock shared by every test that mutates the global env vars
@@ -53,6 +54,8 @@ pub fn run() {
       backup::backup_snapshot,
       backup::backup_list,
       backup::backup_restore,
+      history::history_list_sessions,
+      history::history_get_session,
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

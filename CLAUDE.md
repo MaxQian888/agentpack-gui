@@ -88,6 +88,28 @@ MCP servers, network/mirrors and cc-switch.
 locally and NEVER calls a mutating Rust command. Skills ship as Tauri resources
 (`src-tauri/assets/skills/`, wired via `bundle.resources`).
 
+### Chat history & usage statistics
+
+The **Chat history** section reads, renders and aggregates past sessions from all
+three CLIs (Claude Code JSONL, Codex rollout JSONL, OpenCode SQLite). Same hybrid
+split:
+
+- `src-tauri/src/history.rs` — reads the three on-disk formats **read-only** and
+  normalizes each into one model (`SessionSummary` for the list, `SessionDetail`
+  for a transcript). Commands: `history_list_sessions`, `history_get_session`.
+- `lib/history/` — browser-safe pure logic: `types` (mirrors the serde output),
+  `stats` (usage aggregation + per-session cost), `pricing` (the **per-model $/1M
+  pricing table** — cost is exact for OpenCode, estimated from tokens for
+  Claude/Codex), `markdown` (safe tokenizer for the transcript renderer),
+  `format`/`display` (formatting + source colors). All fully unit-tested.
+- `components/agentpack/sections/history/` — the UI: `index` (Sessions/Usage
+  tabs, prop-driven like `dashboard`; the scan is owned + lazily cached in
+  `app-shell`), `session-browser`, `transcript`, `markdown-view`,
+  `usage-dashboard` (recharts + CSS bars).
+
+Update `lib/history/pricing.ts` when model prices change — the date is in its
+header comment.
+
 ### Docs Structure (`docs/`)
 
 - `docs/app/` - Next.js App Router for the docs site
