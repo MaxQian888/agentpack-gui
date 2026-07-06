@@ -79,6 +79,18 @@ jobs:
           workspaces: "./src-tauri -> target"
           cache-on-failure: true
 
+      # src-tauri/rust-toolchain.toml pins the toolchain, and `tauri build` runs
+      # cargo from src-tauri, so the build target must be added to THAT toolchain
+      # — not the default `stable` that dtolnay/rust-toolchain set up. Matters for
+      # cross builds (e.g. Intel macOS on an Apple-Silicon runner); a no-op when
+      # the matrix target is the runner's own host target.
+      - name: Add the build target to the pinned toolchain
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          rustup show
+          rustup target add ${{ matrix.target }}
+
       - name: Install system dependencies (Ubuntu only)
         if: matrix.platform == 'ubuntu-latest'
         run: |
