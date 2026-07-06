@@ -34,3 +34,35 @@ it("toggles the theme without throwing", async () => {
   await userEvent.click(screen.getByRole("button", { name: en.shell.toggleTheme }))
   expect(screen.getByRole("button", { name: en.shell.toggleTheme })).toBeInTheDocument()
 })
+
+it("renders only the plain Run button when the quick-install handlers are absent", () => {
+  renderHeader()
+  expect(screen.getByRole("button", { name: en.shell.run })).toBeInTheDocument()
+  expect(screen.queryByRole("button", { name: en.shell.quickInstall })).not.toBeInTheDocument()
+})
+
+function renderMenuHeader() {
+  const onRun = jest.fn()
+  const onQuickInstall = jest.fn()
+  const onCustomize = jest.fn()
+  render(
+    <I18nProvider>
+      <Header onRun={onRun} onQuickInstall={onQuickInstall} onCustomize={onCustomize} />
+    </I18nProvider>
+  )
+  return { onRun, onQuickInstall, onCustomize }
+}
+
+it("runs a preset bundle from the Run ▾ quick-install menu", async () => {
+  const { onQuickInstall } = renderMenuHeader()
+  await userEvent.click(screen.getByRole("button", { name: en.shell.quickInstall }))
+  await userEvent.click(screen.getByRole("menuitem", { name: en.presets.everything.title }))
+  expect(onQuickInstall).toHaveBeenCalledWith("everything")
+})
+
+it("opens the customize dialog from the Run ▾ menu", async () => {
+  const { onCustomize } = renderMenuHeader()
+  await userEvent.click(screen.getByRole("button", { name: en.shell.quickInstall }))
+  await userEvent.click(screen.getByRole("menuitem", { name: en.shell.customize }))
+  expect(onCustomize).toHaveBeenCalled()
+})

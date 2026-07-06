@@ -61,7 +61,7 @@ export function SidebarNav({
   const t = useT()
   const hasUpdate = useAppStore((s) => s.hasUpdate())
   return (
-    <nav className="flex w-60 shrink-0 flex-col gap-1 border-r bg-sidebar p-3">
+    <nav data-tour="nav" className="flex w-60 shrink-0 flex-col gap-1 border-r bg-sidebar p-3">
       <div className="px-2 pb-3 pt-1">
         <div className="text-lg font-semibold tracking-tight">{t.brand}</div>
         <p className="text-xs text-muted-foreground">{t.header.tagline}</p>

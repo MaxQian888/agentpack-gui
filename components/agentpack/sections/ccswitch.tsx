@@ -63,6 +63,7 @@ import { isTauri } from "@/lib/tauri"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
+import { HelpTip } from "../help-tip"
 import { ProviderForm } from "../provider-form"
 import { useRunnerCtx } from "../run/runner-context"
 
@@ -291,7 +292,7 @@ export function CcSwitchSection() {
   const editingBlocked = ccRunning === true
 
   return (
-    <SectionShell title={c.menuTitle}>
+    <SectionShell title={c.menuTitle} help={<HelpTip text={t.help.ccswitch} />}>
       {/* Install / check / initialize */}
       <Card className="gap-3 p-4">
         <div className="flex flex-row items-center gap-3">

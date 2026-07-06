@@ -14,12 +14,27 @@ export interface AppSettings {
   skippedVersion: string | null
   /** Epoch ms of the last successful update check (for display). */
   lastCheckAt: number | null
+  /**
+   * Whether the first-run welcome wizard has been completed or dismissed. False
+   * on a fresh install so the wizard greets a newcomer once; set true after they
+   * install or click "later". The About section can reopen the wizard regardless.
+   */
+  onboarded: boolean
+  /**
+   * Whether the user permanently hid the dashboard "quick start" card via its
+   * "don't show again". Independent of `onboarded`: the card is a lingering
+   * safety net for anyone who skipped the wizard, until they set up an assistant
+   * or dismiss it here.
+   */
+  quickStartDismissed: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   autoCheckUpdates: true,
   skippedVersion: null,
   lastCheckAt: null,
+  onboarded: false,
+  quickStartDismissed: false,
 }
 
 const STORE_FILE = "settings.json"

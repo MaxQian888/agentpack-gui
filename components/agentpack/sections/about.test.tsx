@@ -7,7 +7,13 @@ jest.mock("@/lib/tauri/updater", () => ({
 }))
 jest.mock("@/lib/tauri/settings", () => ({
   saveSettings: jest.fn().mockResolvedValue(undefined),
-  DEFAULT_SETTINGS: { autoCheckUpdates: true, skippedVersion: null, lastCheckAt: null },
+  DEFAULT_SETTINGS: {
+    autoCheckUpdates: true,
+    skippedVersion: null,
+    lastCheckAt: null,
+    onboarded: false,
+    quickStartDismissed: false,
+  },
 }))
 jest.mock("@/lib/tauri/system", () => ({ openUrl: jest.fn(), revealPath: jest.fn() }))
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }))
@@ -32,7 +38,13 @@ beforeEach(() => {
     updateState: "idle",
     updateInfo: null,
     downloadProgress: 0,
-    settings: { autoCheckUpdates: true, skippedVersion: null, lastCheckAt: null },
+    settings: {
+      autoCheckUpdates: true,
+      skippedVersion: null,
+      lastCheckAt: null,
+      onboarded: true,
+      quickStartDismissed: false,
+    },
     paths: null,
   })
 })
@@ -99,6 +111,13 @@ it("persists the auto-check preference on toggle", async () => {
   renderAbout()
   await userEvent.click(screen.getByRole("switch"))
   expect(saveSettings).toHaveBeenCalledWith({ autoCheckUpdates: false })
+})
+
+it("reopens the welcome wizard on demand", async () => {
+  useAppStore.setState({ onboardingOpen: false })
+  renderAbout()
+  await userEvent.click(screen.getByRole("button", { name: en.welcome.reopen }))
+  expect(useAppStore.getState().onboardingOpen).toBe(true)
 })
 
 it("reveals config folders when paths are known", async () => {

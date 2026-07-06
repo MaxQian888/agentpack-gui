@@ -270,6 +270,23 @@ it("appends an actionable hint when the binary cannot be spawned", async () => {
   expect(cliReports[0].output.join("\n")).toMatch(/"claude" is not on PATH/)
 })
 
+it("gives a winget-specific hint when winget itself isn't available", async () => {
+  ;(api.runCommand as jest.Mock).mockRejectedValue(
+    new Error("command not found: winget (os error 2)")
+  )
+  const step: StepDescriptor[] = [
+    {
+      kind: "command",
+      id: "w",
+      label: "w",
+      command: { file: "winget", args: ["install", "-e", "--id", "OpenJS.NodeJS.LTS"] },
+    },
+  ]
+  const reports = await runSteps(step, { dryRun: false, paths })
+  expect(reports[0].status).toBe("error")
+  expect(reports[0].output.join("\n")).toMatch(/App Installer/i)
+})
+
 it("a manual info note reports as a warning, not a green success", async () => {
   const steps: StepDescriptor[] = [
     { kind: "info", id: "i", label: "i", lines: ["install manually"], manual: true },
@@ -292,6 +309,60 @@ it("appends an elevation hint when a requiresElevation command fails", async () 
   const reports = await runSteps(steps, { dryRun: false, paths })
   expect(reports[0].status).toBe("error")
   expect(reports[0].output.join("\n")).toMatch(/administrator/i)
+})
+
+it("auto-elevates any winget install and warns about the UAC prompt", async () => {
+  ;(api.runCommand as jest.Mock).mockResolvedValue(0)
+  const steps: StepDescriptor[] = [
+    {
+      kind: "command",
+      id: "c",
+      label: "c",
+      // No requiresElevation flag — a bare winget install must still elevate.
+      command: { file: "winget", args: ["install", "-e", "--id", "farion1231.CC-Switch"] },
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(reports[0].status).toBe("done")
+  expect(api.runCommand).toHaveBeenCalledWith(
+    steps[0].kind === "command" ? steps[0].command : undefined,
+    expect.any(Function),
+    expect.objectContaining({ elevated: true })
+  )
+  expect(reports[0].output.join("\n")).toMatch(/administrator permission/i)
+})
+
+it("treats winget 'already installed / up to date' as success, not an error", async () => {
+  // 0x8A15002B — the package is already current; winget's non-zero code here is benign.
+  ;(api.runCommand as jest.Mock).mockResolvedValue(-1978335189)
+  const steps: StepDescriptor[] = [
+    {
+      kind: "command",
+      id: "c",
+      label: "c",
+      command: { file: "winget", args: ["install", "-e", "--id", "farion1231.CC-Switch"] },
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(reports[0].status).toBe("done")
+  expect(reports[0].output.join("\n")).toMatch(/up to date/i)
+})
+
+it("reports a dismissed UAC prompt as a clear cancellation, not a raw code", async () => {
+  ;(api.runCommand as jest.Mock).mockResolvedValue(1223) // Windows ERROR_CANCELLED
+  const steps: StepDescriptor[] = [
+    {
+      kind: "command",
+      id: "c",
+      label: "c",
+      command: { file: "winget", args: ["install", "-e", "--id", "OpenJS.NodeJS.LTS"] },
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(reports[0].status).toBe("error")
+  expect(reports[0].error).toMatch(/declined|cancel/i)
+  // The declined message stands on its own — no confusing "run it yourself" hint.
+  expect(reports[0].output.join("\n")).not.toMatch(/open a terminal as administrator/i)
 })
 
 it("maps the timeout sentinel to a friendly 'timed out' error", async () => {

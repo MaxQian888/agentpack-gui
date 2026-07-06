@@ -1,5 +1,5 @@
 import { create } from "zustand"
-import type { AgentTarget, OS, Paths, Plan } from "@/lib/agentpack/types"
+import type { AgentTarget, CliInstallManager, OS, Paths, Plan } from "@/lib/agentpack/types"
 import type { Profile } from "@/lib/agentpack/profile"
 import { findPreset } from "@/lib/agentpack/presets"
 import type { UpdateInfo } from "@/lib/tauri/updater"
@@ -37,8 +37,14 @@ interface State {
   osOverride: OS | null
   paths: Paths | null
   panelOpen: boolean
+  /** First-run welcome wizard visibility (opened on a fresh install, or manually from About). */
+  onboardingOpen: boolean
+  /** Guided product tour (spotlight walkthrough of each section) active state. */
+  tourActive: boolean
   detections: Record<string, Detection>
   latestVersions: Record<string, string>
+  /** How each installed CLI was installed (npm vs native), for in-place upgrades. */
+  cliManagers: Record<string, CliInstallManager>
   profiles: Profile[]
   currentProfileId: string | null
 
@@ -61,10 +67,13 @@ interface State {
   setDetections: (d: Record<string, Detection>) => void
   setDetection: (id: string, d: Detection) => void
   setLatestVersion: (id: string, version: string) => void
+  setCliManager: (id: string, manager: CliInstallManager) => void
   setPaths: (p: Paths) => void
   toggleDryRun: () => void
   setOsOverride: (os: OS | null) => void
   setPanelOpen: (open: boolean) => void
+  setOnboardingOpen: (open: boolean) => void
+  setTourActive: (active: boolean) => void
 
   setClis: (clis: Plan["clis"]) => void
   toggleCli: (id: Plan["clis"][number]) => void
@@ -92,8 +101,11 @@ export const useAppStore = create<State>((set, get) => ({
   osOverride: null,
   paths: null,
   panelOpen: false,
+  onboardingOpen: false,
+  tourActive: false,
   detections: {},
   latestVersions: {},
+  cliManagers: {},
   profiles: [],
   currentProfileId: null,
 
@@ -124,11 +136,15 @@ export const useAppStore = create<State>((set, get) => ({
   setDetection: (id, d) => set((s) => ({ detections: { ...s.detections, [id]: d } })),
   setLatestVersion: (id, version) =>
     set((s) => ({ latestVersions: { ...s.latestVersions, [id]: version } })),
+  setCliManager: (id, manager) =>
+    set((s) => ({ cliManagers: { ...s.cliManagers, [id]: manager } })),
   setPaths: (p) => set((s) => ({ paths: p, plan: { ...s.plan, os: s.osOverride ?? p.os } })),
   toggleDryRun: () => set((s) => ({ dryRun: !s.dryRun })),
   setOsOverride: (os) =>
     set((s) => ({ osOverride: os, plan: { ...s.plan, os: os ?? s.paths?.os ?? "mac" } })),
   setPanelOpen: (open) => set({ panelOpen: open }),
+  setOnboardingOpen: (open) => set({ onboardingOpen: open }),
+  setTourActive: (active) => set({ tourActive: active }),
 
   setClis: (clis) => set((s) => ({ plan: { ...s.plan, clis } })),
   toggleCli: (id) =>

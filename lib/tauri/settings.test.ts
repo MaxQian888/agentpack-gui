@@ -32,6 +32,8 @@ describe("loadSettings", () => {
       autoCheckUpdates: false,
       skippedVersion: "9.9.9",
       lastCheckAt: null,
+      onboarded: false,
+      quickStartDismissed: false,
     })
   })
 

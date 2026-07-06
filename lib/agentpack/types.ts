@@ -30,6 +30,13 @@ export interface InstallMethod {
   requiresElevation?: boolean
 }
 
+/**
+ * How an installed CLI got onto PATH, which decides how to UPGRADE it in place:
+ * `npm` → `npm i -g <pkg>@latest`; `native` → re-run the tool's native installer
+ * (running npm on a native install would leave a second, shadowing copy).
+ */
+export type CliInstallManager = "npm" | "native"
+
 /** A CLI tool that can be installed by the wizard. Display text lives in the i18n catalog (keyed by id). */
 export interface CliTool {
   id: "claude-code" | "codex" | "cc-switch"
@@ -75,6 +82,13 @@ export interface Runtime {
    * absent => `installMethodsFor` wraps `install[os]`.
    */
   methods?: Partial<Record<OS, InstallMethod[]>>
+  /**
+   * Optional per-OS UPDATE command for an already-installed runtime — `winget
+   * upgrade` / `brew upgrade` for OS-managed runtimes, or the tool's own
+   * self-update (`bun upgrade`, `uv self update`). Absent OS => no in-place
+   * update, so the UI hides the Update action there.
+   */
+  upgrade?: Partial<Record<OS, Command>>
   /** Fallback note shown when install is null for the current OS. */
   manualNote?: string
 }
@@ -87,10 +101,18 @@ export interface SkillDef {
 /** Transport type for an MCP server. */
 export type McpTransport = "stdio" | "http"
 
+/**
+ * Grouping bucket for the MCP catalog UI, so the management page can present
+ * servers under category headers (like a marketplace) rather than one flat list.
+ */
+export type McpCategory = "memory" | "search" | "web" | "dev" | "reasoning"
+
 /** An MCP server offered in the catalog. Display text lives in the i18n catalog. */
 export interface McpServer {
   id: string
   transport: McpTransport
+  /** Which catalog section this server is grouped under in the management UI. */
+  category: McpCategory
   /** For stdio: the npx package spec, e.g. "@upstash/context7-mcp". */
   npmPackage?: string
   /** Extra args appended after the package (stdio only). */
@@ -99,6 +121,8 @@ export interface McpServer {
   url?: string
   /** Env var name a required API key maps to (omit if none needed). */
   keyEnv?: string
+  /** Link to the server's official docs / source repo (shown as an external link). */
+  docsUrl?: string
 }
 
 /** User-entered API key per MCP id (empty string => skipped / placeholder). */

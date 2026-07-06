@@ -11,11 +11,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { RUNTIMES, installMethodsFor } from "@/lib/agentpack/registry"
-import { runtimeInstallStep } from "@/lib/agentpack/plan"
+import { RUNTIMES, installMethodsFor, runtimeUpgradeCommandFor } from "@/lib/agentpack/registry"
+import { runtimeInstallStep, runtimeUpgradeStep } from "@/lib/agentpack/plan"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
+import { HelpTip } from "../help-tip"
 import { useRunnerCtx } from "../run/runner-context"
 
 export function EnvironmentSection() {
@@ -35,8 +36,20 @@ export function EnvironmentSection() {
     void run([runtimeInstallStep(rt.id, chosen.command, t, chosen.requiresElevation)])
   }
 
+  // Update an already-installed runtime in place. A no-op update (winget/brew
+  // finds nothing newer) reports as "already up to date" rather than an error.
+  const updateNow = (rt: (typeof RUNTIMES)[number]) => {
+    const cmd = runtimeUpgradeCommandFor(rt, effectiveOS())
+    if (!cmd) return
+    void run([runtimeUpgradeStep(rt.id, cmd, t)])
+  }
+
   return (
-    <SectionShell title={t.environment.title} subtitle={t.environment.subtitle}>
+    <SectionShell
+      title={t.environment.title}
+      subtitle={t.environment.subtitle}
+      help={<HelpTip text={t.help.runtime} />}
+    >
       <p className="-mt-2 text-xs text-muted-foreground">{t.environment.installHint}</p>
       <div className="flex flex-col gap-3">
         {RUNTIMES.map((rt) => {
@@ -44,6 +57,7 @@ export function EnvironmentSection() {
           const d = detections[rt.id]
           const methods = installMethodsFor(rt, effectiveOS())
           const installable = methods.length > 0
+          const updatable = !!runtimeUpgradeCommandFor(rt, effectiveOS())
           const selectedMethodId = methodChoice[rt.id] ?? methods[0]?.id
           const selectedMethod = methods.find((m) => m.id === selectedMethodId)
           // Offer a chooser only for missing runtimes that have >1 channel.
@@ -57,10 +71,22 @@ export function EnvironmentSection() {
                 </div>
                 {d ? (
                   d.installed ? (
-                    <Badge variant="secondary" className="shrink-0 font-normal">
-                      {t.envcheck.installed}
-                      {d.version ? ` · ${d.version}` : ""}
-                    </Badge>
+                    <>
+                      <Badge variant="secondary" className="shrink-0 font-normal">
+                        {t.envcheck.installed}
+                        {d.version ? ` · ${d.version}` : ""}
+                      </Badge>
+                      {updatable ? (
+                        <Button variant="outline" size="sm" onClick={() => void updateNow(rt)}>
+                          {t.shell.update}
+                        </Button>
+                      ) : null}
+                      {installable ? (
+                        <Button variant="ghost" size="sm" onClick={() => void installNow(rt)}>
+                          {t.shell.reinstall}
+                        </Button>
+                      ) : null}
+                    </>
                   ) : (
                     <>
                       <Badge

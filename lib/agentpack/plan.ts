@@ -1,6 +1,14 @@
 import { en } from "@/lib/i18n/en"
 import type { Messages } from "@/lib/i18n/types"
-import { findCli, findMcp, findRuntime, findSkill, installMethodsFor } from "./registry"
+import {
+  findCli,
+  findMcp,
+  findRuntime,
+  findSkill,
+  installMethodsFor,
+  upgradeCommandFor,
+} from "./registry"
+import { isUpgradeAvailable } from "./version"
 import {
   buildClaudeMcpCommand,
   buildClaudeMcpRemoveCommand,
@@ -24,9 +32,11 @@ import {
 } from "./ccswitch/sync"
 import type {
   AgentTarget,
+  CliInstallManager,
   CliTool,
   Command,
   CommandStep,
+  McpServer,
   Paths,
   Plan,
   Runtime,
@@ -35,12 +45,41 @@ import type {
 import type { Provider, ProviderApp, ProviderForm, VisibleApps } from "./ccswitch/types"
 
 /**
+ * What's already present on the machine, so a batch run skips redundant work
+ * instead of re-installing over things that are already there:
+ *  - `versions` / `latest` decide upgrade-vs-skip for an installed CLI (upgrade
+ *    only when a newer version is published; otherwise leave it be).
+ *  - the per-agent MCP / skill id lists drop the add / copy steps for entries
+ *    already configured, mirroring exactly what the dashboard scan reports so
+ *    the plan and the dashboard never disagree about what's installed.
+ * Every field is optional; an empty state reproduces fresh-install behavior.
+ */
+export interface InstalledState {
+  /** Detected version per installed tool id. */
+  versions?: Readonly<Record<string, string | undefined>>
+  /** Latest published version per tool id (npm-based CLIs). */
+  latest?: Readonly<Record<string, string | undefined>>
+  /** How each installed CLI was installed, so an upgrade matches it in place. */
+  managers?: Readonly<Record<string, CliInstallManager>>
+  /** MCP server ids already configured for Claude Code (`~/.claude.json`). */
+  claudeMcps?: readonly string[]
+  /** MCP server ids already configured for Codex (`config.toml`). */
+  codexMcps?: readonly string[]
+  /** Skill ids already installed in Claude's skills dir. */
+  claudeSkills?: readonly string[]
+  /** Skill ids already installed in Codex's skills dir. */
+  codexSkills?: readonly string[]
+}
+
+/**
  * Materialize a Plan into ordered, declarative StepDescriptors.
  * Order: npm mirror → runtime prerequisites → CLI installs → skills →
  * MCP servers → relay config. Closures (merge transforms) stay in TS; only
  * their read/write primitives cross IPC at run time. `messages` localizes
  * labels (defaults to English). `installed` holds detected tool/runtime ids
- * (from the dashboard scan) and drives upgrade-vs-install and prerequisites.
+ * (from the dashboard scan) and drives upgrade-vs-install and prerequisites;
+ * `state` carries the finer-grained already-installed detail (CLI versions plus
+ * the configured MCP / skill ids) so already-present items are left untouched.
  *
  * Steps that can only succeed after an earlier step carry `dependsOn`, so the
  * runner skips them (instead of failing noisily) when the prerequisite failed.
@@ -49,11 +88,19 @@ export function buildSteps(
   plan: Plan,
   paths: Paths,
   messages: Messages = en,
-  installed: ReadonlySet<string> = new Set()
+  installed: ReadonlySet<string> = new Set(),
+  state: InstalledState = {}
 ): StepDescriptor[] {
   const t = messages.steps
   const cat = messages.catalog
   const steps: StepDescriptor[] = []
+
+  // Already-configured MCP servers / skills, per agent — an entry here means the
+  // corresponding add / copy step is redundant and gets dropped below.
+  const claudeMcps = new Set(state.claudeMcps ?? [])
+  const codexMcps = new Set(state.codexMcps ?? [])
+  const claudeSkills = new Set(state.claudeSkills ?? [])
+  const codexSkills = new Set(state.codexSkills ?? [])
 
   // 1. npm registry mirror first, so subsequent npm installs use it.
   if (plan.network.npmRegistry) {
@@ -65,20 +112,49 @@ export function buildSteps(
     })
   }
 
-  // Resolve the install command + method for a CLI. An upgrade always uses the
-  // npm `@latest` command; a fresh install uses the user's chosen method (or the
-  // tool's default). `methodId` lets us tell whether Node is actually needed —
-  // only npm-based methods do; a native-script or bun install does not.
-  const resolveCli = (tool: CliTool) => {
-    const upgrade = installed.has(tool.id)
-    if (upgrade) {
-      const cmd: Command | null | undefined = tool.upgrade?.[plan.os] ?? tool.install[plan.os]
-      return { upgrade, cmd, methodId: "npm", requiresElevation: false }
+  // Resolve the install command + method for a CLI. Already-installed tools
+  // upgrade ONLY when a newer version is published; when they're current (or the
+  // version lookup hasn't resolved yet) they're skipped rather than re-installed,
+  // matching the CLIs / Dashboard sections. An upgrade uses the npm `@latest`
+  // command; a fresh install uses the user's chosen method (or the tool's
+  // default). `methodId` lets us tell whether Node is actually needed — only
+  // npm-based methods do; a native-script or bun install does not.
+  type Resolved = {
+    skip: boolean
+    upgrade: boolean
+    cmd: Command | null | undefined
+    methodId: string | undefined
+    requiresElevation: boolean
+  }
+  const resolveCli = (tool: CliTool): Resolved => {
+    if (installed.has(tool.id)) {
+      const behind = isUpgradeAvailable(state.versions?.[tool.id], state.latest?.[tool.id])
+      if (!behind) {
+        return {
+          skip: true,
+          upgrade: false,
+          cmd: undefined,
+          methodId: undefined,
+          requiresElevation: false,
+        }
+      }
+      // Upgrade the way it was installed: a native install re-runs its own
+      // script (no Node needed); an npm one uses `@latest`.
+      const manager = state.managers?.[tool.id]
+      const cmd = upgradeCommandFor(tool, plan.os, manager)
+      return {
+        skip: false,
+        upgrade: true,
+        cmd,
+        methodId: manager === "native" ? "native" : "npm",
+        requiresElevation: false,
+      }
     }
     const methods = installMethodsFor(tool, plan.os)
     const chosen = methods.find((mth) => mth.id === plan.cliMethods?.[tool.id]) ?? methods[0]
     return {
-      upgrade,
+      skip: false,
+      upgrade: false,
       cmd: chosen?.command as Command | undefined,
       methodId: chosen?.id,
       requiresElevation: chosen?.requiresElevation ?? false,
@@ -94,7 +170,10 @@ export function buildSteps(
   let nodeStepIsCommand = false
   const needsNode = plan.clis.some((id) => {
     const tool = findCli(id)
-    return tool?.npmPackage && isNpmBased(resolveCli(tool).methodId)
+    if (!tool?.npmPackage) return false
+    const r = resolveCli(tool)
+    // A skipped (already-current) CLI does no npm work, so it needs no Node.
+    return !r.skip && isNpmBased(r.methodId)
   })
   if (needsNode && !installed.has("node")) {
     const node = findRuntime("node")
@@ -121,12 +200,14 @@ export function buildSteps(
     }
   }
 
-  // 3. CLI installs — already-installed tools upgrade; missing ones install.
+  // 3. CLI installs — missing ones install; installed-but-behind ones upgrade;
+  // installed-and-current ones are skipped (no redundant re-install).
   for (const id of plan.clis) {
     const tool = findCli(id)
     if (!tool) continue
+    const { skip, upgrade, cmd, methodId, requiresElevation } = resolveCli(tool)
+    if (skip) continue
     const title = cat.cli[id]?.title ?? id
-    const { upgrade, cmd, methodId, requiresElevation } = resolveCli(tool)
     const npmBased = Boolean(tool.npmPackage) && isNpmBased(methodId)
     if (cmd) {
       steps.push({
@@ -157,28 +238,36 @@ export function buildSteps(
       ? ["cli-claude-code"]
       : undefined
 
-  // 4. Skills.
+  // 4. Skills — copy only into targets where the skill isn't already installed,
+  // so a re-run never re-copies over an existing install.
   for (const sk of plan.skills) {
     const def = findSkill(sk.id)
     if (!def || sk.targets.length === 0) continue
+    const targets = sk.targets.filter((tg) =>
+      tg === "claude" ? !claudeSkills.has(sk.id) : !codexSkills.has(sk.id)
+    )
+    if (targets.length === 0) continue
     const title = cat.skills[sk.id]?.title ?? sk.id
     steps.push({
       kind: "skillInstall",
       id: `skill-${sk.id}`,
-      label: t.installSkill(title, sk.targets.join(", ")),
+      label: t.installSkill(title, targets.join(", ")),
       skillId: sk.id,
-      targets: sk.targets,
+      targets,
     })
   }
 
-  // 5. MCP servers.
+  // 5. MCP servers — add only to agents that don't already have the server
+  // configured. Re-adding a Claude server errors (`claude mcp add` rejects a
+  // duplicate id); re-merging a Codex one is wasteful — skipping both keeps a
+  // re-run clean and idempotent.
   for (const m of plan.mcps) {
     const server = findMcp(m.id)
     if (!server || m.targets.length === 0) continue
     const title = cat.mcp[m.id]?.title ?? m.id
     const key = plan.mcpKeys[m.id]
 
-    if (m.targets.includes("claude")) {
+    if (m.targets.includes("claude") && !claudeMcps.has(m.id)) {
       steps.push({
         kind: "command",
         id: `mcp-claude-${m.id}`,
@@ -188,7 +277,7 @@ export function buildSteps(
         dependsOn: claudeDep,
       })
     }
-    if (m.targets.includes("codex")) {
+    if (m.targets.includes("codex") && !codexMcps.has(m.id)) {
       const entry = buildCodexMcpEntry(server, key)
       steps.push({
         kind: "mergeFile",
@@ -301,6 +390,25 @@ export function runtimeInstallStep(
   }
 }
 
+/**
+ * Update an already-installed runtime in place (`winget upgrade`, `brew upgrade`,
+ * `bun upgrade`, `uv self update`). A `winget upgrade` is auto-elevated by the
+ * runner, so no explicit elevation flag is needed here.
+ */
+export function runtimeUpgradeStep(
+  id: Runtime["id"],
+  command: { file: string; args: string[] },
+  messages: Messages = en
+): StepDescriptor {
+  const title = messages.catalog.runtime[id]?.title ?? id
+  return {
+    kind: "command",
+    id: `runtime-update-${id}`,
+    label: messages.steps.updateRuntime(title),
+    command,
+  }
+}
+
 export function skillInstallStep(
   skillId: string,
   title: string,
@@ -349,6 +457,44 @@ export function visibleAppsStep(
 
 /** Suffix for the rolling backup written before any mergeFile/ccVisibleApps write. */
 export const BACKUP_SUFFIX = ".agentpack.bak"
+
+/**
+ * Add an MCP server to the chosen agents directly (one card action, outside a
+ * batch run). Claude uses `claude mcp add`; Codex merges an `mcp_servers.<id>`
+ * table into config.toml. Symmetric to `mcpRemoveStep`, and mirrors the add
+ * steps `buildSteps` emits — minus the batch-only `dependsOn` on a same-run
+ * `claude` install, since direct management runs against an already-present CLI.
+ */
+export function mcpAddStep(
+  server: McpServer,
+  targets: AgentTarget[],
+  key: string | undefined,
+  paths: Paths,
+  messages: Messages = en
+): StepDescriptor[] {
+  const title = messages.catalog.mcp[server.id]?.title ?? server.id
+  const steps: StepDescriptor[] = []
+  if (targets.includes("claude")) {
+    steps.push({
+      kind: "command",
+      id: `mcp-add-claude-${server.id}`,
+      label: messages.steps.addMcpClaude(title),
+      command: buildClaudeMcpCommand(server, key),
+    })
+  }
+  if (targets.includes("codex")) {
+    const entry = buildCodexMcpEntry(server, key)
+    steps.push({
+      kind: "mergeFile",
+      id: `mcp-add-codex-${server.id}`,
+      label: messages.steps.addMcpCodex(title),
+      path: paths.codexConfig,
+      merge: (existing) => mergeCodexMcp(existing, server.id, entry),
+      writtenNote: messages.steps.codexMcpWritten(server.id),
+    })
+  }
+  return steps
+}
 
 /**
  * Remove an MCP server from the chosen agents. Claude uses `claude mcp remove`;

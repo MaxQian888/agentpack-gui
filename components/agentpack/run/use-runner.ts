@@ -37,6 +37,20 @@ export interface RunnerState {
   onAfterRun: (fn: () => void) => () => void
 }
 
+/** Whether a plan carries any user selection (CLIs / skills / MCP / network). */
+function planHasSelections(plan: Plan | undefined): boolean {
+  if (!plan) return false
+  const net = plan.network
+  return (
+    plan.clis.length > 0 ||
+    plan.skills.length > 0 ||
+    plan.mcps.length > 0 ||
+    !!net.apiBaseUrl ||
+    !!net.apiToken ||
+    !!net.npmRegistry
+  )
+}
+
 export function useRunner(): RunnerState {
   const t = useT()
   const dryRun = useAppStore((s) => s.dryRun)
@@ -86,7 +100,11 @@ export function useRunner(): RunnerState {
       }
       const all = opts.plan && !dryRun ? [...steps, ...buildVerifySteps(opts.plan, t)] : steps
       if (all.length === 0) {
-        toast.message(t.shell.emptyPlan)
+        // Distinguish "nothing was selected" from "everything selected is already
+        // installed" — the latter produced zero steps only because the one-click
+        // dedup dropped them all, so "select CLIs first" would be wrong and
+        // confusing right after the user picked a preset.
+        toast.message(planHasSelections(opts.plan) ? t.shell.nothingToDo : t.shell.emptyPlan)
         return []
       }
       setPanelOpen(true)

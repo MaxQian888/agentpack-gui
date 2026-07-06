@@ -15,6 +15,11 @@ export interface RunCommandOpts {
   timeoutSecs?: number
   /** When it aborts, the running process (and its children) is killed. */
   signal?: AbortSignal
+  /**
+   * Windows only: run through a UAC-elevating wrapper so machine-scope installs
+   * (winget) succeed instead of failing on permissions. No-op on macOS/Linux.
+   */
+  elevated?: boolean
 }
 
 /**
@@ -32,7 +37,7 @@ export async function runCommand(
 ): Promise<number> {
   const onEvent = new Channel<string>()
   onEvent.onmessage = onLine
-  const { opId, timeoutSecs, signal } = opts
+  const { opId, timeoutSecs, signal, elevated } = opts
   if (opId && signal) {
     if (signal.aborted) void cancelCommand(opId)
     else signal.addEventListener("abort", () => void cancelCommand(opId), { once: true })
@@ -43,6 +48,7 @@ export async function runCommand(
     onEvent,
     opId: opId ?? null,
     timeoutSecs: timeoutSecs ?? null,
+    elevated: elevated ?? null,
   })
 }
 
@@ -72,6 +78,13 @@ export async function detectRuntime(rt: {
 /** Latest published version of an npm package, or null if it can't be determined. */
 export const latestVersion = (pkg: string) =>
   invoke<string | null>("latest_version", { package: pkg })
+
+/**
+ * Whether npm's global prefix owns `pkg` — i.e. the CLI was installed via
+ * `npm i -g`. False means it was put on PATH some other way (the native
+ * installer), which decides how to upgrade it without leaving a duplicate.
+ */
+export const npmOwns = (pkg: string) => invoke<boolean>("npm_owns", { package: pkg })
 
 export const isProcessRunning = (name: string) => invoke<boolean>("is_process_running", { name })
 

@@ -26,9 +26,127 @@ export const en = {
   welcome: {
     title: "Welcome to agentpack",
     intro:
-      "This wizard installs and configures Claude Code, Codex, domain skills, MCP servers and cc-switch — in one pass.",
+      "New here? agentpack installs and sets up your AI coding tools in one click. Pick a bundle below and press Install — nothing is changed until you confirm.",
     language: "Language",
     hint: "↑↓ switch language · enter to start",
+    // First-run wizard (GUI). Plain-language walkthrough of what gets set up.
+    whatTitle: "What it sets up for you",
+    whatClis: "AI coding assistants (Claude Code, Codex) you chat with in your terminal.",
+    whatMcp: "MCP servers — plugins that give the AI extra powers: web access, memory, GitHub…",
+    whatSkills: "Engineering skills — ready-made playbooks the AI follows for common tasks.",
+    whatCcswitch: "cc-switch — keep several API providers/keys and switch with one click.",
+    presetLabel: "Pick a starting bundle",
+    presetHint: "Not sure? Recommended is a good default. You can fine-tune everything later.",
+    previewLabel: "Preview first (dry-run)",
+    previewHint: "See exactly what would happen — without changing anything.",
+    later: "Maybe later",
+    install: "Install now",
+    installPreview: "Preview plan",
+    reopen: "Show welcome guide",
+  },
+
+  /** Guided product tour — a spotlight walkthrough that visits each part of the app. */
+  tour: {
+    title: "Guided tour",
+    start: "Take a tour",
+    skip: "Skip",
+    back: "Back",
+    next: "Next",
+    done: "Done",
+    progress: (i: number, n: number) => `${i} / ${n}`,
+    steps: {
+      nav: {
+        title: "Everything lives here",
+        body: "The left sidebar groups every feature — jump to any part of agentpack from here.",
+      },
+      dashboard: {
+        title: "Dashboard",
+        body: "See what's installed and configured at a glance, and remove anything you don't want.",
+      },
+      presets: {
+        title: "Presets",
+        body: "New here? Pick a bundle and it pre-fills a sensible set of tools in one tap.",
+      },
+      clis: {
+        title: "CLIs",
+        body: "Install or upgrade the AI assistants you run in a terminal — Claude Code, Codex, cc-switch.",
+      },
+      skills: {
+        title: "Skills",
+        body: "Add reusable playbooks that teach the AI how to do common engineering tasks well.",
+      },
+      mcp: {
+        title: "MCP servers",
+        body: "Give the AI extra powers with plugins — web access, memory, GitHub and more.",
+      },
+      network: {
+        title: "Network",
+        body: "Point the CLIs at a custom API relay and an npm mirror — handy behind a proxy.",
+      },
+      ccswitch: {
+        title: "cc-switch",
+        body: "Keep several API providers/keys and switch the active one with a click.",
+      },
+      preview: {
+        title: "Preview first",
+        body: "Turn this on to see exactly what a run would do — without changing anything.",
+      },
+      run: {
+        title: "Install in one click",
+        body: "Once your plan looks right, run it here. Already-installed items are skipped automatically.",
+      },
+    } as Record<string, { title: string; body: string }>,
+  },
+
+  /** Dashboard "quick start" card — a lingering guide for anyone who skipped the wizard. */
+  quickStart: {
+    title: "Quick start",
+    intro: "New to agentpack? The guide sets up your AI coding tools in a few clicks.",
+    stepPick: "Pick a bundle",
+    stepPreview: "Preview (optional)",
+    stepInstall: "Install in one click",
+    openGuide: "Open the guide",
+    dismiss: "Don't show again",
+  },
+
+  /**
+   * Quick-install dialog — the one-page selection surface opened from the header
+   * "Run ▾" menu. Pick a bundle or tick exactly what to install without visiting
+   * each section.
+   */
+  installDialog: {
+    title: "Quick install",
+    subtitle: "Pick a bundle, or tick exactly what to install — no page-hopping.",
+    presetLabel: "Start from a bundle",
+    custom: "Custom",
+    clis: "CLIs",
+    skills: "Skills",
+    mcp: "MCP servers",
+    none: "Nothing selected yet. Pick a bundle above, or tick items below.",
+    selected: (n: number) => `${n} selected`,
+    install: "Install now",
+    installPreview: "Preview plan",
+  },
+
+  /**
+   * Plain-language, one-line explanations of jargon, surfaced as ⓘ tooltips next
+   * to section titles so a newcomer isn't stopped by an acronym.
+   */
+  help: {
+    dryRun:
+      "Dry-run: agentpack only shows what it would do — no files or installs are touched. Turn it off to actually apply.",
+    preset:
+      "A preset pre-selects a sensible bundle. Start with Recommended; change anything afterward.",
+    cli: "CLIs are the AI assistants you run in a terminal (Claude Code, Codex). Installing one adds its command.",
+    runtime:
+      "Runtimes like Node.js and Python are the engines the CLIs and some MCP servers need to run.",
+    skills:
+      "Skills are reusable instruction packs that teach the AI how to do specific engineering tasks well.",
+    mcp: "MCP servers are plugins that extend the AI with new abilities — web access, memory, GitHub, and more.",
+    network:
+      "Point the CLIs at a custom API relay/endpoint and an npm mirror — handy behind a proxy or a slow network.",
+    ccswitch:
+      "cc-switch stores multiple API providers/keys and lets you switch the active one with a click.",
   },
 
   presetsScreen: {
@@ -82,8 +200,33 @@ export const en = {
 
   mcp: {
     title: "Select MCP servers to add",
-    subtitle: "Servers needing an API key will prompt next (skippable).",
+    subtitle:
+      "Plugins that extend the AI. Add any to Claude Code or Codex — installed ones can be removed here.",
     keySuffix: " (key)",
+    installed: "✔ installed",
+    notInstalled: "○ not installed",
+    // Management UI (GUI): search, filters, per-card actions, custom servers.
+    searchPlaceholder: "Search MCP servers…",
+    filterAll: "All",
+    filterInstalled: "Installed",
+    filterNotInstalled: "Not installed",
+    filterNeedsKey: "Needs key",
+    needsKeyBadge: "key",
+    docs: "Docs",
+    addNow: "Add now",
+    removeNow: "Remove now",
+    noResults: "No MCP servers match your search.",
+    summary: (installed: number, total: number) => `${installed} / ${total} installed`,
+    customTitle: "Custom & user-added",
+    customHint: "Servers found in your config that aren't in the catalog.",
+    /** Category header labels, keyed by McpCategory. */
+    categories: {
+      memory: "Memory & knowledge",
+      search: "Search & docs",
+      web: "Web & browser",
+      dev: "Developer tools",
+      reasoning: "Reasoning",
+    } as Record<string, string>,
   },
 
   mcpKeys: {
@@ -279,6 +422,7 @@ export const en = {
   steps: {
     npmRegistry: (url: string) => `Set npm registry → ${url}`,
     installRuntime: (title: string) => `Install ${title}`,
+    updateRuntime: (title: string) => `Update ${title}`,
     installCli: (title: string) => `Install ${title}`,
     upgradeCli: (title: string) => `Upgrade ${title}`,
     noInstaller: (title: string) => `No automated installer for ${title} on this OS.`,
@@ -334,8 +478,14 @@ export const en = {
       `"${file}" is not on PATH — install it first, or restart agentpack if it was just installed.`,
     npmMissingHint:
       "npm is missing — install Node.js (Runtime environment section), restart agentpack, then retry.",
+    wingetMissingHint:
+      'winget isn\'t available — update "App Installer" from the Microsoft Store (Windows 10+), or install this tool manually.',
+    requestingElevation:
+      "Requesting administrator permission — approve the Windows (UAC) prompt to continue.",
+    elevationDeclined: "Administrator permission was declined — the operation was cancelled.",
+    alreadyCurrent: "Already installed and up to date — nothing to do.",
     elevationHint: (cmd: string) =>
-      `This needs administrator rights. Open an elevated terminal (Run as administrator) and run:  ${cmd}`,
+      `The install didn't complete. If it's a permissions issue, open a terminal as administrator and run it yourself:  ${cmd}`,
     timedOut: (mins: number) =>
       `timed out after ${mins} min and was stopped — check your network or run the command manually, then retry.`,
   },
@@ -468,6 +618,8 @@ export const en = {
     osAuto: "Auto",
     run: "Run plan",
     runReview: "Review plan",
+    quickInstall: "Quick install",
+    customize: "Customize…",
     addToPlan: "Add to plan",
     loadConfig: "Load config",
     saveConfigBtn: "Save config",
@@ -476,6 +628,8 @@ export const en = {
     retry: "Retry failed",
     proceed: "Proceed",
     upgrade: "Upgrade",
+    update: "Update",
+    reinstall: "Reinstall",
     installNow: "Install now",
     uninstallNow: "Uninstall now",
     installMethod: "Install method",
@@ -486,6 +640,7 @@ export const en = {
     setCurrent: "Set current",
     save: "Save",
     emptyPlan: "Your plan is empty. Select CLIs, skills, MCP servers or network options first.",
+    nothingToDo: "Everything in your plan is already installed and up to date — nothing to do.",
     notInTauri: "Run the desktop app (pnpm tauri dev) to execute installs.",
     configSaved: (path: string) => `Saved config to ${path}`,
     configLoaded: "Config loaded into your plan.",
@@ -498,6 +653,10 @@ export const en = {
     refresh: "Rescan",
     scanning: "Scanning your environment…",
     notTauri: "Run the desktop app to scan your real environment.",
+    overviewTools: "Tools",
+    overviewMcp: "MCP",
+    overviewSkills: "Skills",
+    overviewProviders: "Providers",
     sectionClis: "CLIs & runtimes",
     sectionSkills: "Installed skills",
     sectionMcp: "MCP servers",

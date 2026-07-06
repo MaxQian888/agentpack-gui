@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
+import { HelpTip } from "../help-tip"
 
 export function NetworkSection() {
   const t = useT()
@@ -13,7 +14,11 @@ export function NetworkSection() {
   const setNetwork = useAppStore((s) => s.setNetwork)
 
   return (
-    <SectionShell title={t.network.title} subtitle={t.network.ask}>
+    <SectionShell
+      title={t.network.title}
+      subtitle={t.network.ask}
+      help={<HelpTip text={t.help.network} />}
+    >
       <Card className="gap-4 p-5">
         <div className="grid gap-2">
           <Label htmlFor="net-base-url">{t.network.baseUrlLabel}</Label>

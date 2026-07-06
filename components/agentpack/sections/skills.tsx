@@ -13,6 +13,7 @@ import { isTauri } from "@/lib/tauri"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
+import { HelpTip } from "../help-tip"
 import { useRunnerCtx } from "../run/runner-context"
 
 const TARGETS: AgentTarget[] = ["claude", "codex"]
@@ -90,7 +91,11 @@ export function SkillsSection() {
   }
 
   return (
-    <SectionShell title={t.skills.title} subtitle={t.skillsManage.categorySubtitle}>
+    <SectionShell
+      title={t.skills.title}
+      subtitle={t.skillsManage.categorySubtitle}
+      help={<HelpTip text={t.help.skills} />}
+    >
       <div className="flex flex-col gap-3">
         {SKILLS.map((skill) => {
           const meta = t.catalog.skills[skill.id]

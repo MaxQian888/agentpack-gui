@@ -44,6 +44,7 @@ pub fn run() {
       exec::launch_app,
       exec::detect_cli,
       exec::latest_version,
+      exec::npm_owns,
       exec::is_process_running,
       fsops::read_text_file,
       fsops::write_text_file,

@@ -26,10 +26,11 @@ jest.mock("sonner", () => ({
 import { renderHook, act } from "@testing-library/react"
 import { toast } from "sonner"
 import { I18nProvider } from "@/lib/i18n/provider"
+import { en } from "@/lib/i18n/en"
 import { useAppStore } from "@/store/app-store"
 import { runSteps } from "@/lib/agentpack/runner"
 import { useRunner } from "./use-runner"
-import type { StepDescriptor } from "@/lib/agentpack/types"
+import type { Plan, StepDescriptor } from "@/lib/agentpack/types"
 
 const wrapper = ({ children }: { children: React.ReactNode }) => (
   <I18nProvider>{children}</I18nProvider>
@@ -62,12 +63,31 @@ it("toasts and bails out when no paths are resolved", async () => {
   expect(runSteps).not.toHaveBeenCalled()
 })
 
-it("toasts when the plan is empty", async () => {
+it("toasts 'select first' when nothing was selected", async () => {
   const { result } = renderHook(() => useRunner(), { wrapper })
   await act(async () => {
     await result.current.run([])
   })
-  expect(toast.message).toHaveBeenCalled()
+  expect(toast.message).toHaveBeenCalledWith(en.shell.emptyPlan)
+  expect(runSteps).not.toHaveBeenCalled()
+})
+
+it("toasts 'already up to date' when a selected plan deduped to nothing", async () => {
+  // A preset WAS chosen (plan has selections) but every step was dropped because
+  // it's already installed — the message must reflect that, not "select first".
+  const plan: Plan = {
+    os: "mac",
+    clis: ["claude-code"],
+    skills: [],
+    mcps: [],
+    mcpKeys: {},
+    network: {},
+  }
+  const { result } = renderHook(() => useRunner(), { wrapper })
+  await act(async () => {
+    await result.current.run([], { plan })
+  })
+  expect(toast.message).toHaveBeenCalledWith(en.shell.nothingToDo)
   expect(runSteps).not.toHaveBeenCalled()
 })
 

@@ -54,7 +54,13 @@ it("shows the header update badge when an update is available and opens About", 
   useAppStore.setState({
     updateState: "available",
     updateInfo: { version: "9.9.9", currentVersion: "1.0.0" },
-    settings: { autoCheckUpdates: true, skippedVersion: null, lastCheckAt: null },
+    settings: {
+      autoCheckUpdates: true,
+      skippedVersion: null,
+      lastCheckAt: null,
+      onboarded: true,
+      quickStartDismissed: false,
+    },
   })
   renderShell()
   await userEvent.click(screen.getByRole("button", { name: en.about.updateAvailable("9.9.9") }))

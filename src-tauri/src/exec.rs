@@ -245,12 +245,113 @@ fn stream_lines<R: std::io::Read>(reader: R, mut sink: impl FnMut(String)) {
 /// the frontend can render a localized "timed out" message instead of a raw code.
 pub const TIMEOUT_ERR: &str = "agentpack:timeout";
 
+/// Exit code we return when the user dismissed the UAC prompt (Windows
+/// `ERROR_CANCELLED`). winget never exits with this, so the frontend can map it
+/// to a clear "you declined administrator access" message rather than a raw code.
+pub const ELEVATION_DECLINED: i32 = 1223;
+
+/// Wrap `file args` so it runs **elevated** (triggering a UAC prompt) on Windows,
+/// relaying the elevated process's combined output and exit code back through a
+/// normal (non-elevated) PowerShell we can stream + time out like any other child.
+///
+/// Machine-scope installers (Node/Python/cc-switch via winget) need admin. From a
+/// non-elevated, non-interactive GUI process winget can't raise UAC itself, so it
+/// fails with "access denied" — or filters out the machine-scope installer and
+/// reports "No applicable installer found" (系统不匹配). Elevating here fixes both.
+///
+/// Two tiny scripts under %TEMP% avoid all shell-quoting hazards:
+///  - inner.ps1 runs ELEVATED: `& <file> <args> > out 2>&1`, then records the exit.
+///  - outer.ps1 runs NON-elevated: `Start-Process -Verb RunAs` the inner, waits,
+///    echoes the captured output, self-cleans, and exits with the inner's code.
+///
+/// Returns `None` if the temp scaffolding can't be written; the caller then runs
+/// the command unelevated (graceful degradation to the prior behaviour).
+///
+/// Note: the elevated child runs in a separate high-integrity context, so it is
+/// NOT part of our process tree — `cancel_command`/timeout can stop the waiting
+/// outer shell but won't kill an in-flight elevated install.
+#[cfg(windows)]
+fn elevated_wrapper(file: &str, args: &[String]) -> Option<(String, Vec<String>)> {
+  use std::sync::atomic::AtomicU64;
+  static SEQ: AtomicU64 = AtomicU64::new(0);
+
+  let uid = format!("{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed));
+  let dir = std::env::temp_dir();
+  let inner_ps = dir.join(format!("agentpack-elev-{uid}.inner.ps1"));
+  let outer_ps = dir.join(format!("agentpack-elev-{uid}.outer.ps1"));
+  let out_txt = dir.join(format!("agentpack-elev-{uid}.out"));
+  let code_txt = dir.join(format!("agentpack-elev-{uid}.code"));
+
+  // PowerShell single-quoted literal: wrap in '…' and double any embedded quote.
+  let psq = |s: &std::borrow::Cow<'_, str>| format!("'{}'", s.replace('\'', "''"));
+  let innerp = inner_ps.to_string_lossy();
+  let outerp = outer_ps.to_string_lossy();
+  let outp = out_txt.to_string_lossy();
+  let codep = code_txt.to_string_lossy();
+
+  // Inner script (ELEVATED): run the target, capture stdout+stderr, record exit.
+  let mut call = format!("& '{}'", file.replace('\'', "''"));
+  for a in args {
+    call.push_str(" '");
+    call.push_str(&a.replace('\'', "''"));
+    call.push('\'');
+  }
+  let inner = format!(
+    "$ErrorActionPreference='Continue'\r\n\
+     {call} > {out} 2>&1\r\n\
+     Set-Content -LiteralPath {code} -Value \"$LASTEXITCODE\" -Encoding ascii\r\n",
+    out = psq(&outp),
+    code = psq(&codep),
+  );
+
+  // Outer script (NON-elevated, streamed by us): elevate the inner via UAC, wait,
+  // echo its captured output, then exit with the recorded code. A cancelled UAC
+  // prompt throws from Start-Process → we exit with the ELEVATION_DECLINED code.
+  let outer = format!(
+    "$ErrorActionPreference='Stop'\r\n\
+     try {{\r\n\
+     \x20 $p = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',{inner} -Verb RunAs -WindowStyle Hidden -PassThru -Wait\r\n\
+     }} catch {{\r\n\
+     \x20 Remove-Item -LiteralPath {inner},{outer} -ErrorAction SilentlyContinue\r\n\
+     \x20 exit {declined}\r\n\
+     }}\r\n\
+     if (Test-Path -LiteralPath {out}) {{ Get-Content -LiteralPath {out} }}\r\n\
+     $rc = 0\r\n\
+     if (Test-Path -LiteralPath {code}) {{\r\n\
+     \x20 $v = (Get-Content -LiteralPath {code} -Raw).Trim()\r\n\
+     \x20 if ($v -match '^-?\\d+$') {{ $rc = [int]$v }} elseif ($null -ne $p.ExitCode) {{ $rc = $p.ExitCode }}\r\n\
+     }} elseif ($null -ne $p.ExitCode) {{ $rc = $p.ExitCode }}\r\n\
+     Remove-Item -LiteralPath {out},{code},{inner},{outer} -ErrorAction SilentlyContinue\r\n\
+     exit $rc\r\n",
+    inner = psq(&innerp),
+    outer = psq(&outerp),
+    out = psq(&outp),
+    code = psq(&codep),
+    declined = ELEVATION_DECLINED,
+  );
+
+  std::fs::write(&inner_ps, inner).ok()?;
+  std::fs::write(&outer_ps, outer).ok()?;
+  Some((
+    "powershell".to_string(),
+    vec![
+      "-NoProfile".into(),
+      "-ExecutionPolicy".into(),
+      "Bypass".into(),
+      "-File".into(),
+      outer_ps.to_string_lossy().into_owned(),
+    ],
+  ))
+}
+
 /// Run a CLI command, streaming each stdout/stderr line to the frontend through
 /// a Tauri channel. Returns the exit code (-1 if unknown). `Err` when the process
 /// cannot be spawned (binary not on PATH) or was killed by the timeout.
 ///
 /// `op_id` (optional) registers the child so `cancel_command(op_id)` can kill it
 /// mid-run; `timeout_secs` (optional) auto-kills a process that never exits.
+/// `elevated` (Windows only) runs the command through a UAC-elevating wrapper so
+/// machine-scope installs succeed instead of failing on permissions.
 ///
 /// `(async)` on a sync fn makes Tauri run it on a worker thread instead of the
 /// main thread, so waiting on a slow subprocess never freezes the UI.
@@ -261,14 +362,28 @@ pub fn run_command(
   on_event: Channel<String>,
   op_id: Option<String>,
   timeout_secs: Option<u64>,
+  elevated: Option<bool>,
 ) -> Result<i32, String> {
   // Resolve the target up front. On Windows every command is wrapped in `cmd /c`,
   // so a missing binary would otherwise spawn `cmd` fine and merely exit non-zero
   // — hiding the real "not found" cause the frontend keys its hints off. Probing
-  // PATH here makes all three platforms report the same clean error.
+  // PATH here makes all three platforms report the same clean error. (Done before
+  // any elevation wrapping so we validate the real target, not `powershell`.)
   if !on_path(&file) {
     return Err(format!("command not found: {file}"));
   }
+
+  // On Windows, an install flagged as needing admin is routed through a UAC
+  // prompt so the machine-scope MSI actually installs. Falls back to running
+  // unelevated if the temp scaffolding can't be written.
+  #[cfg(windows)]
+  let (file, args) = if elevated.unwrap_or(false) {
+    elevated_wrapper(&file, &args).unwrap_or((file, args))
+  } else {
+    (file, args)
+  };
+  #[cfg(not(windows))]
+  let _ = elevated; // no elevation path off Windows
 
   let mut cmd = build_command(&file, &args);
   // Detach stdin so an installer that prompts (e.g. a Y/N) gets EOF and fails
@@ -439,6 +554,23 @@ pub fn latest_version(package: String) -> Option<String> {
   }
 }
 
+/// Whether npm's global prefix currently owns `package` (`npm ls -g --depth=0`).
+///
+/// Used to pick the right UPGRADE command for an already-installed CLI: an
+/// npm-owned CLI upgrades in place via `npm i -g <pkg>@latest`, but a CLI that
+/// was put on PATH by the native installer (the no-Node path) is NOT known to
+/// npm — running `npm i -g` on it would drop a *second*, shadowing copy instead
+/// of upgrading the real one. So a false result means "upgrade by re-running the
+/// native installer". Returns false when npm is absent or doesn't list the
+/// package (both mean "not an npm-managed global install").
+#[tauri::command(async)]
+pub fn npm_owns(package: String) -> bool {
+  build_command("npm", ["ls", "-g", "--depth=0", &package])
+    .output()
+    .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains(&package))
+    .unwrap_or(false)
+}
+
 /// Whether a process with this base name is running (best-effort, used as a
 /// guardrail before writing the cc-switch DB).
 #[tauri::command(async)]
@@ -502,9 +634,18 @@ mod tests {
       channel,
       None,
       None,
+      None,
     );
     let err = res.expect_err("missing binary must be an error");
     assert!(err.contains("command not found"), "got: {err}");
+  }
+
+  #[test]
+  fn npm_owns_is_false_for_a_nonexistent_package() {
+    // Whether or not npm is on PATH, a package that was never installed globally
+    // must report as not-owned (absent npm → spawn fails → false; present npm →
+    // `ls -g` exits non-zero → false). Guards the "fall back to native" default.
+    assert!(!npm_owns("definitely-not-a-real-package-xyz-123".into()));
   }
 
   #[test]
@@ -521,13 +662,66 @@ mod tests {
     } else {
       ("sleep", vec!["20".into()])
     };
-    let res = run_command(file.into(), args, channel, Some("test-timeout".into()), Some(1));
+    let res = run_command(
+      file.into(),
+      args,
+      channel,
+      Some("test-timeout".into()),
+      Some(1),
+      None,
+    );
     assert_eq!(res, Err(TIMEOUT_ERR.to_string()));
     // The child must be deregistered once the call returns.
     assert!(running_children()
       .lock()
       .map(|m| !m.contains_key("test-timeout"))
       .unwrap_or(true));
+  }
+
+  #[cfg(windows)]
+  #[test]
+  fn elevated_wrapper_routes_through_powershell_and_embeds_the_target() {
+    // The wrapper must launch a (non-elevated) powershell -File pointing at a
+    // generated outer script, and that outer script must elevate an inner script
+    // that actually invokes the real target with its args.
+    let (file, args) =
+      elevated_wrapper("winget", &["install".into(), "--id".into(), "OpenJS.NodeJS.LTS".into()])
+        .expect("wrapper should be built");
+    assert_eq!(file, "powershell");
+    let outer_path = args.last().expect("outer script path");
+    assert_eq!(args.first().map(String::as_str), Some("-NoProfile"));
+    assert!(args.iter().any(|a| a == "-File"));
+
+    let inner_path = outer_path.replace(".outer.ps1", ".inner.ps1");
+    let inner = std::fs::read_to_string(&inner_path).expect("inner script written");
+    assert!(inner.contains("& 'winget'"), "inner missing target: {inner}");
+    assert!(inner.contains("'OpenJS.NodeJS.LTS'"), "inner missing arg: {inner}");
+    assert!(inner.contains("$LASTEXITCODE"), "inner must record exit code");
+
+    let outer = std::fs::read_to_string(outer_path).expect("outer script written");
+    assert!(outer.contains("-Verb RunAs"), "outer must elevate: {outer}");
+    assert!(
+      outer.contains(&ELEVATION_DECLINED.to_string()),
+      "outer must map a cancelled UAC prompt to the sentinel"
+    );
+
+    // Clean up the scaffolding the wrapper wrote (it self-deletes only when run).
+    let _ = std::fs::remove_file(&inner_path);
+    let _ = std::fs::remove_file(outer_path);
+  }
+
+  #[cfg(windows)]
+  #[test]
+  fn elevated_wrapper_escapes_single_quotes_in_args() {
+    // A single quote in an arg must be doubled so it can't break out of the
+    // PowerShell single-quoted literal (defensive; our real args never contain one).
+    let (_file, args) = elevated_wrapper("winget", &["a'b".into()]).expect("wrapper");
+    let outer_path = args.last().unwrap();
+    let inner_path = outer_path.replace(".outer.ps1", ".inner.ps1");
+    let inner = std::fs::read_to_string(&inner_path).expect("inner written");
+    assert!(inner.contains("'a''b'"), "single quote not doubled: {inner}");
+    let _ = std::fs::remove_file(&inner_path);
+    let _ = std::fs::remove_file(outer_path);
   }
 
   #[test]

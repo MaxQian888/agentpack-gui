@@ -4,8 +4,10 @@ import {
   cliInstallStep,
   cliUninstallStep,
   fileRestoreStep,
+  mcpAddStep,
   mcpRemoveStep,
   relayRemoveStep,
+  runtimeUpgradeStep,
   skillInstallStep,
   skillRemoveStep,
   snapshotStep,
@@ -13,6 +15,7 @@ import {
   providerStep,
   syncLiveConfigSteps,
 } from "./plan"
+import { findMcp } from "./registry"
 import { mergeCodexMcp } from "./merge/mcp"
 import { mergeClaudeSettings, mergeCodexProvider } from "./merge/network"
 import { DEFAULT_VISIBLE_APPS } from "./ccswitch/settings"
@@ -136,12 +139,81 @@ it("verify steps are all verifyOnly", () => {
   expect(buildVerifySteps(plan).every((s) => s.verifyOnly)).toBe(true)
 })
 
-it("installed CLIs use the upgrade command + label", () => {
-  const step = buildSteps(plan, paths, undefined, new Set(["claude-code"])).find(
-    (s) => s.id === "cli-claude-code"
-  )!
+it("installed CLIs upgrade only when a newer version is published", () => {
+  // Behind → an @latest upgrade step.
+  const behind = buildSteps(plan, paths, undefined, new Set(["claude-code"]), {
+    versions: { "claude-code": "1.0.0" },
+    latest: { "claude-code": "2.0.0" },
+  }).find((s) => s.id === "cli-claude-code")!
+  expect(behind.kind).toBe("command")
+  expect(behind.kind === "command" && behind.command.args.join(" ")).toContain("@latest")
+})
+
+it("upgrades a native-installed CLI by re-running its native installer, not npm", () => {
+  const step = buildSteps(plan, paths, undefined, new Set(["claude-code"]), {
+    versions: { "claude-code": "1.0.0" },
+    latest: { "claude-code": "2.0.0" },
+    managers: { "claude-code": "native" },
+  }).find((s) => s.id === "cli-claude-code")!
   expect(step.kind).toBe("command")
-  expect(step.kind === "command" && step.command.args.join(" ")).toContain("@latest")
+  // Not an npm install (which would drop a second, shadowing copy)…
+  expect(step.kind === "command" && step.command.file).not.toBe("npm")
+  expect(step.kind === "command" && step.command.args.join(" ")).toContain("claude.ai/install")
+  // …and a native re-install brings its own runtime, so no Node dependency.
+  expect(step.dependsOn).toBeUndefined()
+})
+
+it("skips an already-installed CLI that is up to date (no re-install)", () => {
+  const upToDate = buildSteps(plan, paths, undefined, new Set(["claude-code"]), {
+    versions: { "claude-code": "2.0.0" },
+    latest: { "claude-code": "2.0.0" },
+  }).map((s) => s.id)
+  expect(upToDate).not.toContain("cli-claude-code")
+  // With no CLI to install, the npm Node prerequisite is unnecessary too.
+  expect(upToDate).not.toContain("runtime-node")
+})
+
+it("skips an installed CLI when the latest version is still unknown", () => {
+  // A version lookup that hasn't resolved must not trigger a re-install.
+  const ids = buildSteps(plan, paths, undefined, new Set(["claude-code"]), {
+    versions: { "claude-code": "1.0.0" },
+  }).map((s) => s.id)
+  expect(ids).not.toContain("cli-claude-code")
+})
+
+it("skips MCP add steps for agents that already have the server", () => {
+  const ids = buildSteps(plan, paths, undefined, new Set(), {
+    claudeMcps: ["context7"],
+  }).map((s) => s.id)
+  // Already on Claude → dropped; still missing on Codex → kept.
+  expect(ids).not.toContain("mcp-claude-context7")
+  expect(ids).toContain("mcp-codex-context7")
+})
+
+it("drops a fully-installed MCP server from both agents", () => {
+  const ids = buildSteps(plan, paths, undefined, new Set(), {
+    claudeMcps: ["context7"],
+    codexMcps: ["context7"],
+  }).map((s) => s.id)
+  expect(ids).not.toContain("mcp-claude-context7")
+  expect(ids).not.toContain("mcp-codex-context7")
+})
+
+it("copies a skill only into targets where it isn't installed yet", () => {
+  const both: Plan = { ...plan, skills: [{ id: "rust", targets: ["claude", "codex"] }] }
+  const step = buildSteps(both, paths, undefined, new Set(), { claudeSkills: ["rust"] }).find(
+    (s) => s.id === "skill-rust"
+  )!
+  expect(step.kind === "skillInstall" && step.targets).toEqual(["codex"])
+})
+
+it("drops a skill step entirely when installed on every target", () => {
+  const both: Plan = { ...plan, skills: [{ id: "rust", targets: ["claude", "codex"] }] }
+  const ids = buildSteps(both, paths, undefined, new Set(), {
+    claudeSkills: ["rust"],
+    codexSkills: ["rust"],
+  }).map((s) => s.id)
+  expect(ids).not.toContain("skill-rust")
 })
 
 it("emits an info step (manual note) when an OS has no installer", () => {
@@ -219,6 +291,17 @@ describe("menu-action builders", () => {
     expect(install.label).not.toEqual(upgrade.label)
   })
 
+  it("runtimeUpgradeStep builds an update command descriptor", () => {
+    const step = runtimeUpgradeStep("node", { file: "brew", args: ["upgrade", "node"] })
+    expect(step).toMatchObject({
+      kind: "command",
+      id: "runtime-update-node",
+      command: { file: "brew", args: ["upgrade", "node"] },
+    })
+    // Localized "Update <title>" label — distinct from the install-step id above.
+    expect(step.label).toMatch(/node/i)
+  })
+
   it("skillInstallStep / skillRemoveStep carry targets and dests", () => {
     const install = skillInstallStep("rust", "Rust", ["claude"])
     expect(install).toMatchObject({ kind: "skillInstall", skillId: "rust", targets: ["claude"] })
@@ -230,6 +313,35 @@ describe("menu-action builders", () => {
     const step = visibleAppsStep("/cfg.json", DEFAULT_VISIBLE_APPS)
     expect(step.kind).toBe("ccVisibleApps")
     expect(step.kind === "ccVisibleApps" && step.path).toBe("/cfg.json")
+  })
+
+  it("mcpAddStep emits a claude command and a codex mergeFile per target", () => {
+    const steps = mcpAddStep(findMcp("context7")!, ["claude", "codex"], "k", paths)
+    const claude = steps.find((s) => s.id === "mcp-add-claude-context7")!
+    expect(claude.kind === "command" && claude.command.args.slice(0, 3)).toEqual([
+      "mcp",
+      "add",
+      "context7",
+    ])
+    // The key flows into the --env flag for a keyed stdio server.
+    expect(claude.kind === "command" && claude.command.args.join(" ")).toContain(
+      "CONTEXT7_API_KEY=k"
+    )
+    const codex = steps.find((s) => s.id === "mcp-add-codex-context7")!
+    expect(codex.kind === "mergeFile" && codex.path).toBe("/h/.codex/config.toml")
+  })
+
+  it("mcpAddStep only emits the targeted agent", () => {
+    expect(mcpAddStep(findMcp("memory")!, ["codex"], undefined, paths).map((s) => s.id)).toEqual([
+      "mcp-add-codex-memory",
+    ])
+  })
+
+  it("mcpAddStep codex merge writes the server table into config.toml", () => {
+    const step = mcpAddStep(findMcp("context7")!, ["codex"], "k", paths).find(
+      (s) => s.id === "mcp-add-codex-context7"
+    )
+    expect(step?.kind === "mergeFile" && step.merge("")).toContain("context7")
   })
 
   it("mcpRemoveStep emits a claude command and a codex mergeFile per target", () => {

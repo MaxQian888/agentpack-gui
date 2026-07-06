@@ -38,6 +38,8 @@ export function AboutSection() {
   const setUpdateInfo = useAppStore((s) => s.setUpdateInfo)
   const setDownloadProgress = useAppStore((s) => s.setDownloadProgress)
   const setSettings = useAppStore((s) => s.setSettings)
+  const setOnboardingOpen = useAppStore((s) => s.setOnboardingOpen)
+  const setTourActive = useAppStore((s) => s.setTourActive)
 
   // Resolve the app version if the startup effect hasn't already (e.g. the user
   // lands here first). No-op in web mode (returns null).
@@ -186,6 +188,18 @@ export function AboutSection() {
             checked={settings.autoCheckUpdates}
             onCheckedChange={onToggleAutoCheck}
           />
+        </div>
+
+        <div className="flex items-center justify-between gap-3 border-t pt-4">
+          <span className="text-sm">{t.welcome.title}</span>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setTourActive(true)}>
+              {t.tour.start}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setOnboardingOpen(true)}>
+              {t.welcome.reopen}
+            </Button>
+          </div>
         </div>
       </Card>
 

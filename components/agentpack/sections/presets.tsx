@@ -8,6 +8,7 @@ import { PRESETS } from "@/lib/agentpack/presets"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
+import { HelpTip } from "../help-tip"
 
 const OPTIONS = ["custom", ...PRESETS.map((p) => p.id)] as const
 
@@ -24,7 +25,11 @@ export function PresetsSection() {
   }
 
   return (
-    <SectionShell title={t.presetsScreen.title} subtitle={t.presetsScreen.subtitle}>
+    <SectionShell
+      title={t.presetsScreen.title}
+      subtitle={t.presetsScreen.subtitle}
+      help={<HelpTip text={t.help.preset} />}
+    >
       <div className="grid gap-3 sm:grid-cols-2">
         {OPTIONS.map((id) => {
           const meta = t.presets[id]

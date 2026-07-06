@@ -2,7 +2,7 @@ import { en } from "@/lib/i18n/en"
 import type { Messages } from "@/lib/i18n/types"
 import { previewLines, commandToString } from "./preview"
 import { BACKUP_SUFFIX } from "./plan"
-import type { Paths, StepDescriptor, StepReport } from "./types"
+import type { Command, Paths, StepDescriptor, StepReport } from "./types"
 import * as api from "@/lib/tauri/commands"
 
 export interface RunOptions {
@@ -25,6 +25,31 @@ const COMMAND_TIMEOUT_SECS = 600
 let opSeq = 0
 
 const isNotFound = (msg: string) => /command not found/i.test(msg)
+
+/**
+ * winget mutating verbs. These hit machine scope on Windows and need admin, so
+ * they're routed through UAC elevation — otherwise a non-elevated, non-interactive
+ * winget either fails on permissions or reports "No applicable installer found".
+ */
+const WINGET_ELEVATED_VERBS = new Set(["install", "uninstall", "upgrade"])
+const isWingetMutation = (cmd: Command) =>
+  cmd.file === "winget" && WINGET_ELEVATED_VERBS.has(cmd.args[0] ?? "")
+
+/** A command step that needs administrator rights (explicit flag or any winget install). */
+function stepNeedsElevation(step: StepDescriptor): boolean {
+  return step.kind === "command" && (!!step.requiresElevation || isWingetMutation(step.command))
+}
+
+/**
+ * winget exit codes that mean "nothing to do", not a real failure:
+ * `0x8A15002B` (-1978335189) — the package is already installed and current
+ * ("No applicable upgrade"). Treated as success so a redundant install doesn't
+ * surface as a scary red error.
+ */
+const WINGET_NO_OP_CODES = new Set([-1978335189])
+
+/** Windows `ERROR_CANCELLED` — the backend returns this when the user dismisses the UAC prompt. */
+const ELEVATION_DECLINED_CODE = 1223
 
 /**
  * Run descriptors sequentially. A failing step is recorded but does NOT abort
@@ -117,12 +142,15 @@ export async function runSteps(steps: StepDescriptor[], opts: RunOptions): Promi
             report.output.push(
               file === "npm" || file === "npx"
                 ? m.coreOutput.npmMissingHint
-                : m.coreOutput.notOnPathHint(file)
+                : file === "winget"
+                  ? m.coreOutput.wingetMissingHint
+                  : m.coreOutput.notOnPathHint(file)
             )
           }
-          // A tool that needs admin can exit non-zero when UAC is declined /
-          // unavailable — point the user at running it in an elevated terminal.
-          if (step.requiresElevation && !timedOut) {
+          // An elevated install that still failed (for a reason other than a
+          // declined UAC prompt, which already carries its own clear message) —
+          // offer the manual "run it as administrator yourself" fallback.
+          if (stepNeedsElevation(step) && !timedOut && msg !== m.coreOutput.elevationDeclined) {
             report.output.push(m.coreOutput.elevationHint(commandToString(step.command)))
           }
         }
@@ -145,13 +173,26 @@ async function execute(
     case "command": {
       const printable = commandToString(step.command)
       log(`$ ${printable}`)
+      const elevated = stepNeedsElevation(step)
+      // Warn before the UAC dialog steals focus, so the prompt isn't a surprise.
+      if (elevated) log(m.coreOutput.requestingElevation)
       const code = await api.runCommand(step.command, log, {
         opId: `op-${++opSeq}`,
         timeoutSecs: COMMAND_TIMEOUT_SECS,
         signal,
+        elevated,
       })
-      if (code !== 0) throw new Error(`${printable} — ${m.coreOutput.exitedWithCode(code)}`)
-      return
+      if (code === 0) return
+      // "Already installed / up to date" from winget isn't a failure.
+      if (step.command.file === "winget" && WINGET_NO_OP_CODES.has(code)) {
+        log(m.coreOutput.alreadyCurrent)
+        return
+      }
+      // The user dismissed the UAC prompt — a clean cancellation, not a crash.
+      if (elevated && code === ELEVATION_DECLINED_CODE) {
+        throw new Error(m.coreOutput.elevationDeclined)
+      }
+      throw new Error(`${printable} — ${m.coreOutput.exitedWithCode(code)}`)
     }
     case "info": {
       for (const line of step.lines) log(line)

@@ -1,12 +1,24 @@
 jest.mock("@/lib/tauri", () => ({ isTauri: () => true }))
 jest.mock("@/lib/tauri/commands")
+jest.mock("@/lib/tauri/settings", () => ({
+  saveSettings: jest.fn(async () => undefined),
+  DEFAULT_SETTINGS: {
+    autoCheckUpdates: true,
+    skippedVersion: null,
+    lastCheckAt: null,
+    onboarded: false,
+    quickStartDismissed: false,
+  },
+}))
 
 import { useCallback, useEffect, useState } from "react"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import * as api from "@/lib/tauri/commands"
+import { DEFAULT_SETTINGS, saveSettings } from "@/lib/tauri/settings"
 import type { Provider } from "@/lib/agentpack/ccswitch/types"
 import { I18nProvider } from "@/lib/i18n/provider"
+import { en } from "@/lib/i18n/en"
 import { RunnerProvider } from "../run/runner-context"
 import { useAppStore } from "@/store/app-store"
 import type { Paths } from "@/lib/agentpack/types"
@@ -27,7 +39,14 @@ const paths: Paths = {
 
 beforeEach(() => {
   useAppStore.getState().resetPlan()
-  useAppStore.setState({ detections: {}, paths, panelOpen: false, dryRun: true })
+  useAppStore.setState({
+    detections: {},
+    paths,
+    panelOpen: false,
+    dryRun: true,
+    onboardingOpen: false,
+    settings: { ...DEFAULT_SETTINGS },
+  })
   // User-scope MCP servers are now read from ~/.claude.json (not `claude mcp list`);
   // a non-registry id there should classify as custom.
   ;(api.readTextFile as jest.Mock).mockImplementation(async (p: string) =>
@@ -127,10 +146,40 @@ it("renders rich state and runs uninstall / remove / restore actions", async () 
 
   // Exercise the action handlers (dry-run → no real mutation).
   await userEvent.click(screen.getByRole("button", { name: /uninstall/i }))
-  await userEvent.click(screen.getAllByRole("button", { name: "✕" })[0])
+  // The per-entity remove is now an icon button labelled "Remove <id>" (the
+  // codex MCP "memory" and the claude skill "rust"); the bare "Remove" text
+  // buttons below belong to the relay and provider rows.
+  await userEvent.click(screen.getByRole("button", { name: `${en.dashboard.remove} memory` }))
   await userEvent.click(screen.getAllByRole("button", { name: /^restore backup$/i })[0])
   await userEvent.click(screen.getAllByRole("button", { name: /^remove$/i })[0])
   await userEvent.click(screen.getByRole("button", { name: /apply/i }))
 
   expect(useAppStore.getState().panelOpen).toBe(true)
+})
+
+it("shows the quick-start card on a fresh, empty setup", async () => {
+  renderDashboard()
+  expect(screen.getByText(en.quickStart.title)).toBeInTheDocument()
+  await screen.findByText("my-custom") // flush the async scan
+})
+
+it("reopens the welcome wizard from the quick-start card", async () => {
+  renderDashboard()
+  await userEvent.click(screen.getByRole("button", { name: en.quickStart.openGuide }))
+  expect(useAppStore.getState().onboardingOpen).toBe(true)
+})
+
+it("hides the quick-start card once an assistant is installed", async () => {
+  useAppStore.setState({ detections: { "claude-code": { installed: true, version: "1.0.0" } } })
+  renderDashboard()
+  await screen.findByText("my-custom") // flush the async scan
+  expect(screen.queryByText(en.quickStart.title)).not.toBeInTheDocument()
+})
+
+it("permanently hides the quick-start card on Don't show again", async () => {
+  renderDashboard()
+  await userEvent.click(screen.getByRole("button", { name: en.quickStart.dismiss }))
+  expect(screen.queryByText(en.quickStart.title)).not.toBeInTheDocument()
+  expect(useAppStore.getState().settings.quickStartDismissed).toBe(true)
+  expect(saveSettings).toHaveBeenCalledWith({ quickStartDismissed: true })
 })

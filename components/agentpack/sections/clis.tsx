@@ -11,12 +11,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { CLI_TOOLS, installMethodsFor } from "@/lib/agentpack/registry"
+import { CLI_TOOLS, installMethodsFor, upgradeCommandFor } from "@/lib/agentpack/registry"
 import { cliInstallStep } from "@/lib/agentpack/plan"
 import { isUpgradeAvailable } from "@/lib/agentpack/version"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
+import { HelpTip } from "../help-tip"
 import { useRunnerCtx } from "../run/runner-context"
 
 export function ClisSection() {
@@ -27,17 +28,22 @@ export function ClisSection() {
   const setCliMethod = useAppStore((s) => s.setCliMethod)
   const detections = useAppStore((s) => s.detections)
   const latestVersions = useAppStore((s) => s.latestVersions)
+  const cliManagers = useAppStore((s) => s.cliManagers)
   const effectiveOS = useAppStore((s) => s.effectiveOS)
   const { run } = useRunnerCtx()
 
   const upgradeNow = (tool: (typeof CLI_TOOLS)[number]) => {
-    const cmd = tool.upgrade?.[effectiveOS()] ?? tool.install[effectiveOS()]
+    const cmd = upgradeCommandFor(tool, effectiveOS(), cliManagers[tool.id])
     if (!cmd) return
     void run([cliInstallStep(tool.id, cmd, true, t)])
   }
 
   return (
-    <SectionShell title={t.tools.title} subtitle={t.tools.subtitle}>
+    <SectionShell
+      title={t.tools.title}
+      subtitle={t.tools.subtitle}
+      help={<HelpTip text={t.help.cli} />}
+    >
       <p className="-mt-2 text-xs text-muted-foreground">{t.tools.upgradeNote}</p>
       <div className="flex flex-col gap-3">
         {CLI_TOOLS.map((tool) => {

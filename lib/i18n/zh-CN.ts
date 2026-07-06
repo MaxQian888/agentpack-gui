@@ -23,9 +23,118 @@ export const zhCN = {
 
   welcome: {
     title: "欢迎使用 agentpack",
-    intro: "本向导一次性安装并配置 Claude Code、Codex、领域技能、MCP 服务与 cc-switch。",
+    intro:
+      "第一次用？agentpack 帮你一键安装并配置好 AI 编程工具。在下面选一个套餐，点「一键安装」即可 —— 确认之前不会改动任何文件。",
     language: "语言",
     hint: "↑↓ 切换语言 · 回车 开始",
+    // 首次启动向导（GUI）。用大白话讲清楚会装些什么。
+    whatTitle: "它会帮你装好这些",
+    whatClis: "AI 编程助手（Claude Code、Codex）—— 在终端里和你对话的那位。",
+    whatMcp: "MCP 服务 —— 给 AI 增加外部能力的插件：联网、记忆、GitHub……",
+    whatSkills: "工程技能 —— 现成的做事套路，AI 处理常见任务时照着做。",
+    whatCcswitch: "cc-switch —— 存多套 API 供应商/密钥，一键切换。",
+    presetLabel: "选一个起步套餐",
+    presetHint: "拿不准就选「推荐」。之后每一项都能再细调。",
+    previewLabel: "先预览（演练，不真正执行）",
+    previewHint: "先看清楚会发生什么 —— 不改动任何东西。",
+    later: "以后再说",
+    install: "一键安装",
+    installPreview: "预览方案",
+    reopen: "重新查看入门引导",
+  },
+
+  /** 功能漫游导览 —— 聚光灯式逐步走查 App 各个部分。 */
+  tour: {
+    title: "功能导览",
+    start: "带我逛一圈",
+    skip: "跳过",
+    back: "上一步",
+    next: "下一步",
+    done: "完成",
+    progress: (i: number, n: number) => `${i} / ${n}`,
+    steps: {
+      nav: {
+        title: "功能都在这里",
+        body: "左侧导航把所有功能分门别类 —— 从这里可以跳到 agentpack 的任意部分。",
+      },
+      dashboard: {
+        title: "仪表盘",
+        body: "一眼看清装了什么、配了什么，也能在这里移除不想要的东西。",
+      },
+      presets: {
+        title: "套餐",
+        body: "第一次用？选一套组合，一键预填一批合理的工具。",
+      },
+      clis: {
+        title: "CLI",
+        body: "安装或升级你在终端里运行的 AI 助手 —— Claude Code、Codex、cc-switch。",
+      },
+      skills: {
+        title: "技能",
+        body: "添加可复用的做事套路，教 AI 把常见工程任务做好。",
+      },
+      mcp: {
+        title: "MCP 服务",
+        body: "用插件给 AI 增加外部能力 —— 联网、记忆、GitHub 等等。",
+      },
+      network: {
+        title: "网络",
+        body: "把 CLI 指向自定义 API 中转和 npm 镜像 —— 走代理时很有用。",
+      },
+      ccswitch: {
+        title: "cc-switch",
+        body: "保存多套 API 供应商/密钥，点一下就切换当前使用的那套。",
+      },
+      preview: {
+        title: "先预览",
+        body: "打开它，先看清楚一次执行会做什么 —— 不改动任何东西。",
+      },
+      run: {
+        title: "一键安装",
+        body: "方案没问题后，点这里执行。已安装的项会自动跳过。",
+      },
+    } as Record<string, { title: string; body: string }>,
+  },
+
+  /** 仪表盘「快速开始」卡片 —— 给跳过向导的用户留的引导入口。 */
+  quickStart: {
+    title: "快速开始",
+    intro: "第一次用 agentpack？跟着引导，几步就能装好你的 AI 编程工具。",
+    stepPick: "选套餐",
+    stepPreview: "预览（可选）",
+    stepInstall: "一键安装",
+    openGuide: "打开引导",
+    dismiss: "不再显示",
+  },
+
+  /** 快速安装弹窗 —— 从 header「执行 ▾」菜单打开的一页式选择面板，不用逐个页面翻。 */
+  installDialog: {
+    title: "快速安装",
+    subtitle: "选一个套餐，或直接勾选要装的东西 —— 不用来回翻页面。",
+    presetLabel: "从套餐开始",
+    custom: "自定义",
+    clis: "CLI",
+    skills: "技能",
+    mcp: "MCP 服务",
+    none: "还没选任何项。在上面选个套餐，或在下面勾选。",
+    selected: (n: number) => `已选 ${n} 项`,
+    install: "立即安装",
+    installPreview: "预览方案",
+  },
+
+  /**
+   * 术语的一句话大白话解释，作为 ⓘ 提示挂在各板块标题旁，
+   * 让新手不被缩写卡住。
+   */
+  help: {
+    dryRun: "演练模式：agentpack 只展示会做什么 —— 不碰任何文件、不真正安装。关掉它才会真正执行。",
+    preset: "预设会替你预选一套合理的组合。先用「推荐」，之后随时能改。",
+    cli: "CLI 就是你在终端里运行的 AI 助手（Claude Code、Codex）。装好后会多出对应命令。",
+    runtime: "Node.js、Python 这类运行时，是 CLI 和部分 MCP 服务运行所需的引擎。",
+    skills: "技能是可复用的指令包，教 AI 把某类工程任务做好。",
+    mcp: "MCP 服务是给 AI 扩能力的插件 —— 联网、记忆、GitHub 等等。",
+    network: "把 CLI 指向自定义 API 中转/端点和 npm 镜像 —— 走代理或网络较慢时很有用。",
+    ccswitch: "cc-switch 保存多套 API 供应商/密钥，点一下就切换当前使用的那套。",
   },
 
   presetsScreen: {
@@ -79,8 +188,32 @@ export const zhCN = {
 
   mcp: {
     title: "选择要添加的 MCP 服务",
-    subtitle: "需要 API 密钥的服务会在下一步提示（可跳过）。",
+    subtitle: "为 AI 扩展能力的插件。可添加到 Claude Code 或 Codex —— 已安装的也能在此移除。",
     keySuffix: " (需密钥)",
+    installed: "✔ 已安装",
+    notInstalled: "○ 未安装",
+    // 管理界面（GUI）：搜索、筛选、卡片内操作、自定义服务器。
+    searchPlaceholder: "搜索 MCP 服务…",
+    filterAll: "全部",
+    filterInstalled: "已安装",
+    filterNotInstalled: "未安装",
+    filterNeedsKey: "需密钥",
+    needsKeyBadge: "密钥",
+    docs: "文档",
+    addNow: "立即添加",
+    removeNow: "立即移除",
+    noResults: "没有匹配的 MCP 服务。",
+    summary: (installed: number, total: number) => `已安装 ${installed} / ${total}`,
+    customTitle: "自定义 / 手动添加",
+    customHint: "在你的配置中发现、但不在内置目录里的服务器。",
+    /** 分类标题，按 McpCategory 索引。 */
+    categories: {
+      memory: "记忆与知识",
+      search: "搜索与文档",
+      web: "网页与浏览器",
+      dev: "开发工具",
+      reasoning: "推理",
+    } as Record<string, string>,
   },
 
   mcpKeys: {
@@ -264,6 +397,7 @@ export const zhCN = {
   steps: {
     npmRegistry: (url: string) => `设置 npm 镜像源 → ${url}`,
     installRuntime: (title: string) => `安装 ${title}`,
+    updateRuntime: (title: string) => `更新 ${title}`,
     installCli: (title: string) => `安装 ${title}`,
     upgradeCli: (title: string) => `升级 ${title}`,
     noInstaller: (title: string) => `本系统没有 ${title} 的自动安装方式。`,
@@ -317,7 +451,14 @@ export const zhCN = {
     notOnPathHint: (file: string) =>
       `“${file}” 不在 PATH 中 —— 请先安装；如果刚刚安装过，请重启 agentpack。`,
     npmMissingHint: "缺少 npm —— 请先在“运行时环境”里安装 Node.js，重启 agentpack 后重试。",
-    elevationHint: (cmd: string) => `此操作需要管理员权限。请以管理员身份打开终端并运行：  ${cmd}`,
+    wingetMissingHint:
+      "winget 不可用 —— 请到 Microsoft Store 更新“应用安装程序”(App Installer，Windows 10+)，或手动安装该工具。",
+    requestingElevation:
+      "正在申请管理员权限 —— 请在弹出的 Windows (UAC) 提示中点击“是”以继续安装。",
+    elevationDeclined: "已拒绝管理员授权 —— 操作已取消。",
+    alreadyCurrent: "已安装且为最新版本 —— 无需重复安装。",
+    elevationHint: (cmd: string) =>
+      `安装未完成。如果是权限问题，请以管理员身份打开终端并手动运行：  ${cmd}`,
     timedOut: (mins: number) =>
       `超过 ${mins} 分钟未完成，已终止 —— 请检查网络或手动执行该命令后重试。`,
   },
@@ -443,6 +584,8 @@ export const zhCN = {
     osAuto: "自动",
     run: "执行计划",
     runReview: "确认计划",
+    quickInstall: "快速安装",
+    customize: "自定义…",
     addToPlan: "加入计划",
     loadConfig: "导入配置",
     saveConfigBtn: "保存配置",
@@ -451,6 +594,8 @@ export const zhCN = {
     retry: "重试失败项",
     proceed: "确认执行",
     upgrade: "升级",
+    update: "更新",
+    reinstall: "重装",
     installNow: "立即安装",
     uninstallNow: "立即卸载",
     installMethod: "安装方式",
@@ -461,6 +606,7 @@ export const zhCN = {
     setCurrent: "设为当前",
     save: "保存",
     emptyPlan: "计划为空。请先选择 CLI、技能、MCP 服务或网络选项。",
+    nothingToDo: "计划里的项目都已安装且为最新 —— 无需执行。",
     notInTauri: "请在桌面应用中运行（pnpm tauri dev）以执行安装。",
     configSaved: (path: string) => `已保存配置到 ${path}`,
     configLoaded: "配置已载入到你的计划。",
@@ -472,6 +618,10 @@ export const zhCN = {
     refresh: "重新扫描",
     scanning: "正在扫描你的环境…",
     notTauri: "请在桌面应用中运行以扫描真实环境。",
+    overviewTools: "工具",
+    overviewMcp: "MCP",
+    overviewSkills: "技能",
+    overviewProviders: "供应商",
     sectionClis: "CLI 与运行时",
     sectionSkills: "已安装技能",
     sectionMcp: "MCP 服务",
