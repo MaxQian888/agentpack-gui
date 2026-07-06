@@ -8,12 +8,15 @@ import {
   relayRemoveStep,
   skillInstallStep,
   skillRemoveStep,
+  snapshotStep,
   visibleAppsStep,
   providerStep,
   syncLiveConfigSteps,
 } from "./plan"
+import { mergeCodexMcp } from "./merge/mcp"
+import { mergeClaudeSettings, mergeCodexProvider } from "./merge/network"
 import { DEFAULT_VISIBLE_APPS } from "./ccswitch/settings"
-import type { Paths, Plan } from "./types"
+import type { Paths, Plan, StepDescriptor } from "./types"
 import type { Provider, ProviderForm } from "./ccswitch/types"
 
 const paths: Paths = {
@@ -299,5 +302,86 @@ describe("menu-action builders", () => {
     const steps = syncLiveConfigSteps(provider, paths, undefined, ["cc-provider-setCurrent"])
     expect(steps.map((s) => s.id)).toEqual(["cc-sync-codex-config", "cc-sync-codex-auth"])
     for (const s of steps) expect(s.dependsOn).toEqual(["cc-provider-setCurrent"])
+  })
+
+  it("snapshotStep threads its reason into a snapshot descriptor", () => {
+    const step = snapshotStep("pre-switch backup")
+    expect(step.kind).toBe("snapshot")
+    expect(step.kind === "snapshot" && step.reason).toBe("pre-switch backup")
+  })
+})
+
+/**
+ * The `mergeFile` descriptors carry inline `merge` closures that delegate to the
+ * pure text transforms (tested exhaustively in merge/merge.test.ts). These tests
+ * exercise the wiring: each descriptor invokes the right transform with the right
+ * args, so a mis-wired closure is caught here.
+ */
+describe("mergeFile closures delegate to the expected transform", () => {
+  const mergeOf = (step: StepDescriptor | undefined): ((existing: string) => string) => {
+    if (!step || step.kind !== "mergeFile") throw new Error(`expected mergeFile, got ${step?.kind}`)
+    return step.merge
+  }
+
+  const codexPlan: Plan = {
+    ...plan,
+    clis: ["claude-code", "codex"],
+    skills: [],
+    mcps: [{ id: "context7", targets: ["codex"] }],
+    mcpKeys: { context7: "k" },
+    network: { apiBaseUrl: "https://relay", apiToken: "tok" },
+  }
+
+  it("codex mcp step writes the server entry into config.toml", () => {
+    const step = buildSteps(codexPlan, paths).find((s) => s.id === "mcp-codex-context7")
+    expect(mergeOf(step)("")).toContain("context7")
+  })
+
+  it("claude relay step sets the ANTHROPIC base URL", () => {
+    const step = buildSteps(codexPlan, paths).find((s) => s.id === "relay-claude")
+    expect(JSON.parse(mergeOf(step)("")).env.ANTHROPIC_BASE_URL).toBe("https://relay")
+  })
+
+  it("codex relay step writes the agentpack provider", () => {
+    const step = buildSteps(codexPlan, paths).find((s) => s.id === "relay-codex")
+    expect(mergeOf(step)("")).toContain("agentpack")
+  })
+
+  it("codex mcp-remove step deletes the named server table", () => {
+    const existing = mergeCodexMcp("", "context7", { command: "npx", args: [] })
+    const step = mcpRemoveStep("context7", ["codex"], paths).find(
+      (s) => s.id === "mcp-remove-codex-context7"
+    )
+    expect(mergeOf(step)(existing)).not.toContain("context7")
+  })
+
+  it("claude relay-remove step clears the relay env vars", () => {
+    const existing = mergeClaudeSettings("", { apiBaseUrl: "https://r", apiToken: "t" })
+    const step = relayRemoveStep(["claude-code"], paths).find((s) => s.id === "relay-remove-claude")
+    expect(JSON.parse(mergeOf(step)(existing)).env.ANTHROPIC_BASE_URL).toBeUndefined()
+  })
+
+  it("codex relay-remove step drops the agentpack provider", () => {
+    const existing = mergeCodexProvider("", { apiBaseUrl: "https://r" })
+    const step = relayRemoveStep(["codex"], paths).find((s) => s.id === "relay-remove-codex")
+    expect(mergeOf(step)(existing)).not.toContain("agentpack")
+  })
+
+  it("codex sync steps write config.toml and auth.json from the provider", () => {
+    const provider: Provider = {
+      id: "1",
+      app_type: "codex",
+      name: "prov",
+      settings_config: JSON.stringify({
+        config: 'model_provider = "openai"\n[model_providers.openai]\nname = "OpenAI"\n',
+        auth: { OPENAI_API_KEY: "sk-1" },
+      }),
+      is_current: true,
+    }
+    const steps = syncLiveConfigSteps(provider, paths)
+    const cfg = steps.find((s) => s.id === "cc-sync-codex-config")
+    expect(mergeOf(cfg)("")).toContain("model_provider")
+    const auth = steps.find((s) => s.id === "cc-sync-codex-auth")
+    expect(JSON.parse(mergeOf(auth)("")).OPENAI_API_KEY).toBe("sk-1")
   })
 })
