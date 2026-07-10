@@ -60,6 +60,7 @@ it("shows the header update badge when an update is available and opens About", 
       lastCheckAt: null,
       onboarded: true,
       quickStartDismissed: false,
+      ghMirrorPrefix: null,
     },
   })
   renderShell()

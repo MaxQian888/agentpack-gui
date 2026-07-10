@@ -44,7 +44,7 @@ import {
   type ClaudeRelayState,
 } from "@/lib/agentpack/scan"
 import { ccLoadProviders, listSkills, pathExists, readTextFile } from "@/lib/tauri/commands"
-import type { AgentTarget, Paths } from "@/lib/agentpack/types"
+import type { AgentTarget, CliTool, Paths } from "@/lib/agentpack/types"
 import type { Provider } from "@/lib/agentpack/ccswitch/types"
 import { isTauri } from "@/lib/tauri"
 import { saveSettings } from "@/lib/tauri/settings"
@@ -300,14 +300,7 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
                           variant="outline"
                           size="sm"
                           onClick={() =>
-                            runThen([
-                              cliInstallStep(
-                                tool.id as "claude-code" | "codex" | "cc-switch",
-                                upgradeCmd,
-                                true,
-                                t
-                              ),
-                            ])
+                            runThen([cliInstallStep(tool.id as CliTool["id"], upgradeCmd, true, t)])
                           }
                         >
                           {t.shell.upgrade}
@@ -319,7 +312,7 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
                         onClick={() =>
                           runThen([
                             cliUninstallStep(
-                              tool.id as "claude-code" | "codex" | "cc-switch",
+                              tool.id as CliTool["id"],
                               findCli(tool.id)?.uninstall?.[os],
                               t
                             ),

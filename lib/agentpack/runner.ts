@@ -263,6 +263,20 @@ async function execute(
       }
       return
     }
+    case "skillCopy": {
+      const dests = await api.installSkillFromDir(step.srcPath, step.dirName, step.targets)
+      for (const d of dests) log(m.coreOutput.copy(step.srcPath, d))
+      return
+    }
+    case "skillRepoInstall": {
+      const dests = await api.installRepoSkills(
+        step.scanId,
+        step.skills.map((s) => s.relPath),
+        step.targets
+      )
+      for (const d of dests) log(m.coreOutput.copy(step.scanId, d))
+      return
+    }
     case "snapshot": {
       const entry = await api.backupSnapshot(step.reason)
       log(m.coreOutput.snapshot(entry.id))

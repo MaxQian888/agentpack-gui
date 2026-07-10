@@ -4,15 +4,20 @@ import { openApp, navTo } from "./helpers"
 test.beforeEach(async ({ page }) => openApp(page))
 
 test("applying the Recommended preset pre-checks CLIs", async ({ page }) => {
-  await page.getByRole("button", { name: /Recommended/ }).click()
+  await navTo(page, "presets")
+  await page.getByRole("button", { name: /^Recommended/ }).click()
   await navTo(page, "clis")
   await expect(page.locator("#cli-claude-code")).toBeChecked()
   await expect(page.locator("#cli-codex")).toBeChecked()
 })
 
 test("Custom preset clears any selection", async ({ page }) => {
-  await page.getByRole("button", { name: /Recommended/ }).click()
-  await page.getByRole("button", { name: /Custom/ }).click()
+  await navTo(page, "presets")
+  await page.getByRole("button", { name: /^Recommended/ }).click()
+  await page.getByRole("button", { name: /^Custom/ }).click()
+  // Custom resets the plan and opens the customize dialog — dismiss it before navigating.
+  await page.keyboard.press("Escape")
+  await expect(page.getByRole("dialog")).toBeHidden()
   await navTo(page, "clis")
   await expect(page.locator("#cli-claude-code")).not.toBeChecked()
 })

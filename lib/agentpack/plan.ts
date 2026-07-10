@@ -23,6 +23,12 @@ import {
   mergeCodexProvider,
   npmRegistryCommand,
 } from "./merge/network"
+import {
+  mergeClaudeSkillOverride,
+  mergeOpencodeSkillPermission,
+  type ClaudeSkillVisibility,
+  type OpencodeSkillPermission,
+} from "./merge/skill-config"
 import { mergeVisibleApps } from "./ccswitch/settings"
 import { buildSettingsConfig } from "./ccswitch/provider"
 import {
@@ -427,7 +433,7 @@ export function skillInstallStep(
 export function skillRemoveStep(
   skillId: string,
   title: string,
-  targets: AgentTarget[],
+  targets: string[],
   dests: string[],
   messages: Messages = en
 ): StepDescriptor {
@@ -438,6 +444,86 @@ export function skillRemoveStep(
     skillId,
     targets,
     dests,
+  }
+}
+
+/**
+ * Copy a local skill folder (an installed skill from another agent's root, or a
+ * user-picked import folder) into each target's skills root.
+ */
+export function skillCopyStep(
+  dirName: string,
+  title: string,
+  srcPath: string,
+  targets: string[],
+  dests: string[],
+  messages: Messages = en
+): StepDescriptor {
+  return {
+    kind: "skillCopy",
+    id: `skill-copy-${dirName}-${targets.join("-")}`,
+    label: messages.steps.copySkill(title, targets.join(", ")),
+    srcPath,
+    dirName,
+    targets,
+    dests,
+  }
+}
+
+/** Install the selected skills from a fetched GitHub repo scan into each target. */
+export function skillRepoInstallStep(
+  scanId: string,
+  skills: { relPath: string; dirName: string }[],
+  targets: string[],
+  dests: string[],
+  messages: Messages = en
+): StepDescriptor {
+  return {
+    kind: "skillRepoInstall",
+    id: `skill-repo-install-${scanId}`,
+    label: messages.steps.installRepoSkills(skills.length, targets.join(", ")),
+    scanId,
+    skills,
+    targets,
+    dests,
+  }
+}
+
+/**
+ * Set a skill's Claude Code visibility (`skillOverrides` in settings.json, keyed
+ * by skill NAME). Rides the mergeFile machinery: backup-on-first-touch, atomic
+ * write, dry-run preview.
+ */
+export function skillVisibilityStep(
+  name: string,
+  visibility: ClaudeSkillVisibility,
+  paths: Paths,
+  messages: Messages = en
+): StepDescriptor {
+  return {
+    kind: "mergeFile",
+    id: `skill-visibility-${name}`,
+    label: messages.steps.skillVisibility(name, visibility),
+    path: paths.claudeSettings,
+    merge: (existing) => mergeClaudeSkillOverride(existing, name, visibility),
+    writtenNote: messages.steps.claudeSkillOverridesWritten,
+  }
+}
+
+/** Set a skill's OpenCode permission (`permission.skill.<name>` in opencode.json). */
+export function skillPermissionStep(
+  name: string,
+  permission: OpencodeSkillPermission,
+  paths: Paths,
+  messages: Messages = en
+): StepDescriptor {
+  return {
+    kind: "mergeFile",
+    id: `skill-permission-${name}`,
+    label: messages.steps.skillPermission(name, permission),
+    path: paths.opencodeConfig,
+    merge: (existing) => mergeOpencodeSkillPermission(existing, name, permission),
+    writtenNote: messages.steps.opencodeConfigWritten,
   }
 }
 

@@ -2,6 +2,7 @@ import { invoke, Channel } from "@tauri-apps/api/core"
 import type { AgentTarget, Command, Paths } from "@/lib/agentpack/types"
 import type { Provider, ProviderApp } from "@/lib/agentpack/ccswitch/types"
 import type { HistorySource, ListResult, SessionDetail } from "@/lib/history/types"
+import type { RepoScan, SkillsScanResult } from "@/lib/skills/types"
 
 // Typed wrappers around the custom Rust commands (src-tauri/src/*.rs). Keep this
 // file as the SOLE caller of `invoke` for agentpack — UI/runner import these.
@@ -123,6 +124,23 @@ export const listSkills = (path: string) => invoke<string[]>("list_skills", { pa
 
 export const installSkill = (id: string, targets: AgentTarget[]) =>
   invoke<string[]>("install_skill", { id, targets })
+
+/** Scan the four global skills roots (claude/codex/opencode/agents) with SKILL.md inline. */
+export const skillsScan = () => invoke<SkillsScanResult>("skills_scan")
+
+/** Copy a local skill folder into each target root (cross-agent copy / folder import). */
+export const installSkillFromDir = (src: string, dirName: string, targets: string[]) =>
+  invoke<string[]>("install_skill_from_dir", { src, dirName, targets })
+
+/** Download a GitHub repo tarball and list the skills it contains (read-only). */
+export const fetchRepoSkills = (url: string) => invoke<RepoScan>("fetch_repo_skills", { url })
+
+/** Install previously fetched repo skills (by rel path) into each target root. */
+export const installRepoSkills = (scanId: string, relPaths: string[], targets: string[]) =>
+  invoke<string[]>("install_repo_skills", { scanId, relPaths, targets })
+
+/** Delete a repo scan's temp dir (also swept automatically after 24h). */
+export const cleanupRepoScan = (scanId: string) => invoke<void>("cleanup_repo_scan", { scanId })
 
 export const ccLoadProviders = () => invoke<Provider[]>("cc_load_providers")
 

@@ -86,3 +86,82 @@ describe("parseMarkdown", () => {
     expect(blocks.map((b) => b.type)).toEqual(["heading", "paragraph", "code", "list"])
   })
 })
+
+describe("parseMarkdown — GFM tables", () => {
+  it("parses header, alignment and rows", () => {
+    const blocks = parseMarkdown(
+      ["| Name | Count | Note |", "| :--- | :---: | ---: |", "| a | 1 | x |", "| b | 2 | y |"].join(
+        "\n"
+      )
+    )
+    expect(blocks).toHaveLength(1)
+    const table = blocks[0]
+    if (table.type !== "table") throw new Error("expected table")
+    expect(table.header.map((h) => h[0])).toEqual([
+      { type: "text", value: "Name" },
+      { type: "text", value: "Count" },
+      { type: "text", value: "Note" },
+    ])
+    expect(table.align).toEqual(["left", "center", "right"])
+    expect(table.rows).toHaveLength(2)
+    expect(table.rows[1][1][0]).toEqual({ type: "text", value: "2" })
+  })
+
+  it("parses inline styles inside cells and stops at a blank line", () => {
+    const blocks = parseMarkdown("| a |\n| - |\n| **b** |\n\nafter")
+    const table = blocks[0]
+    if (table.type !== "table") throw new Error("expected table")
+    expect(table.rows[0][0][0]).toEqual({ type: "bold", value: "b" })
+    expect(blocks[1]).toMatchObject({ type: "paragraph" })
+  })
+
+  it("does not treat a pipe line without a separator as a table", () => {
+    const blocks = parseMarkdown("a | b\nplain text")
+    expect(blocks[0].type).toBe("paragraph")
+  })
+
+  it("breaks a paragraph when a table starts on the next line", () => {
+    const blocks = parseMarkdown("intro\n| h |\n| - |\n| v |")
+    expect(blocks.map((b) => b.type)).toEqual(["paragraph", "table"])
+  })
+})
+
+describe("parseMarkdown — nested and task lists", () => {
+  it("nests indented items under their parent", () => {
+    const blocks = parseMarkdown("- parent\n  - child one\n  - child two\n- sibling")
+    const list = blocks[0]
+    if (list.type !== "list") throw new Error("expected list")
+    expect(list.items).toHaveLength(2)
+    expect(list.items[0].children).toHaveLength(2)
+    expect(list.items[0].children![1].inline[0]).toEqual({ type: "text", value: "child two" })
+    expect(list.items[1].inline[0]).toEqual({ type: "text", value: "sibling" })
+  })
+
+  it("records whether a nested list is ordered", () => {
+    const blocks = parseMarkdown("- parent\n  1. first\n  2. second")
+    const list = blocks[0]
+    if (list.type !== "list") throw new Error("expected list")
+    expect(list.items[0].childrenOrdered).toBe(true)
+    expect(list.ordered).toBe(false)
+  })
+
+  it("dedents back to the parent level", () => {
+    const blocks = parseMarkdown("- a\n  - a1\n- b")
+    const list = blocks[0]
+    if (list.type !== "list") throw new Error("expected list")
+    expect(list.items.map((i) => i.inline[0])).toEqual([
+      { type: "text", value: "a" },
+      { type: "text", value: "b" },
+    ])
+  })
+
+  it("parses task list checkboxes", () => {
+    const blocks = parseMarkdown("- [ ] todo\n- [x] done\n- plain")
+    const list = blocks[0]
+    if (list.type !== "list") throw new Error("expected list")
+    expect(list.items[0]).toMatchObject({ checked: false })
+    expect(list.items[0].inline[0]).toEqual({ type: "text", value: "todo" })
+    expect(list.items[1]).toMatchObject({ checked: true })
+    expect(list.items[2].checked).toBeUndefined()
+  })
+})

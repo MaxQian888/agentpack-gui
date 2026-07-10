@@ -32,8 +32,13 @@ const paths: Paths = {
   codexConfig: "/h/.codex/config.toml",
   codexAuth: "/h/.codex/auth.json",
   codexSkillsDir: "/h/.codex/skills",
+  opencodeConfig: "/h/.config/opencode/opencode.json",
+  opencodeSkillsDir: "/h/.config/opencode/skills",
+  agentsSkillsDir: "/h/.agents/skills",
   ccSwitchSettings: "/h/.cc-switch/settings.json",
   ccSwitchDb: "/h/.cc-switch/cc-switch.db",
+  ccConnectDir: "/h/.cc-connect",
+  ccConnectConfig: "/h/.cc-connect/config.toml",
   os: "mac",
 }
 

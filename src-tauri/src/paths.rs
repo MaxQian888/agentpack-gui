@@ -13,8 +13,13 @@ pub struct Paths {
   codex_config: String,
   codex_auth: String,
   codex_skills_dir: String,
+  opencode_config: String,
+  opencode_skills_dir: String,
+  agents_skills_dir: String,
   cc_switch_settings: String,
   cc_switch_db: String,
+  cc_connect_dir: String,
+  cc_connect_config: String,
   os: String,
 }
 
@@ -46,6 +51,7 @@ pub fn get_paths() -> Result<Paths, String> {
   let claude = home.join(".claude");
   let codex = codex_home(&home);
   let ccsw = home.join(".cc-switch");
+  let ccconn = home.join(".cc-connect");
   Ok(Paths {
     home: s(home.clone()),
     claude_settings: s(claude.join("settings.json")),
@@ -56,8 +62,17 @@ pub fn get_paths() -> Result<Paths, String> {
     codex_config: s(codex.join("config.toml")),
     codex_auth: s(codex.join("auth.json")),
     codex_skills_dir: s(codex.join("skills")),
+    // OpenCode uses an XDG-style ~/.config even on Windows (verified against the
+    // opencode.ai docs and a real install); skills.sh installs there too.
+    opencode_config: s(home.join(".config").join("opencode").join("opencode.json")),
+    opencode_skills_dir: s(home.join(".config").join("opencode").join("skills")),
+    // Shared canonical dir used by the skills.sh CLI (symlink targets) and read
+    // directly by OpenCode.
+    agents_skills_dir: s(home.join(".agents").join("skills")),
     cc_switch_settings: s(ccsw.join("settings.json")),
     cc_switch_db: s(ccsw.join("cc-switch.db")),
+    cc_connect_dir: s(ccconn.clone()),
+    cc_connect_config: s(ccconn.join("config.toml")),
     os: os_family().into(),
   })
 }

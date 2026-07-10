@@ -35,6 +35,7 @@ const config: Config = {
     "!lib/agentpack/ccswitch/types.ts",
     "!lib/i18n/types.ts",
     "!lib/history/types.ts",
+    "!lib/skills/types.ts",
   ],
 
   // The directory where Jest should output its coverage files

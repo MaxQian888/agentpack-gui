@@ -34,6 +34,7 @@ describe("loadSettings", () => {
       lastCheckAt: null,
       onboarded: false,
       quickStartDismissed: false,
+      ghMirrorPrefix: null,
     })
   })
 

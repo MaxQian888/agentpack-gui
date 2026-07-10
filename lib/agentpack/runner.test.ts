@@ -449,3 +449,70 @@ it("records the step duration once it finishes", async () => {
   expect(typeof reports[0].durationMs).toBe("number")
   expect(reports[0].durationMs!).toBeGreaterThanOrEqual(0)
 })
+
+it("skillCopy copies via installSkillFromDir and logs each dest", async () => {
+  ;(api.installSkillFromDir as jest.Mock).mockResolvedValue(["/h/.codex/skills/caveman"])
+  const steps: StepDescriptor[] = [
+    {
+      kind: "skillCopy",
+      id: "s",
+      label: "s",
+      srcPath: "/h/.claude/skills/caveman",
+      dirName: "caveman",
+      targets: ["codex"],
+      dests: ["/h/.codex/skills/caveman"],
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(api.installSkillFromDir).toHaveBeenCalledWith("/h/.claude/skills/caveman", "caveman", [
+    "codex",
+  ])
+  expect(reports[0].status).toBe("done")
+  expect(reports[0].output.join("\n")).toContain("/h/.codex/skills/caveman")
+})
+
+it("skillRepoInstall installs the picked rel paths into the targets", async () => {
+  ;(api.installRepoSkills as jest.Mock).mockResolvedValue(["/h/.claude/skills/web-design"])
+  const steps: StepDescriptor[] = [
+    {
+      kind: "skillRepoInstall",
+      id: "r",
+      label: "r",
+      scanId: "scan-1",
+      skills: [{ relPath: "skills/web-design", dirName: "web-design" }],
+      targets: ["claude"],
+      dests: ["/h/.claude/skills/web-design"],
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(api.installRepoSkills).toHaveBeenCalledWith("scan-1", ["skills/web-design"], ["claude"])
+  expect(reports[0].output.join("\n")).toContain("/h/.claude/skills/web-design")
+})
+
+it("dry-run of the new skill kinds renders previews and calls no mutating command", async () => {
+  const steps: StepDescriptor[] = [
+    {
+      kind: "skillCopy",
+      id: "s",
+      label: "s",
+      srcPath: "/src",
+      dirName: "x",
+      targets: ["codex"],
+      dests: ["/h/.codex/skills/x"],
+    },
+    {
+      kind: "skillRepoInstall",
+      id: "r",
+      label: "r",
+      scanId: "scan-1",
+      skills: [{ relPath: "x", dirName: "x" }],
+      targets: ["claude"],
+      dests: ["/h/.claude/skills/x"],
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: true, paths })
+  expect(api.installSkillFromDir).not.toHaveBeenCalled()
+  expect(api.installRepoSkills).not.toHaveBeenCalled()
+  expect(reports[0].output.join("\n")).toContain("would copy /src -> /h/.codex/skills/x")
+  expect(reports[1].output.join("\n")).toContain("/h/.claude/skills/x")
+})

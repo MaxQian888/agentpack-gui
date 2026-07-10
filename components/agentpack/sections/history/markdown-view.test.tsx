@@ -31,3 +31,28 @@ describe("MarkdownView", () => {
     expect(screen.getByText("quoted line").tagName).toBe("BLOCKQUOTE")
   })
 })
+
+it("renders GFM tables with th/td cells", () => {
+  const { container } = render(<MarkdownView text={"| Col |\n| :-: |\n| **val** |"} />)
+  const th = container.querySelector("th")
+  expect(th).toHaveTextContent("Col")
+  expect(th).toHaveStyle({ textAlign: "center" })
+  expect(container.querySelector("td strong")).toHaveTextContent("val")
+})
+
+it("renders nested lists and task checkboxes", () => {
+  const { container } = render(<MarkdownView text={"- [x] done\n- parent\n  - child"} />)
+  const checkbox = container.querySelector("input[type=checkbox]")
+  expect(checkbox).toBeChecked()
+  expect(checkbox).toBeDisabled()
+  expect(container.querySelector("ul ul li")).toHaveTextContent("child")
+})
+
+it("doc variant renders real heading tags; chat variant keeps paragraphs", () => {
+  const { container: doc } = render(<MarkdownView variant="doc" text={"# Title\n## Sub"} />)
+  expect(doc.querySelector("h1")).toHaveTextContent("Title")
+  expect(doc.querySelector("h2")).toHaveTextContent("Sub")
+  const { container: chat } = render(<MarkdownView text={"# Title"} />)
+  expect(chat.querySelector("h1")).toBeNull()
+  expect(chat.querySelector("p")).toHaveTextContent("Title")
+})

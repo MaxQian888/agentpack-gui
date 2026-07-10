@@ -35,6 +35,11 @@ export function previewLines(
       )
     case "skillRemove":
       return step.dests.map((d) => out.wouldDelete(d))
+    case "skillCopy":
+      return step.dests.map((d) => out.wouldCopy(step.srcPath, d))
+    case "skillRepoInstall":
+      // dests are precomputed (skill × target) — dry-run never touches the scan.
+      return step.dests.map((d) => out.wouldCopy(step.scanId, d))
     case "ccProvider": {
       const app = (step.payload as { app?: string }).app ?? ""
       return [`would run: ${step.op} provider (${app})`]

@@ -1,8 +1,20 @@
 "use client"
 
-import { Fragment, useMemo } from "react"
-import { parseMarkdown, type InlineToken, type MdBlock } from "@/lib/history/markdown"
+import { Fragment, useMemo, createElement } from "react"
+import {
+  parseMarkdown,
+  type InlineToken,
+  type ListItem,
+  type MdBlock,
+} from "@/lib/history/markdown"
 import { cn } from "@/lib/utils"
+
+/**
+ * `chat` keeps the compact transcript styling (headings as bold paragraphs);
+ * `doc` renders document-style SKILL.md pages with real h1–h6 tags and a size
+ * scale.
+ */
+type Variant = "chat" | "doc"
 
 /** Render styled inline tokens (code / bold / italic / link / text). */
 function Inline({ tokens }: { tokens: InlineToken[] }) {
@@ -51,7 +63,61 @@ function Inline({ tokens }: { tokens: InlineToken[] }) {
   )
 }
 
-function Block({ block }: { block: MdBlock }) {
+const DOC_HEADING_SIZE: Record<number, string> = {
+  1: "text-xl",
+  2: "text-lg",
+  3: "text-base",
+}
+
+function Heading({
+  level,
+  inline,
+  variant,
+}: {
+  level: number
+  inline: InlineToken[]
+  variant: Variant
+}) {
+  if (variant === "chat") {
+    return (
+      <p className={cn("font-semibold", level <= 2 ? "text-base" : "text-sm")}>
+        <Inline tokens={inline} />
+      </p>
+    )
+  }
+  return createElement(
+    `h${level}`,
+    { className: cn("font-semibold tracking-tight", DOC_HEADING_SIZE[level] ?? "text-sm") },
+    <Inline tokens={inline} />
+  )
+}
+
+function Items({ items, ordered }: { items: ListItem[]; ordered: boolean }) {
+  const children = items.map((it, i) => (
+    <li key={i}>
+      {it.checked !== undefined ? (
+        <input
+          type="checkbox"
+          checked={it.checked}
+          readOnly
+          disabled
+          className="mr-1.5 size-3 accent-primary align-baseline"
+        />
+      ) : null}
+      <Inline tokens={it.inline} />
+      {it.children?.length ? (
+        <Items items={it.children} ordered={it.childrenOrdered ?? false} />
+      ) : null}
+    </li>
+  ))
+  return ordered ? (
+    <ol className="ml-5 list-decimal space-y-1">{children}</ol>
+  ) : (
+    <ul className="ml-5 list-disc space-y-1">{children}</ul>
+  )
+}
+
+function Block({ block, variant }: { block: MdBlock; variant: Variant }) {
   switch (block.type) {
     case "code":
       return (
@@ -60,28 +126,43 @@ function Block({ block }: { block: MdBlock }) {
         </pre>
       )
     case "heading":
-      return (
-        <p className={cn("font-semibold", block.level <= 2 ? "text-base" : "text-sm")}>
-          <Inline tokens={block.inline} />
-        </p>
-      )
+      return <Heading level={block.level} inline={block.inline} variant={variant} />
     case "list":
-      return block.ordered ? (
-        <ol className="ml-5 list-decimal space-y-1">
-          {block.items.map((it, i) => (
-            <li key={i}>
-              <Inline tokens={it} />
-            </li>
-          ))}
-        </ol>
-      ) : (
-        <ul className="ml-5 list-disc space-y-1">
-          {block.items.map((it, i) => (
-            <li key={i}>
-              <Inline tokens={it} />
-            </li>
-          ))}
-        </ul>
+      return <Items items={block.items} ordered={block.ordered} />
+    case "table":
+      return (
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-xs">
+            <thead>
+              <tr>
+                {block.header.map((cell, i) => (
+                  <th
+                    key={i}
+                    className="border bg-muted/40 px-2 py-1 text-left font-semibold"
+                    style={block.align[i] ? { textAlign: block.align[i] } : undefined}
+                  >
+                    <Inline tokens={cell} />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {block.rows.map((row, r) => (
+                <tr key={r}>
+                  {row.map((cell, c) => (
+                    <td
+                      key={c}
+                      className="border px-2 py-1 align-top"
+                      style={block.align[c] ? { textAlign: block.align[c] } : undefined}
+                    >
+                      <Inline tokens={cell} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )
     case "quote":
       return (
@@ -99,12 +180,20 @@ function Block({ block }: { block: MdBlock }) {
 }
 
 /** Render Markdown text as a safe React tree (no HTML injection). */
-export function MarkdownView({ text, className }: { text: string; className?: string }) {
+export function MarkdownView({
+  text,
+  className,
+  variant = "chat",
+}: {
+  text: string
+  className?: string
+  variant?: Variant
+}) {
   const blocks = useMemo(() => parseMarkdown(text), [text])
   return (
     <div className={cn("min-w-0 space-y-2 text-sm leading-relaxed", className)}>
       {blocks.map((b, i) => (
-        <Block key={i} block={b} />
+        <Block key={i} block={b} variant={variant} />
       ))}
     </div>
   )

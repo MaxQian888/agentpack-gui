@@ -41,6 +41,37 @@ it("everything preset covers the whole MCP registry", () => {
   expect(e.mcps.length).toBe(MCP_SERVERS.length)
 })
 
+it("everything preset covers the whole CLI registry", () => {
+  const e = findPreset("everything")!
+  expect(e.clis.length).toBe(CLI_TOOLS.length)
+})
+
+it("cc-connect and opencode are npm-managed on every OS", () => {
+  for (const [id, pkg] of [
+    ["cc-connect", "cc-connect"],
+    ["opencode", "opencode-ai"],
+  ] as const) {
+    const tool = findCli(id)!
+    expect(tool.npmPackage).toBe(pkg)
+    for (const os of ["win", "mac", "linux"] as const) {
+      expect(tool.install[os]).toEqual({ file: "npm", args: ["install", "-g", pkg] })
+      expect(tool.upgrade?.[os]?.args.join(" ")).toContain(`${pkg}@latest`)
+      expect(tool.uninstall?.[os]).toEqual({ file: "npm", args: ["uninstall", "-g", pkg] })
+      // npm is the default method; pnpm/bun are offered as alternatives.
+      const methods = installMethodsFor(tool, os)
+      expect(methods[0].id).toBe("npm")
+      expect(methods.map((m) => m.id)).toEqual(["npm", "pnpm", "bun"])
+    }
+  }
+})
+
+it("cc-connect and opencode are detected by executing their real binary (not GUI)", () => {
+  expect(findCli("cc-connect")?.bin).toBe("cc-connect")
+  expect(findCli("cc-connect")?.gui).toBeFalsy()
+  expect(findCli("opencode")?.bin).toBe("opencode")
+  expect(findCli("opencode")?.gui).toBeFalsy()
+})
+
 it("every MCP server has a category the section knows how to render", () => {
   for (const m of MCP_SERVERS) {
     expect(m.category).toBeDefined()

@@ -331,6 +331,59 @@ export const CLI_TOOLS: readonly CliTool[] = [
     manualNote:
       "On Linux, download the .deb / .AppImage from https://github.com/farion1231/cc-switch/releases",
   },
+  // npm-only on purpose: upgrade routing (`cliManagers`) only distinguishes
+  // npm vs native, so offering brew here would leave a shadowing npm copy on
+  // upgrade. brew / binary installs stay a user-managed path.
+  {
+    id: "cc-connect",
+    bin: "cc-connect",
+    npmPackage: "cc-connect",
+    install: {
+      win: { file: "npm", args: ["install", "-g", "cc-connect"] },
+      mac: { file: "npm", args: ["install", "-g", "cc-connect"] },
+      linux: { file: "npm", args: ["install", "-g", "cc-connect"] },
+    },
+    methods: {
+      win: pmMethods("cc-connect"),
+      mac: pmMethods("cc-connect"),
+      linux: pmMethods("cc-connect"),
+    },
+    upgrade: {
+      win: { file: "npm", args: ["install", "-g", "cc-connect@latest"] },
+      mac: { file: "npm", args: ["install", "-g", "cc-connect@latest"] },
+      linux: { file: "npm", args: ["install", "-g", "cc-connect@latest"] },
+    },
+    uninstall: {
+      win: { file: "npm", args: ["uninstall", "-g", "cc-connect"] },
+      mac: { file: "npm", args: ["uninstall", "-g", "cc-connect"] },
+      linux: { file: "npm", args: ["uninstall", "-g", "cc-connect"] },
+    },
+  },
+  {
+    id: "opencode",
+    bin: "opencode",
+    npmPackage: "opencode-ai",
+    install: {
+      win: { file: "npm", args: ["install", "-g", "opencode-ai"] },
+      mac: { file: "npm", args: ["install", "-g", "opencode-ai"] },
+      linux: { file: "npm", args: ["install", "-g", "opencode-ai"] },
+    },
+    methods: {
+      win: pmMethods("opencode-ai"),
+      mac: pmMethods("opencode-ai"),
+      linux: pmMethods("opencode-ai"),
+    },
+    upgrade: {
+      win: { file: "npm", args: ["install", "-g", "opencode-ai@latest"] },
+      mac: { file: "npm", args: ["install", "-g", "opencode-ai@latest"] },
+      linux: { file: "npm", args: ["install", "-g", "opencode-ai@latest"] },
+    },
+    uninstall: {
+      win: { file: "npm", args: ["uninstall", "-g", "opencode-ai"] },
+      mac: { file: "npm", args: ["uninstall", "-g", "opencode-ai"] },
+      linux: { file: "npm", args: ["uninstall", "-g", "opencode-ai"] },
+    },
+  },
 ]
 
 /** Bundled domain skills (content lives in assets/skills/<id>/SKILL.md; display text in i18n catalog). */

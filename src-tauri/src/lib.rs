@@ -6,6 +6,7 @@ mod fsops;
 mod history;
 mod history_cache;
 mod paths;
+mod skills;
 
 /// One process-wide lock shared by every test that mutates the global env vars
 /// (`AGENTPACK_CCSWITCH_DB`, `AGENTPACK_BACKUP_ROOT`, `AGENTPACK_SKIP_RUNNING_CHECK`,
@@ -55,6 +56,11 @@ pub fn run() {
       fsops::remove_dir,
       fsops::list_skills,
       fsops::install_skill,
+      skills::skills_scan,
+      skills::install_skill_from_dir,
+      skills::fetch_repo_skills,
+      skills::install_repo_skills,
+      skills::cleanup_repo_scan,
       ccswitch::cc_load_providers,
       ccswitch::cc_write_provider,
       backup::backup_snapshot,

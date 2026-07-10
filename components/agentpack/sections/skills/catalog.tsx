@@ -12,9 +12,7 @@ import { pathExists } from "@/lib/tauri/commands"
 import { isTauri } from "@/lib/tauri"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-import { SectionShell } from "./section-shell"
-import { HelpTip } from "../help-tip"
-import { useRunnerCtx } from "../run/runner-context"
+import { useRunnerCtx } from "../../run/runner-context"
 
 const TARGETS: AgentTarget[] = ["claude", "codex"]
 
@@ -39,7 +37,8 @@ async function detectStatus(paths: Paths): Promise<SkillStatus> {
   return Object.fromEntries(entries)
 }
 
-export function SkillsSection() {
+/** The six bundled domain skills with per-target install/uninstall. */
+export function CatalogTab() {
   const t = useT()
   const skills = useAppStore((s) => s.plan.skills)
   const setSkill = useAppStore((s) => s.setSkill)
@@ -91,75 +90,69 @@ export function SkillsSection() {
   }
 
   return (
-    <SectionShell
-      title={t.skills.title}
-      subtitle={t.skillsManage.categorySubtitle}
-      help={<HelpTip text={t.help.skills} />}
-    >
-      <div className="flex flex-col gap-3">
-        {SKILLS.map((skill) => {
-          const meta = t.catalog.skills[skill.id]
-          const targets = targetsFor(skill.id)
-          const st = status[skill.id]
-          const anyInstalled = st ? Object.values(st).some(Boolean) : false
-          return (
-            <Card key={skill.id} className="gap-3 p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <span className="font-medium">{meta?.title ?? skill.id}</span>
-                  <p className="text-sm text-muted-foreground">{meta?.description}</p>
-                </div>
-                {st ? (
-                  <Badge
-                    variant={anyInstalled ? "secondary" : "outline"}
-                    className="shrink-0 font-normal text-muted-foreground"
+    <div className="flex flex-col gap-3">
+      {SKILLS.map((skill) => {
+        const meta = t.catalog.skills[skill.id]
+        const targets = targetsFor(skill.id)
+        const st = status[skill.id]
+        const anyInstalled = st ? Object.values(st).some(Boolean) : false
+        return (
+          <Card key={skill.id} className="gap-3 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <span className="font-medium">{meta?.title ?? skill.id}</span>
+                <p className="text-sm text-muted-foreground">{meta?.description}</p>
+              </div>
+              {st ? (
+                <Badge
+                  variant={anyInstalled ? "secondary" : "outline"}
+                  className="shrink-0 font-normal text-muted-foreground"
+                >
+                  {anyInstalled
+                    ? `${t.skillsManage.installed}${
+                        st.claude && st.codex ? "" : ` (${st.claude ? "claude" : "codex"})`
+                      }`
+                    : t.skillsManage.notInstalled}
+                </Badge>
+              ) : null}
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex gap-5">
+                {TARGETS.map((target) => (
+                  <label
+                    key={target}
+                    className="flex cursor-pointer items-center gap-2 text-sm capitalize"
                   >
-                    {anyInstalled
-                      ? `${t.skillsManage.installed}${
-                          st.claude && st.codex ? "" : ` (${st.claude ? "claude" : "codex"})`
-                        }`
-                      : t.skillsManage.notInstalled}
-                  </Badge>
-                ) : null}
+                    <Checkbox
+                      checked={targets.includes(target)}
+                      onCheckedChange={() => toggleTarget(skill.id, target)}
+                    />
+                    {target}
+                  </label>
+                ))}
               </div>
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex gap-5">
-                  {TARGETS.map((target) => (
-                    <label
-                      key={target}
-                      className="flex cursor-pointer items-center gap-2 text-sm capitalize"
-                    >
-                      <Checkbox
-                        checked={targets.includes(target)}
-                        onCheckedChange={() => toggleTarget(skill.id, target)}
-                      />
-                      {target}
-                    </label>
-                  ))}
+              {targets.length > 0 ? (
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => installNow(skill.id, meta?.title ?? skill.id, targets)}
+                  >
+                    {t.shell.installNow}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => uninstallNow(skill.id, meta?.title ?? skill.id, targets)}
+                  >
+                    {t.shell.uninstallNow}
+                  </Button>
                 </div>
-                {targets.length > 0 ? (
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => installNow(skill.id, meta?.title ?? skill.id, targets)}
-                    >
-                      {t.shell.installNow}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => uninstallNow(skill.id, meta?.title ?? skill.id, targets)}
-                    >
-                      {t.shell.uninstallNow}
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            </Card>
-          )
-        })}
-      </div>
-    </SectionShell>
+              ) : null}
+            </div>
+          </Card>
+        )
+      })}
+    </div>
   )
 }

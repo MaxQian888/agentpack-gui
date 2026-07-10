@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { ListResult } from "@/lib/history/types"
+import type { SkillsScanResult } from "@/lib/skills/types"
 import { isTauri } from "@/lib/tauri"
 import {
   detectCli,
@@ -11,6 +12,7 @@ import {
   latestVersion,
   npmOwns,
   pkgManagerOwns,
+  skillsScan,
 } from "@/lib/tauri/commands"
 import { checkForUpdate, getAppVersion } from "@/lib/tauri/updater"
 import { loadSettings, saveSettings } from "@/lib/tauri/settings"
@@ -70,6 +72,23 @@ function ShellBody() {
   // to run on startup) and cached here so returning to History reuses it.
   const [historyResult, setHistoryResult] = useState<ListResult | null>(null)
   const [historyLoading, setHistoryLoading] = useState(false)
+
+  // Installed-skills scan (reads every SKILL.md across the four global roots):
+  // lazy on first Skills visit, cached here, invalidated after every real run.
+  const [skillsResult, setSkillsResult] = useState<SkillsScanResult | null>(null)
+  const [skillsLoading, setSkillsLoading] = useState(false)
+
+  const loadSkills = useCallback(async () => {
+    if (!isTauri()) return
+    setSkillsLoading(true)
+    try {
+      setSkillsResult(await skillsScan())
+    } catch {
+      setSkillsResult({ skills: [], errors: [] })
+    } finally {
+      setSkillsLoading(false)
+    }
+  }, [])
 
   const loadHistory = useCallback(async () => {
     if (!isTauri()) return
@@ -224,15 +243,40 @@ function ShellBody() {
     }
   }, [section, historyResult])
 
+  // Lazily scan installed skills the first time the user opens the Skills
+  // section (same shape as the history effect above).
+  useEffect(() => {
+    if (!isTauri() || section !== "skills" || skillsResult !== null) return
+    let cancelled = false
+    skillsScan()
+      .then((r) => {
+        if (!cancelled) setSkillsResult(r)
+      })
+      .catch(() => {
+        if (!cancelled) setSkillsResult({ skills: [], errors: [] })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [section, skillsResult])
+
   // After any real run (install/upgrade/uninstall/remove), re-detect tools and
   // re-scan the dashboard once, centrally, so every surface reflects the change.
+  // The skills scan refreshes too when it has already been loaded (a run may
+  // have installed/removed/copied skills); read via a ref so the subscription
+  // isn't torn down on every scan.
+  const skillsLoadedRef = useRef(false)
+  useEffect(() => {
+    skillsLoadedRef.current = skillsResult !== null
+  }, [skillsResult])
   useEffect(
     () =>
       onAfterRun(() => {
         void refreshDetections()
         void rescanDashboard()
+        if (skillsLoadedRef.current) void loadSkills()
       }),
-    [onAfterRun, refreshDetections, rescanDashboard]
+    [onAfterRun, refreshDetections, rescanDashboard, loadSkills]
   )
 
   // One-click install: build the plan against a FRESH scan of the current
@@ -349,7 +393,13 @@ function ShellBody() {
       case "clis":
         return <ClisSection />
       case "skills":
-        return <SkillsSection />
+        return (
+          <SkillsSection
+            scan={skillsResult}
+            loading={skillsLoading}
+            refresh={() => void loadSkills()}
+          />
+        )
       case "mcp":
         return <McpSection />
       case "network":

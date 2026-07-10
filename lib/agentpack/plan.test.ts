@@ -10,6 +10,10 @@ import {
   runtimeUpgradeStep,
   skillInstallStep,
   skillRemoveStep,
+  skillCopyStep,
+  skillRepoInstallStep,
+  skillVisibilityStep,
+  skillPermissionStep,
   snapshotStep,
   visibleAppsStep,
   providerStep,
@@ -30,8 +34,13 @@ const paths: Paths = {
   codexConfig: "/h/.codex/config.toml",
   codexAuth: "/h/.codex/auth.json",
   codexSkillsDir: "/h/.codex/skills",
+  opencodeConfig: "/h/.config/opencode/opencode.json",
+  opencodeSkillsDir: "/h/.config/opencode/skills",
+  agentsSkillsDir: "/h/.agents/skills",
   ccSwitchSettings: "/h/.cc-switch/settings.json",
   ccSwitchDb: "/h/.cc-switch/cc-switch.db",
+  ccConnectDir: "/h/.cc-connect",
+  ccConnectConfig: "/h/.cc-connect/config.toml",
   os: "mac",
 }
 
@@ -495,5 +504,56 @@ describe("mergeFile closures delegate to the expected transform", () => {
     expect(mergeOf(cfg)("")).toContain("model_provider")
     const auth = steps.find((s) => s.id === "cc-sync-codex-auth")
     expect(JSON.parse(mergeOf(auth)("")).OPENAI_API_KEY).toBe("sk-1")
+  })
+})
+
+describe("skills browser step builders", () => {
+  it("skillCopyStep carries src, dirName, targets and precomputed dests", () => {
+    const step = skillCopyStep(
+      "caveman",
+      "caveman",
+      "/h/.claude/skills/caveman",
+      ["codex"],
+      ["/h/.codex/skills/caveman"]
+    )
+    expect(step).toMatchObject({
+      kind: "skillCopy",
+      srcPath: "/h/.claude/skills/caveman",
+      dirName: "caveman",
+      targets: ["codex"],
+      dests: ["/h/.codex/skills/caveman"],
+    })
+    expect(step.label).toContain("caveman")
+  })
+
+  it("skillRepoInstallStep lists the picked skills and pluralizes the label", () => {
+    const step = skillRepoInstallStep(
+      "scan-1",
+      [
+        { relPath: "skills/a", dirName: "a" },
+        { relPath: "skills/b", dirName: "b" },
+      ],
+      ["claude", "codex"],
+      ["/h/.claude/skills/a", "/h/.codex/skills/a", "/h/.claude/skills/b", "/h/.codex/skills/b"]
+    )
+    expect(step.kind).toBe("skillRepoInstall")
+    expect(step.label).toContain("2")
+    expect(step.kind === "skillRepoInstall" && step.skills).toHaveLength(2)
+  })
+
+  it("skillVisibilityStep merges skillOverrides into claude settings.json", () => {
+    const step = skillVisibilityStep("find-docs", "name-only", paths)
+    if (step.kind !== "mergeFile") throw new Error(`expected mergeFile, got ${step.kind}`)
+    expect(step.path).toBe(paths.claudeSettings)
+    const merged = JSON.parse(step.merge("{}"))
+    expect(merged.skillOverrides).toEqual({ "find-docs": "name-only" })
+  })
+
+  it("skillPermissionStep merges permission.skill into opencode.json", () => {
+    const step = skillPermissionStep("internal-docs", "deny", paths)
+    if (step.kind !== "mergeFile") throw new Error(`expected mergeFile, got ${step.kind}`)
+    expect(step.path).toBe(paths.opencodeConfig)
+    const merged = JSON.parse(step.merge(""))
+    expect(merged.permission.skill).toEqual({ "internal-docs": "deny" })
   })
 })

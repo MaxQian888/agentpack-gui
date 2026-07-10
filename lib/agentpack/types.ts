@@ -39,7 +39,7 @@ export type CliInstallManager = "npm" | "native"
 
 /** A CLI tool that can be installed by the wizard. Display text lives in the i18n catalog (keyed by id). */
 export interface CliTool {
-  id: "claude-code" | "codex" | "cc-switch"
+  id: "claude-code" | "codex" | "cc-switch" | "cc-connect" | "opencode"
   /** Binary name to probe on PATH for detection. */
   bin: string
   /** GUI app: detect by PATH lookup only, never execute it (it may open a window). */
@@ -178,8 +178,15 @@ export interface Paths {
   codexConfig: string
   codexAuth: string
   codexSkillsDir: string
+  /** `~/.config/opencode/opencode.json` (XDG-style path even on Windows). */
+  opencodeConfig: string
+  opencodeSkillsDir: string
+  /** Shared canonical dir used by the skills.sh CLI and read by OpenCode. */
+  agentsSkillsDir: string
   ccSwitchSettings: string
   ccSwitchDb: string
+  ccConnectDir: string
+  ccConnectConfig: string
   os: OS
 }
 
@@ -189,6 +196,8 @@ export type StepKind =
   | "mergeFile"
   | "skillInstall"
   | "skillRemove"
+  | "skillCopy"
+  | "skillRepoInstall"
   | "ccProvider"
   | "ccVisibleApps"
   | "fileRestore"
@@ -243,7 +252,29 @@ export interface SkillInstallStep extends StepBase {
 export interface SkillRemoveStep extends StepBase {
   kind: "skillRemove"
   skillId: string
-  targets: AgentTarget[]
+  /** Label-only; execution deletes `dests`. Includes browser sources (opencode/agents). */
+  targets: string[]
+  dests: string[]
+}
+
+/** Copy a local skill folder into agent skills roots (cross-agent copy / import). */
+export interface SkillCopyStep extends StepBase {
+  kind: "skillCopy"
+  srcPath: string
+  dirName: string
+  /** SkillInstallTarget[] — kept as strings so agentpack types stay skills-agnostic. */
+  targets: string[]
+  /** Destination dirs, precomputed for dry-run preview. */
+  dests: string[]
+}
+
+/** Install skills picked from a fetched GitHub repo scan (see skills.rs). */
+export interface SkillRepoInstallStep extends StepBase {
+  kind: "skillRepoInstall"
+  scanId: string
+  skills: { relPath: string; dirName: string }[]
+  targets: string[]
+  /** Destination dirs (skill × target), precomputed for dry-run preview. */
   dests: string[]
 }
 
@@ -278,6 +309,8 @@ export type StepDescriptor =
   | MergeFileStep
   | SkillInstallStep
   | SkillRemoveStep
+  | SkillCopyStep
+  | SkillRepoInstallStep
   | CcProviderStep
   | CcVisibleAppsStep
   | FileRestoreStep

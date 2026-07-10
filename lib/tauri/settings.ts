@@ -27,6 +27,12 @@ export interface AppSettings {
    * or dismiss it here.
    */
   quickStartDismissed: boolean
+  /**
+   * Optional URL prefix prepended to GitHub tarball downloads (e.g.
+   * `https://gh-proxy.com/`) for networks where github.com is unreachable.
+   * Null = direct.
+   */
+  ghMirrorPrefix: string | null
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -35,6 +41,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lastCheckAt: null,
   onboarded: false,
   quickStartDismissed: false,
+  ghMirrorPrefix: null,
 }
 
 const STORE_FILE = "settings.json"

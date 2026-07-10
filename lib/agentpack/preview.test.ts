@@ -111,3 +111,32 @@ it("fileRestore preview shows would restore from backup", () => {
     "would restore /h/.codex/config.toml.agentpack.bak -> /h/.codex/config.toml",
   ])
 })
+
+it("skillCopy preview shows would copy per dest", () => {
+  const s: StepDescriptor = {
+    kind: "skillCopy",
+    id: "s",
+    label: "s",
+    srcPath: "/h/.claude/skills/caveman",
+    dirName: "caveman",
+    targets: ["codex", "opencode"],
+    dests: ["/h/.codex/skills/caveman", "/h/.config/opencode/skills/caveman"],
+  }
+  expect(previewLines(s, paths)).toEqual([
+    "would copy /h/.claude/skills/caveman -> /h/.codex/skills/caveman",
+    "would copy /h/.claude/skills/caveman -> /h/.config/opencode/skills/caveman",
+  ])
+})
+
+it("skillRepoInstall preview renders precomputed dests without touching the scan", () => {
+  const s: StepDescriptor = {
+    kind: "skillRepoInstall",
+    id: "r",
+    label: "r",
+    scanId: "scan-1",
+    skills: [{ relPath: "skills/web", dirName: "web" }],
+    targets: ["claude"],
+    dests: ["/h/.claude/skills/web"],
+  }
+  expect(previewLines(s, paths)).toEqual(["would copy scan-1 -> /h/.claude/skills/web"])
+})

@@ -1,12 +1,14 @@
 /**
- * A deliberately small Markdown tokenizer for rendering chat transcripts. It
- * produces a block/inline AST that a React component maps to elements — no HTML
- * string, so nothing is injected via `dangerouslySetInnerHTML`.
+ * A deliberately small Markdown tokenizer for rendering chat transcripts and
+ * SKILL.md documents. It produces a block/inline AST that a React component maps
+ * to elements — no HTML string, so nothing is injected via
+ * `dangerouslySetInnerHTML`.
  *
- * Scope is chat-readability, not spec compliance: fenced code, ATX headings,
- * lists, blockquotes and paragraphs at the block level; inline code, links and
- * `**bold**` / `*italic*` (asterisks only — underscores are left alone so file
- * names and identifiers don't become italic). Keeping it pure makes it testable.
+ * Scope is readability, not spec compliance: fenced code, ATX headings, nested
+ * (+ task) lists, GFM tables, blockquotes and paragraphs at the block level;
+ * inline code, links and `**bold**` / `*italic*` (asterisks only — underscores
+ * are left alone so file names and identifiers don't become italic). Keeping it
+ * pure makes it testable.
  */
 
 export type InlineToken =
@@ -16,10 +18,22 @@ export type InlineToken =
   | { type: "italic"; value: string }
   | { type: "link"; value: string; href: string }
 
+export interface ListItem {
+  inline: InlineToken[]
+  /** Task-list state (`- [ ]` / `- [x]`); undefined for plain items. */
+  checked?: boolean
+  children?: ListItem[]
+  /** Whether the nested `children` list is ordered (from its first marker). */
+  childrenOrdered?: boolean
+}
+
+export type TableAlign = "left" | "center" | "right" | null
+
 export type MdBlock =
   | { type: "code"; lang: string; value: string }
   | { type: "heading"; level: number; inline: InlineToken[] }
-  | { type: "list"; ordered: boolean; items: InlineToken[][] }
+  | { type: "list"; ordered: boolean; items: ListItem[] }
+  | { type: "table"; header: InlineToken[][]; align: TableAlign[]; rows: InlineToken[][][] }
   | { type: "quote"; inline: InlineToken[] }
   | { type: "paragraph"; inline: InlineToken[] }
 
@@ -58,9 +72,73 @@ export function parseInline(src: string): InlineToken[] {
 }
 
 const HEADING = /^(#{1,6})\s+(.*)$/
-const ULIST = /^\s*[-*+]\s+(.*)$/
-const OLIST = /^\s*\d+[.)]\s+(.*)$/
+const ULIST = /^(\s*)[-*+]\s+(.*)$/
+const OLIST = /^(\s*)\d+[.)]\s+(.*)$/
 const QUOTE = /^>\s?(.*)$/
+const TASK = /^\[([ xX])\]\s+(.*)$/
+/** GFM table separator row: `|---|:--:|` etc. — dashes with optional colons. */
+const TABLE_SEP = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/
+
+/** Whether a table starts at `lines[i]` (a `|` row followed by a separator row). */
+function isTableStart(lines: string[], i: number): boolean {
+  return (
+    lines[i].includes("|") &&
+    i + 1 < lines.length &&
+    lines[i + 1].includes("-") &&
+    TABLE_SEP.test(lines[i + 1])
+  )
+}
+
+/** Split a `| a | b |` row into trimmed cell strings. */
+function splitRow(line: string): string[] {
+  let s = line.trim()
+  if (s.startsWith("|")) s = s.slice(1)
+  if (s.endsWith("|")) s = s.slice(0, -1)
+  return s.split("|").map((c) => c.trim())
+}
+
+function parseAlign(cell: string): TableAlign {
+  const left = cell.startsWith(":")
+  const right = cell.endsWith(":")
+  if (left && right) return "center"
+  if (right) return "right"
+  if (left) return "left"
+  return null
+}
+
+interface ListLine {
+  indent: number
+  ordered: boolean
+  text: string
+}
+
+/** Build the (possibly nested) item tree from consecutive list lines. */
+function buildListItems(entries: ListLine[]): ListItem[] {
+  const root: ListItem[] = []
+  const stack: { indent: number; items: ListItem[] }[] = [
+    { indent: entries[0]?.indent ?? 0, items: root },
+  ]
+  for (const entry of entries) {
+    while (stack.length > 1 && entry.indent < stack[stack.length - 1].indent) {
+      stack.pop()
+    }
+    let top = stack[stack.length - 1]
+    const parent = top.items[top.items.length - 1]
+    if (entry.indent > top.indent && parent) {
+      const children: ListItem[] = (parent.children ??= [])
+      parent.childrenOrdered ??= entry.ordered
+      stack.push({ indent: entry.indent, items: children })
+      top = stack[stack.length - 1]
+    }
+    const task = TASK.exec(entry.text)
+    top.items.push(
+      task
+        ? { inline: parseInline(task[2]), checked: task[1] !== " " }
+        : { inline: parseInline(entry.text) }
+    )
+  }
+  return root
+}
 
 /** Parse Markdown source into a block AST. */
 export function parseMarkdown(src: string): MdBlock[] {
@@ -98,15 +176,29 @@ export function parseMarkdown(src: string): MdBlock[] {
       continue
     }
 
-    if (ULIST.test(line) || OLIST.test(line)) {
-      const ordered = OLIST.test(line) && !ULIST.test(line)
-      const items: InlineToken[][] = []
-      while (i < lines.length && (ULIST.test(lines[i]) || OLIST.test(lines[i]))) {
-        const m = ULIST.exec(lines[i]) ?? OLIST.exec(lines[i])
-        items.push(parseInline(m![1]))
+    if (isTableStart(lines, i)) {
+      const header = splitRow(lines[i]).map(parseInline)
+      const align = splitRow(lines[i + 1]).map(parseAlign)
+      i += 2
+      const rows: InlineToken[][][] = []
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim() !== "") {
+        rows.push(splitRow(lines[i]).map(parseInline))
         i++
       }
-      blocks.push({ type: "list", ordered, items })
+      blocks.push({ type: "table", header, align, rows })
+      continue
+    }
+
+    if (ULIST.test(line) || OLIST.test(line)) {
+      const ordered = OLIST.test(line) && !ULIST.test(line)
+      const entries: ListLine[] = []
+      while (i < lines.length && (ULIST.test(lines[i]) || OLIST.test(lines[i]))) {
+        const u = ULIST.exec(lines[i])
+        const m = u ?? OLIST.exec(lines[i])!
+        entries.push({ indent: m[1].length, ordered: !u, text: m[2] })
+        i++
+      }
+      blocks.push({ type: "list", ordered, items: buildListItems(entries) })
       continue
     }
 
@@ -129,7 +221,8 @@ export function parseMarkdown(src: string): MdBlock[] {
       !ULIST.test(lines[i]) &&
       !OLIST.test(lines[i]) &&
       !QUOTE.test(lines[i]) &&
-      !/^```/.test(lines[i])
+      !/^```/.test(lines[i]) &&
+      !isTableStart(lines, i)
     ) {
       para.push(lines[i])
       i++

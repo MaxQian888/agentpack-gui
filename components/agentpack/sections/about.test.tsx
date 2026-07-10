@@ -44,6 +44,7 @@ beforeEach(() => {
       lastCheckAt: null,
       onboarded: true,
       quickStartDismissed: false,
+      ghMirrorPrefix: null,
     },
     paths: null,
   })
@@ -130,8 +131,13 @@ it("reveals config folders when paths are known", async () => {
       codexConfig: "/home/.codex/config.toml",
       codexAuth: "/home/.codex/auth.json",
       codexSkillsDir: "/home/.codex/skills",
+      opencodeConfig: "/home/.config/opencode/opencode.json",
+      opencodeSkillsDir: "/home/.config/opencode/skills",
+      agentsSkillsDir: "/home/.agents/skills",
       ccSwitchSettings: "/home/.cc-switch/settings.json",
       ccSwitchDb: "/home/.cc-switch/db.sqlite",
+      ccConnectDir: "/home/.cc-connect",
+      ccConnectConfig: "/home/.cc-connect/config.toml",
       os: "mac",
     },
   })

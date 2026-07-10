@@ -10,10 +10,10 @@ jest.mock("@/lib/tauri/commands", () => ({
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
-import { RunnerProvider } from "../run/runner-context"
+import { RunnerProvider } from "../../run/runner-context"
 import { useAppStore } from "@/store/app-store"
 import { installSkill, removeDir, pathExists } from "@/lib/tauri/commands"
-import { SkillsSection } from "./skills"
+import { CatalogTab } from "./catalog"
 
 const paths = {
   home: "/h",
@@ -32,7 +32,7 @@ function renderSkills() {
   return render(
     <I18nProvider>
       <RunnerProvider>
-        <SkillsSection />
+        <CatalogTab />
       </RunnerProvider>
     </I18nProvider>
   )

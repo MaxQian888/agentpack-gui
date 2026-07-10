@@ -8,6 +8,7 @@ export const NAV = {
   mcp: "MCP servers",
   network: "Network / mirrors",
   ccswitch: "cc-switch management",
+  ccconnect: "cc-connect management",
   config: "Save current setup as config",
 } as const
 

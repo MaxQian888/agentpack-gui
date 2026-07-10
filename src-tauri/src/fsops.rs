@@ -44,13 +44,14 @@ pub fn path_exists(path: String) -> bool {
 }
 
 /// The skills directories a skill may legitimately be installed into / removed
-/// from: `~/.claude/skills` and `<codexHome>/skills`. Used as a delete whitelist.
+/// from. Used as a delete whitelist; the canonical source→root list lives in
+/// `skills::source_roots` so the scanner and this guardrail can never disagree.
 fn skills_roots() -> Vec<PathBuf> {
   match dirs::home_dir() {
-    Some(home) => vec![
-      home.join(".claude").join("skills"),
-      codex_home(&home).join("skills"),
-    ],
+    Some(home) => crate::skills::source_roots(&home)
+      .into_iter()
+      .map(|(_, root)| root)
+      .collect(),
     None => Vec::new(),
   }
 }
@@ -80,18 +81,40 @@ fn ensure_within_skills_dir(target: &Path) -> Result<(), String> {
   ))
 }
 
+/// Delete a skill entry at `p`, which may be a real directory OR a symlink into
+/// the shared `~/.agents/skills` canonical dir (how the skills.sh CLI installs).
+/// A link is removed as a link — never traversed — so deleting the Claude entry
+/// can never destroy the canonical copy other agents still use. Windows dir
+/// links/junctions need `remove_dir`; Unix symlinks are plain files.
+pub(crate) fn remove_skill_dir_at(p: &Path) -> Result<(), String> {
+  let is_link = fs::symlink_metadata(p)
+    .map(|m| m.file_type().is_symlink())
+    .unwrap_or(false)
+    || fs::read_link(p).is_ok(); // read_link also resolves Windows junctions
+  if is_link {
+    #[cfg(windows)]
+    return fs::remove_dir(p)
+      .or_else(|_| fs::remove_file(p))
+      .map_err(|e| e.to_string());
+    #[cfg(not(windows))]
+    return fs::remove_file(p).map_err(|e| e.to_string());
+  }
+  fs::remove_dir_all(p).map_err(|e| e.to_string())
+}
+
 /// Remove a skill directory. No-op if absent. Validated against the skills-dir
 /// whitelist so it can only ever delete `<skillsRoot>/<id>`, never an arbitrary
 /// path.
 #[tauri::command(async)]
 pub fn remove_dir(path: String) -> Result<(), String> {
   let p = Path::new(&path);
-  if !p.exists() {
+  // symlink_metadata (not exists(), which follows links) so a dangling symlink
+  // is still cleaned up rather than reported as already-absent.
+  if fs::symlink_metadata(p).is_err() {
     return Ok(());
   }
   ensure_within_skills_dir(p)?;
-  fs::remove_dir_all(p).map_err(|e| e.to_string())?;
-  Ok(())
+  remove_skill_dir_at(p)
 }
 
 /// Enumerate installed skills in a skills directory (used by the dashboard),
@@ -120,7 +143,7 @@ pub fn list_skills(path: String) -> Result<Vec<String>, String> {
   Ok(names)
 }
 
-fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
+pub(crate) fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
   fs::create_dir_all(dest)?;
   for entry in fs::read_dir(src)? {
     let entry = entry?;
@@ -141,7 +164,7 @@ fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
 /// swapped in once the copy fully succeeds. A failure mid-copy therefore leaves
 /// the existing install untouched, rather than the old delete-then-copy which
 /// could leave a skill half-deleted / half-installed if the copy blew up.
-fn replace_dir(src: &Path, dest: &Path) -> io::Result<()> {
+pub(crate) fn replace_dir(src: &Path, dest: &Path) -> io::Result<()> {
   let name = dest
     .file_name()
     .and_then(|n| n.to_str())
@@ -169,7 +192,7 @@ fn replace_dir(src: &Path, dest: &Path) -> io::Result<()> {
 /// A skill id must be a plain directory name — it is joined into both a resource
 /// path and a delete target, so a traversal id (`../foo`) or a separator could
 /// escape the skills dir. Reject empties, separators, and `..`.
-fn is_safe_skill_id(id: &str) -> bool {
+pub(crate) fn is_safe_skill_id(id: &str) -> bool {
   !id.is_empty() && !id.contains('/') && !id.contains('\\') && !id.contains("..")
 }
 
