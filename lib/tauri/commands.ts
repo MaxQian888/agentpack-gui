@@ -100,6 +100,15 @@ export const pkgManagerOwns = (manager: "winget" | "brew", id: string) =>
 
 export const isProcessRunning = (name: string) => invoke<boolean>("is_process_running", { name })
 
+/**
+ * Spawn the cc-connect bridge detached; resolves once spawned, not on exit
+ * (`runCommand` would block until the service exits, which it never does).
+ */
+export const startCcConnect = () => invoke<void>("start_cc_connect")
+
+/** Stop every running cc-connect process (idempotent no-op when none). */
+export const stopCcConnect = () => invoke<void>("stop_cc_connect")
+
 export const readTextFile = (path: string) => invoke<string>("read_text_file", { path })
 
 export const writeTextFile = (path: string, content: string) =>

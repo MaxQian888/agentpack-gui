@@ -3,6 +3,7 @@
 import {
   ArrowLeftRight,
   Boxes,
+  Cable,
   FileJson,
   Globe,
   Info,
@@ -28,6 +29,7 @@ export type SectionKey =
   | "mcp"
   | "network"
   | "ccswitch"
+  | "ccconnect"
   | "config"
   | "about"
 
@@ -47,6 +49,7 @@ export const SECTIONS: SectionDef[] = [
   { key: "mcp", icon: Server, label: (m) => m.menu.mcp },
   { key: "network", icon: Globe, label: (m) => m.menu.network },
   { key: "ccswitch", icon: ArrowLeftRight, label: (m) => m.menu.ccswitch },
+  { key: "ccconnect", icon: Cable, label: (m) => m.menu.ccconnect },
   { key: "config", icon: FileJson, label: (m) => m.menu.saveConfig },
   { key: "about", icon: Info, label: (m) => m.menu.about },
 ]

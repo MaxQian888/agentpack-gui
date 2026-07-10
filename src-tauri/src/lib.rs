@@ -47,6 +47,8 @@ pub fn run() {
       exec::npm_owns,
       exec::pkg_manager_owns,
       exec::is_process_running,
+      exec::start_cc_connect,
+      exec::stop_cc_connect,
       fsops::read_text_file,
       fsops::write_text_file,
       fsops::path_exists,

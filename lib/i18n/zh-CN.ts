@@ -135,6 +135,8 @@ export const zhCN = {
     mcp: "MCP 服务是给 AI 扩能力的插件 —— 联网、记忆、GitHub 等等。",
     network: "把 CLI 指向自定义 API 中转/端点和 npm 镜像 —— 走代理或网络较慢时很有用。",
     ccswitch: "cc-switch 保存多套 API 供应商/密钥，点一下就切换当前使用的那套。",
+    ccconnect:
+      "cc-connect 把本地编码代理桥接到聊天软件（飞书、Slack、Telegram 等），随时随地远程驱动它们。",
   },
 
   presetsScreen: {
@@ -300,6 +302,10 @@ export const zhCN = {
       "cc-switch": {
         title: "cc-switch",
         description: "管理 / 切换 Claude Code 与 Codex 的 API 供应商的桌面 GUI。",
+      },
+      "cc-connect": {
+        title: "cc-connect",
+        description: "把本地编码代理桥接到飞书、Slack、Telegram 等聊天平台（cc-connect）。",
       },
     } as Record<string, { title: string; description: string }>,
     runtime: {
@@ -478,6 +484,7 @@ export const zhCN = {
     environment: "运行时环境",
     skills: "工程技能",
     ccswitch: "cc-switch 管理",
+    ccconnect: "cc-connect 管理",
     clis: "安装 / 升级 CLI",
     mcp: "MCP 服务",
     network: "网络 / 镜像",
@@ -576,6 +583,35 @@ export const zhCN = {
     fieldModel: "模型（可选）：",
     fieldNotes: "备注（可选）：",
     fieldWebsite: "官网（可选）：",
+  },
+
+  ccconnect: {
+    menuTitle: "cc-connect 管理",
+    install: "安装 / 检查 cc-connect",
+    detected: "✔ 已检测到 cc-connect",
+    notDetected: "○ 未检测到 cc-connect",
+    checking: "正在检查 cc-connect…",
+    refresh: "刷新",
+    uninstall: "卸载",
+    uninstallConfirm: "卸载 cc-connect？其 ~/.cc-connect 配置目录会保留，重装后配置仍在。",
+    serviceTitle: "桥接服务",
+    serviceHint: "桥接进程把本地编码代理连接到聊天平台，运行期间同时提供 Web 管理界面。",
+    running: "● 运行中",
+    stopped: "○ 已停止",
+    start: "启动",
+    stop: "停止",
+    startFailed: "无法启动 cc-connect。请确认已安装后重试。",
+    stopFailed: "无法停止 cc-connect。请手动停止后点击刷新。",
+    daemonNote: "macOS/Linux 上装了系统守护进程？请改用 `cc-connect daemon start/stop` 管理。",
+    dryRunBlocked: "预览（演练）模式开启中 —— 启动/停止服务已禁用。",
+    webTitle: "Web 管理界面",
+    webUrl: (url: string) => `桥接运行期间可通过 ${url} 访问。`,
+    openWeb: "打开 Web 界面",
+    configTitle: "配置",
+    configInitialized: "✔ config.toml 已存在",
+    configMissing: "○ 尚未初始化 —— cc-connect 首次启动时会自动创建",
+    reveal: "在文件夹中显示",
+    loadFailed: "无法读取 cc-connect 状态。点击刷新重试。",
   },
 
   shell: {

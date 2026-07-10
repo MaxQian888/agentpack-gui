@@ -30,6 +30,7 @@ import { SkillsSection } from "./sections/skills"
 import { McpSection } from "./sections/mcp"
 import { NetworkSection } from "./sections/network"
 import { CcSwitchSection } from "./sections/ccswitch"
+import { CcConnectSection } from "./sections/ccconnect"
 import { AboutSection } from "./sections/about"
 import { ConfigIO } from "./config-io"
 import { OnboardingDialog } from "./onboarding-dialog"
@@ -355,6 +356,8 @@ function ShellBody() {
         return <NetworkSection />
       case "ccswitch":
         return <CcSwitchSection />
+      case "ccconnect":
+        return <CcConnectSection />
       case "config":
         return <ConfigIO />
       case "about":

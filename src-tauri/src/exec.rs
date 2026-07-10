@@ -586,6 +586,73 @@ pub fn launch_cc_switch() -> Result<(), String> {
     .map_err(|e| format!("could not launch cc-switch: {e}"))
 }
 
+/// Spawn a binary detached (stdio null) so a long-running service outlives this
+/// call. `run_command` can't be reused: it blocks until exit, which a service
+/// never does. Routed through `build_command` so npm `.cmd` shims work on
+/// Windows.
+fn spawn_detached(bin: &str) -> Result<(), String> {
+  if !on_path(bin) {
+    return Err(format!("command not found: {bin}"));
+  }
+  let mut cmd = build_command(bin, std::iter::empty::<&str>());
+  cmd
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .spawn()
+    .map(|_| ())
+    .map_err(|e| format!("could not launch {bin}: {e}"))
+}
+
+/// Kill every process with this base name, children included (`/T` / no flag —
+/// npm shims put a node wrapper between us and the real binary). Idempotent:
+/// "no such process" (taskkill 128, pkill 1) is a successful no-op.
+fn kill_by_name(name: &str) -> Result<(), String> {
+  let mut c = if cfg!(windows) {
+    let mut c = Command::new("taskkill");
+    c.args(["/IM", &format!("{name}.exe"), "/F", "/T"]);
+    c
+  } else {
+    let mut c = Command::new("pkill");
+    c.args(["-x", name]);
+    c
+  };
+  apply_no_window(&mut c);
+  apply_env(&mut c);
+  match c.output() {
+    Ok(o) if o.status.success() => Ok(()),
+    Ok(o) => {
+      let no_match = o.status.code() == Some(if cfg!(windows) { 128 } else { 1 });
+      if no_match {
+        Ok(())
+      } else {
+        let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
+        Err(if err.is_empty() {
+          format!("could not stop {name}")
+        } else {
+          err
+        })
+      }
+    }
+    Err(e) => Err(format!("could not stop {name}: {e}")),
+  }
+}
+
+/// Start the cc-connect bridge as a detached background process. `cc-connect
+/// daemon` only exists on Linux (systemd) / macOS (launchd), so the app manages
+/// the plain foreground process the same way on every OS; while running it
+/// serves the web management UI.
+#[tauri::command(async)]
+pub fn start_cc_connect() -> Result<(), String> {
+  spawn_detached("cc-connect")
+}
+
+/// Stop every running cc-connect process (idempotent).
+#[tauri::command(async)]
+pub fn stop_cc_connect() -> Result<(), String> {
+  kill_by_name("cc-connect")
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DetectionResult {
@@ -764,6 +831,17 @@ mod tests {
   #[test]
   fn missing_binary_not_installed() {
     assert!(!detect_cli("definitely-not-a-real-bin-xyz".into(), false).installed);
+  }
+
+  #[test]
+  fn spawn_detached_rejects_missing_binary() {
+    let err = spawn_detached("definitely-not-a-real-bin-xyz").unwrap_err();
+    assert!(err.contains("command not found"), "unexpected error: {err}");
+  }
+
+  #[test]
+  fn kill_by_name_is_idempotent_when_nothing_matches() {
+    assert_eq!(kill_by_name("definitely-not-a-real-proc-xyz"), Ok(()));
   }
 
   #[test]

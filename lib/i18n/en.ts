@@ -147,6 +147,8 @@ export const en = {
       "Point the CLIs at a custom API relay/endpoint and an npm mirror — handy behind a proxy or a slow network.",
     ccswitch:
       "cc-switch stores multiple API providers/keys and lets you switch the active one with a click.",
+    ccconnect:
+      "cc-connect bridges your local coding agents to chat apps (Feishu, Slack, Telegram…) so you can drive them from anywhere.",
   },
 
   presetsScreen: {
@@ -318,6 +320,10 @@ export const en = {
       "cc-switch": {
         title: "cc-switch",
         description: "Desktop GUI to manage/switch API providers for Claude Code & Codex.",
+      },
+      "cc-connect": {
+        title: "cc-connect",
+        description: "Bridge local coding agents to Feishu, Slack, Telegram & more (cc-connect).",
       },
     } as Record<string, { title: string; description: string }>,
     runtime: {
@@ -506,6 +512,7 @@ export const en = {
     environment: "Runtime environment",
     skills: "Engineering skills",
     ccswitch: "cc-switch management",
+    ccconnect: "cc-connect management",
     clis: "Install / upgrade CLIs",
     mcp: "MCP servers",
     network: "Network / mirrors",
@@ -609,6 +616,39 @@ export const en = {
     fieldModel: "Model (optional):",
     fieldNotes: "Notes (optional):",
     fieldWebsite: "Website (optional):",
+  },
+
+  /** cc-connect management screens (bridge local agents to chat platforms). */
+  ccconnect: {
+    menuTitle: "cc-connect management",
+    install: "Install / check cc-connect",
+    detected: "✔ cc-connect detected",
+    notDetected: "○ cc-connect not detected",
+    checking: "Checking cc-connect…",
+    refresh: "Refresh",
+    uninstall: "Uninstall",
+    uninstallConfirm:
+      "Uninstall cc-connect? Its ~/.cc-connect config directory is kept, so reinstalling restores your setup.",
+    serviceTitle: "Bridge service",
+    serviceHint:
+      "The bridge process connects your local coding agents to chat platforms and serves the web management UI while it runs.",
+    running: "● running",
+    stopped: "○ stopped",
+    start: "Start",
+    stop: "Stop",
+    startFailed: "Couldn't start cc-connect. Make sure it's installed, then try again.",
+    stopFailed: "Couldn't stop cc-connect. Stop it manually, then click Refresh.",
+    daemonNote:
+      "Installed the system daemon on macOS/Linux? Manage it with `cc-connect daemon start/stop` instead.",
+    dryRunBlocked: "Preview mode is on — starting or stopping the service is disabled.",
+    webTitle: "Web management UI",
+    webUrl: (url: string) => `Served at ${url} while the bridge is running.`,
+    openWeb: "Open Web UI",
+    configTitle: "Configuration",
+    configInitialized: "✔ config.toml present",
+    configMissing: "○ not initialized — cc-connect creates it on first start",
+    reveal: "Show in folder",
+    loadFailed: "Couldn't read the cc-connect state. Click Refresh to retry.",
   },
 
   /** GUI shell strings (header controls, dialogs) — GUI-only, not in the TUI. */
