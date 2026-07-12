@@ -50,6 +50,7 @@ pub fn run() {
       exec::is_process_running,
       exec::start_cc_connect,
       exec::stop_cc_connect,
+      exec::probe_port,
       fsops::read_text_file,
       fsops::write_text_file,
       fsops::path_exists,

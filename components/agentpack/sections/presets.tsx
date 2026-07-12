@@ -48,13 +48,13 @@ export function PresetsSection({ onCustomize }: { onCustomize?: () => void }) {
                 if (e.key === "Enter" || e.key === " ") choose(id)
               }}
               className={cn(
-                "cursor-pointer gap-1 p-4 transition-colors hover:border-primary/50",
-                active && "border-primary ring-1 ring-primary"
+                "h-full cursor-pointer gap-1.5 p-4 transition-colors hover:border-primary/50 hover:bg-muted/30",
+                active && "border-primary bg-primary/5 ring-1 ring-primary"
               )}
             >
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <span className="font-medium">{meta?.title ?? id}</span>
-                {active ? <Check className="size-4 text-primary" /> : null}
+                {active ? <Check className="size-4 shrink-0 text-primary" /> : null}
               </div>
               <p className="text-sm text-muted-foreground">{meta?.description}</p>
             </Card>

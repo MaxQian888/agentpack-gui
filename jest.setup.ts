@@ -5,6 +5,7 @@
 
 import "@testing-library/jest-dom"
 import React from "react"
+import { webcrypto } from "node:crypto"
 
 // jsdom lacks matchMedia — needed by next-themes and the shadcn use-mobile hook.
 if (typeof window !== "undefined" && !window.matchMedia) {
@@ -52,6 +53,12 @@ if (typeof Element !== "undefined") {
   Element.prototype.scrollIntoView = Element.prototype.scrollIntoView || jest.fn()
   Element.prototype.hasPointerCapture = Element.prototype.hasPointerCapture || jest.fn()
   Element.prototype.releasePointerCapture = Element.prototype.releasePointerCapture || jest.fn()
+}
+
+// jsdom lacks the Web Crypto API (ccconnect's web-admin token generator uses
+// crypto.getRandomValues). Back it with Node's webcrypto so tests can exercise it.
+if (typeof globalThis.crypto === "undefined" || !globalThis.crypto.getRandomValues) {
+  Object.defineProperty(globalThis, "crypto", { value: webcrypto, configurable: true })
 }
 
 type MockNextImageProps = React.ComponentPropsWithoutRef<"img"> & {

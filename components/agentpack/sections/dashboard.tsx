@@ -228,14 +228,28 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
           icon={Terminal}
           label={d.overviewTools}
           value={`${installedTools}/${allTools.length}`}
+          tint="sky"
         />
-        <StatTile icon={Server} label={d.overviewMcp} value={mcpCount} loading={loading} />
-        <StatTile icon={Wrench} label={d.overviewSkills} value={skillCount} loading={loading} />
+        <StatTile
+          icon={Server}
+          label={d.overviewMcp}
+          value={mcpCount}
+          loading={loading}
+          tint="violet"
+        />
+        <StatTile
+          icon={Wrench}
+          label={d.overviewSkills}
+          value={skillCount}
+          loading={loading}
+          tint="amber"
+        />
         <StatTile
           icon={ArrowLeftRight}
           label={d.overviewProviders}
           value={view.providers.length}
           loading={loading}
+          tint="emerald"
         />
       </div>
 
@@ -252,9 +266,9 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* CLIs & runtimes — the primary card, spanning the full width. */}
-        <Card className="gap-3 p-4 lg:col-span-2">
+        <Card className="flex flex-col gap-3 p-4 lg:col-span-2">
           <CardHead icon={Terminal} title={d.sectionClis} />
           <div className="flex flex-col gap-0.5 sm:grid sm:grid-cols-2 sm:gap-x-6">
             {allTools.map((tool) => {
@@ -330,7 +344,7 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
         </Card>
 
         {/* MCP servers */}
-        <Card className="gap-3 p-4">
+        <Card className="flex h-full min-h-[13rem] flex-col gap-3 p-4">
           <CardHead icon={Server} title={d.sectionMcp} />
           {loading ? (
             <SkeletonRows rows={3} />
@@ -357,7 +371,7 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
         </Card>
 
         {/* Skills */}
-        <Card className="gap-3 p-4">
+        <Card className="flex h-full min-h-[13rem] flex-col gap-3 p-4">
           <CardHead icon={Wrench} title={d.sectionSkills} />
           {loading ? (
             <SkeletonRows rows={3} />
@@ -394,7 +408,7 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
         </Card>
 
         {/* Relay */}
-        <Card className="gap-3 p-4">
+        <Card className="flex h-full min-h-[13rem] flex-col gap-3 p-4">
           <CardHead
             icon={Globe}
             title={d.sectionRelay}
@@ -445,7 +459,7 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
         </Card>
 
         {/* cc-switch providers */}
-        <Card className="gap-3 p-4">
+        <Card className="flex h-full min-h-[13rem] flex-col gap-3 p-4">
           <CardHead
             icon={ArrowLeftRight}
             title={d.sectionCcswitch}
@@ -467,7 +481,7 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
           ) : view.providers.length === 0 ? (
             <p className="text-sm text-muted-foreground">{d.none}</p>
           ) : (
-            <div className="flex max-h-64 flex-col gap-0.5 overflow-y-auto pr-1">
+            <div className="flex max-h-72 min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pr-1">
               {view.providers.map((p) => (
                 <div
                   key={p.id}
@@ -504,7 +518,7 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
         </Card>
 
         {/* Config file health */}
-        <Card className="gap-3 p-4">
+        <Card className="flex flex-col gap-3 p-4 lg:col-span-2">
           <CardHead icon={FileJson} title={d.sectionHealth} />
           {loading ? (
             <SkeletonRows rows={2} />
@@ -580,29 +594,45 @@ function QuickStartCard({
   )
 }
 
+const STAT_TINTS = {
+  sky: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
+  violet: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
+  amber: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  emerald: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+} as const
+
 /** Compact metric tile for the overview strip. */
 function StatTile({
   icon: Icon,
   label,
   value,
   loading,
+  tint,
 }: {
   icon: LucideIcon
   label: string
   value: string | number
   loading?: boolean
+  tint: keyof typeof STAT_TINTS
 }) {
   return (
-    <Card className="gap-2 p-4">
-      <div className="flex items-center gap-2 text-muted-foreground">
-        <Icon className="size-4 shrink-0" aria-hidden="true" />
-        <span className="truncate text-xs font-medium">{label}</span>
+    <Card className="flex-row items-center gap-3 p-4 transition-shadow hover:shadow-sm">
+      <span
+        className={cn(
+          "flex size-10 shrink-0 items-center justify-center rounded-lg",
+          STAT_TINTS[tint]
+        )}
+      >
+        <Icon className="size-5" aria-hidden="true" />
+      </span>
+      <div className="flex min-w-0 flex-col gap-1">
+        <span className="truncate text-xs font-medium text-muted-foreground">{label}</span>
+        {loading ? (
+          <Skeleton className="h-6 w-10" />
+        ) : (
+          <span className="text-2xl leading-none font-semibold tabular-nums">{value}</span>
+        )}
       </div>
-      {loading ? (
-        <Skeleton className="h-8 w-10" />
-      ) : (
-        <div className="text-2xl leading-none font-semibold tabular-nums">{value}</div>
-      )}
     </Card>
   )
 }
@@ -631,12 +661,16 @@ function CardHead({
 }
 
 /**
- * Bounds a card's list region: long MCP/skill lists scroll inside a capped box
- * instead of stretching the card and unbalancing the 2-column grid. `max-h` is a
- * cap, so short lists keep their natural height with no wasted space.
+ * Bounds a card's list region: it fills the card's flexible body (so every card
+ * in a stretched grid row stays the same height) and long MCP/skill lists scroll
+ * inside instead of pushing the card taller and unbalancing the grid.
  */
 function ScrollList({ children }: { children: React.ReactNode }) {
-  return <div className="flex max-h-72 flex-col gap-3 overflow-y-auto pr-1">{children}</div>
+  return (
+    <div className="flex max-h-72 min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
+      {children}
+    </div>
+  )
 }
 
 /** Placeholder rows shown while the first disk scan is in flight. */

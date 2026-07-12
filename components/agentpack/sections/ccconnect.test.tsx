@@ -6,8 +6,10 @@ jest.mock("sonner", () => ({
 jest.mock("@/lib/tauri/commands", () => ({
   detectCli: jest.fn(async () => ({ installed: false })),
   isProcessRunning: jest.fn(async () => false),
+  probePort: jest.fn(async () => false),
   pathExists: jest.fn(async () => false),
   readTextFile: jest.fn(async () => ""),
+  writeTextFile: jest.fn(async () => undefined),
   startCcConnect: jest.fn(async () => undefined),
   stopCcConnect: jest.fn(async () => undefined),
   runCommand: jest.fn(async (_cmd: unknown, onLine: (l: string) => void) => {
@@ -31,10 +33,12 @@ import {
   detectCli,
   isProcessRunning,
   pathExists,
+  probePort,
   readTextFile,
   runCommand,
   startCcConnect,
   stopCcConnect,
+  writeTextFile,
 } from "@/lib/tauri/commands"
 import { openUrl, revealPath } from "@/lib/tauri/system"
 import { CcConnectSection } from "./ccconnect"
@@ -54,6 +58,7 @@ beforeEach(() => {
   isTauriMock.mockReturnValue(true)
   ;(detectCli as jest.Mock).mockResolvedValue({ installed: false })
   ;(isProcessRunning as jest.Mock).mockResolvedValue(false)
+  ;(probePort as jest.Mock).mockResolvedValue(false)
   ;(pathExists as jest.Mock).mockResolvedValue(false)
   ;(readTextFile as jest.Mock).mockResolvedValue("")
   useAppStore.setState({
@@ -189,9 +194,9 @@ it("disables start while cc-connect is not installed", async () => {
   expect(start).toBeDisabled()
 })
 
-it("opens the web UI on the default port only while running", async () => {
+it("opens the dashboard on the management port once that port answers", async () => {
   ;(detectCli as jest.Mock).mockResolvedValue({ installed: true, version: "1.4.1" })
-  ;(isProcessRunning as jest.Mock).mockResolvedValue(true)
+  ;(probePort as jest.Mock).mockResolvedValue(true)
   renderCc()
   const open = await screen.findByRole("button", { name: en.ccconnect.openWeb })
   await waitFor(() => expect(open).toBeEnabled())
@@ -199,11 +204,52 @@ it("opens the web UI on the default port only while running", async () => {
   expect(openUrl).toHaveBeenCalledWith("http://localhost:9820")
 })
 
-it("reads a custom management port from config.toml", async () => {
+it("keeps Open dashboard disabled while the management port isn't answering", async () => {
+  ;(detectCli as jest.Mock).mockResolvedValue({ installed: true, version: "1.4.1" })
+  // Process up but no port bound yet (management disabled): running, not openable.
+  ;(isProcessRunning as jest.Mock).mockResolvedValue(true)
+  renderCc()
+  const open = await screen.findByRole("button", { name: en.ccconnect.openWeb })
+  await screen.findByText(en.ccconnect.running)
+  expect(open).toBeDisabled()
+})
+
+it("appends the management token to the dashboard URL when one is configured", async () => {
+  ;(detectCli as jest.Mock).mockResolvedValue({ installed: true, version: "1.4.1" })
+  ;(pathExists as jest.Mock).mockResolvedValue(true)
+  ;(probePort as jest.Mock).mockResolvedValue(true)
+  ;(readTextFile as jest.Mock).mockResolvedValue('[management]\nenabled = true\ntoken = "secret"\n')
+  renderCc()
+  const open = await screen.findByRole("button", { name: en.ccconnect.openWeb })
+  await waitFor(() => expect(open).toBeEnabled())
+  await userEvent.click(open)
+  expect(openUrl).toHaveBeenCalledWith("http://localhost:9820/?token=secret")
+})
+
+it("treats a listening service port as running even when the process name doesn't match", async () => {
+  ;(detectCli as jest.Mock).mockResolvedValue({ installed: true, version: "1.4.1" })
+  ;(isProcessRunning as jest.Mock).mockResolvedValue(false)
+  ;(probePort as jest.Mock).mockResolvedValue(true)
+  renderCc()
+  expect(await screen.findByText(en.ccconnect.running)).toBeInTheDocument()
+})
+
+it("passes the management, bridge and webhook ports to stop", async () => {
   ;(detectCli as jest.Mock).mockResolvedValue({ installed: true, version: "1.4.1" })
   ;(isProcessRunning as jest.Mock).mockResolvedValue(true)
+  ;(stopCcConnect as jest.Mock).mockImplementation(async () => {
+    ;(isProcessRunning as jest.Mock).mockResolvedValue(false)
+  })
+  renderCc()
+  await userEvent.click(await screen.findByRole("button", { name: en.ccconnect.stop }))
+  await waitFor(() => expect(stopCcConnect).toHaveBeenCalledWith([9820, 9810, 9111]))
+})
+
+it("reads a custom management port from config.toml", async () => {
+  ;(detectCli as jest.Mock).mockResolvedValue({ installed: true, version: "1.4.1" })
   ;(pathExists as jest.Mock).mockResolvedValue(true)
-  ;(readTextFile as jest.Mock).mockResolvedValue("[management]\nport = 8080\n")
+  ;(probePort as jest.Mock).mockResolvedValue(true)
+  ;(readTextFile as jest.Mock).mockResolvedValue("[management]\nenabled = true\nport = 8080\n")
   renderCc()
   const open = await screen.findByRole("button", { name: en.ccconnect.openWeb })
   await waitFor(() =>
@@ -211,6 +257,30 @@ it("reads a custom management port from config.toml", async () => {
   )
   await userEvent.click(open)
   expect(openUrl).toHaveBeenCalledWith("http://localhost:8080")
+})
+
+it("enables web admin by writing an enabled [management] section", async () => {
+  ;(detectCli as jest.Mock).mockResolvedValue({ installed: true, version: "1.4.1" })
+  renderCc()
+  const enable = await screen.findByRole("button", { name: en.ccconnect.enableWebAdmin })
+  await waitFor(() => expect(enable).toBeEnabled())
+  await userEvent.click(enable)
+  await waitFor(() =>
+    expect(writeTextFile).toHaveBeenCalledWith(CONFIG, expect.stringContaining("enabled = true"))
+  )
+  expect(writeTextFile).toHaveBeenCalledWith(CONFIG, expect.stringContaining("[management]"))
+  expect(toast.success).toHaveBeenCalledWith(en.ccconnect.webAdminEnabled)
+})
+
+it("hides Enable web admin once management is already enabled", async () => {
+  ;(detectCli as jest.Mock).mockResolvedValue({ installed: true, version: "1.4.1" })
+  ;(pathExists as jest.Mock).mockResolvedValue(true)
+  ;(readTextFile as jest.Mock).mockResolvedValue("[management]\nenabled = true\n")
+  renderCc()
+  expect(await screen.findByText(en.ccconnect.managementEnabled)).toBeInTheDocument()
+  expect(
+    screen.queryByRole("button", { name: en.ccconnect.enableWebAdmin })
+  ).not.toBeInTheDocument()
 })
 
 it("shows config state and reveals the file when initialized", async () => {

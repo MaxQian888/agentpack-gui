@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { ExternalLink, FolderOpen, Loader2, Play, RefreshCw, Square } from "lucide-react"
+import { ExternalLink, FolderOpen, Loader2, Play, RefreshCw, Square, Wand2 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -20,24 +20,62 @@ import {
 import { findCli, installMethodsFor, upgradeCommandFor } from "@/lib/agentpack/registry"
 import { cliInstallStep, cliUninstallStep } from "@/lib/agentpack/plan"
 import { isUpgradeAvailable } from "@/lib/agentpack/version"
-import { parseManagementPort, webUiUrl } from "@/lib/agentpack/ccconnect"
+import {
+  CC_CONNECT_BRIDGE_PORT,
+  CC_CONNECT_MANAGEMENT_PORT,
+  CC_CONNECT_WEBHOOK_PORT,
+  dashboardUrl,
+  getConfigValue,
+  isSectionEnabled,
+  parseBridgePort,
+  parseConfigDoc,
+  parseManagementPort,
+  parseManagementToken,
+  parseWebhookPort,
+  serializeConfigDoc,
+  setConfigValue,
+} from "@/lib/agentpack/ccconnect"
 import {
   detectCli,
   isProcessRunning,
   pathExists,
+  probePort,
   readTextFile,
   startCcConnect,
   stopCcConnect,
+  writeTextFile,
 } from "@/lib/tauri/commands"
 import { openUrl, revealPath } from "@/lib/tauri/system"
 import { isTauri } from "@/lib/tauri"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
+import { CcConnectConfigEditor } from "./ccconnect-config"
 import { HelpTip } from "../help-tip"
 import { useRunnerCtx } from "../run/runner-context"
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Whether the bridge is up: process-name match OR either service port
+ * answering. npm installs run the bridge under a `node` wrapper, so the
+ * process-name check alone reports "stopped" for a perfectly healthy service.
+ */
+async function serviceUp(mgmt: number, bridge: number): Promise<boolean> {
+  const checks = await Promise.all([
+    isProcessRunning("cc-connect"),
+    probePort(mgmt),
+    probePort(bridge),
+  ])
+  return checks.some(Boolean)
+}
+
+/** A URL-safe random token for the management dashboard (mirrors `cc-connect web`). */
+function generateToken(): string {
+  const bytes = new Uint8Array(24)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")
+}
 
 export function CcConnectSection() {
   const t = useT()
@@ -55,11 +93,19 @@ export function CcConnectSection() {
   )
   const [version, setVersion] = useState<string | undefined>(storeDetected?.version)
   const [running, setRunning] = useState<boolean | null>(null)
+  // Management port answering specifically — gates "Open dashboard" (the bridge
+  // port being up isn't enough to load the web UI).
+  const [mgmtUp, setMgmtUp] = useState(false)
   const [configExists, setConfigExists] = useState<boolean | null>(null)
-  const [port, setPort] = useState<number | null>(null)
+  const [mgmtPort, setMgmtPort] = useState(CC_CONNECT_MANAGEMENT_PORT)
+  const [bridgePort, setBridgePort] = useState(CC_CONNECT_BRIDGE_PORT)
+  const [webhookPort, setWebhookPort] = useState(CC_CONNECT_WEBHOOK_PORT)
+  const [mgmtEnabled, setMgmtEnabled] = useState(false)
+  const [mgmtToken, setMgmtToken] = useState<string | undefined>(undefined)
   // Start/stop in flight — the buttons stay disabled until the state flip is
   // confirmed (or the poll gives up), so a double-click can't race the service.
   const [busy, setBusy] = useState(false)
+  const [webBusy, setWebBusy] = useState(false)
 
   const mounted = useRef(true)
   useEffect(() => {
@@ -70,29 +116,40 @@ export function CcConnectSection() {
   }, [])
 
   // Refresh every slice: detection (mirrored into the shared store so the
-  // dashboard agrees), process state, and config presence/port.
+  // dashboard agrees), config presence/ports/state, and service liveness.
   const scan = useCallback(async () => {
     if (!isTauri()) return
-    const [d, isRunning] = await Promise.all([
-      detectCli("cc-connect", false),
-      isProcessRunning("cc-connect"),
-    ])
-    if (!mounted.current) return
-    setDetected(d.installed)
-    setVersion(d.version)
-    useAppStore.getState().setDetection("cc-connect", d)
-    setRunning(isRunning)
+    // Ports first — the liveness probe needs them. read_text_file returns ""
+    // for a missing file, so a fresh install simply uses the defaults.
+    let mgmt = CC_CONNECT_MANAGEMENT_PORT
+    let bridge = CC_CONNECT_BRIDGE_PORT
     if (paths) {
-      // read_text_file returns "" for a missing file, so a fresh install
-      // simply falls back to the default port.
       const [cfgExists, cfg] = await Promise.all([
         pathExists(paths.ccConnectConfig),
         readTextFile(paths.ccConnectConfig),
       ])
       if (!mounted.current) return
+      mgmt = parseManagementPort(cfg)
+      bridge = parseBridgePort(cfg)
       setConfigExists(cfgExists)
-      setPort(parseManagementPort(cfg))
+      setMgmtPort(mgmt)
+      setBridgePort(bridge)
+      setWebhookPort(parseWebhookPort(cfg))
+      setMgmtEnabled(isSectionEnabled(cfg, "management"))
+      setMgmtToken(parseManagementToken(cfg))
     }
+    const [d, proc, mUp, bUp] = await Promise.all([
+      detectCli("cc-connect", false),
+      isProcessRunning("cc-connect"),
+      probePort(mgmt),
+      probePort(bridge),
+    ])
+    if (!mounted.current) return
+    setDetected(d.installed)
+    setVersion(d.version)
+    useAppStore.getState().setDetection("cc-connect", d)
+    setMgmtUp(mUp)
+    setRunning(proc || mUp || bUp)
   }, [paths])
 
   // Surface a failed scan instead of leaving an unhandled rejection — the user
@@ -136,17 +193,17 @@ export function CcConnectSection() {
     void runThen([cliUninstallStep("cc-connect", tool.uninstall?.[os], t)])
   }
 
-  // Start/stop the bridge process, then poll until tasklist/pgrep confirms the
-  // flip (spawn/kill return before the OS process table catches up). If the poll
-  // gives up, the state didn't change — surface that as a failure.
+  // Start/stop the bridge process, then poll until the service state confirms
+  // the flip (spawn/kill return before the ports open/close). If the poll gives
+  // up, the state didn't change — surface that as a failure.
   const setService = async (start: boolean) => {
     if (dryRun || busy) return
     setBusy(true)
     try {
-      await (start ? startCcConnect() : stopCcConnect())
+      await (start ? startCcConnect() : stopCcConnect([mgmtPort, bridgePort, webhookPort]))
       for (let i = 0; i < 10 && mounted.current; i++) {
         await sleep(500)
-        if ((await isProcessRunning("cc-connect")) === start) {
+        if ((await serviceUp(mgmtPort, bridgePort)) === start) {
           if (mounted.current) setRunning(start)
           return
         }
@@ -160,7 +217,39 @@ export function CcConnectSection() {
     }
   }
 
-  const url = webUiUrl(port ?? parseManagementPort(""))
+  // Turn the management dashboard on by writing config (what `cc-connect web`'s
+  // EnableWebAdmin does): [management] enabled=true, a port, and an auth token.
+  // Bare `cc-connect` with an empty config exits immediately — this gives the
+  // service the dashboard to serve so Start actually stays up.
+  const enableWebAdmin = async () => {
+    if (!paths || dryRun || webBusy) return
+    setWebBusy(true)
+    try {
+      const text = await readTextFile(paths.ccConnectConfig)
+      if (text.trim() && !parseConfigDoc(text)) {
+        toast.error(c.invalidToml)
+        return
+      }
+      let doc = parseConfigDoc(text) ?? {}
+      doc = setConfigValue(doc, ["management", "enabled"], true)
+      const port = getConfigValue(doc, ["management", "port"])
+      if (typeof port !== "number") {
+        doc = setConfigValue(doc, ["management", "port"], CC_CONNECT_MANAGEMENT_PORT)
+      }
+      if (!getConfigValue(doc, ["management", "token"])) {
+        doc = setConfigValue(doc, ["management", "token"], generateToken())
+      }
+      await writeTextFile(paths.ccConnectConfig, `${serializeConfigDoc(doc)}\n`)
+      toast.success(c.webAdminEnabled)
+    } catch {
+      if (mounted.current) toast.error(c.webAdminFailed)
+    } finally {
+      if (mounted.current) setWebBusy(false)
+      await reload()
+    }
+  }
+
+  const url = dashboardUrl(mgmtPort, mgmtToken)
 
   if (!isTauri()) {
     return (
@@ -272,24 +361,51 @@ export function CcConnectSection() {
         </p>
       </Card>
 
-      {/* Web management UI */}
+      {/* Web dashboard */}
       <Card className="gap-3 p-4">
         <div className="flex flex-row items-center gap-3">
           <div className="flex-1">
             <div className="font-medium">{c.webTitle}</div>
             <p className="mt-1 text-xs text-muted-foreground">{c.webUrl(url)}</p>
+            {configExists !== null ? (
+              <Badge
+                variant={mgmtEnabled ? "secondary" : "outline"}
+                className="mt-1 font-normal text-muted-foreground"
+              >
+                {mgmtEnabled ? c.managementEnabled : c.managementDisabled}
+              </Badge>
+            ) : null}
           </div>
+          {detected === true && !mgmtEnabled ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1"
+              disabled={webBusy || dryRun || !paths}
+              onClick={() => void enableWebAdmin()}
+            >
+              {webBusy ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Wand2 className="size-3.5" />
+              )}
+              {c.enableWebAdmin}
+            </Button>
+          ) : null}
           <Button
             variant="outline"
             size="sm"
             className="gap-1"
-            disabled={running !== true}
+            disabled={!mgmtUp}
             onClick={() => void openUrl(url)}
           >
             <ExternalLink className="size-3.5" />
             {c.openWeb}
           </Button>
         </div>
+        {!mgmtEnabled ? (
+          <p className="border-t pt-3 text-xs text-muted-foreground">{c.webAdminHint}</p>
+        ) : null}
       </Card>
 
       {/* Configuration */}
@@ -311,6 +427,13 @@ export function CcConnectSection() {
               </Badge>
             ) : null}
           </div>
+          {paths ? (
+            <CcConnectConfigEditor
+              path={paths.ccConnectConfig}
+              exists={configExists === true}
+              onSaved={() => void reload()}
+            />
+          ) : null}
           {paths && configExists ? (
             <Button
               variant="ghost"

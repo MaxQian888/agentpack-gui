@@ -107,8 +107,15 @@ export const isProcessRunning = (name: string) => invoke<boolean>("is_process_ru
  */
 export const startCcConnect = () => invoke<void>("start_cc_connect")
 
-/** Stop every running cc-connect process (idempotent no-op when none). */
-export const stopCcConnect = () => invoke<void>("stop_cc_connect")
+/**
+ * Stop every running cc-connect process (idempotent no-op when none). Also
+ * kills whatever listens on the given service ports — npm installs run the
+ * bridge under a `node` wrapper that a name-based kill misses.
+ */
+export const stopCcConnect = (ports: number[]) => invoke<void>("stop_cc_connect", { ports })
+
+/** Whether something listens on 127.0.0.1:port (service liveness probe). */
+export const probePort = (port: number) => invoke<boolean>("probe_port", { port })
 
 export const readTextFile = (path: string) => invoke<string>("read_text_file", { path })
 

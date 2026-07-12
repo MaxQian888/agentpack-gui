@@ -647,10 +647,77 @@ pub fn start_cc_connect() -> Result<(), String> {
   spawn_detached("cc-connect")
 }
 
-/// Stop every running cc-connect process (idempotent).
+/// Stop every running cc-connect process (idempotent). Kills by image name AND
+/// by the ports the service listens on: npm installs run the real work under a
+/// `node` wrapper whose image name is not `cc-connect`, so a name-only kill
+/// silently leaves the service alive.
 #[tauri::command(async)]
-pub fn stop_cc_connect() -> Result<(), String> {
-  kill_by_name("cc-connect")
+pub fn stop_cc_connect(ports: Vec<u16>) -> Result<(), String> {
+  kill_by_name("cc-connect")?;
+  for port in ports {
+    kill_by_port(port);
+  }
+  Ok(())
+}
+
+/// Whether something is listening on 127.0.0.1:`port` — the reliable "is the
+/// cc-connect service up" signal regardless of what its process image is named.
+#[tauri::command(async)]
+pub fn probe_port(port: u16) -> bool {
+  let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+  std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(400)).is_ok()
+}
+
+/// Kill the process tree(s) listening on a local TCP port (best-effort no-op
+/// when nothing listens). Guards against killing PID 0 / ourselves.
+fn kill_by_port(port: u16) {
+  let me = std::process::id();
+  for pid in pids_listening_on(port) {
+    if pid == 0 || pid == me {
+      continue;
+    }
+    if cfg!(windows) {
+      kill_tree(pid);
+    } else {
+      // The listener isn't necessarily a group leader (unlike run_command
+      // children), so signal the single PID rather than a process group.
+      let _ = Command::new("kill").arg("-9").arg(pid.to_string()).output();
+    }
+  }
+}
+
+#[cfg(windows)]
+fn pids_listening_on(port: u16) -> Vec<u32> {
+  let mut c = Command::new("netstat");
+  c.args(["-ano", "-p", "tcp"]);
+  apply_no_window(&mut c);
+  let Ok(o) = c.output() else { return vec![] };
+  let needle = format!(":{port}");
+  String::from_utf8_lossy(&o.stdout)
+    .lines()
+    .filter_map(|l| {
+      let cols: Vec<&str> = l.split_whitespace().collect();
+      // Proto Local Foreign State PID
+      if cols.len() >= 5 && cols[3].eq_ignore_ascii_case("LISTENING") && cols[1].ends_with(&needle)
+      {
+        cols[4].parse().ok()
+      } else {
+        None
+      }
+    })
+    .collect()
+}
+
+#[cfg(not(windows))]
+fn pids_listening_on(port: u16) -> Vec<u32> {
+  let mut c = Command::new("lsof");
+  c.args(["-ti", &format!("tcp:{port}"), "-sTCP:LISTEN"]);
+  apply_env(&mut c);
+  let Ok(o) = c.output() else { return vec![] };
+  String::from_utf8_lossy(&o.stdout)
+    .lines()
+    .filter_map(|l| l.trim().parse().ok())
+    .collect()
 }
 
 #[derive(Serialize)]
