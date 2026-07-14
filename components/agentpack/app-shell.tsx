@@ -313,6 +313,7 @@ function ShellBody() {
         managers: cliManagers,
         claudeMcps: scan ? [...scan.claudeMcps.known, ...scan.claudeMcps.custom] : [],
         codexMcps: scan ? [...scan.codexMcps.known, ...scan.codexMcps.custom] : [],
+        opencodeMcps: scan ? [...scan.opencodeMcps.known, ...scan.opencodeMcps.custom] : [],
         claudeSkills: scan ? [...scan.claudeSkills.known, ...scan.claudeSkills.custom] : [],
         codexSkills: scan ? [...scan.codexSkills.known, ...scan.codexSkills.custom] : [],
       }
@@ -401,7 +402,9 @@ function ShellBody() {
           />
         )
       case "mcp":
-        return <McpSection />
+        return (
+          <McpSection scan={dashboardScan} loading={dashboardScanning} refresh={rescanDashboard} />
+        )
       case "network":
         return <NetworkSection />
       case "ccswitch":

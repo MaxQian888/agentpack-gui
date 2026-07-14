@@ -11,10 +11,18 @@ import {
 import { isUpgradeAvailable } from "./version"
 import {
   buildClaudeMcpCommand,
+  buildClaudeMcpCommandFromSpec,
   buildClaudeMcpRemoveCommand,
   buildCodexMcpEntry,
+  buildCodexMcpEntryFromSpec,
+  buildOpencodeMcpEntry,
+  buildOpencodeMcpEntryFromSpec,
   deleteCodexMcpEntry,
+  deleteOpencodeMcpEntry,
   mergeCodexMcp,
+  mergeOpencodeMcp,
+  resolveCatalogSpec,
+  type McpSpec,
 } from "./merge/mcp"
 import {
   deleteClaudeRelay,
@@ -43,6 +51,7 @@ import type {
   Command,
   CommandStep,
   McpServer,
+  McpTarget,
   Paths,
   Plan,
   Runtime,
@@ -71,6 +80,8 @@ export interface InstalledState {
   claudeMcps?: readonly string[]
   /** MCP server ids already configured for Codex (`config.toml`). */
   codexMcps?: readonly string[]
+  /** MCP server ids already configured for OpenCode (`opencode.json`). */
+  opencodeMcps?: readonly string[]
   /** Skill ids already installed in Claude's skills dir. */
   claudeSkills?: readonly string[]
   /** Skill ids already installed in Codex's skills dir. */
@@ -105,6 +116,7 @@ export function buildSteps(
   // corresponding add / copy step is redundant and gets dropped below.
   const claudeMcps = new Set(state.claudeMcps ?? [])
   const codexMcps = new Set(state.codexMcps ?? [])
+  const opencodeMcps = new Set(state.opencodeMcps ?? [])
   const claudeSkills = new Set(state.claudeSkills ?? [])
   const codexSkills = new Set(state.codexSkills ?? [])
 
@@ -292,6 +304,17 @@ export function buildSteps(
         path: paths.codexConfig,
         merge: (existing) => mergeCodexMcp(existing, server.id, entry),
         writtenNote: t.codexMcpWritten(server.id),
+      })
+    }
+    if (m.targets.includes("opencode") && !opencodeMcps.has(m.id)) {
+      const entry = buildOpencodeMcpEntry(server, key)
+      steps.push({
+        kind: "mergeFile",
+        id: `mcp-opencode-${m.id}`,
+        label: t.addMcpOpencode(title),
+        path: paths.opencodeConfig,
+        merge: (existing) => mergeOpencodeMcp(existing, server.id, entry),
+        writtenNote: t.opencodeMcpWritten(server.id),
       })
     }
   }
@@ -544,56 +567,146 @@ export function visibleAppsStep(
 /** Suffix for the rolling backup written before any mergeFile/ccVisibleApps write. */
 export const BACKUP_SUFFIX = ".agentpack.bak"
 
+/** MCP title for a step label: catalog title when known, else the raw id. */
+function mcpTitle(id: string, messages: Messages): string {
+  return messages.catalog.mcp[id]?.title ?? id
+}
+
 /**
- * Add an MCP server to the chosen agents directly (one card action, outside a
- * batch run). Claude uses `claude mcp add`; Codex merges an `mcp_servers.<id>`
- * table into config.toml. Symmetric to `mcpRemoveStep`, and mirrors the add
- * steps `buildSteps` emits — minus the batch-only `dependsOn` on a same-run
- * `claude` install, since direct management runs against an already-present CLI.
+ * Add steps for a resolved `McpSpec` across the chosen targets. Claude runs
+ * `claude mcp add`; Codex / OpenCode merge an entry into their config file
+ * (`config.toml` / `opencode.json`). Shared by catalog adds (`mcpAddStep`) and
+ * custom-server adds (`mcpAddSpecStep`).
  */
-export function mcpAddStep(
-  server: McpServer,
-  targets: AgentTarget[],
-  key: string | undefined,
+function mcpAddSpecSteps(
+  id: string,
+  spec: McpSpec,
+  targets: McpTarget[],
   paths: Paths,
-  messages: Messages = en
+  messages: Messages
 ): StepDescriptor[] {
-  const title = messages.catalog.mcp[server.id]?.title ?? server.id
+  const title = mcpTitle(id, messages)
   const steps: StepDescriptor[] = []
   if (targets.includes("claude")) {
     steps.push({
       kind: "command",
-      id: `mcp-add-claude-${server.id}`,
+      id: `mcp-add-claude-${id}`,
       label: messages.steps.addMcpClaude(title),
-      command: buildClaudeMcpCommand(server, key),
+      command: buildClaudeMcpCommandFromSpec(id, spec),
     })
   }
   if (targets.includes("codex")) {
-    const entry = buildCodexMcpEntry(server, key)
+    const entry = buildCodexMcpEntryFromSpec(spec)
     steps.push({
       kind: "mergeFile",
-      id: `mcp-add-codex-${server.id}`,
+      id: `mcp-add-codex-${id}`,
       label: messages.steps.addMcpCodex(title),
       path: paths.codexConfig,
-      merge: (existing) => mergeCodexMcp(existing, server.id, entry),
-      writtenNote: messages.steps.codexMcpWritten(server.id),
+      merge: (existing) => mergeCodexMcp(existing, id, entry),
+      writtenNote: messages.steps.codexMcpWritten(id),
+    })
+  }
+  if (targets.includes("opencode")) {
+    const entry = buildOpencodeMcpEntryFromSpec(spec)
+    steps.push({
+      kind: "mergeFile",
+      id: `mcp-add-opencode-${id}`,
+      label: messages.steps.addMcpOpencode(title),
+      path: paths.opencodeConfig,
+      merge: (existing) => mergeOpencodeMcp(existing, id, entry),
+      writtenNote: messages.steps.opencodeMcpWritten(id),
     })
   }
   return steps
 }
 
 /**
- * Remove an MCP server from the chosen agents. Claude uses `claude mcp remove`;
- * Codex deletes the `mcp_servers.<id>` table from config.toml. Returns one step
- * per targeted agent (mirrors how buildSteps splits add steps).
+ * Add a catalog MCP server to the chosen agents directly (one card action,
+ * outside a batch run). Mirrors the add steps `buildSteps` emits — minus the
+ * batch-only `dependsOn` on a same-run `claude` install, since direct management
+ * runs against an already-present CLI.
  */
-export function mcpRemoveStep(
-  id: string,
-  targets: AgentTarget[],
+export function mcpAddStep(
+  server: McpServer,
+  targets: McpTarget[],
+  key: string | undefined,
   paths: Paths,
   messages: Messages = en
 ): StepDescriptor[] {
-  const title = messages.catalog.mcp[id]?.title ?? id
+  return mcpAddSpecSteps(server.id, resolveCatalogSpec(server, key), targets, paths, messages)
+}
+
+/**
+ * Add a user-defined custom MCP server (any command / url) to the chosen agents.
+ * Same wiring as `mcpAddStep` but from a directly-constructed `McpSpec` rather
+ * than a catalog entry, so custom servers reach all three targets identically.
+ */
+export function mcpAddSpecStep(
+  id: string,
+  spec: McpSpec,
+  targets: McpTarget[],
+  paths: Paths,
+  messages: Messages = en
+): StepDescriptor[] {
+  return mcpAddSpecSteps(id, spec, targets, paths, messages)
+}
+
+/**
+ * Edit an existing MCP server's config on the chosen targets. Codex / OpenCode
+ * are idempotent overwrite merges (a single add re-writes the entry). Claude has
+ * NO in-place edit — `claude mcp add` rejects a duplicate id — so it removes
+ * then re-adds; the remove is `verifyOnly` so that adding Claude as a *new*
+ * target mid-edit (nothing to remove) is tolerated rather than failing.
+ */
+export function mcpEditStep(
+  id: string,
+  spec: McpSpec,
+  targets: McpTarget[],
+  paths: Paths,
+  messages: Messages = en
+): StepDescriptor[] {
+  const title = mcpTitle(id, messages)
+  const steps: StepDescriptor[] = []
+  if (targets.includes("claude")) {
+    steps.push({
+      kind: "command",
+      id: `mcp-edit-remove-claude-${id}`,
+      label: messages.steps.removeMcpClaude(title),
+      command: buildClaudeMcpRemoveCommand(id),
+      verifyOnly: true,
+    })
+    steps.push({
+      kind: "command",
+      id: `mcp-edit-add-claude-${id}`,
+      label: messages.steps.addMcpClaude(title),
+      command: buildClaudeMcpCommandFromSpec(id, spec),
+    })
+  }
+  // Codex / OpenCode: reuse the add merges (overwrite the existing entry).
+  steps.push(
+    ...mcpAddSpecSteps(
+      id,
+      spec,
+      targets.filter((tg) => tg !== "claude"),
+      paths,
+      messages
+    )
+  )
+  return steps
+}
+
+/**
+ * Remove an MCP server from the chosen agents. Claude uses `claude mcp remove`;
+ * Codex / OpenCode delete the entry from their config file. Returns one step per
+ * targeted agent (mirrors how buildSteps splits add steps).
+ */
+export function mcpRemoveStep(
+  id: string,
+  targets: McpTarget[],
+  paths: Paths,
+  messages: Messages = en
+): StepDescriptor[] {
+  const title = mcpTitle(id, messages)
   const steps: StepDescriptor[] = []
   if (targets.includes("claude")) {
     steps.push({
@@ -611,6 +724,16 @@ export function mcpRemoveStep(
       path: paths.codexConfig,
       merge: (existing) => deleteCodexMcpEntry(existing, id),
       writtenNote: messages.steps.codexMcpWritten(id),
+    })
+  }
+  if (targets.includes("opencode")) {
+    steps.push({
+      kind: "mergeFile",
+      id: `mcp-remove-opencode-${id}`,
+      label: messages.steps.removeMcpOpencode(title),
+      path: paths.opencodeConfig,
+      merge: (existing) => deleteOpencodeMcpEntry(existing, id),
+      writtenNote: messages.steps.opencodeMcpWritten(id),
     })
   }
   return steps

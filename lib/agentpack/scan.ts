@@ -82,6 +82,27 @@ export function parseClaudeMcpConfig(json: string): string[] {
   return Object.keys(servers as Record<string, unknown>)
 }
 
+/**
+ * List OpenCode MCP server ids from `~/.config/opencode/opencode.json`.
+ *
+ * Reads the top-level `mcp` object keys — the same place `mergeOpencodeMcp`
+ * writes and `deleteOpencodeMcpEntry` prunes, so it stays in lockstep with what
+ * this app installs/removes for OpenCode. Defensive: malformed / empty input
+ * degrades to an empty list, never throws.
+ */
+export function parseOpencodeMcpConfig(json: string): string[] {
+  if (!json.trim()) return []
+  let data: Record<string, unknown>
+  try {
+    data = JSON.parse(json) as Record<string, unknown>
+  } catch {
+    return []
+  }
+  const servers = data["mcp"]
+  if (!servers || typeof servers !== "object") return []
+  return Object.keys(servers as Record<string, unknown>)
+}
+
 /** Split ids into ones present in `registryIds` (known) and the rest (custom). */
 export function classifyAgainstRegistry(
   ids: readonly string[],

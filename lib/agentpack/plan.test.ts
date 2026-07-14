@@ -5,6 +5,8 @@ import {
   cliUninstallStep,
   fileRestoreStep,
   mcpAddStep,
+  mcpAddSpecStep,
+  mcpEditStep,
   mcpRemoveStep,
   relayRemoveStep,
   runtimeUpgradeStep,
@@ -208,6 +210,16 @@ it("drops a fully-installed MCP server from both agents", () => {
   expect(ids).not.toContain("mcp-codex-context7")
 })
 
+it("emits an opencode batch step for an opencode-targeted MCP, skipping when present", () => {
+  const ocPlan: Plan = { ...plan, mcps: [{ id: "context7", targets: ["opencode"] }] }
+  const added = buildSteps(ocPlan, paths).find((s) => s.id === "mcp-opencode-context7")
+  expect(added?.kind === "mergeFile" && added.path).toBe(paths.opencodeConfig)
+  const skipped = buildSteps(ocPlan, paths, undefined, new Set(), {
+    opencodeMcps: ["context7"],
+  }).map((s) => s.id)
+  expect(skipped).not.toContain("mcp-opencode-context7")
+})
+
 it("copies a skill only into targets where it isn't installed yet", () => {
   const both: Plan = { ...plan, skills: [{ id: "rust", targets: ["claude", "codex"] }] }
   const step = buildSteps(both, paths, undefined, new Set(), { claudeSkills: ["rust"] }).find(
@@ -371,6 +383,66 @@ describe("menu-action builders", () => {
     expect(mcpRemoveStep("memory", ["claude"], paths).map((s) => s.id)).toEqual([
       "mcp-remove-claude-memory",
     ])
+  })
+
+  it("mcpAddStep opencode merge writes mcp.<id> into opencode.json", () => {
+    const step = mcpAddStep(findMcp("context7")!, ["opencode"], "k", paths).find(
+      (s) => s.id === "mcp-add-opencode-context7"
+    )
+    expect(step?.kind === "mergeFile" && step.path).toBe(paths.opencodeConfig)
+    expect(step?.kind === "mergeFile" && step.merge("")).toContain("context7")
+  })
+
+  it("mcpAddStep spans all three targets", () => {
+    const ids = mcpAddStep(findMcp("context7")!, ["claude", "codex", "opencode"], "k", paths).map(
+      (s) => s.id
+    )
+    expect(ids).toEqual([
+      "mcp-add-claude-context7",
+      "mcp-add-codex-context7",
+      "mcp-add-opencode-context7",
+    ])
+  })
+
+  it("mcpAddSpecStep adds a custom (non-npx) server across targets", () => {
+    const steps = mcpAddSpecStep(
+      "mine",
+      { transport: "stdio", command: "uvx", args: ["mymcp"], env: { T: "1" } },
+      ["claude", "opencode"],
+      paths
+    )
+    const claude = steps.find((s) => s.id === "mcp-add-claude-mine")!
+    expect(claude.kind === "command" && claude.command.args.join(" ")).toContain("-- uvx mymcp")
+    const oc = steps.find((s) => s.id === "mcp-add-opencode-mine")!
+    expect(oc.kind === "mergeFile" && oc.merge("")).toContain("uvx")
+  })
+
+  it("mcpEditStep removes-then-adds for Claude, overwrites Codex/OpenCode", () => {
+    const steps = mcpEditStep(
+      "mine",
+      { transport: "stdio", command: "npx", args: ["-y", "pkg"], env: {} },
+      ["claude", "codex"],
+      paths
+    )
+    const ids = steps.map((s) => s.id)
+    // Claude: remove (verifyOnly) precedes add; Codex: single overwrite merge.
+    expect(ids).toEqual([
+      "mcp-edit-remove-claude-mine",
+      "mcp-edit-add-claude-mine",
+      "mcp-add-codex-mine",
+    ])
+    const remove = steps[0]
+    expect(remove.kind === "command" && remove.verifyOnly).toBe(true)
+    expect(ids.indexOf("mcp-edit-remove-claude-mine")).toBeLessThan(
+      ids.indexOf("mcp-edit-add-claude-mine")
+    )
+  })
+
+  it("mcpRemoveStep emits an opencode delete-merge for the opencode target", () => {
+    const step = mcpRemoveStep("context7", ["opencode"], paths).find(
+      (s) => s.id === "mcp-remove-opencode-context7"
+    )
+    expect(step?.kind === "mergeFile" && step.path).toBe(paths.opencodeConfig)
   })
 
   it("relayRemoveStep removes claude + codex relay config for chosen clis", () => {

@@ -1,0 +1,312 @@
+"use client"
+
+import { useMemo, useState } from "react"
+import { Plus, X } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
+import { cn } from "@/lib/utils"
+import { useT } from "@/lib/i18n/provider"
+import { MCP_REGISTRY_IDS } from "@/lib/agentpack/scan"
+import type { McpSpec } from "@/lib/agentpack/merge/mcp"
+import type { McpTarget } from "@/lib/agentpack/types"
+import { MCP_TARGETS, TargetDot } from "./helpers"
+
+export interface CustomFormValue {
+  id: string
+  spec: McpSpec
+  targets: McpTarget[]
+}
+
+type EnvRow = { key: string; value: string }
+
+const BEARER = "Bearer "
+
+function argsToText(args: string[]): string {
+  return args.join("\n")
+}
+function textToArgs(text: string): string[] {
+  return text
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+function envToRows(env: Record<string, string>): EnvRow[] {
+  const rows = Object.entries(env).map(([key, value]) => ({ key, value }))
+  return rows.length ? rows : [{ key: "", value: "" }]
+}
+function rowsToEnv(rows: EnvRow[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const r of rows) if (r.key.trim()) out[r.key.trim()] = r.value
+  return out
+}
+
+/**
+ * The add / edit form for a custom MCP server. Emits a validated
+ * `{ id, spec, targets }`; the caller turns it into runner steps. In edit mode
+ * the id is locked and the fields are prefilled from the existing spec.
+ */
+export function CustomServerForm({
+  mode,
+  initial,
+  takenIds,
+  submitting,
+  onSubmit,
+  onCancel,
+}: {
+  mode: "add" | "edit"
+  initial?: CustomFormValue
+  /** Ids already configured (add mode rejects a collision). */
+  takenIds: Set<string>
+  submitting?: boolean
+  onSubmit: (value: CustomFormValue) => void
+  onCancel?: () => void
+}) {
+  const m = useT().mcp
+
+  const init = initial?.spec
+  const [id, setId] = useState(initial?.id ?? "")
+  const [transport, setTransport] = useState<"stdio" | "http">(init?.transport ?? "stdio")
+  const [command, setCommand] = useState(init?.transport === "stdio" ? init.command : "npx")
+  const [argsText, setArgsText] = useState(init?.transport === "stdio" ? argsToText(init.args) : "")
+  const [envRows, setEnvRows] = useState<EnvRow[]>(
+    envToRows(init?.transport === "stdio" ? init.env : {})
+  )
+  const [url, setUrl] = useState(init?.transport === "http" ? init.url : "")
+  const [token, setToken] = useState(
+    init?.transport === "http" ? (init.headers.Authorization ?? "").replace(BEARER, "") : ""
+  )
+  const [tokenEnvVar, setTokenEnvVar] = useState(
+    init?.transport === "http" ? (init.bearerTokenEnvVar ?? "") : ""
+  )
+  const [targets, setTargets] = useState<Set<McpTarget>>(new Set(initial?.targets ?? ["claude"]))
+  const [error, setError] = useState<string | null>(null)
+
+  const toggleTarget = (t: McpTarget) =>
+    setTargets((prev) => {
+      const next = new Set(prev)
+      if (next.has(t)) next.delete(t)
+      else next.add(t)
+      return next
+    })
+
+  const idError = useMemo(() => {
+    // The id is locked and trusted (read from disk) in edit mode.
+    if (mode === "edit") return null
+    const trimmed = id.trim()
+    if (!trimmed) return m.errIdRequired
+    if (!/^[a-z0-9-]+$/.test(trimmed)) return m.errIdFormat
+    if (MCP_REGISTRY_IDS.includes(trimmed)) return m.errIdReserved
+    if (takenIds.has(trimmed)) return m.errIdExists
+    return null
+  }, [id, mode, takenIds, m])
+
+  const buildSpec = (): McpSpec => {
+    if (transport === "http") {
+      const headers: Record<string, string> = {}
+      if (token.trim()) headers.Authorization = `${BEARER}${token.trim()}`
+      return {
+        transport: "http",
+        url: url.trim(),
+        headers,
+        bearerTokenEnvVar: tokenEnvVar.trim() || undefined,
+      }
+    }
+    return {
+      transport: "stdio",
+      command: command.trim(),
+      args: textToArgs(argsText),
+      env: rowsToEnv(envRows),
+    }
+  }
+
+  const submit = () => {
+    if (idError) return setError(idError)
+    if (transport === "stdio" && !command.trim()) return setError(m.errCommandRequired)
+    if (transport === "http" && !url.trim()) return setError(m.errUrlRequired)
+    if (targets.size === 0) return setError(m.errTargetRequired)
+    if (transport === "http" && token.trim() && targets.has("codex") && !tokenEnvVar.trim()) {
+      return setError(m.errCodexTokenEnv)
+    }
+    setError(null)
+    onSubmit({ id: id.trim(), spec: buildSpec(), targets: [...targets] })
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="mcp-id">{m.fieldId}</Label>
+        <Input
+          id="mcp-id"
+          value={id}
+          disabled={mode === "edit"}
+          onChange={(e) => setId(e.target.value)}
+          placeholder="my-server"
+        />
+        <p className="text-xs text-muted-foreground">{m.fieldIdHint}</p>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Label>{m.fieldTransport}</Label>
+        <div className="flex gap-2">
+          {(["stdio", "http"] as const).map((tr) => (
+            <button
+              key={tr}
+              type="button"
+              onClick={() => setTransport(tr)}
+              className={cn(
+                "rounded-full border px-3 py-1 text-xs transition-colors",
+                transport === tr
+                  ? "border-primary bg-primary/10 font-medium"
+                  : "text-muted-foreground hover:bg-accent/40"
+              )}
+            >
+              {tr === "stdio" ? m.transportStdio : m.transportHttp}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {transport === "stdio" ? (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="mcp-cmd">{m.fieldCommand}</Label>
+              <Input
+                id="mcp-cmd"
+                value={command}
+                onChange={(e) => setCommand(e.target.value)}
+                placeholder="npx"
+              />
+              <p className="text-xs text-muted-foreground">{m.fieldCommandHint}</p>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="mcp-args">{m.fieldArgs}</Label>
+              <Textarea
+                id="mcp-args"
+                value={argsText}
+                onChange={(e) => setArgsText(e.target.value)}
+                placeholder={"-y\n@scope/package"}
+                className="min-h-20 font-mono text-xs"
+              />
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>{m.fieldEnv}</Label>
+            <div className="flex flex-col gap-2">
+              {envRows.map((row, i) => (
+                <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                  <Input
+                    value={row.key}
+                    onChange={(e) =>
+                      setEnvRows((rows) =>
+                        rows.map((r, j) => (j === i ? { ...r, key: e.target.value } : r))
+                      )
+                    }
+                    placeholder={m.envKeyPlaceholder}
+                    className="font-mono text-xs"
+                  />
+                  <Input
+                    value={row.value}
+                    onChange={(e) =>
+                      setEnvRows((rows) =>
+                        rows.map((r, j) => (j === i ? { ...r, value: e.target.value } : r))
+                      )
+                    }
+                    placeholder={m.envValuePlaceholder}
+                    className="font-mono text-xs"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-9"
+                    onClick={() => setEnvRows((rows) => rows.filter((_, j) => j !== i))}
+                  >
+                    <X className="size-4" />
+                  </Button>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-fit gap-1"
+                onClick={() => setEnvRows((rows) => [...rows, { key: "", value: "" }])}
+              >
+                <Plus className="size-3.5" />
+                {m.addRow}
+              </Button>
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="mcp-url">{m.fieldUrl}</Label>
+            <Input
+              id="mcp-url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://my-mcp-server.com/mcp"
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="mcp-token">{m.fieldToken}</Label>
+              <Input
+                id="mcp-token"
+                type="password"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">{m.fieldTokenHint}</p>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="mcp-tokenenv">{m.fieldTokenEnvVar}</Label>
+              <Input
+                id="mcp-tokenenv"
+                value={tokenEnvVar}
+                onChange={(e) => setTokenEnvVar(e.target.value)}
+                placeholder="MY_TOKEN"
+                className="font-mono text-xs"
+              />
+              <p className="text-xs text-muted-foreground">{m.fieldTokenEnvVarHint}</p>
+            </div>
+          </div>
+        </>
+      )}
+
+      <div className="flex flex-col gap-1.5">
+        <Label>{m.selectTargets}</Label>
+        <div className="flex flex-wrap items-center gap-4 text-sm">
+          {MCP_TARGETS.map((target) => (
+            <label key={target} className="flex cursor-pointer items-center gap-2">
+              <Checkbox
+                checked={targets.has(target)}
+                onCheckedChange={() => toggleTarget(target)}
+              />
+              <TargetDot target={target} on={targets.has(target)} />
+              {m.targets[target]}
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+
+      <div className="flex items-center gap-2">
+        <Button onClick={submit} disabled={submitting}>
+          {mode === "edit" ? m.saveChanges : m.addServer}
+        </Button>
+        {onCancel ? (
+          <Button variant="ghost" onClick={onCancel} disabled={submitting}>
+            {m.cancel}
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  )
+}

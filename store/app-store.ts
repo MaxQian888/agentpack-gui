@@ -1,5 +1,12 @@
 import { create } from "zustand"
-import type { AgentTarget, CliInstallManager, OS, Paths, Plan } from "@/lib/agentpack/types"
+import type {
+  AgentTarget,
+  CliInstallManager,
+  McpTarget,
+  OS,
+  Paths,
+  Plan,
+} from "@/lib/agentpack/types"
 import type { Profile } from "@/lib/agentpack/profile"
 import { findPreset } from "@/lib/agentpack/presets"
 import type { UpdateInfo } from "@/lib/tauri/updater"
@@ -88,7 +95,7 @@ interface State {
   /** Choose which install method a CLI uses (undefined => back to the default). */
   setCliMethod: (id: string, methodId: string | undefined) => void
   setSkill: (id: string, targets: AgentTarget[]) => void
-  setMcp: (id: string, targets: AgentTarget[]) => void
+  setMcp: (id: string, targets: McpTarget[]) => void
   setMcpKey: (id: string, key: string) => void
   setNetwork: (patch: Partial<Plan["network"]>) => void
   applyPreset: (presetId: string) => void
@@ -199,7 +206,7 @@ export const useAppStore = create<State>((set, get) => ({
           ...emptyPlan(s.plan.os),
           clis: p.clis as Plan["clis"],
           skills: p.skills.map((id) => ({ id, targets: ["claude", "codex"] as AgentTarget[] })),
-          mcps: p.mcps.map((id) => ({ id, targets: ["claude"] as AgentTarget[] })),
+          mcps: p.mcps.map((id) => ({ id, targets: ["claude"] as McpTarget[] })),
         },
       }
     }),

@@ -1,9 +1,20 @@
 import {
   buildClaudeMcpCommand,
+  buildClaudeMcpCommandFromSpec,
   buildClaudeMcpRemoveCommand,
   buildCodexMcpEntry,
+  buildCodexMcpEntryFromSpec,
+  buildOpencodeMcpEntry,
+  buildOpencodeMcpEntryFromSpec,
   deleteCodexMcpEntry,
+  deleteOpencodeMcpEntry,
   mergeCodexMcp,
+  mergeOpencodeMcp,
+  parseClaudeMcpEntry,
+  parseCodexMcpEntry,
+  parseOpencodeMcpEntry,
+  resolveCatalogSpec,
+  type McpSpec,
 } from "./mcp"
 import {
   deleteClaudeRelay,
@@ -143,6 +154,153 @@ it("deleteCodexProvider keeps other providers and a non-agentpack selector", () 
   const out = deleteCodexProvider(toml)
   expect(out).toContain("other")
   expect(out).toContain('model_provider = "other"')
+})
+
+// --- OpenCode target + custom-spec + reverse parsers ---------------------
+
+it("opencode stdio entry uses type:local, a command array and `environment`", () => {
+  const e = buildOpencodeMcpEntry(findMcp("context7")!, "abc")
+  expect(e.type).toBe("local")
+  expect(e.command).toEqual(["npx", "-y", "@upstash/context7-mcp"])
+  expect(e.enabled).toBe(true)
+  expect(e.environment).toEqual({ CONTEXT7_API_KEY: "abc" })
+  expect(e.env).toBeUndefined() // never the Codex `env` key
+})
+
+it("opencode http entry uses type:remote with inline headers", () => {
+  const e = buildOpencodeMcpEntry(findMcp("supermemory")!, "k")
+  expect(e.type).toBe("remote")
+  expect(e.url).toBe("https://mcp.supermemory.ai/mcp")
+  expect(e.headers).toEqual({ Authorization: "Bearer k" })
+})
+
+it("mergeOpencodeMcp writes mcp.<id> and preserves other keys, idempotent", () => {
+  const existing = JSON.stringify({ theme: "dark", mcp: { keep: { type: "local" } } })
+  let out = mergeOpencodeMcp(existing, "context7", { type: "local", command: ["npx"] })
+  out = mergeOpencodeMcp(out, "context7", { type: "local", command: ["npx", "-y"] })
+  const parsed = JSON.parse(out)
+  expect(parsed.theme).toBe("dark")
+  expect(parsed.mcp.keep).toEqual({ type: "local" })
+  expect(parsed.mcp.context7.command).toEqual(["npx", "-y"])
+  expect(Object.keys(parsed.mcp)).toEqual(["keep", "context7"])
+})
+
+it("mergeOpencodeMcp throws on malformed JSON rather than clobbering", () => {
+  expect(() => mergeOpencodeMcp("{not json", "x", { type: "local" })).toThrow()
+})
+
+it("deleteOpencodeMcpEntry prunes the id, and prunes an emptied mcp object", () => {
+  const two = mergeOpencodeMcp(mergeOpencodeMcp("", "a", { type: "local" }), "b", { type: "local" })
+  const afterA = JSON.parse(deleteOpencodeMcpEntry(two, "a"))
+  expect(afterA.mcp).toEqual({ b: { type: "local" } })
+  const emptied = JSON.parse(deleteOpencodeMcpEntry(mergeOpencodeMcp("", "only", {}), "only"))
+  expect(emptied.mcp).toBeUndefined()
+  expect(deleteOpencodeMcpEntry("", "x")).toBe("")
+})
+
+it("custom stdio spec writes any command across all three targets", () => {
+  const spec: McpSpec = {
+    transport: "stdio",
+    command: "uvx",
+    args: ["some-mcp", "--flag"],
+    env: { TOKEN: "t" },
+  }
+  const claude = buildClaudeMcpCommandFromSpec("mine", spec)
+  expect(claude.args.join(" ")).toContain("-- uvx some-mcp --flag")
+  expect(claude.args.join(" ")).toContain("--env TOKEN=t")
+  expect(buildCodexMcpEntryFromSpec(spec)).toEqual({
+    command: "uvx",
+    args: ["some-mcp", "--flag"],
+    env: { TOKEN: "t" },
+  })
+  expect(buildOpencodeMcpEntryFromSpec(spec)).toEqual({
+    type: "local",
+    command: ["uvx", "some-mcp", "--flag"],
+    enabled: true,
+    environment: { TOKEN: "t" },
+  })
+})
+
+it("custom http spec: Codex uses bearer env var, Claude/OpenCode inline headers", () => {
+  const spec: McpSpec = {
+    transport: "http",
+    url: "https://x/mcp",
+    headers: { Authorization: "Bearer secret", "X-Extra": "1" },
+    bearerTokenEnvVar: "MY_TOKEN",
+  }
+  expect(buildCodexMcpEntryFromSpec(spec)).toEqual({
+    url: "https://x/mcp",
+    bearer_token_env_var: "MY_TOKEN",
+  })
+  const claude = buildClaudeMcpCommandFromSpec("mine", spec).args.join(" ")
+  expect(claude).toContain("--header Authorization: Bearer secret")
+  expect(claude).toContain("--header X-Extra: 1")
+  expect(buildOpencodeMcpEntryFromSpec(spec)).toEqual({
+    type: "remote",
+    url: "https://x/mcp",
+    enabled: true,
+    headers: { Authorization: "Bearer secret", "X-Extra": "1" },
+  })
+})
+
+it("reverse parsers round-trip a catalog server per target", () => {
+  const server = findMcp("context7")!
+  const spec = resolveCatalogSpec(server, "abc")
+
+  const claudeJson = JSON.stringify({
+    mcpServers: {
+      context7: {
+        type: "stdio",
+        command: "npx",
+        args: spec.transport === "stdio" ? spec.args : [],
+        env: { CONTEXT7_API_KEY: "abc" },
+      },
+    },
+  })
+  expect(parseClaudeMcpEntry(claudeJson, "context7")).toEqual({
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "@upstash/context7-mcp"],
+    env: { CONTEXT7_API_KEY: "abc" },
+  })
+
+  const codexToml = mergeCodexMcp("", "context7", buildCodexMcpEntry(server, "abc"))
+  expect(parseCodexMcpEntry(codexToml, "context7")).toEqual({
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "@upstash/context7-mcp"],
+    env: { CONTEXT7_API_KEY: "abc" },
+  })
+
+  const opencodeJson = mergeOpencodeMcp("", "context7", buildOpencodeMcpEntry(server, "abc"))
+  expect(parseOpencodeMcpEntry(opencodeJson, "context7")).toEqual({
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "@upstash/context7-mcp"],
+    env: { CONTEXT7_API_KEY: "abc" },
+  })
+})
+
+it("reverse parsers read http entries and are defensive on missing / bad input", () => {
+  const claudeHttp = JSON.stringify({
+    mcpServers: { s: { type: "http", url: "https://h", headers: { Authorization: "Bearer k" } } },
+  })
+  expect(parseClaudeMcpEntry(claudeHttp, "s")).toEqual({
+    transport: "http",
+    url: "https://h",
+    headers: { Authorization: "Bearer k" },
+  })
+  const codexHttp = mergeCodexMcp("", "s", { url: "https://h", bearer_token_env_var: "T" })
+  expect(parseCodexMcpEntry(codexHttp, "s")).toEqual({
+    transport: "http",
+    url: "https://h",
+    headers: {},
+    bearerTokenEnvVar: "T",
+  })
+  expect(parseClaudeMcpEntry("", "s")).toBeUndefined()
+  expect(parseClaudeMcpEntry("{bad", "s")).toBeUndefined()
+  expect(parseCodexMcpEntry("", "s")).toBeUndefined()
+  expect(parseOpencodeMcpEntry("{}", "missing")).toBeUndefined()
 })
 
 it("tolerates servers missing url / package / keyEnv via defensive fallbacks", () => {

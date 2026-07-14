@@ -1,8 +1,16 @@
 /** Supported operating-system families. */
 export type OS = "win" | "mac" | "linux"
 
-/** Which agent CLIs a skill / MCP server can target. */
+/** Which agent CLIs a skill can target. */
 export type AgentTarget = "claude" | "codex"
+
+/**
+ * Which agent CLIs an MCP server can target. A superset of `AgentTarget`:
+ * MCP servers additionally support OpenCode (skills do not, so `AgentTarget`
+ * stays narrow). Because `AgentTarget ⊆ McpTarget`, existing `AgentTarget[]`
+ * call sites remain assignable to `McpTarget[]`.
+ */
+export type McpTarget = "claude" | "codex" | "opencode"
 
 /** A concrete command to run, described declaratively so it can be dry-run printed. */
 export interface Command {
@@ -159,7 +167,7 @@ export interface Plan {
   /** Skill ids selected, with their install targets. */
   skills: { id: string; targets: AgentTarget[] }[]
   /** MCP ids selected, with their install targets. */
-  mcps: { id: string; targets: AgentTarget[] }[]
+  mcps: { id: string; targets: McpTarget[] }[]
   /** Keys entered for MCP servers (by mcp id). */
   mcpKeys: McpKeys
   network: NetworkConfig

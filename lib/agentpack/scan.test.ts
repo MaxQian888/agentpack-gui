@@ -3,9 +3,10 @@ import {
   parseClaudeMcpConfig,
   parseClaudeRelay,
   parseCodexConfig,
+  parseOpencodeMcpConfig,
 } from "./scan"
 import { mergeClaudeSettings, mergeCodexProvider } from "./merge/network"
-import { mergeCodexMcp } from "./merge/mcp"
+import { mergeCodexMcp, mergeOpencodeMcp } from "./merge/mcp"
 
 it("parseClaudeRelay inverts mergeClaudeSettings", () => {
   const json = mergeClaudeSettings("", { apiBaseUrl: "https://r", apiToken: "t" })
@@ -47,6 +48,19 @@ it("parseClaudeMcpConfig tolerates empty / malformed / server-less input", () =>
   expect(parseClaudeMcpConfig("{not json")).toEqual([])
   expect(parseClaudeMcpConfig("{}")).toEqual([])
   expect(parseClaudeMcpConfig(JSON.stringify({ mcpServers: null }))).toEqual([])
+})
+
+it("parseOpencodeMcpConfig lists mcp ids from opencode.json", () => {
+  let json = mergeOpencodeMcp("", "context7", { type: "local", command: ["npx"] })
+  json = mergeOpencodeMcp(json, "memory", { type: "local", command: ["npx"] })
+  expect(parseOpencodeMcpConfig(json).sort()).toEqual(["context7", "memory"])
+})
+
+it("parseOpencodeMcpConfig tolerates empty / malformed / mcp-less input", () => {
+  expect(parseOpencodeMcpConfig("")).toEqual([])
+  expect(parseOpencodeMcpConfig("{not json")).toEqual([])
+  expect(parseOpencodeMcpConfig("{}")).toEqual([])
+  expect(parseOpencodeMcpConfig(JSON.stringify({ mcp: null }))).toEqual([])
 })
 
 it("classifyAgainstRegistry separates known from custom", () => {

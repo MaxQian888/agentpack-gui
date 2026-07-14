@@ -39,6 +39,7 @@ import {
   parseClaudeMcpConfig,
   parseClaudeRelay,
   parseCodexConfig,
+  parseOpencodeMcpConfig,
   SKILL_REGISTRY_IDS,
   type ClassifiedIds,
   type ClaudeRelayState,
@@ -63,6 +64,7 @@ interface FileHealth {
 export interface DashboardScan {
   claudeMcps: ClassifiedIds
   codexMcps: ClassifiedIds
+  opencodeMcps: ClassifiedIds
   claudeSkills: ClassifiedIds
   codexSkills: ClassifiedIds
   relay: ClaudeRelayState
@@ -75,6 +77,7 @@ export interface DashboardScan {
 const emptyScan = (): DashboardScan => ({
   claudeMcps: { known: [], custom: [] },
   codexMcps: { known: [], custom: [] },
+  opencodeMcps: { known: [], custom: [] },
   claudeSkills: { known: [], custom: [] },
   codexSkills: { known: [], custom: [] },
   relay: { hasToken: false },
@@ -100,6 +103,7 @@ export async function scanEnvironment(paths: Paths): Promise<DashboardScan> {
     claudeJson,
     claudeConfig,
     codexToml,
+    opencodeJson,
     claudeSkillNames,
     codexSkillNames,
     providers,
@@ -110,6 +114,7 @@ export async function scanEnvironment(paths: Paths): Promise<DashboardScan> {
     // the ~45s health-checking `claude mcp list`, which also risks hanging.
     readTextFile(paths.claudeConfig).catch(() => ""),
     readTextFile(paths.codexConfig).catch(() => ""),
+    readTextFile(paths.opencodeConfig).catch(() => ""),
     listSkills(paths.claudeSkillsDir).catch(() => [] as string[]),
     listSkills(paths.codexSkillsDir).catch(() => [] as string[]),
     ccLoadProviders().catch(() => [] as Provider[]),
@@ -122,6 +127,7 @@ export async function scanEnvironment(paths: Paths): Promise<DashboardScan> {
   return {
     claudeMcps: classifyAgainstRegistry(parseClaudeMcpConfig(claudeConfig), MCP_REGISTRY_IDS),
     codexMcps: classifyAgainstRegistry(codex.mcpServers, MCP_REGISTRY_IDS),
+    opencodeMcps: classifyAgainstRegistry(parseOpencodeMcpConfig(opencodeJson), MCP_REGISTRY_IDS),
     claudeSkills: classifyAgainstRegistry(claudeSkillNames, SKILL_REGISTRY_IDS),
     codexSkills: classifyAgainstRegistry(codexSkillNames, SKILL_REGISTRY_IDS),
     relay: parseClaudeRelay(claudeJson),
@@ -187,6 +193,8 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
     ...view.claudeMcps.custom,
     ...view.codexMcps.known,
     ...view.codexMcps.custom,
+    ...view.opencodeMcps.known,
+    ...view.opencodeMcps.custom,
   ]).size
   const skillCount = new Set([
     ...view.claudeSkills.known,
