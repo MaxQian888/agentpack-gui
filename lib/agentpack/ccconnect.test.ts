@@ -6,6 +6,7 @@ import {
   PROVIDER_TOKEN,
   dashboardUrl,
   defaultConfigToml,
+  ensureWebAdmin,
   getConfigValue,
   isProviderScoped,
   isSectionEnabled,
@@ -176,8 +177,47 @@ describe("defaultConfigToml", () => {
     const doc = parseConfigDoc(toml)!
     expect(getConfigValue(doc, ["management", "enabled"])).toBe(true)
     expect(getConfigValue(doc, ["management", "port"])).toBe(CC_CONNECT_MANAGEMENT_PORT)
+    expect(getConfigValue(doc, ["management", "cors_origins"])).toEqual(["*"])
     expect(getConfigValue(doc, ["log", "level"])).toBe("info")
     expect(doc.web).toBeUndefined()
     expect(isSectionEnabled(toml, "management")).toBe(true)
+  })
+})
+
+describe("ensureWebAdmin", () => {
+  it("enables management with the given token + cors on an empty doc", () => {
+    const { doc, token, changed } = ensureWebAdmin({}, "tok123")
+    expect(changed).toBe(true)
+    expect(token).toBe("tok123")
+    expect(getConfigValue(doc, ["management", "enabled"])).toBe(true)
+    expect(getConfigValue(doc, ["management", "port"])).toBe(CC_CONNECT_MANAGEMENT_PORT)
+    expect(getConfigValue(doc, ["management", "token"])).toBe("tok123")
+    expect(getConfigValue(doc, ["management", "cors_origins"])).toEqual(["*"])
+  })
+
+  it("keeps an existing token (never rotates) and reports no change", () => {
+    const base = parseConfigDoc(
+      '[management]\nenabled = true\nport = 8080\ntoken = "keep"\ncors_origins = ["*"]\n'
+    )!
+    const { doc, token, changed } = ensureWebAdmin(base, "new")
+    expect(token).toBe("keep")
+    expect(changed).toBe(false)
+    expect(getConfigValue(doc, ["management", "port"])).toBe(8080)
+  })
+
+  it("backfills only the missing pieces (enabled but tokenless)", () => {
+    const base = parseConfigDoc("[management]\nenabled = true\nport = 9820\n")!
+    const { doc, token, changed } = ensureWebAdmin(base, "gen")
+    expect(changed).toBe(true)
+    expect(token).toBe("gen")
+    expect(getConfigValue(doc, ["management", "token"])).toBe("gen")
+    expect(getConfigValue(doc, ["management", "cors_origins"])).toEqual(["*"])
+  })
+
+  it("does not mutate the input doc", () => {
+    const base = parseConfigDoc("[management]\nport = 1\n")!
+    ensureWebAdmin(base, "x")
+    expect(getConfigValue(base, ["management", "enabled"])).toBeUndefined()
+    expect(getConfigValue(base, ["management", "token"])).toBeUndefined()
   })
 })

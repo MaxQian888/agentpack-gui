@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { ExternalLink, FolderOpen, Loader2, Play, RefreshCw, Square, Wand2 } from "lucide-react"
+import { ExternalLink, FolderOpen, Loader2, Play, RefreshCw, Square } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -25,15 +25,14 @@ import {
   CC_CONNECT_MANAGEMENT_PORT,
   CC_CONNECT_WEBHOOK_PORT,
   dashboardUrl,
+  ensureWebAdmin,
   getConfigValue,
   isSectionEnabled,
   parseBridgePort,
   parseConfigDoc,
   parseManagementPort,
-  parseManagementToken,
   parseWebhookPort,
   serializeConfigDoc,
-  setConfigValue,
 } from "@/lib/agentpack/ccconnect"
 import {
   detectCli,
@@ -93,15 +92,11 @@ export function CcConnectSection() {
   )
   const [version, setVersion] = useState<string | undefined>(storeDetected?.version)
   const [running, setRunning] = useState<boolean | null>(null)
-  // Management port answering specifically — gates "Open dashboard" (the bridge
-  // port being up isn't enough to load the web UI).
-  const [mgmtUp, setMgmtUp] = useState(false)
   const [configExists, setConfigExists] = useState<boolean | null>(null)
   const [mgmtPort, setMgmtPort] = useState(CC_CONNECT_MANAGEMENT_PORT)
   const [bridgePort, setBridgePort] = useState(CC_CONNECT_BRIDGE_PORT)
   const [webhookPort, setWebhookPort] = useState(CC_CONNECT_WEBHOOK_PORT)
   const [mgmtEnabled, setMgmtEnabled] = useState(false)
-  const [mgmtToken, setMgmtToken] = useState<string | undefined>(undefined)
   // Start/stop in flight — the buttons stay disabled until the state flip is
   // confirmed (or the poll gives up), so a double-click can't race the service.
   const [busy, setBusy] = useState(false)
@@ -136,7 +131,6 @@ export function CcConnectSection() {
       setBridgePort(bridge)
       setWebhookPort(parseWebhookPort(cfg))
       setMgmtEnabled(isSectionEnabled(cfg, "management"))
-      setMgmtToken(parseManagementToken(cfg))
     }
     const [d, proc, mUp, bUp] = await Promise.all([
       detectCli("cc-connect", false),
@@ -148,7 +142,6 @@ export function CcConnectSection() {
     setDetected(d.installed)
     setVersion(d.version)
     useAppStore.getState().setDetection("cc-connect", d)
-    setMgmtUp(mUp)
     setRunning(proc || mUp || bUp)
   }, [paths])
 
@@ -217,11 +210,13 @@ export function CcConnectSection() {
     }
   }
 
-  // Turn the management dashboard on by writing config (what `cc-connect web`'s
-  // EnableWebAdmin does): [management] enabled=true, a port, and an auth token.
-  // Bare `cc-connect` with an empty config exits immediately — this gives the
-  // service the dashboard to serve so Start actually stays up.
-  const enableWebAdmin = async () => {
+  // One click, dashboard open and already logged in. Guarantee the management
+  // section is enabled with a login token (what `cc-connect web`'s
+  // EnableWebAdmin does: enabled + port + token + cors), make sure the service
+  // is actually serving that port, then open it with `?token=` so the SPA
+  // skips its login form. This folds the old enable → start → open steps into
+  // one and fixes "the dashboard still asks me to log in".
+  const openDashboard = async () => {
     if (!paths || dryRun || webBusy) return
     setWebBusy(true)
     try {
@@ -230,17 +225,35 @@ export function CcConnectSection() {
         toast.error(c.invalidToml)
         return
       }
-      let doc = parseConfigDoc(text) ?? {}
-      doc = setConfigValue(doc, ["management", "enabled"], true)
-      const port = getConfigValue(doc, ["management", "port"])
-      if (typeof port !== "number") {
-        doc = setConfigValue(doc, ["management", "port"], CC_CONNECT_MANAGEMENT_PORT)
+      const { doc, token, changed } = ensureWebAdmin(parseConfigDoc(text) ?? {}, generateToken())
+      const portVal = getConfigValue(doc, ["management", "port"])
+      const port = typeof portVal === "number" ? portVal : CC_CONNECT_MANAGEMENT_PORT
+      if (changed) {
+        await writeTextFile(paths.ccConnectConfig, `${serializeConfigDoc(doc)}\n`)
       }
-      if (!getConfigValue(doc, ["management", "token"])) {
-        doc = setConfigValue(doc, ["management", "token"], generateToken())
+      // If the dashboard port isn't answering, (re)start the service so it picks
+      // up the config. A stale bridge-only instance is bounced first, otherwise
+      // the fresh `cc-connect` can't bind its ports.
+      if (!(await probePort(port))) {
+        if (await serviceUp(port, bridgePort)) {
+          await stopCcConnect([port, bridgePort, webhookPort])
+          for (let i = 0; i < 10 && (await serviceUp(port, bridgePort)); i++) await sleep(400)
+        }
+        await startCcConnect()
+        let up = false
+        for (let i = 0; i < 12 && mounted.current; i++) {
+          await sleep(500)
+          if (await probePort(port)) {
+            up = true
+            break
+          }
+        }
+        if (!up) {
+          if (mounted.current) toast.error(c.startFailed)
+          return
+        }
       }
-      await writeTextFile(paths.ccConnectConfig, `${serializeConfigDoc(doc)}\n`)
-      toast.success(c.webAdminEnabled)
+      await openUrl(dashboardUrl(port, token))
     } catch {
       if (mounted.current) toast.error(c.webAdminFailed)
     } finally {
@@ -249,7 +262,8 @@ export function CcConnectSection() {
     }
   }
 
-  const url = dashboardUrl(mgmtPort, mgmtToken)
+  // Shown in the hint without the token (localhost-only, but no need to leak it).
+  const url = dashboardUrl(mgmtPort)
 
   if (!isTauri()) {
     return (
@@ -376,36 +390,24 @@ export function CcConnectSection() {
               </Badge>
             ) : null}
           </div>
-          {detected === true && !mgmtEnabled ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1"
-              disabled={webBusy || dryRun || !paths}
-              onClick={() => void enableWebAdmin()}
-            >
-              {webBusy ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Wand2 className="size-3.5" />
-              )}
-              {c.enableWebAdmin}
-            </Button>
-          ) : null}
           <Button
             variant="outline"
             size="sm"
             className="gap-1"
-            disabled={!mgmtUp}
-            onClick={() => void openUrl(url)}
+            disabled={webBusy || dryRun || detected !== true || !paths}
+            onClick={() => void openDashboard()}
           >
-            <ExternalLink className="size-3.5" />
-            {c.openWeb}
+            {webBusy ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <ExternalLink className="size-3.5" />
+            )}
+            {mgmtEnabled ? c.openWeb : c.enableAndOpen}
           </Button>
         </div>
-        {!mgmtEnabled ? (
-          <p className="border-t pt-3 text-xs text-muted-foreground">{c.webAdminHint}</p>
-        ) : null}
+        <p className="border-t pt-3 text-xs text-muted-foreground">
+          {mgmtEnabled ? c.webReadyHint : c.webAdminHint}
+        </p>
       </Card>
 
       {/* Configuration */}

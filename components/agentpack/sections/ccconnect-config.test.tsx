@@ -61,6 +61,49 @@ it("loads the existing config and saves a form edit back through TOML", async ()
   expect(onSaved).toHaveBeenCalled()
 })
 
+it("toggles a boolean switch and edits a text field, then saves both", async () => {
+  ;(readTextFile as jest.Mock).mockResolvedValue("[management]\nport = 9820\n")
+  await openDialog(true)
+  await userEvent.click(await screen.findByLabelText(en.ccconnect.fields.quiet))
+  await userEvent.type(screen.getByLabelText(en.ccconnect.fields.dataDir), "/tmp/cc")
+  await userEvent.click(screen.getByRole("button", { name: en.ccconnect.save }))
+  await waitFor(() => expect(writeTextFile).toHaveBeenCalled())
+  const written = (writeTextFile as jest.Mock).mock.calls.at(-1)![1] as string
+  expect(written).toContain("quiet = true")
+  expect(written).toContain("/tmp/cc")
+})
+
+it("changes a select field and saves the chosen value", async () => {
+  ;(readTextFile as jest.Mock).mockResolvedValue("[management]\nport = 9820\n")
+  await openDialog(true)
+  await userEvent.click(await screen.findByLabelText(en.ccconnect.fields.logLevel))
+  await userEvent.click(await screen.findByRole("option", { name: "debug" }))
+  await userEvent.click(screen.getByRole("button", { name: en.ccconnect.save }))
+  await waitFor(() =>
+    expect(writeTextFile).toHaveBeenCalledWith(PATH, expect.stringContaining('level = "debug"'))
+  )
+})
+
+it("closes the editor with a toast when the config can't be read", async () => {
+  ;(readTextFile as jest.Mock).mockRejectedValue("io")
+  renderEditor(true)
+  await userEvent.click(screen.getByRole("button", { name: en.ccconnect.configEdit }))
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith(en.ccconnect.loadFailed))
+})
+
+it("edits CORS origins as a comma-separated list and writes them as an array", async () => {
+  ;(readTextFile as jest.Mock).mockResolvedValue('[management]\nenabled = true\ntoken = "x"\n')
+  await openDialog(true)
+  const cors = await screen.findByLabelText(en.ccconnect.fields.corsOrigins)
+  await userEvent.type(cors, "http://a.test, http://b.test")
+  await userEvent.click(screen.getByRole("button", { name: en.ccconnect.save }))
+  await waitFor(() => expect(writeTextFile).toHaveBeenCalled())
+  const written = (writeTextFile as jest.Mock).mock.calls.at(-1)![1] as string
+  expect(written).toContain("cors_origins")
+  expect(written).toContain("http://a.test")
+  expect(written).toContain("http://b.test")
+})
+
 it("refuses to save invalid TOML", async () => {
   ;(readTextFile as jest.Mock).mockResolvedValue("[management]\nport = 9820\n")
   await openDialog(true)

@@ -104,9 +104,13 @@ export interface ConfigField {
   path: string[]
   /** i18n label key under t.ccconnect.fields. */
   key: string
-  type: "string" | "number" | "boolean" | "select"
+  /**
+   * `string-list` edits a TOML array of strings (e.g. `cors_origins`) via a
+   * single comma/newline-separated text input.
+   */
+  type: "string" | "number" | "boolean" | "select" | "string-list"
   options?: string[]
-  /** Value written when the user enables a section that doesn't exist yet. */
+  /** Placeholder / example text shown in the empty input. */
   placeholder?: string
 }
 
@@ -154,11 +158,19 @@ export const CONFIG_SECTIONS: ConfigSection[] = [
       { path: ["language"], key: "language", type: "select", options: ["", "en", "zh"] },
       { path: ["data_dir"], key: "dataDir", type: "string" },
       {
+        path: ["shell"],
+        key: "shell",
+        type: "select",
+        options: ["", "sh", "bash", "zsh", "fish", "cmd", "powershell", "pwsh"],
+      },
+      { path: ["shell_profile"], key: "shellProfile", type: "string" },
+      {
         path: ["attachment_send"],
         key: "attachmentSend",
         type: "select",
         options: ["", "on", "off"],
       },
+      { path: ["max_attachment_size_mb"], key: "maxAttachmentSize", type: "number" },
       { path: ["quiet"], key: "quiet", type: "boolean" },
       {
         path: ["log", "level"],
@@ -174,6 +186,12 @@ export const CONFIG_SECTIONS: ConfigSection[] = [
       { path: ["management", "enabled"], key: "enabled", type: "boolean" },
       { path: ["management", "port"], key: "port", type: "number" },
       { path: ["management", "token"], key: "token", type: "string" },
+      {
+        path: ["management", "cors_origins"],
+        key: "corsOrigins",
+        type: "string-list",
+        placeholder: "*",
+      },
     ],
   },
   {
@@ -203,7 +221,7 @@ export const CONFIG_SECTIONS: ConfigSection[] = [
         path: ["speech", "provider"],
         key: "provider",
         type: "select",
-        options: ["openai", "groq"],
+        options: ["openai", "groq", "qwen"],
       },
       { path: ["speech", "language"], key: "speechLanguage", type: "string" },
       { path: ["speech", PROVIDER_TOKEN, "api_key"], key: "apiKey", type: "string" },
@@ -219,9 +237,11 @@ export const CONFIG_SECTIONS: ConfigSection[] = [
         path: ["tts", "provider"],
         key: "provider",
         type: "select",
-        options: ["qwen", "openai", "minimax", "edge"],
+        options: ["qwen", "openai", "minimax", "mimo", "edge", "espeak", "pico"],
       },
       { path: ["tts", "voice"], key: "voice", type: "string" },
+      { path: ["tts", "voice_id"], key: "voiceId", type: "string" },
+      { path: ["tts", "speed"], key: "speed", type: "number" },
       {
         path: ["tts", "tts_mode"],
         key: "ttsMode",
@@ -237,10 +257,48 @@ export const CONFIG_SECTIONS: ConfigSection[] = [
   {
     key: "display",
     fields: [
+      {
+        path: ["display", "mode"],
+        key: "displayMode",
+        type: "select",
+        options: ["", "full", "compact", "quiet"],
+      },
       { path: ["display", "thinking_messages"], key: "thinkingMessages", type: "boolean" },
       { path: ["display", "thinking_max_len"], key: "thinkingMaxLen", type: "number" },
       { path: ["display", "tool_messages"], key: "toolMessages", type: "boolean" },
       { path: ["display", "tool_max_len"], key: "toolMaxLen", type: "number" },
+      { path: ["display", "history_max_len"], key: "historyMaxLen", type: "number" },
+      { path: ["display", "show_context_indicator"], key: "showContextIndicator", type: "boolean" },
+      { path: ["display", "reply_footer"], key: "replyFooter", type: "boolean" },
+      { path: ["display", "hide_agent_footer"], key: "hideAgentFooter", type: "boolean" },
+    ],
+  },
+  {
+    key: "streamPreview",
+    fields: [
+      { path: ["stream_preview", "enabled"], key: "enabled", type: "boolean" },
+      { path: ["stream_preview", "interval_ms"], key: "intervalMs", type: "number" },
+      { path: ["stream_preview", "min_delta_chars"], key: "minDeltaChars", type: "number" },
+      { path: ["stream_preview", "max_chars"], key: "maxChars", type: "number" },
+    ],
+  },
+  {
+    key: "rateLimit",
+    fields: [
+      { path: ["rate_limit", "max_messages"], key: "maxMessages", type: "number" },
+      { path: ["rate_limit", "window_secs"], key: "windowSecs", type: "number" },
+    ],
+  },
+  {
+    key: "relay",
+    fields: [
+      { path: ["relay", "timeout_secs"], key: "relayTimeout", type: "number" },
+      {
+        path: ["relay", "visibility"],
+        key: "visibility",
+        type: "select",
+        options: ["", "full", "summary", "none"],
+      },
     ],
   },
   {
@@ -248,7 +306,13 @@ export const CONFIG_SECTIONS: ConfigSection[] = [
     fields: [
       { path: ["idle_timeout_mins"], key: "idleTimeout", type: "number" },
       { path: ["max_turn_time_mins"], key: "maxTurnTime", type: "number" },
+      { path: ["reset_on_idle_mins"], key: "resetOnIdle", type: "number" },
       { path: ["workspace_idle_timeout_mins"], key: "workspaceIdleTimeout", type: "number" },
+      {
+        path: ["agent_session_idle_timeout_mins"],
+        key: "agentSessionIdleTimeout",
+        type: "number",
+      },
     ],
   },
 ]
@@ -295,6 +359,43 @@ export function setConfigValue(doc: CcConnectDoc, path: string[], value: unknown
 }
 
 /**
+ * Ensure the management dashboard is turned on with a non-empty login token,
+ * returning the (possibly updated) doc, the token to open the dashboard with,
+ * and whether anything changed. `newToken` is consumed only when the config has
+ * no token yet, so opening never rotates a token out from under a running
+ * service. Mirrors cc-connect's own `EnableWebAdmin` (enabled + port + token +
+ * cors_origins) — and guaranteeing a token is what lets the dashboard open
+ * pre-authenticated instead of stopping at the SPA's login form.
+ */
+export function ensureWebAdmin(
+  doc: CcConnectDoc,
+  newToken: string
+): { doc: CcConnectDoc; token: string; changed: boolean } {
+  let next = doc
+  let changed = false
+  const set = (path: string[], value: unknown) => {
+    next = setConfigValue(next, path, value)
+    changed = true
+  }
+  if (getConfigValue(next, ["management", "enabled"]) !== true) {
+    set(["management", "enabled"], true)
+  }
+  if (!validPort(getConfigValue(next, ["management", "port"]))) {
+    set(["management", "port"], CC_CONNECT_MANAGEMENT_PORT)
+  }
+  const existing = getConfigValue(next, ["management", "token"])
+  let token = typeof existing === "string" && existing !== "" ? existing : ""
+  if (!token) {
+    token = newToken
+    set(["management", "token"], token)
+  }
+  if (getConfigValue(next, ["management", "cors_origins"]) === undefined) {
+    set(["management", "cors_origins"], ["*"])
+  }
+  return { doc: next, token, changed }
+}
+
+/**
  * Starter config written when the user creates config.toml from the GUI. It
  * turns the management dashboard on (the whole point of the GUI helper) so a
  * plain `Start` immediately serves the web UI on 9820; the bridge is left for
@@ -311,6 +412,9 @@ export function defaultConfigToml(): string {
     "[management]",
     "enabled = true",
     `port = ${CC_CONNECT_MANAGEMENT_PORT}`,
+    // A login token is injected by the GUI's Open dashboard action so the
+    // dashboard opens pre-authenticated; cors matches `cc-connect web`.
+    'cors_origins = ["*"]',
     "",
   ].join("\n")
 }
