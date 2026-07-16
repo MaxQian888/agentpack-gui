@@ -293,6 +293,45 @@ export const zhCN = {
     // 详情对话框
     detailConfigTitle: "各 agent 的配置",
     detailNotConfigured: "尚未在任何 agent 上配置。",
+    detailPresence: "已配置于",
+    detailRaw: "原始配置",
+    copy: "复制",
+    copied: "已复制",
+    fieldHeaders: "请求头",
+    fieldBearerEnv: "Bearer 令牌环境变量",
+    category: "分类",
+    // 健康检测 / 测试
+    test: "测试",
+    testAll: "全部测试",
+    testing: "测试中…",
+    healthOk: "正常",
+    healthFail: "失败",
+    healthUnknown: "未测试",
+    healthCmdOk: (cmd: string) => `已在 PATH 中找到 ${cmd}`,
+    healthCmdMissing: (cmd: string) => `PATH 中未找到 ${cmd}`,
+    healthHttpOk: (ms: number) => `可达 · ${ms} ms`,
+    healthHttpReachable: "可达",
+    healthHttpUnreachable: "端点不可达",
+    healthBadUrl: "服务器 URL 无效",
+    // 粘贴导入
+    importCardTitle: "从 JSON 或命令导入",
+    importCardHint: "粘贴 mcpServers 配置块、单条服务器对象，或一行 claude mcp add … 命令。",
+    importOpen: "粘贴并导入",
+    importDialogTitle: "导入 MCP 服务器",
+    importPlaceholder: '粘贴 JSON 或 "claude mcp add …" 命令…',
+    importParseError: "无法解析 —— 请粘贴有效的 JSON 或 claude mcp add … 命令。",
+    importUnsupported: "未在输入中找到任何 MCP 服务器。",
+    importFound: (n: number) => `待导入 ${n} 个服务器`,
+    importButton: (n: number) => `导入 ${n} 个`,
+    importSelectTargets: "导入到",
+    importCollision: "已存在 —— 导入将覆盖",
+    importDone: (n: number) => `已导入 ${n} 个服务器。`,
+    // 总览矩阵
+    tabMatrix: "总览",
+    matrixHint: "查看各服务器分别配置在哪个 CLI。点击单元格可添加或移除。",
+    matrixServer: "服务器",
+    copyToTarget: (target: string) => `复制到 ${target}`,
+    copyDone: (target: string) => `已复制到 ${target}。`,
   },
 
   mcpKeys: {
@@ -466,6 +505,30 @@ export const zhCN = {
         title: "Playwright",
         purpose: "浏览器自动化与 DOM 检查。",
       },
+      everything: {
+        title: "Everything（示例）",
+        purpose: "覆盖全部 MCP 能力的示例服务器，便于测试。",
+      },
+      puppeteer: {
+        title: "Puppeteer",
+        purpose: "无头 Chrome 浏览器自动化与抓取。",
+      },
+      gitlab: {
+        title: "GitLab",
+        purpose: "项目、议题、合并请求与仓库文件。",
+      },
+      "google-maps": {
+        title: "Google 地图",
+        purpose: "地理编码、地点、路线与距离。",
+      },
+      firecrawl: {
+        title: "Firecrawl",
+        purpose: "抓取网站并转换为干净的 Markdown。",
+      },
+      airtable: {
+        title: "Airtable",
+        purpose: "读写 Airtable 数据库与记录。",
+      },
     } as Record<string, { title: string; purpose: string }>,
     /** 安装方式标签，按注册表中的 method id 索引。 */
     methods: {
@@ -496,6 +559,11 @@ export const zhCN = {
     copySkill: (title: string, targets: string) => `复制技能 “${title}” → ${targets}`,
     installRepoSkills: (count: number, targets: string) =>
       `从仓库安装 ${count} 个技能 → ${targets}`,
+    updateSkill: (name: string, targets: string) => `更新技能 “${name}” → ${targets}`,
+    backupSkill: (name: string) => `删除前备份技能 “${name}”`,
+    createSkill: (name: string, targets: string) => `新建技能 “${name}” → ${targets}`,
+    editSkill: (name: string) => `保存技能 “${name}” 的修改`,
+    skillMdWritten: "已更新 SKILL.md",
     skillVisibility: (name: string, value: string) =>
       `设置技能 “${name}” 可见性 → ${value}（Claude Code）`,
     skillPermission: (name: string, value: string) =>
@@ -545,6 +613,7 @@ export const zhCN = {
     wouldRestore: (src: string, dest: string) => `将恢复 ${src} -> ${dest}`,
     snapshot: (id: string) => `已备份 → ${id}`,
     wouldSnapshot: "将备份 cc-switch 数据库与实际配置",
+    wouldBackupSkill: (path: string) => `将备份 ${path}`,
     skippedDependency: (label: string) => `已跳过 —— 依赖的步骤 “${label}” 失败了`,
     skippedCancelled: "已跳过 —— 运行已取消",
     notOnPathHint: (file: string) =>
@@ -676,6 +745,97 @@ export const zhCN = {
     pickFolder: "选择文件夹…",
     notASkillFolder: "所选文件夹中没有 SKILL.md。",
     importNow: "导入",
+
+    // --- 统计概览条 ---
+    statTotal: "总数",
+    statBundled: "内置",
+    statCustom: "自定义",
+    statManaged: "可更新",
+
+    // --- 在文件夹/外部打开 ---
+    revealInFolder: "在文件夹中显示",
+    openSkillMd: "打开 SKILL.md",
+
+    // --- 富详情 ---
+    invocationTitle: "调用方式",
+    invokeCommand: (cmd: string) => `输入 ${cmd}`,
+    invokeAuto: "Claude 可自动加载",
+    invokeManual: "仅手动调用",
+    invokeUserHidden: "不在 / 菜单显示",
+    whenToUseLabel: "何时使用",
+    argumentHintLabel: "参数",
+    allowedToolsLabel: "允许的工具",
+    modelLabel: "模型",
+    effortLabel: "思考强度",
+    pathsLabel: "路径范围",
+    costTitle: "上下文成本",
+    costLine: (bytes: number, lines: number, tokens: number) =>
+      `${bytes.toLocaleString()} B · ${lines} 行 · ~${tokens.toLocaleString()} tokens`,
+    filesTitle: "技能内文件",
+    filesLoading: "正在列出文件…",
+    filesEmpty: "仅有 SKILL.md。",
+    allFieldsTitle: "全部 frontmatter 字段",
+    sourceRepo: (repo: string) => `来自 ${repo}`,
+
+    // --- 应用内编辑 ---
+    edit: "编辑",
+    editSave: "保存",
+    editCancel: "取消",
+    editHint: "正在编辑 SKILL.md 原文，保存前会自动备份上一版本。",
+
+    // --- 更新/同步 ---
+    checkUpdates: "检查更新",
+    checking: "检查中…",
+    updateAll: (n: number) => `全部更新（${n}）`,
+    updateAvailable: "有更新",
+    update: "更新",
+    updatesFound: (n: number) => `有 ${n} 个可更新。`,
+    noUpdates: "所有受管技能均为最新。",
+    checkFailed: (msg: string) => `检查更新失败：${msg}`,
+
+    // --- 备份 ---
+    backups: "备份",
+    backupsTitle: "技能备份",
+    backupsSubtitle: "删除技能前会先在此保留备份。",
+    backupsEmpty: "暂无备份。",
+    backupsLoading: "正在加载备份…",
+    backupName: "技能",
+    backupSource: "来源",
+    backupCreated: "备份时间",
+    backupSize: "大小",
+    restore: "恢复",
+    restoreInto: "恢复到",
+    restored: (n: number) => `已恢复到 ${n} 个目标。`,
+    deleteBackup: "删除",
+    deleteBackupConfirm: (name: string) => `删除“${name}”的备份？`,
+    deleteBackupBody: "这将永久移除该备份。",
+    backupDeleted: "备份已删除。",
+    backupActionFailed: (msg: string) => `失败：${msg}`,
+
+    // --- 新建技能 ---
+    createTitle: "新建技能",
+    createHint: "在所选 agent 中生成一个新的 SKILL.md。",
+    nameLabel: "名称",
+    nameHint: "将作为目录名与 /命令名。",
+    descriptionLabel: "描述",
+    descriptionPlaceholder: "它做什么、何时使用",
+    templateLabel: "模板",
+    templateBlank: "空白",
+    templateReference: "参考型（知识）",
+    templateTask: "任务型（步骤）",
+    createNow: "创建技能",
+    nameInvalid: "只能使用字母、数字和连字符，不能有空格或斜杠。",
+
+    // --- 收藏仓库源（市场） ---
+    reposTitle: "技能仓库源",
+    reposHint: "保存常用 GitHub 仓库，随时浏览与安装。",
+    reposEmpty: "暂无已保存的仓库。",
+    repoUrlPlaceholder: "添加仓库：owner/repo",
+    repoLabelPlaceholder: "标签（可选）",
+    addRepo: "保存",
+    browse: "浏览",
+    removeRepo: "移除",
+    recommendedTitle: "推荐",
   },
 
   ccswitch: {

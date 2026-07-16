@@ -1,12 +1,18 @@
 "use client"
 
 import { useState } from "react"
-import { Check, Eye, EyeOff, Plus } from "lucide-react"
+import { Check, Copy, Eye, EyeOff, Plus } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import { MCP_REGISTRY_IDS } from "@/lib/agentpack/scan"
-import type { McpSpec } from "@/lib/agentpack/merge/mcp"
+import {
+  buildCodexMcpEntryFromSpec,
+  buildOpencodeMcpEntryFromSpec,
+  mergeCodexMcp,
+  mergeOpencodeMcp,
+  type McpSpec,
+} from "@/lib/agentpack/merge/mcp"
 import type { McpTarget } from "@/lib/agentpack/types"
 import type { ClassifiedIds } from "@/lib/agentpack/scan"
 import type { DashboardScan } from "../dashboard"
@@ -76,6 +82,112 @@ export function describeSpec(spec: McpSpec): string[] {
   const lines = [`command: ${[spec.command, ...spec.args].join(" ")}`]
   for (const k of Object.keys(spec.env)) lines.push(`env: ${k}=••••••`)
   return lines
+}
+
+/** One labelled row of a spec for the structured detail viewer. */
+export interface SpecField {
+  label: string
+  /** The real value (copied verbatim); rendered masked when `secret`. */
+  value: string
+  mono?: boolean
+  secret?: boolean
+}
+
+/** Field labels the detail viewer passes in (kept out of this pure helper). */
+export interface SpecFieldLabels {
+  command: string
+  url: string
+  env: string
+  headers: string
+  bearerEnv: string
+}
+
+/**
+ * Break a resolved spec into labelled fields for the structured viewer — the
+ * command line + each env var (stdio), or the url + each header + bearer env var
+ * (http). Secret-bearing values (env values, header values) are flagged so the
+ * view masks them while a copy button still yields the real value.
+ */
+export function specFields(spec: McpSpec, labels: SpecFieldLabels): SpecField[] {
+  if (spec.transport === "http") {
+    const out: SpecField[] = [{ label: labels.url, value: spec.url, mono: true }]
+    for (const [k, v] of Object.entries(spec.headers))
+      out.push({ label: `${labels.headers}: ${k}`, value: v, mono: true, secret: true })
+    if (spec.bearerTokenEnvVar)
+      out.push({ label: labels.bearerEnv, value: spec.bearerTokenEnvVar, mono: true })
+    return out
+  }
+  const out: SpecField[] = [
+    { label: labels.command, value: [spec.command, ...spec.args].join(" "), mono: true },
+  ]
+  for (const [k, v] of Object.entries(spec.env))
+    out.push({ label: `${labels.env}: ${k}`, value: v, mono: true, secret: true })
+  return out
+}
+
+const MASK = "••••••"
+
+/** A copy of a spec with every secret value replaced by a mask (keys kept). */
+function maskSpec(spec: McpSpec): McpSpec {
+  if (spec.transport === "http") {
+    const headers: Record<string, string> = {}
+    for (const k of Object.keys(spec.headers)) headers[k] = MASK
+    return { ...spec, headers }
+  }
+  const env: Record<string, string> = {}
+  for (const k of Object.keys(spec.env)) env[k] = MASK
+  return { ...spec, env }
+}
+
+/**
+ * Render one server's on-disk entry as the exact text that target writes, with
+ * secrets masked — so the viewer can show the real per-target file shape (Codex
+ * TOML, OpenCode / Claude JSON) rather than a lossy summary. Pure + unit-testable.
+ */
+export function rawConfigText(id: string, spec: McpSpec, target: McpTarget): string {
+  const masked = maskSpec(spec)
+  if (target === "codex") return mergeCodexMcp("", id, buildCodexMcpEntryFromSpec(masked)).trim()
+  if (target === "opencode")
+    return mergeOpencodeMcp("", id, buildOpencodeMcpEntryFromSpec(masked)).trim()
+  // Claude ~/.claude.json `mcpServers.<id>` object.
+  const entry =
+    masked.transport === "http"
+      ? {
+          url: masked.url,
+          ...(Object.keys(masked.headers).length ? { headers: masked.headers } : {}),
+        }
+      : {
+          command: masked.command,
+          args: masked.args,
+          ...(Object.keys(masked.env).length ? { env: masked.env } : {}),
+        }
+  return JSON.stringify({ mcpServers: { [id]: entry } }, null, 2)
+}
+
+/** Copy `value` to the clipboard (the user's own machine → unmasked). */
+export function CopyButton({ value, ariaLabel }: { value: string; ariaLabel?: string }) {
+  const t = useT().mcp
+  const [done, setDone] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard?.writeText(value)
+      setDone(true)
+      setTimeout(() => setDone(false), 1500)
+    } catch {
+      // Clipboard unavailable (e.g. denied) — silently ignore.
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      title={done ? t.copied : t.copy}
+      aria-label={ariaLabel ?? t.copy}
+      className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
+    >
+      {done ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+    </button>
+  )
 }
 
 /** A colored (present) / hollow (absent) target dot. */

@@ -499,6 +499,8 @@ export function skillRepoInstallStep(
   skills: { relPath: string; dirName: string }[],
   targets: string[],
   dests: string[],
+  repo: string,
+  ref: string,
   messages: Messages = en
 ): StepDescriptor {
   return {
@@ -509,6 +511,83 @@ export function skillRepoInstallStep(
     skills,
     targets,
     dests,
+    repo,
+    ref,
+  }
+}
+
+/** Re-sync a managed skill from its origin repo into each of its sources. */
+export function skillUpdateStep(
+  dirName: string,
+  path: string,
+  targets: string[],
+  dests: string[],
+  mirrorPrefix: string | null,
+  messages: Messages = en
+): StepDescriptor {
+  return {
+    kind: "skillUpdate",
+    id: `skill-update-${dirName}`,
+    label: messages.steps.updateSkill(dirName, targets.join(", ")),
+    path,
+    dirName,
+    targets,
+    dests,
+    mirrorPrefix,
+  }
+}
+
+/** Back up a skill's directory before it is deleted. */
+export function skillBackupStep(
+  dirName: string,
+  path: string,
+  messages: Messages = en
+): StepDescriptor {
+  return {
+    kind: "skillBackup",
+    id: `skill-backup-${dirName}`,
+    label: messages.steps.backupSkill(dirName),
+    path,
+    dirName,
+  }
+}
+
+/** Create a new hand-authored skill (`<root>/<name>/SKILL.md`) in each target. */
+export function skillCreateStep(
+  name: string,
+  targets: string[],
+  content: string,
+  dests: string[],
+  messages: Messages = en
+): StepDescriptor {
+  return {
+    kind: "skillCreate",
+    id: `skill-create-${name}`,
+    label: messages.steps.createSkill(name, targets.join(", ")),
+    name,
+    targets,
+    content,
+    dests,
+  }
+}
+
+/**
+ * Overwrite a skill's SKILL.md with edited content. Rides the mergeFile
+ * machinery (backup-on-first-touch, atomic write, dry-run preview).
+ */
+export function skillEditStep(
+  dirName: string,
+  skillMdPath: string,
+  content: string,
+  messages: Messages = en
+): StepDescriptor {
+  return {
+    kind: "mergeFile",
+    id: `skill-edit-${dirName}`,
+    label: messages.steps.editSkill(dirName),
+    path: skillMdPath,
+    merge: () => content,
+    writtenNote: messages.steps.skillMdWritten,
   }
 }
 

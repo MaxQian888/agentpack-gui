@@ -9,6 +9,7 @@ import type { Message, Part, SessionDetail } from "@/lib/history/types"
 import { formatTokens } from "@/lib/history/format"
 import { modelColor } from "@/lib/history/display"
 import { useIncremental } from "@/hooks/use-incremental"
+import { CodeHighlight } from "@/components/agentpack/code-highlight"
 import { MarkdownView } from "./markdown-view"
 
 /** A collapsible section built on native <details> — no state, fully testable. */
@@ -37,11 +38,11 @@ function Foldable({
   )
 }
 
-/** Monospace block for tool inputs / outputs, scrollable when long. */
-function CodeBlock({ text }: { text: string }) {
+/** Monospace block for tool inputs / outputs / patches, scrollable when long. */
+function CodeBlock({ text, lang }: { text: string; lang?: string }) {
   return (
     <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-xs text-foreground/90">
-      {text}
+      {lang ? <CodeHighlight code={text} lang={lang} /> : text}
     </pre>
   )
 }
@@ -96,7 +97,7 @@ function PartView({ part }: { part: Part }) {
     case "patch":
       return (
         <Foldable label={t.patch} icon={<FileDiff className="size-3.5" />}>
-          <CodeBlock text={part.text} />
+          <CodeBlock text={part.text} lang="diff" />
         </Foldable>
       )
     case "image":

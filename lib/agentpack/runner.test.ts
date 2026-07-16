@@ -482,10 +482,18 @@ it("skillRepoInstall installs the picked rel paths into the targets", async () =
       skills: [{ relPath: "skills/web-design", dirName: "web-design" }],
       targets: ["claude"],
       dests: ["/h/.claude/skills/web-design"],
+      repo: "owner/repo",
+      ref: "HEAD",
     },
   ]
   const reports = await runSteps(steps, { dryRun: false, paths })
-  expect(api.installRepoSkills).toHaveBeenCalledWith("scan-1", ["skills/web-design"], ["claude"])
+  expect(api.installRepoSkills).toHaveBeenCalledWith(
+    "scan-1",
+    ["skills/web-design"],
+    ["claude"],
+    "owner/repo",
+    "HEAD"
+  )
   expect(reports[0].output.join("\n")).toContain("/h/.claude/skills/web-design")
 })
 
@@ -508,6 +516,8 @@ it("dry-run of the new skill kinds renders previews and calls no mutating comman
       skills: [{ relPath: "x", dirName: "x" }],
       targets: ["claude"],
       dests: ["/h/.claude/skills/x"],
+      repo: "owner/repo",
+      ref: "HEAD",
     },
   ]
   const reports = await runSteps(steps, { dryRun: true, paths })
@@ -515,4 +525,79 @@ it("dry-run of the new skill kinds renders previews and calls no mutating comman
   expect(api.installRepoSkills).not.toHaveBeenCalled()
   expect(reports[0].output.join("\n")).toContain("would copy /src -> /h/.codex/skills/x")
   expect(reports[1].output.join("\n")).toContain("/h/.claude/skills/x")
+})
+
+it("skillUpdate re-syncs from the origin path into its targets", async () => {
+  ;(api.updateSkill as jest.Mock).mockResolvedValue(["/h/.claude/skills/web"])
+  const steps: StepDescriptor[] = [
+    {
+      kind: "skillUpdate",
+      id: "u",
+      label: "u",
+      path: "/h/.claude/skills/web",
+      dirName: "web",
+      targets: ["claude"],
+      dests: ["/h/.claude/skills/web"],
+      mirrorPrefix: null,
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(api.updateSkill).toHaveBeenCalledWith("/h/.claude/skills/web", ["claude"], null)
+  expect(reports[0].status).toBe("done")
+  expect(reports[0].output.join("\n")).toContain("/h/.claude/skills/web")
+})
+
+it("skillBackup copies the skill into the backup store", async () => {
+  ;(api.backupSkill as jest.Mock).mockResolvedValue({
+    id: "web-1",
+    name: "web",
+    dirName: "web",
+    source: "claude",
+    bytes: 10,
+    createdAt: 1,
+  })
+  const steps: StepDescriptor[] = [
+    { kind: "skillBackup", id: "b", label: "b", path: "/h/.claude/skills/web", dirName: "web" },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(api.backupSkill).toHaveBeenCalledWith("/h/.claude/skills/web")
+  expect(reports[0].status).toBe("done")
+})
+
+it("skillBackup failure skips a dependent remove step", async () => {
+  ;(api.backupSkill as jest.Mock).mockRejectedValue(new Error("no space"))
+  const steps: StepDescriptor[] = [
+    { kind: "skillBackup", id: "b", label: "b", path: "/h/.claude/skills/web", dirName: "web" },
+    {
+      kind: "skillRemove",
+      id: "rm",
+      label: "rm",
+      skillId: "web",
+      targets: ["claude"],
+      dests: ["/h/.claude/skills/web"],
+      dependsOn: ["b"],
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(reports[0].status).toBe("error")
+  expect(reports[1].status).toBe("skipped")
+  expect(api.removeDir).not.toHaveBeenCalled()
+})
+
+it("skillCreate writes the new skill into each target", async () => {
+  ;(api.createSkill as jest.Mock).mockResolvedValue(["/h/.claude/skills/web"])
+  const steps: StepDescriptor[] = [
+    {
+      kind: "skillCreate",
+      id: "c",
+      label: "c",
+      name: "web",
+      targets: ["claude"],
+      content: "---\nname: web\n---\n",
+      dests: ["/h/.claude/skills/web"],
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(api.createSkill).toHaveBeenCalledWith("web", ["claude"], "---\nname: web\n---\n")
+  expect(reports[0].status).toBe("done")
 })

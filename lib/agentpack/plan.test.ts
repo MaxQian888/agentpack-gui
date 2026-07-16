@@ -14,6 +14,10 @@ import {
   skillRemoveStep,
   skillCopyStep,
   skillRepoInstallStep,
+  skillUpdateStep,
+  skillBackupStep,
+  skillCreateStep,
+  skillEditStep,
   skillVisibilityStep,
   skillPermissionStep,
   snapshotStep,
@@ -606,11 +610,51 @@ describe("skills browser step builders", () => {
         { relPath: "skills/b", dirName: "b" },
       ],
       ["claude", "codex"],
-      ["/h/.claude/skills/a", "/h/.codex/skills/a", "/h/.claude/skills/b", "/h/.codex/skills/b"]
+      ["/h/.claude/skills/a", "/h/.codex/skills/a", "/h/.claude/skills/b", "/h/.codex/skills/b"],
+      "owner/repo",
+      "HEAD"
     )
     expect(step.kind).toBe("skillRepoInstall")
+    expect(step.kind === "skillRepoInstall" && step.repo).toBe("owner/repo")
     expect(step.label).toContain("2")
     expect(step.kind === "skillRepoInstall" && step.skills).toHaveLength(2)
+  })
+
+  it("skillUpdateStep carries the path, targets, dests and mirror prefix", () => {
+    const step = skillUpdateStep(
+      "caveman",
+      "/h/.claude/skills/caveman",
+      ["claude", "codex"],
+      ["/h/.claude/skills/caveman", "/h/.codex/skills/caveman"],
+      "https://gh-proxy.com/"
+    )
+    expect(step.kind).toBe("skillUpdate")
+    expect(step.label).toContain("caveman")
+    expect(step.kind === "skillUpdate" && step.mirrorPrefix).toBe("https://gh-proxy.com/")
+    expect(step.kind === "skillUpdate" && step.dests).toHaveLength(2)
+  })
+
+  it("skillBackupStep points at the skill path", () => {
+    const step = skillBackupStep("caveman", "/h/.claude/skills/caveman")
+    expect(step.kind).toBe("skillBackup")
+    expect(step.kind === "skillBackup" && step.path).toBe("/h/.claude/skills/caveman")
+    expect(step.label).toContain("caveman")
+  })
+
+  it("skillCreateStep carries name, content and dests", () => {
+    const step = skillCreateStep("my-skill", ["claude"], "---\nname: my-skill\n---\n", [
+      "/h/.claude/skills/my-skill",
+    ])
+    expect(step.kind).toBe("skillCreate")
+    expect(step.kind === "skillCreate" && step.content).toContain("my-skill")
+    expect(step.kind === "skillCreate" && step.dests).toEqual(["/h/.claude/skills/my-skill"])
+  })
+
+  it("skillEditStep rides mergeFile and overwrites SKILL.md", () => {
+    const step = skillEditStep("caveman", "/h/.claude/skills/caveman/SKILL.md", "new body")
+    expect(step.kind).toBe("mergeFile")
+    expect(step.kind === "mergeFile" && step.path).toBe("/h/.claude/skills/caveman/SKILL.md")
+    expect(step.kind === "mergeFile" && step.merge("old")).toBe("new body")
   })
 
   it("skillVisibilityStep merges skillOverrides into claude settings.json", () => {

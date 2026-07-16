@@ -15,9 +15,12 @@ describe("MarkdownView", () => {
     expect(link.href).toBe("https://a.dev/")
   })
 
-  it("renders a fenced code block", () => {
-    render(<MarkdownView text={"```ts\nconst x = 1\n```"} />)
-    expect(screen.getByText("const x = 1")).toBeInTheDocument()
+  it("renders a fenced code block with syntax highlighting", () => {
+    const { container } = render(<MarkdownView text={"```ts\nconst x = 1\n```"} />)
+    // The whole line is preserved (across token spans)...
+    expect(container.querySelector("pre")).toHaveTextContent("const x = 1")
+    // ...and the language keyword is colored.
+    expect(screen.getByText("const")).toHaveClass("text-violet-600")
   })
 
   it("renders ordered and unordered lists and a blockquote", () => {

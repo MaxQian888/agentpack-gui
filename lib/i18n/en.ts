@@ -306,6 +306,46 @@ export const en = {
     // Detail dialog
     detailConfigTitle: "Configuration by agent",
     detailNotConfigured: "Not configured on any agent yet.",
+    detailPresence: "Configured on",
+    detailRaw: "Raw config",
+    copy: "Copy",
+    copied: "Copied",
+    fieldHeaders: "Headers",
+    fieldBearerEnv: "Bearer token env var",
+    category: "Category",
+    // Health check / test
+    test: "Test",
+    testAll: "Test all",
+    testing: "Testing…",
+    healthOk: "OK",
+    healthFail: "Failed",
+    healthUnknown: "Not tested",
+    healthCmdOk: (cmd: string) => `${cmd} found on PATH`,
+    healthCmdMissing: (cmd: string) => `${cmd} not found on PATH`,
+    healthHttpOk: (ms: number) => `Reachable · ${ms} ms`,
+    healthHttpReachable: "Reachable",
+    healthHttpUnreachable: "Endpoint unreachable",
+    healthBadUrl: "Invalid server URL",
+    // Import from paste
+    importCardTitle: "Import from JSON or a command",
+    importCardHint:
+      "Paste an mcpServers block, a single server object, or a claude mcp add … line.",
+    importOpen: "Paste & import",
+    importDialogTitle: "Import MCP servers",
+    importPlaceholder: 'Paste JSON or a "claude mcp add …" command…',
+    importParseError: "Couldn't parse — paste valid JSON or a claude mcp add … command.",
+    importUnsupported: "No MCP servers found in that input.",
+    importFound: (n: number) => `${n} server${n === 1 ? "" : "s"} to import`,
+    importButton: (n: number) => `Import ${n}`,
+    importSelectTargets: "Import into",
+    importCollision: "already configured — importing overwrites it",
+    importDone: (n: number) => `Imported ${n} server${n === 1 ? "" : "s"}.`,
+    // Overview matrix
+    tabMatrix: "Overview",
+    matrixHint: "Which servers are configured on which CLI. Click a cell to add or remove.",
+    matrixServer: "Server",
+    copyToTarget: (target: string) => `Copy to ${target}`,
+    copyDone: (target: string) => `Copied to ${target}.`,
   },
 
   mcpKeys: {
@@ -484,6 +524,30 @@ export const en = {
         title: "Playwright",
         purpose: "Browser automation & DOM inspection.",
       },
+      everything: {
+        title: "Everything (reference)",
+        purpose: "Reference server exercising every MCP feature — handy for testing.",
+      },
+      puppeteer: {
+        title: "Puppeteer",
+        purpose: "Headless-Chrome browser automation & scraping.",
+      },
+      gitlab: {
+        title: "GitLab",
+        purpose: "Projects, issues, merge requests & repo files.",
+      },
+      "google-maps": {
+        title: "Google Maps",
+        purpose: "Geocoding, places, directions & distance.",
+      },
+      firecrawl: {
+        title: "Firecrawl",
+        purpose: "Crawl & scrape websites into clean markdown.",
+      },
+      airtable: {
+        title: "Airtable",
+        purpose: "Read & write Airtable bases and records.",
+      },
     } as Record<string, { title: string; purpose: string }>,
     /** Install-method labels, keyed by the method id in the registry. */
     methods: {
@@ -521,6 +585,11 @@ export const en = {
     copySkill: (title: string, targets: string) => `Copy skill "${title}" → ${targets}`,
     installRepoSkills: (count: number, targets: string) =>
       `Install ${count} skill${count === 1 ? "" : "s"} from repo → ${targets}`,
+    updateSkill: (name: string, targets: string) => `Update skill "${name}" → ${targets}`,
+    backupSkill: (name: string) => `Back up skill "${name}" before delete`,
+    createSkill: (name: string, targets: string) => `Create skill "${name}" → ${targets}`,
+    editSkill: (name: string) => `Save edits to skill "${name}"`,
+    skillMdWritten: "updated SKILL.md",
     skillVisibility: (name: string, value: string) =>
       `Set skill "${name}" visibility → ${value} (Claude Code)`,
     skillPermission: (name: string, value: string) =>
@@ -571,6 +640,7 @@ export const en = {
     wouldRestore: (src: string, dest: string) => `would restore ${src} -> ${dest}`,
     snapshot: (id: string) => `backed up → ${id}`,
     wouldSnapshot: "would back up cc-switch DB and live configs",
+    wouldBackupSkill: (path: string) => `would back up ${path}`,
     skippedDependency: (label: string) => `skipped — required step "${label}" failed`,
     skippedCancelled: "skipped — run cancelled",
     notOnPathHint: (file: string) =>
@@ -706,6 +776,97 @@ export const en = {
     pickFolder: "Choose folder…",
     notASkillFolder: "The selected folder has no SKILL.md.",
     importNow: "Import",
+
+    // --- Stats overview strip ---
+    statTotal: "Total",
+    statBundled: "Bundled",
+    statCustom: "Custom",
+    statManaged: "Managed",
+
+    // --- Reveal / open externally ---
+    revealInFolder: "Reveal in folder",
+    openSkillMd: "Open SKILL.md",
+
+    // --- Rich detail view ---
+    invocationTitle: "Invocation",
+    invokeCommand: (cmd: string) => `Type ${cmd}`,
+    invokeAuto: "Claude can auto-load",
+    invokeManual: "Manual only",
+    invokeUserHidden: "Hidden from / menu",
+    whenToUseLabel: "When to use",
+    argumentHintLabel: "Arguments",
+    allowedToolsLabel: "Allowed tools",
+    modelLabel: "Model",
+    effortLabel: "Effort",
+    pathsLabel: "Path scope",
+    costTitle: "Context cost",
+    costLine: (bytes: number, lines: number, tokens: number) =>
+      `${bytes.toLocaleString()} B · ${lines} lines · ~${tokens.toLocaleString()} tokens`,
+    filesTitle: "Files in this skill",
+    filesLoading: "Listing files…",
+    filesEmpty: "Only SKILL.md.",
+    allFieldsTitle: "All frontmatter fields",
+    sourceRepo: (repo: string) => `from ${repo}`,
+
+    // --- In-app edit ---
+    edit: "Edit",
+    editSave: "Save",
+    editCancel: "Cancel",
+    editHint: "Editing the raw SKILL.md. Saving backs up the previous version.",
+
+    // --- Update / sync ---
+    checkUpdates: "Check updates",
+    checking: "Checking…",
+    updateAll: (n: number) => `Update all (${n})`,
+    updateAvailable: "Update available",
+    update: "Update",
+    updatesFound: (n: number) => `${n} update${n === 1 ? "" : "s"} available.`,
+    noUpdates: "All managed skills are up to date.",
+    checkFailed: (msg: string) => `Update check failed: ${msg}`,
+
+    // --- Backups ---
+    backups: "Backups",
+    backupsTitle: "Skill backups",
+    backupsSubtitle: "Deleting a skill keeps a backup here first.",
+    backupsEmpty: "No backups yet.",
+    backupsLoading: "Loading backups…",
+    backupName: "Skill",
+    backupSource: "From",
+    backupCreated: "Backed up",
+    backupSize: "Size",
+    restore: "Restore",
+    restoreInto: "Restore into",
+    restored: (n: number) => `Restored into ${n} target${n === 1 ? "" : "s"}.`,
+    deleteBackup: "Delete",
+    deleteBackupConfirm: (name: string) => `Delete backup of "${name}"?`,
+    deleteBackupBody: "This permanently removes the backup.",
+    backupDeleted: "Backup deleted.",
+    backupActionFailed: (msg: string) => `Failed: ${msg}`,
+
+    // --- Create a skill ---
+    createTitle: "Create a skill",
+    createHint: "Scaffold a new SKILL.md in the chosen agents.",
+    nameLabel: "Name",
+    nameHint: "Becomes the folder and the /command.",
+    descriptionLabel: "Description",
+    descriptionPlaceholder: "What it does and when to use it",
+    templateLabel: "Template",
+    templateBlank: "Blank",
+    templateReference: "Reference (knowledge)",
+    templateTask: "Task (steps)",
+    createNow: "Create skill",
+    nameInvalid: "Use letters, numbers and dashes — no spaces or slashes.",
+
+    // --- Saved repo sources (marketplace) ---
+    reposTitle: "Skill repositories",
+    reposHint: "Save GitHub repos to browse and install from.",
+    reposEmpty: "No saved repositories yet.",
+    repoUrlPlaceholder: "Add a repo: owner/repo",
+    repoLabelPlaceholder: "Label (optional)",
+    addRepo: "Save",
+    browse: "Browse",
+    removeRepo: "Remove",
+    recommendedTitle: "Recommended",
   },
 
   /** cc-switch management screens. */

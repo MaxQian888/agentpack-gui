@@ -2,7 +2,14 @@ import { invoke, Channel } from "@tauri-apps/api/core"
 import type { AgentTarget, Command, Paths } from "@/lib/agentpack/types"
 import type { Provider, ProviderApp } from "@/lib/agentpack/ccswitch/types"
 import type { HistorySource, ListResult, SessionDetail } from "@/lib/history/types"
-import type { RepoScan, SkillsScanResult } from "@/lib/skills/types"
+import type {
+  RepoScan,
+  SkillBackup,
+  SkillFile,
+  SkillsScanResult,
+  SkillUpdateResult,
+} from "@/lib/skills/types"
+import type { UpdateQuery } from "@/lib/skills/updates"
 
 // Typed wrappers around the custom Rust commands (src-tauri/src/*.rs). Keep this
 // file as the SOLE caller of `invoke` for agentpack — UI/runner import these.
@@ -117,6 +124,21 @@ export const stopCcConnect = (ports: number[]) => invoke<void>("stop_cc_connect"
 /** Whether something listens on 127.0.0.1:port (service liveness probe). */
 export const probePort = (port: number) => invoke<boolean>("probe_port", { port })
 
+/** Whether a command resolves on PATH — the stdio half of the MCP health check. */
+export const commandOnPath = (command: string) => invoke<boolean>("command_on_path", { command })
+
+/**
+ * TCP-reachability + connect latency for an arbitrary host:port — the http half
+ * of the MCP health check. Returns `{ reachable, latencyMs }`; an unresolvable or
+ * refused endpoint resolves to `reachable: false` rather than rejecting.
+ */
+export const probeHost = (host: string, port: number, timeoutMs?: number) =>
+  invoke<{ reachable: boolean; latencyMs: number | null }>("probe_host", {
+    host,
+    port,
+    timeoutMs: timeoutMs ?? null,
+  })
+
 export const readTextFile = (path: string) => invoke<string>("read_text_file", { path })
 
 export const writeTextFile = (path: string, content: string) =>
@@ -142,12 +164,52 @@ export const installSkillFromDir = (src: string, dirName: string, targets: strin
 /** Download a GitHub repo tarball and list the skills it contains (read-only). */
 export const fetchRepoSkills = (url: string) => invoke<RepoScan>("fetch_repo_skills", { url })
 
-/** Install previously fetched repo skills (by rel path) into each target root. */
-export const installRepoSkills = (scanId: string, relPaths: string[], targets: string[]) =>
-  invoke<string[]>("install_repo_skills", { scanId, relPaths, targets })
+/**
+ * Install previously fetched repo skills (by rel path) into each target root.
+ * `repo`/`ref` are recorded as provenance (`.agentpack-origin.json`) so the skill
+ * can later be update-checked and re-synced.
+ */
+export const installRepoSkills = (
+  scanId: string,
+  relPaths: string[],
+  targets: string[],
+  repo: string,
+  ref: string
+) => invoke<string[]>("install_repo_skills", { scanId, relPaths, targets, repo, gitRef: ref })
 
 /** Delete a repo scan's temp dir (also swept automatically after 24h). */
 export const cleanupRepoScan = (scanId: string) => invoke<void>("cleanup_repo_scan", { scanId })
+
+/** List the files inside a skill directory (read-only; dotfiles skipped). */
+export const listSkillFiles = (path: string) => invoke<SkillFile[]>("list_skill_files", { path })
+
+/**
+ * Re-fetch each managed skill's repo and report whether its content changed
+ * since install (by content hash). `mirrorPrefix` mirrors GitHub downloads.
+ */
+export const checkRepoUpdates = (entries: UpdateQuery[], mirrorPrefix: string | null) =>
+  invoke<SkillUpdateResult[]>("check_repo_updates", { entries, mirrorPrefix })
+
+/** Re-sync a managed skill from its origin repo into each target root. */
+export const updateSkill = (path: string, targets: string[], mirrorPrefix: string | null) =>
+  invoke<string[]>("update_skill", { path, targets, mirrorPrefix })
+
+/** Back up a skill's directory before deletion; returns the backup metadata. */
+export const backupSkill = (path: string) => invoke<SkillBackup>("backup_skill", { path })
+
+/** List kept skill backups, newest first. */
+export const listSkillBackups = () => invoke<SkillBackup[]>("list_skill_backups")
+
+/** Restore a backed-up skill into each target root. */
+export const restoreSkillBackup = (id: string, targets: string[]) =>
+  invoke<string[]>("restore_skill_backup", { id, targets })
+
+/** Permanently delete a skill backup. */
+export const deleteSkillBackup = (id: string) => invoke<void>("delete_skill_backup", { id })
+
+/** Create a new hand-authored skill (`<root>/<name>/SKILL.md`); refuses overwrite. */
+export const createSkill = (name: string, targets: string[], content: string) =>
+  invoke<string[]>("create_skill", { name, targets, content })
 
 export const ccLoadProviders = () => invoke<Provider[]>("cc_load_providers")
 

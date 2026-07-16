@@ -137,6 +137,48 @@ it("skillRepoInstall preview renders precomputed dests without touching the scan
     skills: [{ relPath: "skills/web", dirName: "web" }],
     targets: ["claude"],
     dests: ["/h/.claude/skills/web"],
+    repo: "owner/repo",
+    ref: "HEAD",
   }
   expect(previewLines(s, paths)).toEqual(["would copy scan-1 -> /h/.claude/skills/web"])
+})
+
+it("skillUpdate preview renders precomputed dests from the origin path", () => {
+  const s: StepDescriptor = {
+    kind: "skillUpdate",
+    id: "u",
+    label: "u",
+    path: "/h/.claude/skills/web",
+    dirName: "web",
+    targets: ["claude"],
+    dests: ["/h/.claude/skills/web"],
+    mirrorPrefix: null,
+  }
+  expect(previewLines(s, paths)).toEqual([
+    "would copy /h/.claude/skills/web -> /h/.claude/skills/web",
+  ])
+})
+
+it("skillBackup preview announces the backup without touching disk", () => {
+  const s: StepDescriptor = {
+    kind: "skillBackup",
+    id: "b",
+    label: "b",
+    path: "/h/.claude/skills/web",
+    dirName: "web",
+  }
+  expect(previewLines(s, paths)).toEqual(["would back up /h/.claude/skills/web"])
+})
+
+it("skillCreate preview lists the SKILL.md dests it would write", () => {
+  const s: StepDescriptor = {
+    kind: "skillCreate",
+    id: "c",
+    label: "c",
+    name: "web",
+    targets: ["claude"],
+    content: "---\nname: web\n---\n",
+    dests: ["/h/.claude/skills/web"],
+  }
+  expect(previewLines(s, paths)).toEqual(["would write /h/.claude/skills/web"])
 })

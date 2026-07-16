@@ -256,17 +256,14 @@ function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((x): x is string => typeof x === "string") : []
 }
 
-/** Read a Claude `~/.claude.json` `mcpServers.<id>` entry into an `McpSpec`. */
-export function parseClaudeMcpEntry(json: string, id: string): McpSpec | undefined {
-  let data: Record<string, unknown> | undefined
-  try {
-    data = asRecord(JSON.parse(json))
-  } catch {
-    return undefined
-  }
-  const entry = asRecord(data?.["mcpServers"])?.[id]
-  const rec = asRecord(entry)
-  if (!rec) return undefined
+/**
+ * Read a loose "standard" MCP entry record (the Claude / Cursor / VS Code
+ * `mcpServers.<id>` shape: `{ command, args, env }` or `{ url, headers }`) into an
+ * `McpSpec`. Shared by `parseClaudeMcpEntry` and the paste-importer so both agree
+ * on how a pasted `mcpServers` block maps to the normalized shape. Returns
+ * `undefined` when the record is neither stdio nor http.
+ */
+export function specFromClaudeRecord(rec: Record<string, unknown>): McpSpec | undefined {
   if (typeof rec["url"] === "string") {
     return { transport: "http", url: rec["url"], headers: asStringMap(rec["headers"]) }
   }
@@ -279,6 +276,18 @@ export function parseClaudeMcpEntry(json: string, id: string): McpSpec | undefin
     }
   }
   return undefined
+}
+
+/** Read a Claude `~/.claude.json` `mcpServers.<id>` entry into an `McpSpec`. */
+export function parseClaudeMcpEntry(json: string, id: string): McpSpec | undefined {
+  let data: Record<string, unknown> | undefined
+  try {
+    data = asRecord(JSON.parse(json))
+  } catch {
+    return undefined
+  }
+  const rec = asRecord(asRecord(data?.["mcpServers"])?.[id])
+  return rec ? specFromClaudeRecord(rec) : undefined
 }
 
 /** Read a Codex `config.toml` `mcp_servers.<id>` entry into an `McpSpec`. */
@@ -312,16 +321,13 @@ export function parseCodexMcpEntry(toml: string, id: string): McpSpec | undefine
   return undefined
 }
 
-/** Read an OpenCode `opencode.json` `mcp.<id>` entry into an `McpSpec`. */
-export function parseOpencodeMcpEntry(json: string, id: string): McpSpec | undefined {
-  let data: Record<string, unknown> | undefined
-  try {
-    data = asRecord(JSON.parse(json))
-  } catch {
-    return undefined
-  }
-  const entry = asRecord(asRecord(data?.["mcp"])?.[id])
-  if (!entry) return undefined
+/**
+ * Read a loose OpenCode `mcp.<id>` entry record (`{ type, command: [...],
+ * environment }` / `{ type: "remote", url, headers }`) into an `McpSpec`. Shared
+ * by `parseOpencodeMcpEntry` and the paste-importer so an `mcp` block pasted from
+ * an opencode.json maps the same way. Returns `undefined` when it's neither.
+ */
+export function specFromOpencodeRecord(entry: Record<string, unknown>): McpSpec | undefined {
   if (entry["type"] === "remote" || typeof entry["url"] === "string") {
     return {
       transport: "http",
@@ -337,4 +343,16 @@ export function parseOpencodeMcpEntry(json: string, id: string): McpSpec | undef
     args: command.slice(1),
     env: asStringMap(entry["environment"]),
   }
+}
+
+/** Read an OpenCode `opencode.json` `mcp.<id>` entry into an `McpSpec`. */
+export function parseOpencodeMcpEntry(json: string, id: string): McpSpec | undefined {
+  let data: Record<string, unknown> | undefined
+  try {
+    data = asRecord(JSON.parse(json))
+  } catch {
+    return undefined
+  }
+  const entry = asRecord(asRecord(data?.["mcp"])?.[id])
+  return entry ? specFromOpencodeRecord(entry) : undefined
 }

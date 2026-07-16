@@ -499,6 +499,52 @@ export const MCP_SERVERS: readonly McpServer[] = [
     npmPackage: "@playwright/mcp",
     docsUrl: "https://github.com/microsoft/playwright-mcp",
   },
+  {
+    id: "everything",
+    transport: "stdio",
+    category: "dev",
+    npmPackage: "@modelcontextprotocol/server-everything",
+    docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/everything",
+  },
+  {
+    id: "puppeteer",
+    transport: "stdio",
+    category: "web",
+    npmPackage: "@modelcontextprotocol/server-puppeteer",
+    docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/puppeteer",
+  },
+  {
+    id: "gitlab",
+    transport: "stdio",
+    category: "dev",
+    npmPackage: "@modelcontextprotocol/server-gitlab",
+    keyEnv: "GITLAB_PERSONAL_ACCESS_TOKEN",
+    docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/gitlab",
+  },
+  {
+    id: "google-maps",
+    transport: "stdio",
+    category: "web",
+    npmPackage: "@modelcontextprotocol/server-google-maps",
+    keyEnv: "GOOGLE_MAPS_API_KEY",
+    docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/google-maps",
+  },
+  {
+    id: "firecrawl",
+    transport: "stdio",
+    category: "web",
+    npmPackage: "firecrawl-mcp",
+    keyEnv: "FIRECRAWL_API_KEY",
+    docsUrl: "https://github.com/mendableai/firecrawl-mcp-server",
+  },
+  {
+    id: "airtable",
+    transport: "stdio",
+    category: "dev",
+    npmPackage: "airtable-mcp-server",
+    keyEnv: "AIRTABLE_API_KEY",
+    docsUrl: "https://github.com/domdomegg/airtable-mcp-server",
+  },
 ]
 
 /**

@@ -1,12 +1,16 @@
 jest.mock("@/lib/tauri", () => ({ isTauri: jest.fn(() => true) }))
-jest.mock("@/lib/tauri/commands", () => ({ readTextFile: jest.fn() }))
+jest.mock("@/lib/tauri/commands", () => ({
+  readTextFile: jest.fn(),
+  commandOnPath: jest.fn(async () => true),
+  probeHost: jest.fn(async () => ({ reachable: true, latencyMs: 12 })),
+}))
 jest.mock("@/lib/tauri/system", () => ({ openUrl: jest.fn() }))
 
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-import { readTextFile } from "@/lib/tauri/commands"
+import { commandOnPath, readTextFile } from "@/lib/tauri/commands"
 import { openUrl } from "@/lib/tauri/system"
 import { McpDetailDialog } from "./detail-dialog"
 import type { DashboardScan } from "../dashboard"
@@ -48,6 +52,8 @@ beforeEach(() => {
     p.includes(".claude.json") ? CLAUDE : "{}"
   )
   ;(openUrl as jest.Mock).mockClear()
+  ;(commandOnPath as jest.Mock).mockClear()
+  ;(commandOnPath as jest.Mock).mockResolvedValue(true)
 })
 
 function renderDialog(props: Partial<Parameters<typeof McpDetailDialog>[0]> = {}) {
@@ -86,9 +92,29 @@ it("shows the catalog badge and the parsed on-disk config, ✓ where absent", as
   })
   expect(await screen.findByText("Context7")).toBeInTheDocument()
   expect(screen.getByText("catalog")).toBeInTheDocument()
-  // Claude parses to a spec; OpenCode's empty "{}" config renders the ✓ fallback.
-  expect(await screen.findByText(/command: npx -y @upstash\/context7-mcp/)).toBeInTheDocument()
+  // Claude parses to a spec (command shown as a field value); OpenCode's empty
+  // "{}" config has no parseable entry, so it renders the ✓ fallback.
+  expect(await screen.findByText(/npx -y @upstash\/context7-mcp/)).toBeInTheDocument()
   expect(screen.getByText("✓")).toBeInTheDocument()
+})
+
+it("runs a lightweight health check when Test is clicked", async () => {
+  ;(commandOnPath as jest.Mock).mockResolvedValue(true)
+  renderDialog()
+  await screen.findByText("Context7")
+  await userEvent.click(screen.getByRole("button", { name: "Test" }))
+  await waitFor(() => expect(commandOnPath).toHaveBeenCalledWith("npx"))
+  expect(await screen.findByText(/found on PATH/i)).toBeInTheDocument()
+})
+
+it("copies a field's real value to the clipboard", async () => {
+  const writeText = jest.fn().mockResolvedValue(undefined)
+  Object.assign(navigator, { clipboard: { writeText } })
+  renderDialog()
+  // Wait for the parsed spec fields (not just the header title) to render.
+  await screen.findByText(/npx -y @upstash\/context7-mcp/)
+  await userEvent.click(screen.getByRole("button", { name: /Copy Command/i }))
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith("npx -y @upstash/context7-mcp"))
 })
 
 it("opens the docs link for a catalog server", async () => {

@@ -272,9 +272,26 @@ async function execute(
       const dests = await api.installRepoSkills(
         step.scanId,
         step.skills.map((s) => s.relPath),
-        step.targets
+        step.targets,
+        step.repo,
+        step.ref
       )
       for (const d of dests) log(m.coreOutput.copy(step.scanId, d))
+      return
+    }
+    case "skillUpdate": {
+      const dests = await api.updateSkill(step.path, step.targets, step.mirrorPrefix)
+      for (const d of dests) log(m.coreOutput.copy(step.path, d))
+      return
+    }
+    case "skillBackup": {
+      const entry = await api.backupSkill(step.path)
+      log(m.coreOutput.backup(entry.id))
+      return
+    }
+    case "skillCreate": {
+      const dests = await api.createSkill(step.name, step.targets, step.content)
+      for (const d of dests) log(m.coreOutput.write(d))
       return
     }
     case "snapshot": {

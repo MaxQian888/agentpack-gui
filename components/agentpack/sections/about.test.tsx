@@ -45,6 +45,7 @@ beforeEach(() => {
       onboarded: true,
       quickStartDismissed: false,
       ghMirrorPrefix: null,
+      skillRepoSources: [],
     },
     paths: null,
   })

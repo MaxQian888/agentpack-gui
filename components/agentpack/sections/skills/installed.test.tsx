@@ -1,10 +1,23 @@
 jest.mock("@/lib/tauri", () => ({ isTauri: () => true }))
+jest.mock("@/lib/tauri/system", () => ({ revealPath: jest.fn(), openPath: jest.fn() }))
 jest.mock("@/lib/tauri/commands", () => ({
   pathExists: jest.fn(async () => false),
   readTextFile: jest.fn(async () => "{}"),
   writeTextFile: jest.fn(async () => undefined),
   removeDir: jest.fn(async () => undefined),
   installSkillFromDir: jest.fn(async () => ["/h/.codex/skills/caveman"]),
+  listSkillFiles: jest.fn(async () => []),
+  checkRepoUpdates: jest.fn(async () => []),
+  updateSkill: jest.fn(async () => ["/h/.claude/skills/web"]),
+  listSkillBackups: jest.fn(async () => []),
+  backupSkill: jest.fn(async () => ({
+    id: "caveman-1",
+    name: "caveman",
+    dirName: "caveman",
+    source: "claude",
+    bytes: 0,
+    createdAt: 0,
+  })),
 }))
 
 import { render, screen, waitFor } from "@testing-library/react"
@@ -12,8 +25,15 @@ import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
 import { useAppStore } from "@/store/app-store"
-import { installSkillFromDir, removeDir } from "@/lib/tauri/commands"
+import {
+  checkRepoUpdates,
+  installSkillFromDir,
+  readTextFile,
+  removeDir,
+  updateSkill,
+} from "@/lib/tauri/commands"
 import type { InstalledSkill, SkillsScanResult } from "@/lib/skills/types"
+import { openPath, revealPath } from "@/lib/tauri/system"
 import { RunnerProvider } from "../../run/runner-context"
 import { InstalledSkillsTab } from "./installed"
 
@@ -37,6 +57,7 @@ function skill(
     linkTarget: null,
     skillMd: `---\nname: ${over.dirName}\ndescription: about ${over.dirName}\n---\n# ${over.dirName}\n`,
     modifiedAt: 0,
+    origin: null,
     ...over,
   }
 }
@@ -131,8 +152,110 @@ it("copies a skill to an agent it is missing from", async () => {
   await waitFor(() => expect(refresh).toHaveBeenCalled())
 })
 
-it("opens the detail dialog from a row click", async () => {
+it("opens and closes the detail dialog", async () => {
   renderTab()
   await userEvent.click(screen.getByText("tauri-v2"))
   expect(await screen.findByText(en.skillsBrowser.configTitle)).toBeInTheDocument()
+  await userEvent.keyboard("{Escape}")
+  await waitFor(() =>
+    expect(screen.queryByText(en.skillsBrowser.configTitle)).not.toBeInTheDocument()
+  )
+})
+
+it("shows an inline enable-status badge for a non-default skill", async () => {
+  ;(readTextFile as jest.Mock).mockImplementation(async (path: string) =>
+    path.endsWith("settings.json")
+      ? JSON.stringify({ skillOverrides: { "tauri-v2": "off" } })
+      : "{}"
+  )
+  renderTab()
+  expect(await screen.findByText(en.skillsBrowser.visibility["off"])).toBeInTheDocument()
+})
+
+it("reveals and opens a skill from the row menu", async () => {
+  renderTab()
+  const actions = () => screen.getAllByRole("button", { name: en.skillsBrowser.actions })[0]
+  await userEvent.click(actions())
+  await userEvent.click(
+    await screen.findByRole("menuitem", { name: en.skillsBrowser.revealInFolder })
+  )
+  await waitFor(() => expect(revealPath).toHaveBeenCalled())
+  await userEvent.click(actions())
+  await userEvent.click(await screen.findByRole("menuitem", { name: en.skillsBrowser.openSkillMd }))
+  await waitFor(() => expect(openPath).toHaveBeenCalledWith(expect.stringContaining("SKILL.md")))
+})
+
+it("opens the backups dialog from the toolbar", async () => {
+  renderTab()
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.backups }))
+  expect(await screen.findByText(en.skillsBrowser.backupsTitle)).toBeInTheDocument()
+})
+
+it("checks for updates and flags a managed skill with a pending update", async () => {
+  const managedScan: SkillsScanResult = {
+    skills: [
+      skill({
+        source: "claude",
+        dirName: "web",
+        path: "/h/.claude/skills/web",
+        origin: { repo: "o/r", ref: "HEAD", relPath: "", contentHash: "h1", installedAt: 0 },
+      }),
+    ],
+    errors: [],
+  }
+  ;(checkRepoUpdates as jest.Mock).mockResolvedValue([
+    { path: "/h/.claude/skills/web", hasUpdate: true, latestHash: "h2", error: null },
+  ])
+  render(
+    <I18nProvider>
+      <RunnerProvider>
+        <InstalledSkillsTab scan={managedScan} refresh={jest.fn()} />
+      </RunnerProvider>
+    </I18nProvider>
+  )
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.checkUpdates }))
+  await waitFor(() =>
+    expect(checkRepoUpdates).toHaveBeenCalledWith(
+      [{ path: "/h/.claude/skills/web", origin: expect.objectContaining({ repo: "o/r" }) }],
+      null
+    )
+  )
+  expect(await screen.findByText(en.skillsBrowser.updateAvailable)).toBeInTheDocument()
+
+  // "Update all" re-syncs the managed skill through the runner.
+  await userEvent.click(screen.getByRole("button", { name: /Update all/ }))
+  await waitFor(() =>
+    expect(updateSkill).toHaveBeenCalledWith("/h/.claude/skills/web", ["claude"], null)
+  )
+})
+
+it("updates a single managed skill from its row menu", async () => {
+  const managedScan: SkillsScanResult = {
+    skills: [
+      skill({
+        source: "claude",
+        dirName: "web",
+        path: "/h/.claude/skills/web",
+        origin: { repo: "o/r", ref: "HEAD", relPath: "", contentHash: "h1", installedAt: 0 },
+      }),
+    ],
+    errors: [],
+  }
+  ;(checkRepoUpdates as jest.Mock).mockResolvedValue([
+    { path: "/h/.claude/skills/web", hasUpdate: true, latestHash: "h2", error: null },
+  ])
+  render(
+    <I18nProvider>
+      <RunnerProvider>
+        <InstalledSkillsTab scan={managedScan} refresh={jest.fn()} />
+      </RunnerProvider>
+    </I18nProvider>
+  )
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.checkUpdates }))
+  await screen.findByText(en.skillsBrowser.updateAvailable)
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.actions }))
+  await userEvent.click(await screen.findByRole("menuitem", { name: en.skillsBrowser.update }))
+  await waitFor(() =>
+    expect(updateSkill).toHaveBeenCalledWith("/h/.claude/skills/web", ["claude"], null)
+  )
 })

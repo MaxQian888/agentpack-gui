@@ -8,6 +8,7 @@ jest.mock("@/lib/tauri/commands", () => ({
   fetchRepoSkills: jest.fn(async () => ({ scanId: "scan-1", skills: [] })),
   installRepoSkills: jest.fn(async () => ["/h/.claude/skills/web-design"]),
   cleanupRepoScan: jest.fn(async () => undefined),
+  createSkill: jest.fn(async () => ["/h/.claude/skills/my-skill"]),
 }))
 jest.mock("@/lib/tauri/dialog", () => ({ pickFolder: jest.fn(async () => null) }))
 jest.mock("@/lib/tauri/settings", () => ({
@@ -30,6 +31,7 @@ import { en } from "@/lib/i18n/en"
 import { useAppStore } from "@/store/app-store"
 import {
   cleanupRepoScan,
+  createSkill,
   fetchRepoSkills,
   installRepoSkills,
   installSkillFromDir,
@@ -37,6 +39,7 @@ import {
   runCommand,
 } from "@/lib/tauri/commands"
 import { pickFolder } from "@/lib/tauri/dialog"
+import { saveSettings } from "@/lib/tauri/settings"
 import { RunnerProvider } from "../../run/runner-context"
 import { AddSkillsTab } from "./add"
 
@@ -52,7 +55,20 @@ const paths = {
 } as never
 
 beforeEach(() => {
-  useAppStore.setState({ paths, dryRun: false, panelOpen: false })
+  useAppStore.setState({
+    paths,
+    dryRun: false,
+    panelOpen: false,
+    settings: {
+      autoCheckUpdates: true,
+      skippedVersion: null,
+      lastCheckAt: null,
+      onboarded: false,
+      quickStartDismissed: false,
+      ghMirrorPrefix: null,
+      skillRepoSources: [],
+    },
+  } as never)
 })
 
 function renderAdd(refresh = jest.fn()) {
@@ -110,7 +126,9 @@ it("fetches repo skills, lets the user pick, installs and cleans up", async () =
     expect(installRepoSkills).toHaveBeenCalledWith(
       "scan-1",
       ["skills/web-design"],
-      ["claude", "codex"]
+      ["claude", "codex"],
+      "vercel-labs/agent-skills",
+      "HEAD"
     )
   )
   await waitFor(() => expect(cleanupRepoScan).toHaveBeenCalledWith("scan-1"))
@@ -168,4 +186,60 @@ it("cancelling the folder picker is a no-op", async () => {
   await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.pickFolder }))
   expect(screen.queryByText(en.skillsBrowser.notASkillFolder)).not.toBeInTheDocument()
   expect(screen.queryByRole("button", { name: en.skillsBrowser.importNow })).not.toBeInTheDocument()
+})
+
+it("creates a new skill from the scaffold form", async () => {
+  const refresh = renderAdd()
+  await userEvent.type(screen.getByLabelText(en.skillsBrowser.nameLabel), "my-skill")
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.createNow }))
+  await waitFor(() => expect(createSkill).toHaveBeenCalled())
+  const [name, targets, content] = (createSkill as jest.Mock).mock.calls[0]
+  expect(name).toBe("my-skill")
+  expect(targets).toEqual(["claude", "codex"])
+  expect(content).toContain("name: my-skill")
+  expect(refresh).toHaveBeenCalled()
+})
+
+it("disables create for an invalid skill name", async () => {
+  renderAdd()
+  await userEvent.type(screen.getByLabelText(en.skillsBrowser.nameLabel), "bad name")
+  expect(screen.getByText(en.skillsBrowser.nameInvalid)).toBeInTheDocument()
+  expect(screen.getByRole("button", { name: en.skillsBrowser.createNow })).toBeDisabled()
+})
+
+it("adds a recommended repo source, then browses it", async () => {
+  ;(fetchRepoSkills as jest.Mock).mockResolvedValue({
+    scanId: "s3",
+    skills: [{ dirName: "x", relPath: "x", skillMd: "---\nname: x\n---\n" }],
+  })
+  renderAdd()
+  // The recommended Anthropic chip adds it to the saved list.
+  await userEvent.click(screen.getByRole("button", { name: /Anthropic/ }))
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.browse }))
+  await waitFor(() =>
+    expect(fetchRepoSkills).toHaveBeenCalledWith(
+      "https://codeload.github.com/anthropics/skills/tar.gz/HEAD"
+    )
+  )
+})
+
+it("saves a GitHub mirror prefix from the advanced settings", async () => {
+  renderAdd()
+  await userEvent.click(screen.getByText(en.skillsBrowser.advancedTitle))
+  await userEvent.type(screen.getByPlaceholderText("https://gh-proxy.com/"), "https://m.example/")
+  await waitFor(() =>
+    expect(saveSettings).toHaveBeenCalledWith({ ghMirrorPrefix: expect.any(String) })
+  )
+})
+
+it("saves a manually-entered repo source and removes it", async () => {
+  renderAdd()
+  await userEvent.type(
+    screen.getByPlaceholderText(en.skillsBrowser.repoUrlPlaceholder),
+    "me/skills"
+  )
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.addRepo }))
+  expect(screen.getByText("me/skills")).toBeInTheDocument()
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.removeRepo }))
+  expect(screen.getByText(en.skillsBrowser.reposEmpty)).toBeInTheDocument()
 })

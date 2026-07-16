@@ -39,6 +39,8 @@ dirs = "6"
 ureq = { version = "2", default-features = false, features = ["tls"] }
 flate2 = "1"
 tar = "0.4"
+# Content hashing for skill update detection (see skills::hash_skill_dir).
+sha2 = "0.10"
 
 # Read the live persisted PATH from the registry so tools installed mid-session
 # (Node via winget, claude via `npm i -g`) are found without an app restart.

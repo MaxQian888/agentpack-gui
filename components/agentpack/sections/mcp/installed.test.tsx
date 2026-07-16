@@ -3,11 +3,19 @@ jest.mock("../../run/runner-context", () => ({
   useRunnerCtx: () => ({ run: mockRun, onAfterRun: () => () => {} }),
 }))
 jest.mock("@/lib/tauri", () => ({ isTauri: () => true }))
-jest.mock("@/lib/tauri/commands", () => ({ readTextFile: jest.fn(async () => "{}") }))
+jest.mock("@/lib/tauri/commands", () => ({
+  readTextFile: jest.fn(async () => "{}"),
+  commandOnPath: jest.fn(async () => true),
+  probeHost: jest.fn(async () => ({ reachable: true, latencyMs: 5 })),
+}))
 jest.mock("@/lib/tauri/system", () => ({ openUrl: jest.fn() }))
+jest.mock("sonner", () => ({
+  toast: { success: jest.fn(), error: jest.fn(), info: jest.fn() },
+}))
 
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { toast } from "sonner"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { readTextFile } from "@/lib/tauri/commands"
@@ -38,6 +46,7 @@ const paths = {
 
 beforeEach(() => {
   mockRun.mockClear()
+  ;(toast.success as jest.Mock).mockClear()
   useAppStore.getState().resetPlan()
   useAppStore.setState({ paths })
 })
@@ -77,6 +86,36 @@ it("removing a target confirms then runs the remove step", async () => {
   await waitFor(() => expect(mockRun).toHaveBeenCalled())
   const steps = mockRun.mock.calls[0][0] as { id: string }[]
   expect(steps.some((s) => s.id === "mcp-remove-claude-context7")).toBe(true)
+})
+
+it("copies a known server to a missing target from the row menu", async () => {
+  renderInstalled()
+  await userEvent.click(screen.getAllByRole("button", { name: /Actions/i })[0])
+  await userEvent.click(await screen.findByRole("menuitem", { name: /Copy to Codex/i }))
+  await waitFor(() => expect(mockRun).toHaveBeenCalled())
+  const steps = mockRun.mock.calls[0][0] as { id: string }[]
+  expect(steps.some((s) => s.id === "mcp-add-codex-context7")).toBe(true)
+  expect(toast.success).toHaveBeenCalled()
+})
+
+it("runs a health check from the row menu and toasts the outcome", async () => {
+  renderInstalled()
+  await userEvent.click(screen.getAllByRole("button", { name: /Actions/i })[0])
+  await userEvent.click(await screen.findByRole("menuitem", { name: /^Test$/i }))
+  await waitFor(() => expect(toast.success).toHaveBeenCalled())
+})
+
+it("tests and copies a custom server by reading its on-disk spec", async () => {
+  ;(readTextFile as jest.Mock).mockImplementation(async (p: string) =>
+    p.endsWith("config.toml") ? '[mcp_servers.mine]\ncommand = "node"\nargs = ["s.js"]\n' : "{}"
+  )
+  renderInstalled()
+  // "mine" is the custom server on Codex (rows sorted: Context7, then mine).
+  await userEvent.click(screen.getAllByRole("button", { name: /Actions/i })[1])
+  await userEvent.click(await screen.findByRole("menuitem", { name: /Copy to Claude Code/i }))
+  await waitFor(() => expect(mockRun).toHaveBeenCalled())
+  const steps = mockRun.mock.calls[0][0] as { id: string }[]
+  expect(steps.some((s) => s.id === "mcp-add-claude-mine")).toBe(true)
 })
 
 it("narrows by source filter and shows the filtered-empty state on no search hit", async () => {

@@ -668,6 +668,43 @@ pub fn probe_port(port: u16) -> bool {
   std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(400)).is_ok()
 }
 
+/// Result of an MCP http-endpoint reachability probe.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostProbe {
+  reachable: bool,
+  latency_ms: Option<u64>,
+}
+
+/// TCP-reachability probe for an arbitrary `host:port`, with connect latency.
+/// Generalizes `probe_port` (localhost only) so the MCP health check can test a
+/// remote http MCP endpoint. Resolves the host via DNS (blocking — hence `async`,
+/// so it runs on a worker thread) then times a `connect_timeout`. An unresolvable
+/// host or a refused/timed-out connection returns `reachable: false` rather than
+/// erroring, so the caller renders one clean "unreachable" outcome.
+#[tauri::command(async)]
+pub fn probe_host(host: String, port: u16, timeout_ms: Option<u64>) -> HostProbe {
+  use std::net::ToSocketAddrs;
+  let timeout = Duration::from_millis(timeout_ms.unwrap_or(1200));
+  let start = Instant::now();
+  let addrs = match (host.as_str(), port).to_socket_addrs() {
+    Ok(a) => a,
+    Err(_) => return HostProbe { reachable: false, latency_ms: None },
+  };
+  for addr in addrs {
+    if std::net::TcpStream::connect_timeout(&addr, timeout).is_ok() {
+      return HostProbe {
+        reachable: true,
+        latency_ms: Some(start.elapsed().as_millis() as u64),
+      };
+    }
+  }
+  HostProbe {
+    reachable: false,
+    latency_ms: None,
+  }
+}
+
 /// Kill the process tree(s) listening on a local TCP port (best-effort no-op
 /// when nothing listens). Guards against killing PID 0 / ourselves.
 fn kill_by_port(port: u16) {
@@ -737,6 +774,15 @@ fn on_path(bin: &str) -> bool {
   apply_no_window(&mut c);
   apply_env(&mut c);
   c.output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// Whether a command resolves on PATH (thin `#[tauri::command]` wrapper over the
+/// private `on_path`). Used by the MCP health check to verify a stdio server's
+/// executable (npx / uvx / python / an absolute path) exists before trusting the
+/// config — the lightweight equivalent of cc-switch's `validate_mcp_command`.
+#[tauri::command(async)]
+pub fn command_on_path(command: String) -> bool {
+  on_path(&command)
 }
 
 /// Detect a CLI. GUI tools (cc-switch) are never executed — PATH + resolved
@@ -898,6 +944,28 @@ mod tests {
   #[test]
   fn missing_binary_not_installed() {
     assert!(!detect_cli("definitely-not-a-real-bin-xyz".into(), false).installed);
+  }
+
+  #[test]
+  fn command_on_path_finds_a_real_binary() {
+    let bin = if cfg!(windows) { "cmd" } else { "sh" };
+    assert!(command_on_path(bin.into()));
+  }
+
+  #[test]
+  fn command_on_path_rejects_a_missing_binary() {
+    assert!(!command_on_path("definitely-not-a-real-bin-xyz".into()));
+  }
+
+  #[test]
+  fn probe_host_refused_localhost_is_false() {
+    // A closed local port refuses the connection immediately — deterministic and
+    // offline (no DNS, no external network, which some environments hijack). Port
+    // 1 is effectively never listening, so this must report reachable:false with
+    // no latency and without hanging or panicking.
+    let r = probe_host("127.0.0.1".into(), 1, Some(300));
+    assert!(!r.reachable);
+    assert!(r.latency_ms.is_none());
   }
 
   #[test]

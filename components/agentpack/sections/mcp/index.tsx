@@ -13,6 +13,7 @@ import type { DashboardScan } from "../dashboard"
 import { anyPresent, presenceOf, StatTile } from "./helpers"
 import { CatalogTab } from "./catalog"
 import { InstalledTab } from "./installed"
+import { MatrixTab } from "./matrix"
 import { AddCustomTab } from "./add-custom"
 
 /**
@@ -71,6 +72,7 @@ export function McpSection({ scan, loading, refresh }: McpSectionProps) {
           <TabsList>
             <TabsTrigger value="catalog">{m.tabCatalog}</TabsTrigger>
             <TabsTrigger value="installed">{m.tabInstalled}</TabsTrigger>
+            <TabsTrigger value="matrix">{m.tabMatrix}</TabsTrigger>
             <TabsTrigger value="add">{m.tabAdd}</TabsTrigger>
           </TabsList>
           <TabsContent value="catalog" className="mt-4">
@@ -91,6 +93,16 @@ export function McpSection({ scan, loading, refresh }: McpSectionProps) {
               </div>
             ) : (
               <InstalledTab scan={scan} refresh={refresh} />
+            )}
+          </TabsContent>
+          <TabsContent value="matrix" className="mt-4">
+            {scan === null && loading ? (
+              <div className="flex items-center justify-center gap-2 p-10 text-sm text-muted-foreground">
+                <Spinner className="size-4" />
+                {m.loading}
+              </div>
+            ) : (
+              <MatrixTab scan={scan} refresh={refresh} />
             )}
           </TabsContent>
           <TabsContent value="add" className="mt-4">

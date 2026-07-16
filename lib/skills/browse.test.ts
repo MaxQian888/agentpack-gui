@@ -10,6 +10,7 @@ function skill(
     linkTarget: null,
     skillMd: `---\nname: ${over.dirName}\ndescription: about ${over.dirName}\n---\nbody`,
     modifiedAt: 0,
+    origin: null,
     ...over,
   }
 }

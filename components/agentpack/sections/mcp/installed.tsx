@@ -1,7 +1,8 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { Eye, MoreHorizontal, Pencil, Search, Trash2 } from "lucide-react"
+import { Copy, Eye, MoreHorizontal, Pencil, Play, Search, Trash2 } from "lucide-react"
+import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -35,7 +36,17 @@ import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { useIncremental } from "@/hooks/use-incremental"
-import { mcpEditStep, mcpRemoveStep } from "@/lib/agentpack/plan"
+import { mcpAddSpecStep, mcpEditStep, mcpRemoveStep } from "@/lib/agentpack/plan"
+import { findMcp } from "@/lib/agentpack/registry"
+import {
+  parseClaudeMcpEntry,
+  parseCodexMcpEntry,
+  parseOpencodeMcpEntry,
+  resolveCatalogSpec,
+  type McpSpec,
+} from "@/lib/agentpack/merge/mcp"
+import { checkSpecHealth } from "@/lib/agentpack/mcp-health"
+import { commandOnPath, probeHost, readTextFile } from "@/lib/tauri/commands"
 import type { McpTarget } from "@/lib/agentpack/types"
 import { useRunnerCtx } from "../../run/runner-context"
 import type { DashboardScan } from "../dashboard"
@@ -56,6 +67,7 @@ export function InstalledTab({
   const t = useT()
   const m = t.mcp
   const paths = useAppStore((s) => s.paths)
+  const plan = useAppStore((s) => s.plan)
   const { run } = useRunnerCtx()
 
   const [query, setQuery] = useState("")
@@ -100,6 +112,45 @@ export function InstalledTab({
   const removeOne = async (id: string, target: McpTarget) => {
     if (!paths) return
     await run(mcpRemoveStep(id, [target], paths, t))
+    refresh()
+  }
+
+  /** The server's spec: catalog resolution for known ids, on-disk read for custom. */
+  const resolveRowSpec = async (row: McpRow): Promise<McpSpec | undefined> => {
+    const known = findMcp(row.id)
+    if (known) return resolveCatalogSpec(known, plan.mcpKeys[row.id])
+    if (!paths) return undefined
+    const tg = MCP_TARGETS.find((x) => row.presence[x])
+    if (!tg) return undefined
+    const path =
+      tg === "claude"
+        ? paths.claudeConfig
+        : tg === "codex"
+          ? paths.codexConfig
+          : paths.opencodeConfig
+    const text = await readTextFile(path).catch(() => "")
+    return tg === "claude"
+      ? parseClaudeMcpEntry(text, row.id)
+      : tg === "codex"
+        ? parseCodexMcpEntry(text, row.id)
+        : parseOpencodeMcpEntry(text, row.id)
+  }
+
+  const testRow = async (row: McpRow) => {
+    const spec = await resolveRowSpec(row)
+    if (!spec) return
+    const res = await checkSpecHealth(spec, { commandOnPath, probeHost })
+    const label = titleOf(row.id)
+    if (res.status === "ok") toast.success(`${label} · ${m.healthOk}`)
+    else toast.error(`${label} · ${m.healthFail}`)
+  }
+
+  const copyTo = async (row: McpRow, target: McpTarget) => {
+    if (!paths) return
+    const spec = await resolveRowSpec(row)
+    if (!spec) return
+    await run(mcpAddSpecStep(row.id, spec, [target], paths, t))
+    toast.success(m.copyDone(m.targets[target]))
     refresh()
   }
 
@@ -192,11 +243,22 @@ export function InstalledTab({
                       <DropdownMenuItem onSelect={() => setDetailId(row.id)}>
                         <Eye className="size-4" /> {m.view}
                       </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => void testRow(row)}>
+                        <Play className="size-4" /> {m.test}
+                      </DropdownMenuItem>
                       {!row.known ? (
                         <DropdownMenuItem onSelect={() => setDetailId(row.id)}>
                           <Pencil className="size-4" /> {m.edit}
                         </DropdownMenuItem>
                       ) : null}
+                      {MCP_TARGETS.filter((tg) => !row.presence[tg]).length > 0 ? (
+                        <DropdownMenuSeparator />
+                      ) : null}
+                      {MCP_TARGETS.filter((tg) => !row.presence[tg]).map((tg) => (
+                        <DropdownMenuItem key={tg} onSelect={() => void copyTo(row, tg)}>
+                          <Copy className="size-4" /> {m.copyToTarget(m.targets[tg])}
+                        </DropdownMenuItem>
+                      ))}
                       <DropdownMenuSeparator />
                       {present.map((tg) => (
                         <DropdownMenuItem

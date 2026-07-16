@@ -1,4 +1,5 @@
 import { isTauri } from "@/lib/tauri"
+import type { RepoSource } from "@/lib/skills/types"
 
 // Persisted app settings, backed by `@tauri-apps/plugin-store` (a small JSON KV
 // store in the app's data dir). The Zustand store (store/app-store.ts) has no
@@ -33,6 +34,12 @@ export interface AppSettings {
    * Null = direct.
    */
   ghMirrorPrefix: string | null
+  /**
+   * Saved GitHub skill repositories the user can browse & install from (the
+   * skills "marketplace"). Empty by default; the UI offers recommended sources
+   * to add.
+   */
+  skillRepoSources: RepoSource[]
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -42,6 +49,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   onboarded: false,
   quickStartDismissed: false,
   ghMirrorPrefix: null,
+  skillRepoSources: [],
 }
 
 const STORE_FILE = "settings.json"

@@ -2,6 +2,7 @@ jest.mock("@/lib/tauri", () => ({ isTauri: jest.fn() }))
 jest.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: jest.fn(),
   revealItemInDir: jest.fn(),
+  openPath: jest.fn(),
 }))
 jest.mock("@tauri-apps/plugin-notification", () => ({
   isPermissionGranted: jest.fn(),
@@ -10,13 +11,17 @@ jest.mock("@tauri-apps/plugin-notification", () => ({
 }))
 
 import { isTauri } from "@/lib/tauri"
-import { openUrl as opener, revealItemInDir } from "@tauri-apps/plugin-opener"
+import {
+  openUrl as opener,
+  openPath as openPathPlugin,
+  revealItemInDir,
+} from "@tauri-apps/plugin-opener"
 import {
   isPermissionGranted,
   requestPermission,
   sendNotification,
 } from "@tauri-apps/plugin-notification"
-import { notify, openUrl, revealPath } from "./system"
+import { notify, openPath, openUrl, revealPath } from "./system"
 
 const mockedIsTauri = isTauri as jest.Mock
 
@@ -50,6 +55,19 @@ describe("revealPath", () => {
   it("reveals the path under Tauri", async () => {
     await revealPath("/tmp/x")
     expect(revealItemInDir).toHaveBeenCalledWith("/tmp/x")
+  })
+})
+
+describe("openPath", () => {
+  it("no-ops in web mode", async () => {
+    mockedIsTauri.mockReturnValue(false)
+    await openPath("/tmp/x/SKILL.md")
+    expect(openPathPlugin).not.toHaveBeenCalled()
+  })
+
+  it("opens the file with the default app under Tauri", async () => {
+    await openPath("/tmp/x/SKILL.md")
+    expect(openPathPlugin).toHaveBeenCalledWith("/tmp/x/SKILL.md")
   })
 })
 

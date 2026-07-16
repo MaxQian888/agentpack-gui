@@ -40,6 +40,12 @@ export function previewLines(
     case "skillRepoInstall":
       // dests are precomputed (skill × target) — dry-run never touches the scan.
       return step.dests.map((d) => out.wouldCopy(step.scanId, d))
+    case "skillUpdate":
+      return step.dests.map((d) => out.wouldCopy(step.path, d))
+    case "skillBackup":
+      return [out.wouldBackupSkill(step.path)]
+    case "skillCreate":
+      return step.dests.map((d) => out.wouldWrite(d))
     case "ccProvider": {
       const app = (step.payload as { app?: string }).app ?? ""
       return [`would run: ${step.op} provider (${app})`]

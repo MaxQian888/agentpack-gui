@@ -206,6 +206,9 @@ export type StepKind =
   | "skillRemove"
   | "skillCopy"
   | "skillRepoInstall"
+  | "skillUpdate"
+  | "skillBackup"
+  | "skillCreate"
   | "ccProvider"
   | "ccVisibleApps"
   | "fileRestore"
@@ -284,6 +287,45 @@ export interface SkillRepoInstallStep extends StepBase {
   targets: string[]
   /** Destination dirs (skill × target), precomputed for dry-run preview. */
   dests: string[]
+  /** `owner/name` — recorded as provenance for later update checks. */
+  repo: string
+  /** Ref (branch/tag/sha) the skills came from. */
+  ref: string
+}
+
+/**
+ * Re-sync a managed (GitHub-installed) skill from its origin repo. The backend
+ * reads the skill's `.agentpack-origin.json` to know what to re-fetch.
+ */
+export interface SkillUpdateStep extends StepBase {
+  kind: "skillUpdate"
+  /** An installed path of the skill (its origin manifest drives the re-fetch). */
+  path: string
+  dirName: string
+  /** Skill sources to refresh. */
+  targets: string[]
+  /** Destination dirs, precomputed for dry-run preview. */
+  dests: string[]
+  /** GitHub download mirror prefix, or null for direct. */
+  mirrorPrefix: string | null
+}
+
+/** Back up a skill's directory (before deletion) into the restorable history. */
+export interface SkillBackupStep extends StepBase {
+  kind: "skillBackup"
+  /** Canonical/primary skill path to copy into the backup store. */
+  path: string
+  dirName: string
+}
+
+/** Create a new hand-authored skill (`<root>/<name>/SKILL.md`) in each target. */
+export interface SkillCreateStep extends StepBase {
+  kind: "skillCreate"
+  name: string
+  targets: string[]
+  content: string
+  /** Destination dirs, precomputed for dry-run preview. */
+  dests: string[]
 }
 
 export interface CcProviderStep extends StepBase {
@@ -319,6 +361,9 @@ export type StepDescriptor =
   | SkillRemoveStep
   | SkillCopyStep
   | SkillRepoInstallStep
+  | SkillUpdateStep
+  | SkillBackupStep
+  | SkillCreateStep
   | CcProviderStep
   | CcVisibleAppsStep
   | FileRestoreStep

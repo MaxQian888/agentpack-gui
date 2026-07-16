@@ -1,25 +1,47 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Download, FolderOpen } from "lucide-react"
+import { Download, FilePlus2, FolderOpen, GitBranch, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
+import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { saveSettings } from "@/lib/tauri/settings"
 import { pickFolder } from "@/lib/tauri/dialog"
 import { cleanupRepoScan, fetchRepoSkills, pathExists } from "@/lib/tauri/commands"
-import { skillCopyStep, skillRepoInstallStep } from "@/lib/agentpack/plan"
-import { filterBySubpath, parseRepoSource, tarballUrl } from "@/lib/skills/github"
+import { skillCopyStep, skillCreateStep, skillRepoInstallStep } from "@/lib/agentpack/plan"
+import { filterBySubpath, parseRepoSource, tarballUrl, type RepoRef } from "@/lib/skills/github"
 import { npxSkillsAddCommand } from "@/lib/skills/npx"
 import { skillDescription, skillName, splitFrontmatter } from "@/lib/skills/frontmatter"
+import { scaffoldSkillMd, type SkillTemplate } from "@/lib/skills/scaffold"
 import { SKILL_SOURCES } from "@/lib/skills/browse"
 import type { Paths } from "@/lib/agentpack/types"
-import type { RepoScan, SkillSource } from "@/lib/skills/types"
+import type { RepoScan, RepoSource, SkillSource } from "@/lib/skills/types"
 import { useRunnerCtx } from "../../run/runner-context"
+
+/** Curated, verified-to-exist GitHub skill repos offered as one-click sources. */
+const RECOMMENDED_SOURCES: RepoSource[] = [
+  { url: "anthropics/skills", label: "Anthropic — Agent Skills" },
+  { url: "obra/superpowers-skills", label: "Superpowers skills" },
+]
+
+/** A skill dir name is the folder + the /command: letters, numbers, dashes. */
+const SKILL_NAME_RE = /^[A-Za-z0-9._-]+$/
+function isValidSkillName(name: string): boolean {
+  return SKILL_NAME_RE.test(name) && name !== "." && name !== ".."
+}
 
 function skillsDirFor(paths: Paths, source: SkillSource): string {
   switch (source) {
@@ -76,6 +98,8 @@ export function AddSkillsTab({ refresh }: { refresh: () => void }) {
   const [fetching, setFetching] = useState(false)
   const [fetchErr, setFetchErr] = useState<string | null>(null)
   const [scan, setScan] = useState<RepoScan | null>(null)
+  /** The parsed source of the current scan, recorded as install provenance. */
+  const [scanRef, setScanRef] = useState<RepoRef | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [ghTargets, setGhTargets] = useState<Set<SkillSource>>(new Set(["claude", "codex"]))
 
@@ -101,8 +125,8 @@ export function AddSkillsTab({ refresh }: { refresh: () => void }) {
     [scan]
   )
 
-  const fetchNow = async () => {
-    const ref = parseRepoSource(source)
+  const fetchNow = async (srcInput: string = source) => {
+    const ref = parseRepoSource(srcInput)
     if (!ref) {
       setFetchErr(sb.invalidSource)
       return
@@ -119,6 +143,7 @@ export function AddSkillsTab({ refresh }: { refresh: () => void }) {
         void cleanupRepoScan(result.scanId).catch(() => {})
       } else {
         setScan({ scanId: result.scanId, skills })
+        setScanRef(ref)
         setPicked(new Set(skills.map((s) => s.relPath)))
       }
     } catch (e) {
@@ -142,6 +167,8 @@ export function AddSkillsTab({ refresh }: { refresh: () => void }) {
         selected.map(({ relPath, dirName }) => ({ relPath, dirName })),
         targets,
         dests,
+        scanRef ? `${scanRef.owner}/${scanRef.repo}` : "",
+        scanRef?.ref ?? "HEAD",
         t
       ),
     ])
@@ -192,6 +219,44 @@ export function AddSkillsTab({ refresh }: { refresh: () => void }) {
     const dests = targets.map((target) => `${skillsDirFor(paths, target)}/${dirName}`)
     await run([skillCopyStep(dirName, dirName, folder, targets, dests, t)])
     setFolder(null)
+    refresh()
+  }
+
+  // ----- Saved repo sources (marketplace) -----
+  const repoSources = settings.skillRepoSources ?? []
+  const [newRepoUrl, setNewRepoUrl] = useState("")
+  const [newRepoLabel, setNewRepoLabel] = useState("")
+
+  const persistSources = (next: RepoSource[]) => {
+    setSettings({ skillRepoSources: next })
+    void saveSettings({ skillRepoSources: next })
+  }
+  const addRepoSource = (src: RepoSource) => {
+    const url = src.url.trim()
+    if (!url || repoSources.some((r) => r.url === url)) return
+    persistSources([...repoSources, { ...src, url }])
+  }
+  const browseSource = (src: RepoSource) => {
+    setSource(src.url)
+    void fetchNow(src.url)
+  }
+
+  // ----- Create a skill -----
+  const [newName, setNewName] = useState("")
+  const [newDesc, setNewDesc] = useState("")
+  const [template, setTemplate] = useState<SkillTemplate>("blank")
+  const [createTargets, setCreateTargets] = useState<Set<SkillSource>>(new Set(["claude", "codex"]))
+  const trimmedName = newName.trim()
+  const nameValid = trimmedName === "" || isValidSkillName(trimmedName)
+
+  const createSkillNow = async () => {
+    if (!paths || createTargets.size === 0 || !isValidSkillName(trimmedName)) return
+    const targets = [...createTargets]
+    const content = scaffoldSkillMd({ name: trimmedName, description: newDesc, template })
+    const dests = targets.map((target) => `${skillsDirFor(paths, target)}/${trimmedName}`)
+    await run([skillCreateStep(trimmedName, targets, content, dests, t)])
+    setNewName("")
+    setNewDesc("")
     refresh()
   }
 
@@ -298,6 +363,85 @@ export function AddSkillsTab({ refresh }: { refresh: () => void }) {
       <Card className="gap-3 p-4">
         <div>
           <p className="flex items-center gap-2 font-medium">
+            <GitBranch className="size-4" /> {sb.reposTitle}
+          </p>
+          <p className="text-sm text-muted-foreground">{sb.reposHint}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Input
+            value={newRepoUrl}
+            onChange={(e) => setNewRepoUrl(e.target.value)}
+            placeholder={sb.repoUrlPlaceholder}
+            className="min-w-40 flex-1"
+          />
+          <Input
+            value={newRepoLabel}
+            onChange={(e) => setNewRepoLabel(e.target.value)}
+            placeholder={sb.repoLabelPlaceholder}
+            className="w-40"
+          />
+          <Button
+            variant="outline"
+            onClick={() => {
+              addRepoSource({ url: newRepoUrl, label: newRepoLabel.trim() || undefined })
+              setNewRepoUrl("")
+              setNewRepoLabel("")
+            }}
+            disabled={!newRepoUrl.trim()}
+          >
+            {sb.addRepo}
+          </Button>
+        </div>
+        {repoSources.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{sb.reposEmpty}</p>
+        ) : (
+          <div className="flex flex-col gap-1">
+            {repoSources.map((r) => (
+              <div
+                key={r.url}
+                className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm"
+              >
+                <span className="min-w-0 flex-1 truncate">
+                  <span className="font-medium">{r.label ?? r.url}</span>
+                  {r.label ? (
+                    <span className="ml-2 text-xs text-muted-foreground">{r.url}</span>
+                  ) : null}
+                </span>
+                <Button variant="ghost" size="sm" onClick={() => browseSource(r)}>
+                  {sb.browse}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={sb.removeRepo}
+                  onClick={() => persistSources(repoSources.filter((x) => x.url !== r.url))}
+                >
+                  <Trash2 className="size-4 text-destructive" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-muted-foreground">{sb.recommendedTitle}:</span>
+          {RECOMMENDED_SOURCES.filter((rec) => !repoSources.some((r) => r.url === rec.url)).map(
+            (rec) => (
+              <button
+                key={rec.url}
+                type="button"
+                onClick={() => addRepoSource(rec)}
+                className="rounded-full border px-2.5 py-0.5 hover:bg-accent/40"
+              >
+                + {rec.label ?? rec.url}
+              </button>
+            )
+          )}
+        </div>
+      </Card>
+
+      <Card className="gap-3 p-4">
+        <div>
+          <p className="flex items-center gap-2 font-medium">
             <FolderOpen className="size-4" /> {sb.addLocalTitle}
           </p>
           <p className="text-sm text-muted-foreground">{sb.addLocalHint}</p>
@@ -326,6 +470,72 @@ export function AddSkillsTab({ refresh }: { refresh: () => void }) {
             </div>
           </div>
         ) : null}
+      </Card>
+
+      <Card className="gap-3 p-4">
+        <div>
+          <p className="flex items-center gap-2 font-medium">
+            <FilePlus2 className="size-4" /> {sb.createTitle}
+          </p>
+          <p className="text-sm text-muted-foreground">{sb.createHint}</p>
+        </div>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground" htmlFor="new-skill-name">
+              {sb.nameLabel}
+            </label>
+            <Input
+              id="new-skill-name"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="my-skill"
+              aria-invalid={!nameValid}
+            />
+            <p className={cn("text-xs", nameValid ? "text-muted-foreground" : "text-destructive")}>
+              {nameValid ? sb.nameHint : sb.nameInvalid}
+            </p>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-muted-foreground" htmlFor="new-skill-desc">
+              {sb.descriptionLabel}
+            </label>
+            <Textarea
+              id="new-skill-desc"
+              value={newDesc}
+              onChange={(e) => setNewDesc(e.target.value)}
+              placeholder={sb.descriptionPlaceholder}
+              className="min-h-16"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-muted-foreground">{sb.templateLabel}</span>
+              <Select value={template} onValueChange={(v) => setTemplate(v as SkillTemplate)}>
+                <SelectTrigger size="sm" className="w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="blank">{sb.templateBlank}</SelectItem>
+                  <SelectItem value="reference">{sb.templateReference}</SelectItem>
+                  <SelectItem value="task">{sb.templateTask}</SelectItem>
+                </SelectContent>
+              </Select>
+            </label>
+          </div>
+          <TargetPicker
+            targets={createTargets}
+            onToggle={(x) => setCreateTargets(toggleIn(createTargets, x))}
+          />
+          <div>
+            <Button
+              size="sm"
+              onClick={() => void createSkillNow()}
+              disabled={!trimmedName || !nameValid || createTargets.size === 0}
+            >
+              {sb.createNow}
+            </Button>
+          </div>
+        </div>
       </Card>
     </div>
   )

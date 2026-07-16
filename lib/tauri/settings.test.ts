@@ -35,7 +35,14 @@ describe("loadSettings", () => {
       onboarded: false,
       quickStartDismissed: false,
       ghMirrorPrefix: null,
+      skillRepoSources: [],
     })
+  })
+
+  it("round-trips saved skill repo sources", async () => {
+    const sources = [{ url: "anthropics/skills", label: "Anthropic" }]
+    mockedLoad.mockResolvedValue(storeMock({ skillRepoSources: sources }))
+    expect((await loadSettings()).skillRepoSources).toEqual(sources)
   })
 
   it("falls back to defaults when the store throws", async () => {

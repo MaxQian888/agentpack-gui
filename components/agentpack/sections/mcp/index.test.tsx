@@ -12,6 +12,7 @@ import { I18nProvider } from "@/lib/i18n/provider"
 import { RunnerProvider } from "../../run/runner-context"
 import { useAppStore } from "@/store/app-store"
 import { isTauri } from "@/lib/tauri"
+import { MCP_SERVERS } from "@/lib/agentpack/registry"
 import { McpSection } from "./index"
 import type { DashboardScan } from "../dashboard"
 
@@ -46,13 +47,14 @@ function renderSection(loading = false) {
   )
 }
 
-it("renders the three tabs and the stat strip", () => {
+it("renders the four tabs and the stat strip", () => {
   renderSection()
   expect(screen.getByRole("tab", { name: /Catalog/i })).toBeInTheDocument()
   expect(screen.getByRole("tab", { name: /Installed/i })).toBeInTheDocument()
+  expect(screen.getByRole("tab", { name: /Overview/i })).toBeInTheDocument()
   expect(screen.getByRole("tab", { name: /Add custom/i })).toBeInTheDocument()
-  // Stat strip: 11 catalog servers, 1 installed (context7 on claude).
-  expect(screen.getByText("11")).toBeInTheDocument()
+  // Stat strip: the catalog total tracks the registry size.
+  expect(screen.getByText(String(MCP_SERVERS.length))).toBeInTheDocument()
 })
 
 it("shows a not-desktop notice when not running under Tauri", () => {

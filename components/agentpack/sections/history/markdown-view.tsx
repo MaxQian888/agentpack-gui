@@ -7,6 +7,7 @@ import {
   type ListItem,
   type MdBlock,
 } from "@/lib/history/markdown"
+import { CodeHighlight } from "@/components/agentpack/code-highlight"
 import { cn } from "@/lib/utils"
 
 /**
@@ -122,7 +123,9 @@ function Block({ block, variant }: { block: MdBlock; variant: Variant }) {
     case "code":
       return (
         <pre className="overflow-x-auto rounded-md border bg-muted/60 p-3 text-xs">
-          <code className="font-mono">{block.value}</code>
+          <code className="font-mono">
+            <CodeHighlight code={block.value} lang={block.lang} />
+          </code>
         </pre>
       )
     case "heading":

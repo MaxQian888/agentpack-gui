@@ -22,6 +22,13 @@ export async function revealPath(path: string): Promise<void> {
   await revealItemInDir(path)
 }
 
+/** Open a file with the system's default application (e.g. SKILL.md in an editor). */
+export async function openPath(path: string): Promise<void> {
+  if (!isTauri()) return
+  const { openPath: open } = await import("@tauri-apps/plugin-opener")
+  await open(path)
+}
+
 /** Send a desktop notification, requesting permission first if needed. */
 export async function notify(title: string, body: string): Promise<void> {
   if (!isTauri()) return

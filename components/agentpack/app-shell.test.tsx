@@ -61,6 +61,7 @@ it("shows the header update badge when an update is available and opens About", 
       onboarded: true,
       quickStartDismissed: false,
       ghMirrorPrefix: null,
+      skillRepoSources: [],
     },
   })
   renderShell()
