@@ -6,7 +6,7 @@ jest.mock("@/lib/tauri/commands", () => ({
   writeTextFile: jest.fn(async () => undefined),
 }))
 
-import { render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { toast } from "sonner"
 import { I18nProvider } from "@/lib/i18n/provider"
@@ -95,7 +95,11 @@ it("edits CORS origins as a comma-separated list and writes them as an array", a
   ;(readTextFile as jest.Mock).mockResolvedValue('[management]\nenabled = true\ntoken = "x"\n')
   await openDialog(true)
   const cors = await screen.findByLabelText(en.ccconnect.fields.corsOrigins)
-  await userEvent.type(cors, "http://a.test, http://b.test")
+  // Set the whole value in one event: this controlled field re-serializes the
+  // entire TOML doc on every keystroke, so per-character typing re-rendered the
+  // form 28× and tipped the test past 5 s under coverage. We only assert the
+  // final written array, so one change event is both faster and stable.
+  fireEvent.change(cors, { target: { value: "http://a.test, http://b.test" } })
   await userEvent.click(screen.getByRole("button", { name: en.ccconnect.save }))
   await waitFor(() => expect(writeTextFile).toHaveBeenCalled())
   const written = (writeTextFile as jest.Mock).mock.calls.at(-1)![1] as string

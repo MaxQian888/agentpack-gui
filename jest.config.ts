@@ -87,8 +87,19 @@ const config: Config = {
   // A set of global variables that need to be available in all test environments
   // globals: {},
 
-  // The maximum amount of workers used to run your tests. Can be specified as % or a number. E.g. maxWorkers: 10% will use 10% of your CPU amount + 1 as the maximum worker number. maxWorkers: 2 will use a maximum of 2 workers.
-  // maxWorkers: "50%",
+  // Cap parallelism at half the cores. On a 2-core CI runner this resolves to a
+  // single worker (unchanged); on many-core dev machines it prevents the default
+  // (cores - 1) from spawning ~30 jsdom+SWC workers, which paradoxically ran
+  // SLOWER and peaked at ~18 GB RSS from memory pressure. Half the cores is both
+  // faster and far lighter here.
+  maxWorkers: "50%",
+
+  // Recycle a worker once its heap passes this limit. v8 coverage + jsdom bloat
+  // a long-lived worker's old-space across 90+ suites, and the resulting GC
+  // thrash is severe — on a single worker it cut the coverage run from ~259 s to
+  // ~155 s, and locally it bounds peak RSS to ~7 GB instead of 11-18 GB. Faster
+  // AND lighter on every path (single-worker CI included).
+  workerIdleMemoryLimit: "768MB",
 
   // An array of directory names to be searched recursively up from the requiring module's location
   // moduleDirectories: [
