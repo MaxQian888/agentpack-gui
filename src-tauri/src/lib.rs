@@ -5,6 +5,7 @@ mod exec;
 mod fsops;
 mod history;
 mod history_cache;
+mod mcp;
 mod paths;
 mod skills;
 
@@ -72,6 +73,9 @@ pub fn run() {
       skills::restore_skill_backup,
       skills::delete_skill_backup,
       skills::create_skill,
+      mcp::registry_fetch,
+      mcp::mcp_probe_remote,
+      mcp::mcp_probe_stdio,
       ccswitch::cc_load_providers,
       ccswitch::cc_write_provider,
       backup::backup_snapshot,

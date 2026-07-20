@@ -75,7 +75,7 @@ function renderAdd(refresh = jest.fn()) {
   render(
     <I18nProvider>
       <RunnerProvider>
-        <AddSkillsTab refresh={refresh} />
+        <AddSkillsTab installed={{ skills: [], errors: [] }} refresh={refresh} />
       </RunnerProvider>
     </I18nProvider>
   )

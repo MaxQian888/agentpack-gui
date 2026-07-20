@@ -6,7 +6,9 @@ import {
   fileRestoreStep,
   mcpAddStep,
   mcpAddSpecStep,
+  mcpDisableStep,
   mcpEditStep,
+  mcpEnableStep,
   mcpRemoveStep,
   relayRemoveStep,
   runtimeUpgradeStep,
@@ -26,7 +28,7 @@ import {
   syncLiveConfigSteps,
 } from "./plan"
 import { findMcp } from "./registry"
-import { mergeCodexMcp } from "./merge/mcp"
+import { mergeCodexMcp, type McpSpec } from "./merge/mcp"
 import { mergeClaudeSettings, mergeCodexProvider } from "./merge/network"
 import { DEFAULT_VISIBLE_APPS } from "./ccswitch/settings"
 import type { Paths, Plan, StepDescriptor } from "./types"
@@ -47,6 +49,7 @@ const paths: Paths = {
   ccSwitchDb: "/h/.cc-switch/cc-switch.db",
   ccConnectDir: "/h/.cc-connect",
   ccConnectConfig: "/h/.cc-connect/config.toml",
+  mcpDisabledStore: "/h/.agentpack/mcp-disabled.json",
   os: "mac",
 }
 
@@ -447,6 +450,63 @@ describe("menu-action builders", () => {
       (s) => s.id === "mcp-remove-opencode-context7"
     )
     expect(step?.kind === "mergeFile" && step.path).toBe(paths.opencodeConfig)
+  })
+
+  it("mcpAddSpecStep gates Codex out of an sse spec but keeps Claude/OpenCode", () => {
+    const ids = mcpAddSpecStep(
+      "sser",
+      { transport: "sse", url: "https://x/sse", headers: {} },
+      ["claude", "codex", "opencode"],
+      paths
+    ).map((s) => s.id)
+    expect(ids).toEqual(["mcp-add-claude-sser", "mcp-add-opencode-sser"])
+  })
+
+  it("mcpAddSpecStep wraps npx through cmd /c for Codex/OpenCode on Windows", () => {
+    const winPaths: Paths = { ...paths, os: "win" }
+    const steps = mcpAddSpecStep(
+      "srv",
+      { transport: "stdio", command: "npx", args: ["-y", "pkg"], env: {} },
+      ["codex", "opencode"],
+      winPaths
+    )
+    const codex = steps.find((s) => s.id === "mcp-add-codex-srv")!
+    expect(codex.kind === "mergeFile" && codex.merge("")).toContain('command = "cmd"')
+    const oc = steps.find((s) => s.id === "mcp-add-opencode-srv")!
+    expect(oc.kind === "mergeFile" && oc.merge("")).toContain('"cmd"')
+  })
+
+  it("mcpDisableStep: Codex/OpenCode flip enabled=false, Claude stashes then removes", () => {
+    const spec: McpSpec = { transport: "stdio", command: "npx", args: [], env: {} }
+    const steps = mcpDisableStep("srv", spec, ["claude", "codex", "opencode"], paths)
+    expect(steps.map((s) => s.id)).toEqual([
+      "mcp-disable-stash-srv",
+      "mcp-disable-remove-claude-srv",
+      "mcp-disable-codex-srv",
+      "mcp-disable-opencode-srv",
+    ])
+    // Claude stash writes the spec into the disabled store, then removes the server.
+    const stash = steps[0]
+    expect(stash.kind === "mergeFile" && stash.path).toBe(paths.mcpDisabledStore)
+    expect(stash.kind === "mergeFile" && stash.merge("")).toContain('"srv"')
+    // Codex flips enabled=false in place.
+    const codex = steps.find((s) => s.id === "mcp-disable-codex-srv")!
+    const existing = mergeCodexMcp("", "srv", { command: "npx", args: [] })
+    expect(codex.kind === "mergeFile" && codex.merge(existing)).toMatch(/enabled\s*=\s*false/)
+  })
+
+  it("mcpEnableStep: Claude re-adds then clears the stash; Codex flips enabled=true", () => {
+    const spec: McpSpec = { transport: "stdio", command: "npx", args: [], env: {} }
+    const steps = mcpEnableStep("srv", spec, ["claude", "codex"], paths)
+    expect(steps.map((s) => s.id)).toEqual([
+      "mcp-enable-add-claude-srv",
+      "mcp-enable-unstash-srv",
+      "mcp-enable-codex-srv",
+    ])
+    const unstash = steps.find((s) => s.id === "mcp-enable-unstash-srv")!
+    // Unstashing an existing entry empties the store.
+    const store = JSON.stringify({ srv: { spec, targets: ["claude"] } })
+    expect(unstash.kind === "mergeFile" && JSON.parse(unstash.merge(store))).toEqual({})
   })
 
   it("relayRemoveStep removes claude + codex relay config for chosen clis", () => {

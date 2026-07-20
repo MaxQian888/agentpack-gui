@@ -53,21 +53,42 @@ export function groupSkills(skills: InstalledSkill[]): SkillRow[] {
 
 export type SkillSort = "name" | "modified"
 
-/** Case-insensitive match on name, dir name and description. */
+export interface RowMatch {
+  matched: boolean
+  /**
+   * The query matched only inside the SKILL.md body/frontmatter (e.g.
+   * when_to_use, allowed-tools) — not the visible name, dir name or description.
+   * Drives the "content match" badge so full-text hits aren't confusing.
+   */
+  contentOnly: boolean
+}
+
+/**
+ * Case-insensitive match against a row. Metadata (name / dir name / description)
+ * is checked first; failing that, the full SKILL.md of the row's primary entry
+ * (frontmatter + body) is searched, and such a hit is flagged `contentOnly`.
+ */
+export function matchRow(row: SkillRow, query: string): RowMatch {
+  const q = query.trim().toLowerCase()
+  if (!q) return { matched: true, contentOnly: false }
+  const meta =
+    row.name.toLowerCase().includes(q) ||
+    row.dirName.toLowerCase().includes(q) ||
+    (row.description?.toLowerCase().includes(q) ?? false)
+  if (meta) return { matched: true, contentOnly: false }
+  const body = primaryEntry(row)?.skillMd.toLowerCase().includes(q) ?? false
+  return { matched: body, contentOnly: body }
+}
+
+/** Filter rows by source and query (full-text, via {@link matchRow}). */
 export function filterRows(
   rows: SkillRow[],
   query: string,
   agent: SkillSource | "all"
 ): SkillRow[] {
-  const q = query.trim().toLowerCase()
   return rows.filter((row) => {
     if (agent !== "all" && !row.entries[agent]) return false
-    if (!q) return true
-    return (
-      row.name.toLowerCase().includes(q) ||
-      row.dirName.toLowerCase().includes(q) ||
-      (row.description?.toLowerCase().includes(q) ?? false)
-    )
+    return matchRow(row, query).matched
   })
 }
 

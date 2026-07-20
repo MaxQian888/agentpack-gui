@@ -38,7 +38,7 @@ function slugify(s: string): string {
 
 /** Best-effort id for a single-server paste that carries no id of its own. */
 function deriveId(spec: McpSpec): string {
-  if (spec.transport === "http") {
+  if (spec.transport !== "stdio") {
     try {
       const first = new URL(spec.url).hostname.split(".")[0]
       const s = slugify(first)
@@ -140,7 +140,7 @@ function fromCommand(text: string): ImportResult | null {
   if (addIdx < 0) return null
   const rest = tokens.slice(addIdx + 1)
 
-  let transport: "stdio" | "http" = "stdio"
+  let transport: "stdio" | "http" | "sse" = "stdio"
   const env: Record<string, string> = {}
   const headers: Record<string, string> = {}
   let id: string | undefined
@@ -162,7 +162,7 @@ function fromCommand(text: string): ImportResult | null {
     }
     if (tk === "--transport" || tk === "-t") {
       const v = rest[++i]
-      if (v === "http" || v === "sse") transport = "http"
+      if (v === "http" || v === "sse") transport = v
       continue
     }
     if (tk === "--scope" || tk === "-s") {
@@ -186,7 +186,7 @@ function fromCommand(text: string): ImportResult | null {
       id = tk
       continue
     }
-    if (transport === "http") {
+    if (transport !== "stdio") {
       if (positional === 2) url = tk
       continue
     }
@@ -197,9 +197,11 @@ function fromCommand(text: string): ImportResult | null {
   }
 
   if (!id) return { error: "parse" }
-  if (transport === "http") {
+  if (transport !== "stdio") {
     if (!url) return { error: "parse" }
-    return { servers: [{ id, spec: { transport: "http", url, headers } }] }
+    const spec: McpSpec =
+      transport === "sse" ? { transport: "sse", url, headers } : { transport: "http", url, headers }
+    return { servers: [{ id, spec }] }
   }
   if (!command) return { error: "parse" }
   return { servers: [{ id, spec: { transport: "stdio", command, args, env } }] }
@@ -216,4 +218,47 @@ export function parseMcpImport(text: string): ImportResult {
   const cmd = fromCommand(trimmed)
   if (cmd) return cmd
   return fromJson(trimmed) ?? { error: "parse" }
+}
+
+const REDACTED = "<redacted>"
+
+/**
+ * Serialize servers to the portable `mcpServers` JSON block other MCP managers
+ * accept — the inverse of `parseMcpImport`, for the "export / share" action.
+ * With `redactSecrets`, literal secret values (env values, inline bearer tokens)
+ * are masked so a config can be shared without leaking keys; env *references*
+ * (`${VAR}`) are always kept verbatim since they carry no secret.
+ */
+export function exportMcpServers(
+  servers: ImportedServer[],
+  opts: { redactSecrets?: boolean } = {}
+): string {
+  const mcpServers: Record<string, unknown> = {}
+  for (const { id, spec } of servers) {
+    if (spec.transport === "stdio") {
+      const env: Record<string, string> = {}
+      for (const [k, v] of Object.entries(spec.env)) env[k] = opts.redactSecrets ? REDACTED : v
+      for (const [k, ref] of Object.entries(spec.envRefs ?? {})) env[k] = `\${${ref}}`
+      mcpServers[id] = {
+        command: spec.command,
+        args: spec.args,
+        ...(Object.keys(env).length ? { env } : {}),
+      }
+    } else {
+      const headers: Record<string, string> = {}
+      for (const [k, v] of Object.entries(spec.headers)) {
+        headers[k] =
+          opts.redactSecrets && k.toLowerCase() === "authorization" ? `Bearer ${REDACTED}` : v
+      }
+      if (!("Authorization" in spec.headers) && spec.bearerTokenEnvVar) {
+        headers["Authorization"] = `Bearer \${${spec.bearerTokenEnvVar}}`
+      }
+      mcpServers[id] = {
+        type: spec.transport, // "http" | "sse"
+        url: spec.url,
+        ...(Object.keys(headers).length ? { headers } : {}),
+      }
+    }
+  }
+  return JSON.stringify({ mcpServers }, null, 2) + "\n"
 }

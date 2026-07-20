@@ -9,6 +9,8 @@ import {
   FileCode2,
   Pencil,
   Play,
+  Share2,
+  Zap,
 } from "lucide-react"
 import {
   Dialog,
@@ -26,8 +28,16 @@ import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { isTauri } from "@/lib/tauri"
-import { commandOnPath, probeHost, readTextFile } from "@/lib/tauri/commands"
+import {
+  commandOnPath,
+  mcpProbeRemote,
+  mcpProbeStdio,
+  probeHost,
+  readTextFile,
+  type McpProbeResult,
+} from "@/lib/tauri/commands"
 import { openUrl } from "@/lib/tauri/system"
+import { exportMcpServers } from "@/lib/agentpack/mcp-import"
 import { findMcp } from "@/lib/agentpack/registry"
 import {
   parseClaudeMcpEntry,
@@ -50,6 +60,7 @@ import type { CustomFormValue } from "./custom-form"
 
 type Specs = Partial<Record<McpTarget, McpSpec | undefined>>
 type HealthState = Partial<Record<McpTarget, McpHealth | "testing">>
+type DeepState = Partial<Record<McpTarget, McpProbeResult | "testing">>
 
 /** A collapsible section built on native <details> — no state, fully testable. */
 function Foldable({
@@ -109,6 +120,7 @@ export function McpDetailDialog({
   const paths = useAppStore((s) => s.paths)
   const [specs, setSpecs] = useState<Specs>({})
   const [health, setHealth] = useState<HealthState>({})
+  const [deep, setDeep] = useState<DeepState>({})
 
   useEffect(() => {
     if (!open || !id || !paths || !isTauri()) return
@@ -122,6 +134,7 @@ export function McpDetailDialog({
       if (cancelled) return
       // Reset any prior server's health results as the new specs land.
       setHealth({})
+      setDeep({})
       setSpecs({
         claude: parseClaudeMcpEntry(claudeJson, id),
         codex: parseCodexMcpEntry(codexToml, id),
@@ -161,6 +174,46 @@ export function McpDetailDialog({
   const testAll = () => {
     for (const tg of presentTargets) if (specs[tg]) void testTarget(tg)
   }
+
+  /**
+   * Real MCP handshake. Remote (http/sse) does an `initialize` over the network;
+   * stdio actually spawns the server — so it's an explicit, per-target action.
+   */
+  const deepTest = async (tg: McpTarget) => {
+    const spec = specs[tg]
+    if (!spec) return
+    setDeep((d) => ({ ...d, [tg]: "testing" }))
+    const res =
+      spec.transport === "stdio"
+        ? await mcpProbeStdio(spec.command, spec.args, spec.env)
+        : await mcpProbeRemote(spec.url, spec.headers, spec.transport)
+    setDeep((d) => ({ ...d, [tg]: res }))
+  }
+
+  const probeText = (res: McpProbeResult): string => {
+    switch (res.reason) {
+      case "ok": {
+        const info = [res.serverName, res.protocolVersion].filter(Boolean).join(" · ")
+        return m.probeOk(info || (res.toolCount != null ? `${res.toolCount} tools` : "ok"))
+      }
+      case "unauthorized":
+        return m.probeUnauthorized
+      case "unreachable":
+        return m.probeUnreachable
+      case "not-mcp":
+        return m.probeNotMcp
+      case "timeout":
+        return m.probeTimeout
+      case "spawn-failed":
+        return m.probeSpawnFailed
+      default:
+        return res.reason.startsWith("http-") ? m.probeHttp(res.reason.slice(5)) : res.reason
+    }
+  }
+
+  const exportText = editSpec
+    ? exportMcpServers([{ id, spec: editSpec }], { redactSecrets: true })
+    : ""
 
   const healthDetail = (spec: McpSpec, h: McpHealth): string => {
     const cmd = spec.transport === "stdio" ? spec.command : ""
@@ -272,8 +325,45 @@ export function McpDetailDialog({
                           <Play className="size-3" />
                           {m.test}
                         </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 gap-1 px-2 text-xs"
+                          disabled={!spec || deep[tg] === "testing"}
+                          title={m.deepTesting}
+                          onClick={() => void deepTest(tg)}
+                        >
+                          <Zap className="size-3" />
+                          {m.deepTest}
+                        </Button>
                       </div>
                     </div>
+                    {deep[tg] ? (
+                      <div className="mb-2 flex items-center gap-1.5 text-xs">
+                        {deep[tg] === "testing" ? (
+                          <span className="flex items-center gap-1.5 text-muted-foreground">
+                            <Spinner className="size-3.5" />
+                            {m.deepTesting}
+                          </span>
+                        ) : (
+                          <span
+                            className={cn(
+                              "flex items-center gap-1.5",
+                              (deep[tg] as McpProbeResult).ok
+                                ? "text-emerald-600"
+                                : "text-amber-600"
+                            )}
+                          >
+                            {(deep[tg] as McpProbeResult).ok ? (
+                              <CheckCircle2 className="size-3.5" />
+                            ) : (
+                              <AlertTriangle className="size-3.5" />
+                            )}
+                            {probeText(deep[tg] as McpProbeResult)}
+                          </span>
+                        )}
+                      </div>
+                    ) : null}
                     {spec ? (
                       <>
                         <div className="flex flex-col gap-1.5">
@@ -306,6 +396,20 @@ export function McpDetailDialog({
               })}
             </div>
           )}
+
+          {editSpec ? (
+            <Foldable
+              label={
+                <span className="flex items-center gap-1.5">
+                  {m.exportShareable}
+                  <CopyButton value={exportText} ariaLabel={m.exportShareable} />
+                </span>
+              }
+              icon={<Share2 className="size-3.5" />}
+            >
+              <CodeBlock text={exportText} lang="json" />
+            </Foldable>
+          ) : null}
         </div>
 
         {canEdit ? (

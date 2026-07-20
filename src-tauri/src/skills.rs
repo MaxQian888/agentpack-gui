@@ -37,8 +37,9 @@ pub(crate) fn source_roots(home: &Path) -> [(&'static str, PathBuf); 4] {
   ]
 }
 
-/// Root a skill installs into for a given target name.
-fn target_root(home: &Path, target: &str) -> Option<PathBuf> {
+/// Root a skill installs into for a given target name. Shared with
+/// `fsops::install_skill` so bundled-skill installs resolve the same four roots.
+pub(crate) fn target_root(home: &Path, target: &str) -> Option<PathBuf> {
   source_roots(home)
     .into_iter()
     .find(|(source, _)| *source == target)
@@ -976,37 +977,52 @@ pub fn delete_skill_backup(id: String) -> Result<(), String> {
 /// new SKILL.md into `<root>/<name>` for each. Existence is checked across all
 /// roots before writing any of them, so a later root failing never leaves a
 /// mix of created/not-created dirs.
-fn create_skill_in_roots(name: &str, roots: &[PathBuf], content: &str) -> Result<Vec<String>, String> {
+fn create_skill_in_roots(
+  name: &str,
+  roots: &[PathBuf],
+  content: &str,
+  overwrite: bool,
+) -> Result<Vec<String>, String> {
   if !crate::fsops::is_safe_skill_id(name) {
     return Err(format!("invalid skill name: {name}"));
   }
   let mut dests = Vec::new();
   for root in roots {
     let dest = root.join(name);
-    if dest.exists() {
+    if dest.exists() && !overwrite {
       return Err(format!("skill already exists: {}", dest.to_string_lossy()));
     }
     dests.push(dest);
   }
   for dest in &dests {
+    // On overwrite, drop any prior skill dir first so stale files never linger.
+    if dest.exists() {
+      fs::remove_dir_all(dest).map_err(|e| e.to_string())?;
+    }
     fs::create_dir_all(dest).map_err(|e| e.to_string())?;
     fs::write(dest.join("SKILL.md"), content).map_err(|e| e.to_string())?;
   }
   Ok(dests.into_iter().map(|d| d.to_string_lossy().into_owned()).collect())
 }
 
-/// Hand-author a new skill's SKILL.md into each target's skills root. Refuses
-/// to overwrite an existing dir — this is for brand-new skills only, `update_skill`
-/// and `install_skill_from_dir` cover replacing an existing one. Unmanaged: no
+/// Hand-author a new skill's SKILL.md into each target's skills root. By default
+/// refuses to overwrite an existing dir (brand-new skills only); pass
+/// `overwrite: true` — which the frontend only does after the user resolves the
+/// install-conflict dialog — to replace an existing skill in place. Unmanaged: no
 /// origin manifest is written.
 #[tauri::command(async)]
-pub fn create_skill(name: String, targets: Vec<String>, content: String) -> Result<Vec<String>, String> {
+pub fn create_skill(
+  name: String,
+  targets: Vec<String>,
+  content: String,
+  overwrite: bool,
+) -> Result<Vec<String>, String> {
   let home = dirs::home_dir().ok_or("no home dir")?;
   let roots = targets
     .iter()
     .map(|t| target_root(&home, t).ok_or_else(|| format!("invalid skill target: {t}")))
     .collect::<Result<Vec<_>, _>>()?;
-  create_skill_in_roots(&name, &roots, &content)
+  create_skill_in_roots(&name, &roots, &content, overwrite)
 }
 
 #[cfg(test)]
@@ -1168,6 +1184,15 @@ mod tests {
     let roots = source_roots(home);
     let sources: Vec<&str> = roots.iter().map(|(s, _)| *s).collect();
     assert_eq!(sources, vec!["claude", "codex", "opencode", "agents"]);
+    // `install_skill` (bundled), `install_skill_from_dir`, `create_skill` and the
+    // repo installer all resolve targets through `target_root`; every one of the
+    // four sources must map to a root, and anything else must be rejected.
+    assert_eq!(target_root(home, "claude"), Some(home.join(".claude").join("skills")));
+    assert_eq!(target_root(home, "codex"), Some(codex_home(home).join("skills")));
+    assert_eq!(
+      target_root(home, "opencode"),
+      Some(home.join(".config").join("opencode").join("skills"))
+    );
     assert_eq!(target_root(home, "agents"), Some(home.join(".agents").join("skills")));
     assert_eq!(target_root(home, "cursor"), None);
   }
@@ -1374,10 +1399,11 @@ mod tests {
     fs::create_dir_all(&root_b).unwrap();
 
     // A bad name is rejected before any fs work.
-    assert!(create_skill_in_roots("../evil", &[root_a.clone()], "# body").is_err());
+    assert!(create_skill_in_roots("../evil", &[root_a.clone()], "# body", false).is_err());
 
     // Happy path writes SKILL.md into every root.
-    let dests = create_skill_in_roots("brand-new", &[root_a.clone(), root_b.clone()], "# body").unwrap();
+    let dests =
+      create_skill_in_roots("brand-new", &[root_a.clone(), root_b.clone()], "# body", false).unwrap();
     assert_eq!(dests.len(), 2);
     assert_eq!(fs::read_to_string(root_a.join("brand-new/SKILL.md")).unwrap(), "# body");
     assert_eq!(fs::read_to_string(root_b.join("brand-new/SKILL.md")).unwrap(), "# body");
@@ -1385,15 +1411,26 @@ mod tests {
     // A second call refuses to overwrite, and does not touch root_b either
     // (the existence check runs across all roots before any write happens).
     fs::write(root_a.join("brand-new/SKILL.md"), "# body").unwrap();
-    assert!(create_skill_in_roots("brand-new", &[root_a.clone(), root_b.clone()], "# changed").is_err());
+    assert!(
+      create_skill_in_roots("brand-new", &[root_a.clone(), root_b.clone()], "# changed", false).is_err()
+    );
     assert_eq!(fs::read_to_string(root_a.join("brand-new/SKILL.md")).unwrap(), "# body");
+
+    // With overwrite=true the existing skill is replaced in place (and stale
+    // files are cleared: the extra file below must be gone afterwards).
+    fs::write(root_a.join("brand-new/stale.md"), "old").unwrap();
+    let dests =
+      create_skill_in_roots("brand-new", &[root_a.clone(), root_b.clone()], "# changed", true).unwrap();
+    assert_eq!(dests.len(), 2);
+    assert_eq!(fs::read_to_string(root_a.join("brand-new/SKILL.md")).unwrap(), "# changed");
+    assert!(!root_a.join("brand-new/stale.md").exists());
 
     let _ = fs::remove_dir_all(&base);
   }
 
   #[test]
   fn create_skill_rejects_unknown_target() {
-    assert!(create_skill("new-skill".into(), vec!["cursor".into()], "# body".into()).is_err());
+    assert!(create_skill("new-skill".into(), vec!["cursor".into()], "# body".into(), false).is_err());
   }
 
   #[test]

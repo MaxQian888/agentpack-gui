@@ -1,11 +1,19 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { ExternalLink, Info, Search } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Spinner } from "@/components/ui/spinner"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,13 +28,17 @@ import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { MCP_CATEGORY_ORDER, MCP_SERVERS } from "@/lib/agentpack/registry"
-import { mcpAddStep, mcpRemoveStep } from "@/lib/agentpack/plan"
+import { mcpAddSpecStep, mcpAddStep, mcpRemoveStep } from "@/lib/agentpack/plan"
+import { mapRegistryResponse, type RegistryCandidate } from "@/lib/agentpack/registry-remote"
 import type { McpServer, McpTarget } from "@/lib/agentpack/types"
+import { isTauri } from "@/lib/tauri"
+import { registryFetch } from "@/lib/tauri/commands"
 import { openUrl } from "@/lib/tauri/system"
 import { useRunnerCtx } from "../../run/runner-context"
 import type { DashboardScan } from "../dashboard"
-import { anyPresent, KeyInput, presenceOf, TargetToggles } from "./helpers"
+import { anyPresent, existingIds, KeyInput, presenceOf, TargetToggles } from "./helpers"
 import { McpDetailDialog } from "./detail-dialog"
+import { CustomServerForm, type CustomFormValue } from "./custom-form"
 
 type Filter = "all" | "installed" | "notInstalled" | "needsKey"
 const FILTERS: Filter[] = ["all", "installed", "notInstalled", "needsKey"]
@@ -46,7 +58,15 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
   const [detailId, setDetailId] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<{ server: McpServer; target: McpTarget } | null>(null)
 
+  // Online registry search (on-demand; the featured catalog above stays offline).
+  const [regResults, setRegResults] = useState<RegistryCandidate[]>([])
+  const [regCursor, setRegCursor] = useState<string | undefined>(undefined)
+  const [regLoading, setRegLoading] = useState(false)
+  const [regError, setRegError] = useState(false)
+  const [addCand, setAddCand] = useState<RegistryCandidate | null>(null)
+
   const claudeDisabled = !detections["claude-code"]?.installed
+  const takenIds = useMemo(() => existingIds(scan), [scan])
 
   const syncPlan = (id: string, target: McpTarget, add: boolean) => {
     const cur = plan.mcps.find((x) => x.id === id)?.targets ?? []
@@ -71,6 +91,53 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
   }
 
   const q = search.trim().toLowerCase()
+
+  const fetchRegistry = async (query: string, cursor?: string) => {
+    if (!isTauri()) return
+    setRegLoading(true)
+    setRegError(false)
+    try {
+      const raw = await registryFetch(query, cursor)
+      const { candidates, nextCursor } = mapRegistryResponse(JSON.parse(raw))
+      setRegResults((prev) => (cursor ? [...prev, ...candidates] : candidates))
+      setRegCursor(nextCursor)
+    } catch {
+      setRegError(true)
+      if (!cursor) setRegResults([])
+    } finally {
+      setRegLoading(false)
+    }
+  }
+
+  // Debounce the online search; the featured catalog above never waits on it.
+  // Results are hidden until q ≥ 2 (see the JSX guard) and every fetch replaces
+  // them, so there's no need to reset state synchronously here.
+  useEffect(() => {
+    if (q.length < 2 || !isTauri()) return
+    const handle = setTimeout(() => void fetchRegistry(q), 350)
+    return () => clearTimeout(handle)
+  }, [q])
+
+  /** Prefill the custom form from a registry candidate (secrets → env refs; required non-secret vars → empty rows). */
+  const candidateToForm = (c: RegistryCandidate): CustomFormValue => {
+    const spec = c.spec!
+    if (spec.transport !== "stdio") return { id: c.id, spec, targets: ["claude"] }
+    const env = { ...spec.env }
+    for (const inp of c.envInputs) {
+      if (inp.required && !inp.secret && !(inp.name in env) && !spec.envRefs?.[inp.name]) {
+        env[inp.name] = ""
+      }
+    }
+    return { id: c.id, spec: { ...spec, env }, targets: ["claude"] }
+  }
+
+  const addFromForm = async (v: CustomFormValue) => {
+    if (!paths) return
+    await run(mcpAddSpecStep(v.id, v.spec, v.targets, paths, t))
+    setAddCand(null)
+    refresh()
+  }
+
   const matches = (server: McpServer): boolean => {
     const meta = t.catalog.mcp[server.id]
     if (q) {
@@ -203,6 +270,105 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
           })}
         </div>
       ))}
+
+      {isTauri() && q.length >= 2 ? (
+        <div className="flex flex-col gap-3">
+          <h3 className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            {m.registryTitle}
+            {regResults.length ? (
+              <span className="text-xs font-normal opacity-70">{regResults.length}</span>
+            ) : null}
+            {regLoading ? <Spinner className="size-3.5" /> : null}
+          </h3>
+          {regError ? (
+            <p className="text-sm text-muted-foreground">{m.registryError}</p>
+          ) : regLoading && regResults.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{m.registrySearching}</p>
+          ) : regResults.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{m.registryEmpty}</p>
+          ) : (
+            <>
+              {regResults.map((c) => (
+                <Card key={c.name} className="gap-2 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">{c.title}</span>
+                        {c.spec ? (
+                          <Badge variant="outline" className="font-normal text-muted-foreground">
+                            {c.spec.transport}
+                          </Badge>
+                        ) : null}
+                        {c.docsUrl ? (
+                          <button
+                            type="button"
+                            onClick={() => void openUrl(c.docsUrl!)}
+                            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                          >
+                            {m.docs}
+                            <ExternalLink className="size-3" />
+                          </button>
+                        ) : null}
+                        <span className="truncate font-mono text-xs text-muted-foreground">
+                          {c.name}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-sm text-muted-foreground">{c.description}</p>
+                    </div>
+                    {c.spec ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0"
+                        onClick={() => setAddCand(c)}
+                      >
+                        {m.registryAdd}
+                      </Button>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className="shrink-0 font-normal text-muted-foreground"
+                        title={m.registryUnsupportedOci}
+                      >
+                        {c.unsupported}
+                      </Badge>
+                    )}
+                  </div>
+                </Card>
+              ))}
+              {regCursor ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-fit"
+                  disabled={regLoading}
+                  onClick={() => void fetchRegistry(q, regCursor)}
+                >
+                  {m.registryLoadMore}
+                </Button>
+              ) : null}
+            </>
+          )}
+        </div>
+      ) : null}
+
+      <Dialog open={addCand !== null} onOpenChange={(open) => !open && setAddCand(null)}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{addCand ? m.registryAddTitle(addCand.title) : ""}</DialogTitle>
+            <DialogDescription className="font-mono text-xs">{addCand?.name}</DialogDescription>
+          </DialogHeader>
+          {addCand ? (
+            <CustomServerForm
+              mode="add"
+              initial={candidateToForm(addCand)}
+              takenIds={takenIds}
+              onSubmit={(v) => void addFromForm(v)}
+              onCancel={() => setAddCand(null)}
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       <McpDetailDialog
         id={detailId}

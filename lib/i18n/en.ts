@@ -223,6 +223,16 @@ export const en = {
     noResults: "No MCP servers match your search.",
     summary: (installed: number, total: number) => `${installed} / ${total} installed`,
     customTitle: "Custom & user-added",
+    // Online registry search
+    registryTitle: "Registry (online)",
+    registryHint: "Search the official MCP registry — type at least 2 characters.",
+    registrySearching: "Searching the registry…",
+    registryEmpty: "No registry servers match.",
+    registryError: "Couldn't reach the registry. Showing the featured catalog only.",
+    registryLoadMore: "Load more",
+    registryAdd: "Add…",
+    registryUnsupportedOci: "Container-only (Docker) — not installable here",
+    registryAddTitle: (name: string) => `Add "${name}" from the registry`,
     customHint: "Servers found in your config that aren't in the catalog.",
     /** Category header labels, keyed by McpCategory. */
     categories: {
@@ -279,7 +289,8 @@ export const en = {
     fieldIdHint: "Unique lowercase id, e.g. my-server.",
     fieldTransport: "Transport",
     transportStdio: "Local (stdio)",
-    transportHttp: "Remote (http)",
+    transportHttp: "Remote (HTTP)",
+    transportSse: "Remote (SSE)",
     fieldCommand: "Command",
     fieldCommandHint: "e.g. npx, uvx, python, or an absolute path.",
     fieldArgs: "Arguments (one per line)",
@@ -291,6 +302,10 @@ export const en = {
     fieldTokenEnvVarHint: "Codex reads the token from this env var rather than storing it.",
     envKeyPlaceholder: "NAME",
     envValuePlaceholder: "value",
+    envRefPlaceholder: "HOST_VAR",
+    envRefLabel: "ref",
+    envRefOn: "References a host env var (never written to disk)",
+    envRefOff: "Stores a literal value",
     addRow: "Add row",
     selectTargets: "Install into",
     addServer: "Add server",
@@ -303,6 +318,7 @@ export const en = {
     errUrlRequired: "Enter a server URL.",
     errTargetRequired: "Select at least one agent.",
     errCodexTokenEnv: "Codex needs a token env-var name when a bearer token is set.",
+    capCodexNoSse: "Codex only supports streamable-HTTP, not standalone SSE.",
     // Detail dialog
     detailConfigTitle: "Configuration by agent",
     detailNotConfigured: "Not configured on any agent yet.",
@@ -326,6 +342,17 @@ export const en = {
     healthHttpReachable: "Reachable",
     healthHttpUnreachable: "Endpoint unreachable",
     healthBadUrl: "Invalid server URL",
+    // Deep test (real MCP handshake) + export
+    deepTest: "Deep test",
+    deepTesting: "Running MCP handshake…",
+    probeOk: (info: string) => `Speaks MCP · ${info}`,
+    probeUnauthorized: "Reachable, but unauthorized — check the key",
+    probeUnreachable: "Unreachable",
+    probeNotMcp: "Reachable, but not an MCP server",
+    probeTimeout: "Timed out",
+    probeSpawnFailed: "Couldn't start the server",
+    probeHttp: (code: string) => `HTTP ${code}`,
+    exportShareable: "Export (shareable, secrets redacted)",
     // Import from paste
     importCardTitle: "Import from JSON or a command",
     importCardHint:
@@ -613,6 +640,10 @@ export const en = {
     removeMcpClaude: (title: string) => `Remove MCP "${title}" ← Claude Code`,
     removeMcpCodex: (title: string) => `Remove MCP "${title}" ← Codex`,
     removeMcpOpencode: (title: string) => `Remove MCP "${title}" ← OpenCode`,
+    disableMcp: (title: string) => `Disable MCP "${title}"`,
+    enableMcp: (title: string) => `Enable MCP "${title}"`,
+    mcpStashed: (id: string) => `${id} remembered in mcp-disabled.json`,
+    mcpUnstashed: (id: string) => `${id} cleared from mcp-disabled.json`,
     removeRelayClaude: "Remove Claude Code API endpoint",
     removeRelayCodex: "Remove Codex API endpoint",
     uninstallCli: (title: string) => `Uninstall ${title}`,
@@ -856,6 +887,40 @@ export const en = {
     templateTask: "Task (steps)",
     createNow: "Create skill",
     nameInvalid: "Use letters, numbers and dashes — no spaces or slashes.",
+
+    // --- Full-text search ---
+    contentMatch: "content match",
+
+    // --- Bundled catalog install status (all four sources) ---
+    catalogInstalledIn: (sources: string) => `Installed: ${sources}`,
+    catalogNotInstalled: "Not installed",
+
+    // --- Batch actions (installed list multi-select) ---
+    selectRow: "Select skill",
+    selectedCount: (n: number) => `${n} selected`,
+    clearSelection: "Clear",
+    batchCopyTo: "Copy to…",
+    batchDeleteScope: "Delete from…",
+    deleteScopeAll: "All sources",
+    batchDelete: "Delete",
+    batchCopyDone: (n: number) => `Copied ${n} skill${n === 1 ? "" : "s"}.`,
+    batchNothingToCopy: "Every selected skill is already in those targets.",
+    batchDeleteConfirmTitle: (n: number) => `Delete ${n} skill${n === 1 ? "" : "s"}?`,
+    batchDeleteConfirmBody: (scope: string) =>
+      `Each skill is backed up first, then removed from ${scope}.`,
+
+    // --- Install conflict (per-target overwrite / skip) ---
+    conflict: {
+      title: "Some skills already exist",
+      body: "Choose which targets to overwrite. Unchecked targets keep their current skill.",
+      overwrite: "Overwrite",
+      skip: "Skip — keep current",
+      overwriteAll: "Overwrite all",
+      keepAll: "Skip all",
+      confirm: "Install",
+      cancel: "Cancel",
+      allSkipped: "All targets skipped — nothing to install.",
+    },
 
     // --- Saved repo sources (marketplace) ---
     reposTitle: "Skill repositories",

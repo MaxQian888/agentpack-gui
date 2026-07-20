@@ -27,9 +27,10 @@ import { npxSkillsAddCommand } from "@/lib/skills/npx"
 import { skillDescription, skillName, splitFrontmatter } from "@/lib/skills/frontmatter"
 import { scaffoldSkillMd, type SkillTemplate } from "@/lib/skills/scaffold"
 import { SKILL_SOURCES } from "@/lib/skills/browse"
-import type { Paths } from "@/lib/agentpack/types"
-import type { RepoScan, RepoSource, SkillSource } from "@/lib/skills/types"
+import { skillDestPath } from "@/lib/skills/paths"
+import type { RepoScan, RepoSource, SkillsScanResult, SkillSource } from "@/lib/skills/types"
 import { useRunnerCtx } from "../../run/runner-context"
+import { useInstallGuard } from "./install-conflict-dialog"
 
 /** Curated, verified-to-exist GitHub skill repos offered as one-click sources. */
 const RECOMMENDED_SOURCES: RepoSource[] = [
@@ -41,19 +42,6 @@ const RECOMMENDED_SOURCES: RepoSource[] = [
 const SKILL_NAME_RE = /^[A-Za-z0-9._-]+$/
 function isValidSkillName(name: string): boolean {
   return SKILL_NAME_RE.test(name) && name !== "." && name !== ".."
-}
-
-function skillsDirFor(paths: Paths, source: SkillSource): string {
-  switch (source) {
-    case "claude":
-      return paths.claudeSkillsDir
-    case "codex":
-      return paths.codexSkillsDir
-    case "opencode":
-      return paths.opencodeSkillsDir
-    case "agents":
-      return paths.agentsSkillsDir
-  }
 }
 
 /** Shared "Install into" target checkboxes. */
@@ -85,13 +73,21 @@ function toggleIn(set: Set<SkillSource>, t: SkillSource): Set<SkillSource> {
   return next
 }
 
-export function AddSkillsTab({ refresh }: { refresh: () => void }) {
+export function AddSkillsTab({
+  installed,
+  refresh,
+}: {
+  installed: SkillsScanResult | null
+  refresh: () => void
+}) {
   const t = useT()
   const sb = t.skillsBrowser
   const paths = useAppStore((s) => s.paths)
   const settings = useAppStore((s) => s.settings)
   const setSettings = useAppStore((s) => s.setSettings)
   const { run } = useRunnerCtx()
+  const { guard, dialog: guardDialog } = useInstallGuard()
+  const installedSkills = installed?.skills ?? []
 
   // ----- GitHub direct install -----
   const [source, setSource] = useState("")
@@ -158,20 +154,33 @@ export function AddSkillsTab({ refresh }: { refresh: () => void }) {
     const selected = scan.skills.filter((s) => picked.has(s.relPath))
     if (selected.length === 0) return
     const targets = [...ghTargets]
-    const dests = selected.flatMap((s) =>
-      targets.map((target) => `${skillsDirFor(paths, target)}/${s.dirName}`)
+    const resolved = await guard(
+      selected.map((s) => ({ dirName: s.dirName, targets })),
+      installedSkills
     )
-    await run([
-      skillRepoInstallStep(
-        scan.scanId,
-        selected.map(({ relPath, dirName }) => ({ relPath, dirName })),
-        targets,
-        dests,
-        scanRef ? `${scanRef.owner}/${scanRef.repo}` : "",
-        scanRef?.ref ?? "HEAD",
-        t
-      ),
-    ])
+    if (!resolved || resolved.length === 0) return
+    const targetsByDir = new Map(resolved.map((r) => [r.dirName, r.targets]))
+    // One step per skill so each keeps its own (possibly reduced) target set;
+    // the id is suffixed with the dir name to stay unique across the shared scanId.
+    const steps = selected
+      .map((s) => {
+        const tg = targetsByDir.get(s.dirName) ?? []
+        if (tg.length === 0) return null
+        const dests = tg.map((target) => skillDestPath(paths, target, s.dirName))
+        const step = skillRepoInstallStep(
+          scan.scanId,
+          [{ relPath: s.relPath, dirName: s.dirName }],
+          tg,
+          dests,
+          scanRef ? `${scanRef.owner}/${scanRef.repo}` : "",
+          scanRef?.ref ?? "HEAD",
+          t
+        )
+        return { ...step, id: `${step.id}-${s.dirName}` }
+      })
+      .filter((s): s is NonNullable<typeof s> => s !== null)
+    if (steps.length === 0) return
+    await run(steps)
     void cleanupRepoScan(scan.scanId).catch(() => {})
     setScan(null)
     refresh()
@@ -215,8 +224,10 @@ export function AddSkillsTab({ refresh }: { refresh: () => void }) {
   const importFolder = async () => {
     if (!folder || !paths || localTargets.size === 0) return
     const dirName = folder.split(/[\\/]/).filter(Boolean).pop() ?? ""
-    const targets = [...localTargets]
-    const dests = targets.map((target) => `${skillsDirFor(paths, target)}/${dirName}`)
+    const resolved = await guard([{ dirName, targets: [...localTargets] }], installedSkills)
+    if (!resolved || resolved.length === 0) return
+    const targets = resolved[0].targets
+    const dests = targets.map((target) => skillDestPath(paths, target, dirName))
     await run([skillCopyStep(dirName, dirName, folder, targets, dests, t)])
     setFolder(null)
     refresh()
@@ -251,10 +262,19 @@ export function AddSkillsTab({ refresh }: { refresh: () => void }) {
 
   const createSkillNow = async () => {
     if (!paths || createTargets.size === 0 || !isValidSkillName(trimmedName)) return
-    const targets = [...createTargets]
+    const resolved = await guard(
+      [{ dirName: trimmedName, targets: [...createTargets] }],
+      installedSkills
+    )
+    if (!resolved || resolved.length === 0) return
+    const targets = resolved[0].targets
+    // A kept target that already has this skill means the user chose to overwrite.
+    const overwrite = targets.some((tg) =>
+      installedSkills.some((s) => s.source === tg && s.dirName === trimmedName)
+    )
     const content = scaffoldSkillMd({ name: trimmedName, description: newDesc, template })
-    const dests = targets.map((target) => `${skillsDirFor(paths, target)}/${trimmedName}`)
-    await run([skillCreateStep(trimmedName, targets, content, dests, t)])
+    const dests = targets.map((target) => skillDestPath(paths, target, trimmedName))
+    await run([skillCreateStep(trimmedName, targets, content, dests, t, overwrite)])
     setNewName("")
     setNewDesc("")
     refresh()
@@ -537,6 +557,8 @@ export function AddSkillsTab({ refresh }: { refresh: () => void }) {
           </div>
         </div>
       </Card>
+
+      {guardDialog}
     </div>
   )
 }

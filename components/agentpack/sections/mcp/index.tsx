@@ -69,12 +69,14 @@ export function McpSection({ scan, loading, refresh }: McpSectionProps) {
         <p className="text-sm text-muted-foreground">{m.notTauri}</p>
       ) : (
         <Tabs defaultValue="catalog">
-          <TabsList>
-            <TabsTrigger value="catalog">{m.tabCatalog}</TabsTrigger>
-            <TabsTrigger value="installed">{m.tabInstalled}</TabsTrigger>
-            <TabsTrigger value="matrix">{m.tabMatrix}</TabsTrigger>
-            <TabsTrigger value="add">{m.tabAdd}</TabsTrigger>
-          </TabsList>
+          <div className="max-w-full overflow-x-auto">
+            <TabsList>
+              <TabsTrigger value="catalog">{m.tabCatalog}</TabsTrigger>
+              <TabsTrigger value="installed">{m.tabInstalled}</TabsTrigger>
+              <TabsTrigger value="matrix">{m.tabMatrix}</TabsTrigger>
+              <TabsTrigger value="add">{m.tabAdd}</TabsTrigger>
+            </TabsList>
+          </div>
           <TabsContent value="catalog" className="mt-4">
             {scan === null && loading ? (
               <div className="flex items-center justify-center gap-2 p-10 text-sm text-muted-foreground">

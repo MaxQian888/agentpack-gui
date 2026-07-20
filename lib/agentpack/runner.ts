@@ -290,7 +290,12 @@ async function execute(
       return
     }
     case "skillCreate": {
-      const dests = await api.createSkill(step.name, step.targets, step.content)
+      const dests = await api.createSkill(
+        step.name,
+        step.targets,
+        step.content,
+        step.overwrite ?? false
+      )
       for (const d of dests) log(m.coreOutput.write(d))
       return
     }

@@ -1,4 +1,3 @@
-use crate::paths::codex_home;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -211,14 +210,13 @@ pub fn install_skill(app: AppHandle, id: String, targets: Vec<String>) -> Result
     return Err(format!("bundled skill not found: {}", base.to_string_lossy()));
   }
   let home = dirs::home_dir().ok_or("no home dir")?;
-  let codex = codex_home(&home);
   let mut dests = Vec::new();
   for t in targets {
-    let dir: PathBuf = match t.as_str() {
-      "claude" => home.join(".claude/skills"),
-      "codex" => codex.join("skills"),
-      other => return Err(format!("invalid skill target: {other}")),
-    };
+    // All four skill roots (claude/codex/opencode/agents) resolve through the
+    // same table the scanner and delete-guardrail use, so a bundled skill can
+    // install anywhere an imported or repo skill can.
+    let dir = crate::skills::target_root(&home, &t)
+      .ok_or_else(|| format!("invalid skill target: {t}"))?;
     let dest = dir.join(&id);
     replace_dir(&base, &dest).map_err(|e| e.to_string())?;
     dests.push(dest.to_string_lossy().into_owned());

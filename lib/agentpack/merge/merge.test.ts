@@ -14,6 +14,9 @@ import {
   parseCodexMcpEntry,
   parseOpencodeMcpEntry,
   resolveCatalogSpec,
+  setCodexMcpEnabled,
+  setOpencodeMcpEnabled,
+  wrapStdioForOs,
   type McpSpec,
 } from "./mcp"
 import {
@@ -72,9 +75,12 @@ it("claude stdio command omits --env when no key, embeds it when present", () =>
   expect(withKey.args.join(" ")).toContain("CONTEXT7_API_KEY=abc")
 })
 
-it("claude http command omits the bearer header when key is blank", () => {
+it("claude http references the keyEnv when no literal key is given (env-reference-first)", () => {
+  // With no pasted key, fall back to referencing the catalog's keyEnv via
+  // Claude's ${VAR} expansion rather than inlining nothing.
   const cmd = buildClaudeMcpCommand(findMcp("supermemory")!, "   ")
-  expect(cmd.args.join(" ")).not.toContain("Authorization")
+  expect(cmd.args.join(" ")).not.toContain("Authorization: Bearer   ")
+  expect(cmd.args.join(" ")).toContain("Authorization: Bearer ${SUPERMEMORY_API_KEY}")
 })
 
 it("claude stdio command appends extraArgs", () => {
@@ -314,4 +320,166 @@ it("tolerates servers missing url / package / keyEnv via defensive fallbacks", (
   expect(claudeStdio.args).toContain("npx")
   const codexStdio = buildCodexMcpEntry(bareStdio, undefined) as Record<string, unknown>
   expect(codexStdio.command).toBe("npx")
+})
+
+// --- SSE transport -------------------------------------------------------
+
+it("sse spec writes --transport sse for Claude and type:remote for OpenCode", () => {
+  const spec: McpSpec = { transport: "sse", url: "https://x/sse", headers: {} }
+  expect(buildClaudeMcpCommandFromSpec("s", spec).args).toEqual(
+    expect.arrayContaining(["--transport", "sse", "s", "https://x/sse"])
+  )
+  // OpenCode has no separate SSE type — remote handles both.
+  expect(buildOpencodeMcpEntryFromSpec(spec)).toEqual({
+    type: "remote",
+    url: "https://x/sse",
+    enabled: true,
+  })
+  // Codex has no standalone SSE; the writer still yields a plain url entry
+  // (plan.ts gates Codex out of an sse spec so this is never persisted there).
+  expect(buildCodexMcpEntryFromSpec(spec)).toEqual({ url: "https://x/sse" })
+})
+
+it("parseClaudeMcpEntry recognizes type:sse", () => {
+  const json = JSON.stringify({ mcpServers: { s: { type: "sse", url: "https://x/sse" } } })
+  expect(parseClaudeMcpEntry(json, "s")).toEqual({
+    transport: "sse",
+    url: "https://x/sse",
+    headers: {},
+  })
+})
+
+// --- env references (secret-first) --------------------------------------
+
+it("stdio envRefs render as native references per target", () => {
+  const spec: McpSpec = {
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "srv"],
+    env: { PLAIN: "v" },
+    envRefs: { GITHUB_TOKEN: "GITHUB_TOKEN" },
+  }
+  // Claude: ${VAR} expansion in --env
+  expect(buildClaudeMcpCommandFromSpec("s", spec).args.join(" ")).toContain(
+    "--env GITHUB_TOKEN=${GITHUB_TOKEN}"
+  )
+  // Codex: literal env table + env_vars whitelist (no interpolation)
+  expect(buildCodexMcpEntryFromSpec(spec)).toEqual({
+    command: "npx",
+    args: ["-y", "srv"],
+    env: { PLAIN: "v" },
+    env_vars: ["GITHUB_TOKEN"],
+  })
+  // OpenCode: {env:VAR} in environment
+  expect(buildOpencodeMcpEntryFromSpec(spec)).toEqual({
+    type: "local",
+    command: ["npx", "-y", "srv"],
+    enabled: true,
+    environment: { PLAIN: "v", GITHUB_TOKEN: "{env:GITHUB_TOKEN}" },
+  })
+})
+
+it("http bearer reference (no inline key) references the env var on every target", () => {
+  const spec: McpSpec = {
+    transport: "http",
+    url: "https://x/mcp",
+    headers: {},
+    bearerTokenEnvVar: "MY_TOKEN",
+  }
+  expect(buildClaudeMcpCommandFromSpec("s", spec).args.join(" ")).toContain(
+    "Authorization: Bearer ${MY_TOKEN}"
+  )
+  expect(buildCodexMcpEntryFromSpec(spec)).toEqual({
+    url: "https://x/mcp",
+    bearer_token_env_var: "MY_TOKEN",
+  })
+  expect(buildOpencodeMcpEntryFromSpec(spec)).toEqual({
+    type: "remote",
+    url: "https://x/mcp",
+    enabled: true,
+    headers: { Authorization: "Bearer {env:MY_TOKEN}" },
+  })
+})
+
+it("reverse parsers round-trip env / bearer references back into refs", () => {
+  const stdio: McpSpec = {
+    transport: "stdio",
+    command: "npx",
+    args: [],
+    env: {},
+    envRefs: { API_KEY: "API_KEY" },
+  }
+  const claudeJson = JSON.stringify({
+    mcpServers: {
+      s: { command: "npx", args: [], env: { API_KEY: "${API_KEY}" } },
+    },
+  })
+  expect(parseClaudeMcpEntry(claudeJson, "s")).toEqual(stdio)
+
+  const codexToml = mergeCodexMcp("", "s", buildCodexMcpEntryFromSpec(stdio))
+  expect(parseCodexMcpEntry(codexToml, "s")).toEqual(stdio)
+
+  const opencodeJson = mergeOpencodeMcp("", "s", buildOpencodeMcpEntryFromSpec(stdio))
+  expect(parseOpencodeMcpEntry(opencodeJson, "s")).toEqual(stdio)
+
+  // http bearer reference: Claude header ${VAR} → bearerTokenEnvVar
+  const claudeHttp = JSON.stringify({
+    mcpServers: {
+      h: { type: "http", url: "https://h", headers: { Authorization: "Bearer ${T}" } },
+    },
+  })
+  expect(parseClaudeMcpEntry(claudeHttp, "h")).toEqual({
+    transport: "http",
+    url: "https://h",
+    headers: {},
+    bearerTokenEnvVar: "T",
+  })
+})
+
+// --- native enable/disable ----------------------------------------------
+
+it("setCodexMcpEnabled toggles the enabled flag in place", () => {
+  const toml = mergeCodexMcp("", "s", { command: "npx", args: [] })
+  const off = setCodexMcpEnabled(toml, "s", false)
+  expect(parseCodexMcpEntry(off, "s")).toBeDefined()
+  expect(off).toMatch(/enabled\s*=\s*false/)
+  const on = setCodexMcpEnabled(off, "s", true)
+  expect(on).toMatch(/enabled\s*=\s*true/)
+  // no-op on unknown id / empty input
+  expect(setCodexMcpEnabled(toml, "nope", false)).toBe(toml)
+  expect(setCodexMcpEnabled("", "s", false)).toBe("")
+})
+
+it("setOpencodeMcpEnabled toggles enabled and preserves the rest", () => {
+  const json = mergeOpencodeMcp(JSON.stringify({ theme: "dark" }), "s", {
+    type: "local",
+    command: ["npx"],
+    enabled: true,
+  })
+  const off = JSON.parse(setOpencodeMcpEnabled(json, "s", false))
+  expect(off.mcp.s.enabled).toBe(false)
+  expect(off.theme).toBe("dark")
+  expect(setOpencodeMcpEnabled(json, "missing", false)).toBe(json)
+  expect(setOpencodeMcpEnabled("", "s", false)).toBe("")
+})
+
+// --- Windows shim wrapping (cross-platform) -----------------------------
+
+it("wrapStdioForOs wraps npm-family shims through cmd /c on Windows only", () => {
+  const spec: McpSpec = { transport: "stdio", command: "npx", args: ["-y", "srv"], env: {} }
+  expect(wrapStdioForOs(spec, "win")).toEqual({
+    transport: "stdio",
+    command: "cmd",
+    args: ["/c", "npx", "-y", "srv"],
+    env: {},
+  })
+  // No-op on mac/linux, for real exes, when already wrapped, and for remote specs.
+  expect(wrapStdioForOs(spec, "mac")).toBe(spec)
+  expect(wrapStdioForOs(spec, "linux")).toBe(spec)
+  const uvx: McpSpec = { transport: "stdio", command: "uvx", args: ["srv"], env: {} }
+  expect(wrapStdioForOs(uvx, "win")).toBe(uvx)
+  const wrapped: McpSpec = { transport: "stdio", command: "cmd", args: ["/c", "npx"], env: {} }
+  expect(wrapStdioForOs(wrapped, "win")).toBe(wrapped)
+  const http: McpSpec = { transport: "http", url: "https://x", headers: {} }
+  expect(wrapStdioForOs(http, "win")).toBe(http)
 })

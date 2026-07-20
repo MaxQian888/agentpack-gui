@@ -1,7 +1,6 @@
 jest.mock("@/lib/tauri", () => ({ isTauri: () => true }))
 jest.mock("@/lib/tauri/commands", () => ({
-  pathExists: jest.fn(async () => true),
-  installSkill: jest.fn(async () => ["/h/.claude/skills/rust"]),
+  installSkill: jest.fn(async () => ["/h/.claude/skills/cpp-cmake"]),
   removeDir: jest.fn(async () => undefined),
   readTextFile: jest.fn(async () => "{}"),
   writeTextFile: jest.fn(async () => undefined),
@@ -12,54 +11,71 @@ import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { RunnerProvider } from "../../run/runner-context"
 import { useAppStore } from "@/store/app-store"
-import { installSkill, removeDir, pathExists } from "@/lib/tauri/commands"
+import { installSkill, removeDir } from "@/lib/tauri/commands"
+import type { SkillsScanResult } from "@/lib/skills/types"
 import { CatalogTab } from "./catalog"
 
 const paths = {
   home: "/h",
   claudeSkillsDir: "/h/.claude/skills",
   codexSkillsDir: "/h/.codex/skills",
+  opencodeSkillsDir: "/h/.config/opencode/skills",
+  agentsSkillsDir: "/h/.agents/skills",
   os: "mac",
 } as never
+
+const emptyScan: SkillsScanResult = { skills: [], errors: [] }
+const rustInstalled: SkillsScanResult = {
+  skills: [
+    {
+      source: "claude",
+      dirName: "rust",
+      path: "/h/.claude/skills/rust",
+      isSymlink: false,
+      linkTarget: null,
+      skillMd: "---\nname: rust\n---\n",
+      modifiedAt: 0,
+      origin: null,
+    },
+  ],
+  errors: [],
+}
 
 beforeEach(() => {
   useAppStore.getState().resetPlan()
   useAppStore.setState({ paths, dryRun: false, panelOpen: false })
-  ;(pathExists as jest.Mock).mockResolvedValue(true)
 })
 
-function renderSkills() {
+function renderCatalog(scan: SkillsScanResult = emptyScan) {
   return render(
     <I18nProvider>
       <RunnerProvider>
-        <CatalogTab />
+        <CatalogTab scan={scan} refresh={jest.fn()} />
       </RunnerProvider>
     </I18nProvider>
   )
 }
 
-it("checking a target adds the skill with that target", async () => {
-  renderSkills()
-  await userEvent.click(screen.getAllByRole("checkbox")[0])
-  const skills = useAppStore.getState().plan.skills
-  expect(skills.length).toBeGreaterThan(0)
-  expect(skills[0].targets).toContain("claude")
-})
-
 it("reveals install/uninstall actions once a target is selected", async () => {
-  renderSkills()
+  renderCatalog()
   expect(screen.queryByRole("button", { name: /Install now/i })).not.toBeInTheDocument()
   await userEvent.click(screen.getAllByRole("checkbox")[0])
   expect(screen.getAllByRole("button", { name: /Install now/i }).length).toBeGreaterThan(0)
 })
 
-it("shows an installed badge once detection resolves", async () => {
-  renderSkills()
-  expect((await screen.findAllByText(/Installed/i)).length).toBeGreaterThan(0)
+it("offers all four skill roots as install targets", () => {
+  renderCatalog()
+  // 6 bundled skills × 4 sources.
+  expect(screen.getAllByRole("checkbox").length).toBe(24)
+})
+
+it("shows an installed badge derived from the scan", () => {
+  renderCatalog(rustInstalled)
+  expect(screen.getAllByText(/Installed:/i).length).toBeGreaterThan(0)
 })
 
 it("install now runs the install step through the runner", async () => {
-  renderSkills()
+  renderCatalog()
   await userEvent.click(screen.getAllByRole("checkbox")[0])
   await userEvent.click(screen.getAllByRole("button", { name: /Install now/i })[0])
   await waitFor(() => expect(installSkill).toHaveBeenCalled())
@@ -67,7 +83,7 @@ it("install now runs the install step through the runner", async () => {
 })
 
 it("uninstall now removes the skill destinations", async () => {
-  renderSkills()
+  renderCatalog()
   await userEvent.click(screen.getAllByRole("checkbox")[0])
   await userEvent.click(screen.getAllByRole("button", { name: /Uninstall now/i })[0])
   await waitFor(() => expect(removeDir).toHaveBeenCalled())

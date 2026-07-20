@@ -39,6 +39,7 @@ const paths: Paths = {
   ccSwitchDb: "/h/.cc-switch/cc-switch.db",
   ccConnectDir: "/h/.cc-connect",
   ccConnectConfig: "/h/.cc-connect/config.toml",
+  mcpDisabledStore: "/h/.agentpack/mcp-disabled.json",
   os: "mac",
 }
 

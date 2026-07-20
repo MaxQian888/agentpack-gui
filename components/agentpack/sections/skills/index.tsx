@@ -86,7 +86,7 @@ export function SkillsSection({ scan, loading, refresh }: SkillsSectionProps) {
       </div>
 
       {stats ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7">
           <StatTile label={sb.statTotal} value={stats.total} />
           <StatTile label={sb.sources.claude} value={stats.counts.claude} />
           <StatTile label={sb.sources.codex} value={stats.counts.codex} />
@@ -120,10 +120,10 @@ export function SkillsSection({ scan, loading, refresh }: SkillsSectionProps) {
           )}
         </TabsContent>
         <TabsContent value="catalog" className="mt-4">
-          <CatalogTab />
+          {tauri ? <CatalogTab scan={scan} refresh={refresh} /> : notTauri}
         </TabsContent>
         <TabsContent value="add" className="mt-4">
-          {tauri ? <AddSkillsTab refresh={refresh} /> : notTauri}
+          {tauri ? <AddSkillsTab installed={scan} refresh={refresh} /> : notTauri}
         </TabsContent>
       </Tabs>
     </div>

@@ -598,6 +598,6 @@ it("skillCreate writes the new skill into each target", async () => {
     },
   ]
   const reports = await runSteps(steps, { dryRun: false, paths })
-  expect(api.createSkill).toHaveBeenCalledWith("web", ["claude"], "---\nname: web\n---\n")
+  expect(api.createSkill).toHaveBeenCalledWith("web", ["claude"], "---\nname: web\n---\n", false)
   expect(reports[0].status).toBe("done")
 })

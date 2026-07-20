@@ -20,7 +20,8 @@ export interface CustomFormValue {
   targets: McpTarget[]
 }
 
-type EnvRow = { key: string; value: string }
+/** `ref` = the value names a host env var to reference (envRefs) rather than a literal (env). */
+type EnvRow = { key: string; value: string; ref: boolean }
 
 const BEARER = "Bearer "
 
@@ -33,14 +34,29 @@ function textToArgs(text: string): string[] {
     .map((s) => s.trim())
     .filter(Boolean)
 }
-function envToRows(env: Record<string, string>): EnvRow[] {
-  const rows = Object.entries(env).map(([key, value]) => ({ key, value }))
-  return rows.length ? rows : [{ key: "", value: "" }]
+function envToRows(env: Record<string, string>, envRefs: Record<string, string> = {}): EnvRow[] {
+  const rows: EnvRow[] = [
+    ...Object.entries(env).map(([key, value]) => ({ key, value, ref: false })),
+    ...Object.entries(envRefs).map(([key, value]) => ({ key, value, ref: true })),
+  ]
+  return rows.length ? rows : [{ key: "", value: "", ref: false }]
 }
-function rowsToEnv(rows: EnvRow[]): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const r of rows) if (r.key.trim()) out[r.key.trim()] = r.value
-  return out
+function rowsToEnvSplit(rows: EnvRow[]): {
+  env: Record<string, string>
+  envRefs: Record<string, string>
+} {
+  const env: Record<string, string> = {}
+  const envRefs: Record<string, string> = {}
+  for (const r of rows) {
+    const k = r.key.trim()
+    if (!k) continue
+    if (r.ref) {
+      if (r.value.trim()) envRefs[k] = r.value.trim()
+    } else {
+      env[k] = r.value
+    }
+  }
+  return { env, envRefs }
 }
 
 /**
@@ -68,18 +84,21 @@ export function CustomServerForm({
 
   const init = initial?.spec
   const [id, setId] = useState(initial?.id ?? "")
-  const [transport, setTransport] = useState<"stdio" | "http">(init?.transport ?? "stdio")
+  const [transport, setTransport] = useState<"stdio" | "http" | "sse">(init?.transport ?? "stdio")
   const [command, setCommand] = useState(init?.transport === "stdio" ? init.command : "npx")
   const [argsText, setArgsText] = useState(init?.transport === "stdio" ? argsToText(init.args) : "")
   const [envRows, setEnvRows] = useState<EnvRow[]>(
-    envToRows(init?.transport === "stdio" ? init.env : {})
+    envToRows(
+      init?.transport === "stdio" ? init.env : {},
+      init?.transport === "stdio" ? (init.envRefs ?? {}) : {}
+    )
   )
-  const [url, setUrl] = useState(init?.transport === "http" ? init.url : "")
+  const [url, setUrl] = useState(init && init.transport !== "stdio" ? init.url : "")
   const [token, setToken] = useState(
-    init?.transport === "http" ? (init.headers.Authorization ?? "").replace(BEARER, "") : ""
+    init && init.transport !== "stdio" ? (init.headers.Authorization ?? "").replace(BEARER, "") : ""
   )
   const [tokenEnvVar, setTokenEnvVar] = useState(
-    init?.transport === "http" ? (init.bearerTokenEnvVar ?? "") : ""
+    init && init.transport !== "stdio" ? (init.bearerTokenEnvVar ?? "") : ""
   )
   const [targets, setTargets] = useState<Set<McpTarget>>(new Set(initial?.targets ?? ["claude"]))
   const [error, setError] = useState<string | null>(null)
@@ -104,30 +123,34 @@ export function CustomServerForm({
   }, [id, mode, takenIds, m])
 
   const buildSpec = (): McpSpec => {
-    if (transport === "http") {
+    if (transport !== "stdio") {
       const headers: Record<string, string> = {}
       if (token.trim()) headers.Authorization = `${BEARER}${token.trim()}`
-      return {
-        transport: "http",
+      const remote = {
         url: url.trim(),
         headers,
         bearerTokenEnvVar: tokenEnvVar.trim() || undefined,
       }
+      return transport === "sse"
+        ? { transport: "sse", ...remote }
+        : { transport: "http", ...remote }
     }
+    const { env, envRefs } = rowsToEnvSplit(envRows)
     return {
       transport: "stdio",
       command: command.trim(),
       args: textToArgs(argsText),
-      env: rowsToEnv(envRows),
+      env,
+      ...(Object.keys(envRefs).length ? { envRefs } : {}),
     }
   }
 
   const submit = () => {
     if (idError) return setError(idError)
     if (transport === "stdio" && !command.trim()) return setError(m.errCommandRequired)
-    if (transport === "http" && !url.trim()) return setError(m.errUrlRequired)
+    if (transport !== "stdio" && !url.trim()) return setError(m.errUrlRequired)
     if (targets.size === 0) return setError(m.errTargetRequired)
-    if (transport === "http" && token.trim() && targets.has("codex") && !tokenEnvVar.trim()) {
+    if (transport !== "stdio" && token.trim() && targets.has("codex") && !tokenEnvVar.trim()) {
       return setError(m.errCodexTokenEnv)
     }
     setError(null)
@@ -150,12 +173,21 @@ export function CustomServerForm({
 
       <div className="flex flex-col gap-1.5">
         <Label>{m.fieldTransport}</Label>
-        <div className="flex gap-2">
-          {(["stdio", "http"] as const).map((tr) => (
+        <div className="flex flex-wrap gap-2">
+          {(["stdio", "http", "sse"] as const).map((tr) => (
             <button
               key={tr}
               type="button"
-              onClick={() => setTransport(tr)}
+              onClick={() => {
+                setTransport(tr)
+                // Codex has no standalone SSE transport — drop it when switching to sse.
+                if (tr === "sse")
+                  setTargets((prev) => {
+                    const next = new Set(prev)
+                    next.delete("codex")
+                    return next
+                  })
+              }}
               className={cn(
                 "rounded-full border px-3 py-1 text-xs transition-colors",
                 transport === tr
@@ -163,7 +195,7 @@ export function CustomServerForm({
                   : "text-muted-foreground hover:bg-accent/40"
               )}
             >
-              {tr === "stdio" ? m.transportStdio : m.transportHttp}
+              {tr === "stdio" ? m.transportStdio : tr === "http" ? m.transportHttp : m.transportSse}
             </button>
           ))}
         </div>
@@ -197,7 +229,7 @@ export function CustomServerForm({
             <Label>{m.fieldEnv}</Label>
             <div className="flex flex-col gap-2">
               {envRows.map((row, i) => (
-                <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                <div key={i} className="grid grid-cols-[1fr_1fr_auto_auto] gap-2">
                   <Input
                     value={row.key}
                     onChange={(e) =>
@@ -210,14 +242,32 @@ export function CustomServerForm({
                   />
                   <Input
                     value={row.value}
+                    type={row.ref ? "text" : "password"}
                     onChange={(e) =>
                       setEnvRows((rows) =>
                         rows.map((r, j) => (j === i ? { ...r, value: e.target.value } : r))
                       )
                     }
-                    placeholder={m.envValuePlaceholder}
+                    placeholder={row.ref ? m.envRefPlaceholder : m.envValuePlaceholder}
                     className="font-mono text-xs"
                   />
+                  <button
+                    type="button"
+                    title={row.ref ? m.envRefOn : m.envRefOff}
+                    onClick={() =>
+                      setEnvRows((rows) =>
+                        rows.map((r, j) => (j === i ? { ...r, ref: !r.ref } : r))
+                      )
+                    }
+                    className={cn(
+                      "rounded-md border px-2 text-xs transition-colors",
+                      row.ref
+                        ? "border-primary bg-primary/10 font-medium"
+                        : "text-muted-foreground hover:bg-accent/40"
+                    )}
+                  >
+                    {m.envRefLabel}
+                  </button>
                   <Button
                     type="button"
                     variant="ghost"
@@ -234,7 +284,7 @@ export function CustomServerForm({
                 variant="outline"
                 size="sm"
                 className="w-fit gap-1"
-                onClick={() => setEnvRows((rows) => [...rows, { key: "", value: "" }])}
+                onClick={() => setEnvRows((rows) => [...rows, { key: "", value: "", ref: false }])}
               >
                 <Plus className="size-3.5" />
                 {m.addRow}
@@ -282,16 +332,28 @@ export function CustomServerForm({
       <div className="flex flex-col gap-1.5">
         <Label>{m.selectTargets}</Label>
         <div className="flex flex-wrap items-center gap-4 text-sm">
-          {MCP_TARGETS.map((target) => (
-            <label key={target} className="flex cursor-pointer items-center gap-2">
-              <Checkbox
-                checked={targets.has(target)}
-                onCheckedChange={() => toggleTarget(target)}
-              />
-              <TargetDot target={target} on={targets.has(target)} />
-              {m.targets[target]}
-            </label>
-          ))}
+          {MCP_TARGETS.map((target) => {
+            // Codex has no standalone SSE transport — gate it out of an sse spec.
+            const disabled = transport === "sse" && target === "codex"
+            return (
+              <label
+                key={target}
+                title={disabled ? m.capCodexNoSse : undefined}
+                className={cn(
+                  "flex items-center gap-2",
+                  disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+                )}
+              >
+                <Checkbox
+                  checked={targets.has(target)}
+                  disabled={disabled}
+                  onCheckedChange={() => toggleTarget(target)}
+                />
+                <TargetDot target={target} on={targets.has(target)} />
+                {m.targets[target]}
+              </label>
+            )
+          })}
         </div>
       </div>
 

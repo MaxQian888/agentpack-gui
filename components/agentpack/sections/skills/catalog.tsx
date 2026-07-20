@@ -1,92 +1,72 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { SKILLS } from "@/lib/agentpack/registry"
 import { skillInstallStep, skillRemoveStep } from "@/lib/agentpack/plan"
-import type { AgentTarget, Paths } from "@/lib/agentpack/types"
-import { pathExists } from "@/lib/tauri/commands"
-import { isTauri } from "@/lib/tauri"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
+import { SKILL_SOURCES } from "@/lib/skills/browse"
+import { skillDestPath } from "@/lib/skills/paths"
+import type { InstalledSkill, SkillsScanResult, SkillSource } from "@/lib/skills/types"
 import { useRunnerCtx } from "../../run/runner-context"
+import { useInstallGuard } from "./install-conflict-dialog"
 
-const TARGETS: AgentTarget[] = ["claude", "codex"]
-
-type SkillStatus = Record<string, Partial<Record<AgentTarget, boolean>>>
-
-function skillMarkerPath(paths: Paths, id: string, target: AgentTarget): string {
-  const dir = target === "claude" ? paths.claudeSkillsDir : paths.codexSkillsDir
-  return `${dir}/${id}/SKILL.md`
+/** Sources that currently have the bundled skill `id` installed, from the scan. */
+function installedSources(skills: InstalledSkill[], id: string): SkillSource[] {
+  const out: SkillSource[] = []
+  for (const source of SKILL_SOURCES) {
+    if (skills.some((s) => s.source === source && s.dirName === id)) out.push(source)
+  }
+  return out
 }
 
-async function detectStatus(paths: Paths): Promise<SkillStatus> {
-  const entries = await Promise.all(
-    SKILLS.map(async (skill) => {
-      const perTarget = await Promise.all(
-        TARGETS.map(
-          async (tg) => [tg, await pathExists(skillMarkerPath(paths, skill.id, tg))] as const
-        )
-      )
-      return [skill.id, Object.fromEntries(perTarget)] as const
-    })
-  )
-  return Object.fromEntries(entries)
-}
-
-/** The six bundled domain skills with per-target install/uninstall. */
-export function CatalogTab() {
+/**
+ * The six bundled domain skills, each installable into (or removable from) any of
+ * the four skill roots (claude/codex/opencode/agents). Target selection is local
+ * to this tab — the bundled catalog is self-contained and no longer feeds the
+ * onboarding plan. Installs are guarded against overwriting an existing skill.
+ */
+export function CatalogTab({
+  scan,
+  refresh,
+}: {
+  scan: SkillsScanResult | null
+  refresh: () => void
+}) {
   const t = useT()
-  const skills = useAppStore((s) => s.plan.skills)
-  const setSkill = useAppStore((s) => s.setSkill)
+  const sb = t.skillsBrowser
   const paths = useAppStore((s) => s.paths)
   const { run } = useRunnerCtx()
-  const [status, setStatus] = useState<SkillStatus>({})
+  const { guard, dialog } = useInstallGuard()
+  const [selected, setSelected] = useState<Record<string, SkillSource[]>>({})
 
-  const loadStatus = useCallback(async () => {
-    if (!isTauri() || !paths) return
-    setStatus(await detectStatus(paths))
-  }, [paths])
+  const skills = scan?.skills ?? []
+  const targetsFor = (id: string): SkillSource[] => selected[id] ?? []
 
-  useEffect(() => {
-    if (!isTauri() || !paths) return
-    let cancelled = false
-    detectStatus(paths).then((s) => {
-      if (!cancelled) setStatus(s)
+  const toggleTarget = (id: string, target: SkillSource) =>
+    setSelected((prev) => {
+      const cur = prev[id] ?? []
+      const next = cur.includes(target) ? cur.filter((x) => x !== target) : [...cur, target]
+      return { ...prev, [id]: next }
     })
-    return () => {
-      cancelled = true
-    }
-  }, [paths])
 
-  const targetsFor = (id: string): AgentTarget[] => skills.find((s) => s.id === id)?.targets ?? []
-
-  const toggleTarget = (id: string, target: AgentTarget) => {
-    const current = targetsFor(id)
-    const next = current.includes(target)
-      ? current.filter((x) => x !== target)
-      : [...current, target]
-    setSkill(id, next)
+  const installNow = async (id: string, title: string, targets: SkillSource[]) => {
+    if (!paths || targets.length === 0) return
+    const resolved = await guard([{ dirName: id, targets }], skills)
+    if (!resolved || resolved.length === 0) return
+    await run([skillInstallStep(id, title, resolved[0].targets, t)])
+    refresh()
   }
 
-  const destsFor = (id: string, targets: AgentTarget[]): string[] =>
-    paths
-      ? targets.map(
-          (tg) => `${tg === "claude" ? paths.claudeSkillsDir : paths.codexSkillsDir}/${id}`
-        )
-      : []
-
-  const installNow = async (id: string, title: string, targets: AgentTarget[]) => {
-    await run([skillInstallStep(id, title, targets, t)])
-    await loadStatus()
-  }
-
-  const uninstallNow = async (id: string, title: string, targets: AgentTarget[]) => {
-    await run([skillRemoveStep(id, title, targets, destsFor(id, targets), t)])
-    await loadStatus()
+  const uninstallNow = async (id: string, title: string, targets: SkillSource[]) => {
+    if (!paths || targets.length === 0) return
+    const dests = targets.map((tg) => skillDestPath(paths, tg, id))
+    await run([skillRemoveStep(id, title, targets, dests, t)])
+    refresh()
   }
 
   return (
@@ -94,40 +74,34 @@ export function CatalogTab() {
       {SKILLS.map((skill) => {
         const meta = t.catalog.skills[skill.id]
         const targets = targetsFor(skill.id)
-        const st = status[skill.id]
-        const anyInstalled = st ? Object.values(st).some(Boolean) : false
+        const installed = installedSources(skills, skill.id)
+        const installedLabel =
+          installed.length === 0
+            ? sb.catalogNotInstalled
+            : sb.catalogInstalledIn(installed.map((s) => sb.sources[s] ?? s).join(", "))
         return (
           <Card key={skill.id} className="gap-3 p-4">
             <div className="flex items-start justify-between gap-3">
-              <div>
+              <div className="min-w-0">
                 <span className="font-medium">{meta?.title ?? skill.id}</span>
                 <p className="text-sm text-muted-foreground">{meta?.description}</p>
               </div>
-              {st ? (
-                <Badge
-                  variant={anyInstalled ? "secondary" : "outline"}
-                  className="shrink-0 font-normal text-muted-foreground"
-                >
-                  {anyInstalled
-                    ? `${t.skillsManage.installed}${
-                        st.claude && st.codex ? "" : ` (${st.claude ? "claude" : "codex"})`
-                      }`
-                    : t.skillsManage.notInstalled}
-                </Badge>
-              ) : null}
+              <Badge
+                variant={installed.length ? "secondary" : "outline"}
+                className="shrink-0 font-normal text-muted-foreground"
+              >
+                {installedLabel}
+              </Badge>
             </div>
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex gap-5">
-                {TARGETS.map((target) => (
-                  <label
-                    key={target}
-                    className="flex cursor-pointer items-center gap-2 text-sm capitalize"
-                  >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap gap-x-5 gap-y-2">
+                {SKILL_SOURCES.map((target) => (
+                  <label key={target} className="flex cursor-pointer items-center gap-2 text-sm">
                     <Checkbox
                       checked={targets.includes(target)}
                       onCheckedChange={() => toggleTarget(skill.id, target)}
                     />
-                    {target}
+                    {sb.sources[target] ?? target}
                   </label>
                 ))}
               </div>
@@ -153,6 +127,7 @@ export function CatalogTab() {
           </Card>
         )
       })}
+      {dialog}
     </div>
   )
 }

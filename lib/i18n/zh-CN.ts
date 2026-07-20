@@ -211,6 +211,16 @@ export const zhCN = {
     noResults: "没有匹配的 MCP 服务。",
     summary: (installed: number, total: number) => `已安装 ${installed} / ${total}`,
     customTitle: "自定义 / 手动添加",
+    // 在线 registry 搜索
+    registryTitle: "Registry（在线）",
+    registryHint: "搜索官方 MCP registry —— 至少输入 2 个字符。",
+    registrySearching: "正在搜索 registry…",
+    registryEmpty: "没有匹配的 registry 服务器。",
+    registryError: "无法连接 registry，仅显示精选目录。",
+    registryLoadMore: "加载更多",
+    registryAdd: "添加…",
+    registryUnsupportedOci: "仅容器（Docker）—— 此处无法安装",
+    registryAddTitle: (name: string) => `从 registry 添加 “${name}”`,
     customHint: "在你的配置中发现、但不在内置目录里的服务器。",
     /** 分类标题，按 McpCategory 索引。 */
     categories: {
@@ -266,7 +276,8 @@ export const zhCN = {
     fieldIdHint: "唯一的小写 id，例如 my-server。",
     fieldTransport: "传输方式",
     transportStdio: "本地（stdio）",
-    transportHttp: "远程（http）",
+    transportHttp: "远程（HTTP）",
+    transportSse: "远程（SSE）",
     fieldCommand: "命令",
     fieldCommandHint: "例如 npx、uvx、python，或一个绝对路径。",
     fieldArgs: "参数（每行一个）",
@@ -278,6 +289,10 @@ export const zhCN = {
     fieldTokenEnvVarHint: "Codex 从该环境变量读取令牌，而不是把它写入磁盘。",
     envKeyPlaceholder: "名称",
     envValuePlaceholder: "值",
+    envRefPlaceholder: "HOST_VAR",
+    envRefLabel: "引用",
+    envRefOn: "引用宿主环境变量（不写入磁盘）",
+    envRefOff: "存储字面值",
     addRow: "添加一行",
     selectTargets: "安装到",
     addServer: "添加服务器",
@@ -290,6 +305,7 @@ export const zhCN = {
     errUrlRequired: "请输入服务器 URL。",
     errTargetRequired: "请至少选择一个 agent。",
     errCodexTokenEnv: "设置了 Bearer 令牌时，Codex 需要一个令牌环境变量名。",
+    capCodexNoSse: "Codex 仅支持 streamable-HTTP，不支持独立 SSE。",
     // 详情对话框
     detailConfigTitle: "各 agent 的配置",
     detailNotConfigured: "尚未在任何 agent 上配置。",
@@ -313,6 +329,17 @@ export const zhCN = {
     healthHttpReachable: "可达",
     healthHttpUnreachable: "端点不可达",
     healthBadUrl: "服务器 URL 无效",
+    // 深度测试（真实 MCP 握手）+ 导出
+    deepTest: "深度测试",
+    deepTesting: "正在进行 MCP 握手…",
+    probeOk: (info: string) => `会说 MCP · ${info}`,
+    probeUnauthorized: "可达，但未授权 —— 请检查密钥",
+    probeUnreachable: "不可达",
+    probeNotMcp: "可达，但不是 MCP 服务器",
+    probeTimeout: "超时",
+    probeSpawnFailed: "无法启动服务器",
+    probeHttp: (code: string) => `HTTP ${code}`,
+    exportShareable: "导出（可分享，已脱敏）",
     // 粘贴导入
     importCardTitle: "从 JSON 或命令导入",
     importCardHint: "粘贴 mcpServers 配置块、单条服务器对象，或一行 claude mcp add … 命令。",
@@ -587,6 +614,10 @@ export const zhCN = {
     removeMcpClaude: (title: string) => `移除 MCP “${title}” ← Claude Code`,
     removeMcpCodex: (title: string) => `移除 MCP “${title}” ← Codex`,
     removeMcpOpencode: (title: string) => `移除 MCP “${title}” ← OpenCode`,
+    disableMcp: (title: string) => `停用 MCP “${title}”`,
+    enableMcp: (title: string) => `启用 MCP “${title}”`,
+    mcpStashed: (id: string) => `${id} 已记入 mcp-disabled.json`,
+    mcpUnstashed: (id: string) => `${id} 已从 mcp-disabled.json 清除`,
     removeRelayClaude: "移除 Claude Code API 端点",
     removeRelayCodex: "移除 Codex API 端点",
     uninstallCli: (title: string) => `卸载 ${title}`,
@@ -825,6 +856,39 @@ export const zhCN = {
     templateTask: "任务型（步骤）",
     createNow: "创建技能",
     nameInvalid: "只能使用字母、数字和连字符，不能有空格或斜杠。",
+
+    // --- 全文搜索 ---
+    contentMatch: "内容匹配",
+
+    // --- 内置目录安装状态（全部四个来源） ---
+    catalogInstalledIn: (sources: string) => `已安装：${sources}`,
+    catalogNotInstalled: "未安装",
+
+    // --- 批量操作（已安装列表多选） ---
+    selectRow: "选择技能",
+    selectedCount: (n: number) => `已选 ${n} 个`,
+    clearSelection: "清除",
+    batchCopyTo: "复制到…",
+    batchDeleteScope: "删除范围…",
+    deleteScopeAll: "全部来源",
+    batchDelete: "删除",
+    batchCopyDone: (n: number) => `已复制 ${n} 个技能。`,
+    batchNothingToCopy: "所选技能在这些目标里都已存在。",
+    batchDeleteConfirmTitle: (n: number) => `删除 ${n} 个技能？`,
+    batchDeleteConfirmBody: (scope: string) => `每个都会先备份，再从${scope}移除。`,
+
+    // --- 安装冲突（逐目标 覆盖/跳过） ---
+    conflict: {
+      title: "部分技能已存在",
+      body: "选择要覆盖哪些目标。未勾选的目标保留现有技能。",
+      overwrite: "覆盖",
+      skip: "跳过 — 保留现有",
+      overwriteAll: "全部覆盖",
+      keepAll: "全部跳过",
+      confirm: "安装",
+      cancel: "取消",
+      allSkipped: "所有目标都被跳过 — 无需安装。",
+    },
 
     // --- 收藏仓库源（市场） ---
     reposTitle: "技能仓库源",

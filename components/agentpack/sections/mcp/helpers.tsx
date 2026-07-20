@@ -73,7 +73,7 @@ export function existingIds(scan: DashboardScan | null): Set<string> {
 
 /** A short, secret-masked description of a resolved spec for the config viewer. */
 export function describeSpec(spec: McpSpec): string[] {
-  if (spec.transport === "http") {
+  if (spec.transport !== "stdio") {
     const lines = [`url: ${spec.url}`]
     for (const k of Object.keys(spec.headers)) lines.push(`header: ${k}: ••••••`)
     if (spec.bearerTokenEnvVar) lines.push(`bearer env: ${spec.bearerTokenEnvVar}`)
@@ -81,6 +81,7 @@ export function describeSpec(spec: McpSpec): string[] {
   }
   const lines = [`command: ${[spec.command, ...spec.args].join(" ")}`]
   for (const k of Object.keys(spec.env)) lines.push(`env: ${k}=••••••`)
+  for (const [k, ref] of Object.entries(spec.envRefs ?? {})) lines.push(`env: ${k}=$${ref}`)
   return lines
 }
 
@@ -109,7 +110,7 @@ export interface SpecFieldLabels {
  * view masks them while a copy button still yields the real value.
  */
 export function specFields(spec: McpSpec, labels: SpecFieldLabels): SpecField[] {
-  if (spec.transport === "http") {
+  if (spec.transport !== "stdio") {
     const out: SpecField[] = [{ label: labels.url, value: spec.url, mono: true }]
     for (const [k, v] of Object.entries(spec.headers))
       out.push({ label: `${labels.headers}: ${k}`, value: v, mono: true, secret: true })
@@ -122,6 +123,9 @@ export function specFields(spec: McpSpec, labels: SpecFieldLabels): SpecField[] 
   ]
   for (const [k, v] of Object.entries(spec.env))
     out.push({ label: `${labels.env}: ${k}`, value: v, mono: true, secret: true })
+  // Env references are host var names, not secret values — show them unmasked.
+  for (const [k, ref] of Object.entries(spec.envRefs ?? {}))
+    out.push({ label: `${labels.env}: ${k}`, value: `$${ref}`, mono: true })
   return out
 }
 
@@ -129,11 +133,12 @@ const MASK = "••••••"
 
 /** A copy of a spec with every secret value replaced by a mask (keys kept). */
 function maskSpec(spec: McpSpec): McpSpec {
-  if (spec.transport === "http") {
+  if (spec.transport !== "stdio") {
     const headers: Record<string, string> = {}
     for (const k of Object.keys(spec.headers)) headers[k] = MASK
     return { ...spec, headers }
   }
+  // Only literal env values are secret; `envRefs` are host var names, kept as-is.
   const env: Record<string, string> = {}
   for (const k of Object.keys(spec.env)) env[k] = MASK
   return { ...spec, env }
@@ -150,17 +155,23 @@ export function rawConfigText(id: string, spec: McpSpec, target: McpTarget): str
   if (target === "opencode")
     return mergeOpencodeMcp("", id, buildOpencodeMcpEntryFromSpec(masked)).trim()
   // Claude ~/.claude.json `mcpServers.<id>` object.
-  const entry =
-    masked.transport === "http"
-      ? {
-          url: masked.url,
-          ...(Object.keys(masked.headers).length ? { headers: masked.headers } : {}),
-        }
-      : {
-          command: masked.command,
-          args: masked.args,
-          ...(Object.keys(masked.env).length ? { env: masked.env } : {}),
-        }
+  let entry: Record<string, unknown>
+  if (masked.transport !== "stdio") {
+    entry = {
+      ...(masked.transport === "sse" ? { type: "sse" } : {}),
+      url: masked.url,
+      ...(Object.keys(masked.headers).length ? { headers: masked.headers } : {}),
+    }
+  } else {
+    // Claude renders env references inline via ${VAR} expansion.
+    const env: Record<string, string> = { ...masked.env }
+    for (const [k, ref] of Object.entries(masked.envRefs ?? {})) env[k] = `\${${ref}}`
+    entry = {
+      command: masked.command,
+      args: masked.args,
+      ...(Object.keys(env).length ? { env } : {}),
+    }
+  }
   return JSON.stringify({ mcpServers: { [id]: entry } }, null, 2)
 }
 

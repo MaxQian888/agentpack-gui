@@ -1,4 +1,4 @@
-import { countsBySource, filterRows, groupSkills, sortRows } from "./browse"
+import { countsBySource, filterRows, groupSkills, matchRow, sortRows } from "./browse"
 import type { InstalledSkill, SkillSource } from "./types"
 
 function skill(
@@ -87,6 +87,47 @@ describe("filterRows", () => {
     expect(filterRows(rows, "CARGO", "all").map((r) => r.dirName)).toEqual(["rust-pro"])
     expect(filterRows(rows, "sql", "all").map((r) => r.dirName)).toEqual(["sql-pro"])
     expect(filterRows(rows, "nothing", "all")).toEqual([])
+  })
+
+  it("includes rows that match only in the SKILL.md body", () => {
+    const bodyRows = groupSkills([
+      skill({
+        source: "claude",
+        dirName: "alpha",
+        skillMd: "---\nname: alpha\n---\nmentions webpack",
+      }),
+      skill({ source: "codex", dirName: "beta", skillMd: "---\nname: beta\n---\nplain" }),
+    ])
+    expect(filterRows(bodyRows, "webpack", "all").map((r) => r.dirName)).toEqual(["alpha"])
+  })
+})
+
+describe("matchRow (full-text)", () => {
+  const row = groupSkills([
+    skill({
+      source: "claude",
+      dirName: "rust-pro",
+      skillMd:
+        "---\nname: rust-pro\ndescription: cargo tooling\nwhen_to_use: building firmware\n---\nUse clippy for linting.",
+    }),
+  ])[0]
+
+  it("treats an empty query as a metadata match", () => {
+    expect(matchRow(row, "")).toEqual({ matched: true, contentOnly: false })
+  })
+
+  it("does not flag name / description hits as content-only", () => {
+    expect(matchRow(row, "cargo")).toEqual({ matched: true, contentOnly: false })
+    expect(matchRow(row, "RUST-PRO")).toEqual({ matched: true, contentOnly: false })
+  })
+
+  it("flags body / frontmatter-only hits as content-only", () => {
+    expect(matchRow(row, "clippy")).toEqual({ matched: true, contentOnly: true })
+    expect(matchRow(row, "firmware")).toEqual({ matched: true, contentOnly: true })
+  })
+
+  it("reports no match when the query is absent everywhere", () => {
+    expect(matchRow(row, "kubernetes")).toEqual({ matched: false, contentOnly: false })
   })
 })
 

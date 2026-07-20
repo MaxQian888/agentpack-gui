@@ -195,6 +195,8 @@ export interface Paths {
   ccSwitchDb: string
   ccConnectDir: string
   ccConnectConfig: string
+  /** `~/.agentpack/mcp-disabled.json` — agentpack's stash for Claude servers disabled via remove-and-remember. */
+  mcpDisabledStore: string
   os: OS
 }
 
@@ -257,7 +259,13 @@ export interface MergeFileStep extends StepBase {
 export interface SkillInstallStep extends StepBase {
   kind: "skillInstall"
   skillId: string
-  targets: AgentTarget[]
+  /**
+   * SkillInstallTarget[] — kept as strings so agentpack types stay
+   * skills-agnostic. The bundled catalog installs into any of the four skill
+   * roots (claude/codex/opencode/agents); the onboarding plan only ever fills
+   * claude/codex.
+   */
+  targets: string[]
 }
 
 export interface SkillRemoveStep extends StepBase {
@@ -326,6 +334,8 @@ export interface SkillCreateStep extends StepBase {
   content: string
   /** Destination dirs, precomputed for dry-run preview. */
   dests: string[]
+  /** Replace an existing skill (set only after the user resolves a conflict). */
+  overwrite?: boolean
 }
 
 export interface CcProviderStep extends StepBase {

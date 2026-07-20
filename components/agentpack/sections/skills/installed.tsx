@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useDeferredValue, useEffect, useMemo, useState } from "react"
 import {
   Copy,
   DownloadCloud,
@@ -16,6 +16,7 @@ import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import {
@@ -65,17 +66,19 @@ import {
   filterRows,
   groupSkills,
   countsBySource,
+  matchRow,
   primaryEntry,
   sortRows,
   SKILL_SOURCES,
   type SkillSort,
 } from "@/lib/skills/browse"
 import { indexUpdates, isManaged, rowUpdateTargets, updateQueries } from "@/lib/skills/updates"
-import type { Paths } from "@/lib/agentpack/types"
+import { skillDestPath, skillsDirFor } from "@/lib/skills/paths"
 import type { SkillRow, SkillSource, SkillsScanResult, SkillUpdateResult } from "@/lib/skills/types"
 import { useRunnerCtx } from "../../run/runner-context"
 import { SkillDetailDialog } from "./skill-detail-dialog"
 import { BackupsDialog } from "./backups-dialog"
+import { useInstallGuard } from "./install-conflict-dialog"
 
 /** Per-source dot colors (claude/codex/opencode match the history palette). */
 export const SKILL_SOURCE_COLORS: Record<SkillSource, string> = {
@@ -93,19 +96,6 @@ function SourceDot({ source }: { source: SkillSource }) {
       style={{ backgroundColor: SKILL_SOURCE_COLORS[source] }}
     />
   )
-}
-
-function skillsDirFor(paths: Paths, source: SkillSource): string {
-  switch (source) {
-    case "claude":
-      return paths.claudeSkillsDir
-    case "codex":
-      return paths.codexSkillsDir
-    case "opencode":
-      return paths.opencodeSkillsDir
-    case "agents":
-      return paths.agentsSkillsDir
-  }
 }
 
 /** Current per-agent config state, keyed by skill NAME (non-default only matters). */
@@ -126,13 +116,21 @@ export function InstalledSkillsTab({
   const paths = useAppStore((s) => s.paths)
   const mirrorPrefix = useAppStore((s) => s.settings.ghMirrorPrefix)
   const { run } = useRunnerCtx()
+  const { guard, dialog: guardDialog } = useInstallGuard()
 
   const [query, setQuery] = useState("")
+  // Defer the full-text filter so typing stays smooth even when SKILL.md bodies
+  // are searched across many skills.
+  const deferredQuery = useDeferredValue(query)
   const [source, setSource] = useState<SkillSource | "all">("all")
   const [sort, setSort] = useState<SkillSort>("name")
   const [detail, setDetail] = useState<SkillRow | null>(null)
   const [toDelete, setToDelete] = useState<{ row: SkillRow; source: SkillSource } | null>(null)
   const [backupsOpen, setBackupsOpen] = useState(false)
+  // Batch selection (by dir name) + the scope its "Delete" acts on.
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [deleteScope, setDeleteScope] = useState<"all" | SkillSource>("all")
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false)
 
   const [overrides, setOverrides] = useState<Record<string, SkillStatus>>({})
   const [overridesBump, setOverridesBump] = useState(0)
@@ -143,14 +141,23 @@ export function InstalledSkillsTab({
   const counts = useMemo(() => countsBySource(scan.skills), [scan])
   const managedRows = useMemo(() => rows.filter(isManaged), [rows])
   const filtered = useMemo(
-    () => sortRows(filterRows(rows, query, source), sort),
-    [rows, query, source, sort]
+    () => sortRows(filterRows(rows, deferredQuery, source), sort),
+    [rows, deferredQuery, source, sort]
   )
   const { visible, sentinelRef, hasMore } = useIncremental(
     filtered.length,
-    `${source}|${query}|${sort}`,
+    `${source}|${deferredQuery}|${sort}`,
     50
   )
+
+  // A rescan can drop skills the user had selected; start each scan clean.
+  // Adjust state during render (React's "reset on prop change" pattern) rather
+  // than in an effect, which would cascade an extra render.
+  const [scanForSelection, setScanForSelection] = useState(scan)
+  if (scan !== scanForSelection) {
+    setScanForSelection(scan)
+    setSelected(new Set())
+  }
 
   // Read the two config files once per scan (and after the detail dialog, which
   // can change them) to show each skill's current enable state inline.
@@ -249,6 +256,76 @@ export function InstalledSkillsTab({
     refresh()
   }
 
+  const toggleSelect = (dirName: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(dirName)) next.delete(dirName)
+      else next.add(dirName)
+      return next
+    })
+
+  const clearSelection = () => setSelected(new Set())
+  const selectedRows = () => rows.filter((r) => selected.has(r.dirName))
+
+  // Copy every selected skill into `target`, skipping any whose only copy is
+  // already there, and routing existing-skill overwrites through the guard.
+  const batchCopy = async (target: SkillSource) => {
+    if (!paths) return
+    const candidates = selectedRows().filter((r) => {
+      const src = primaryEntry(r)
+      return src && src.path !== skillDestPath(paths, target, r.dirName)
+    })
+    if (candidates.length === 0) {
+      toast.info(sb.batchNothingToCopy)
+      return
+    }
+    const resolved = await guard(
+      candidates.map((r) => ({ dirName: r.dirName, targets: [target] })),
+      scan.skills
+    )
+    if (!resolved || resolved.length === 0) return
+    const keep = new Set(resolved.map((r) => r.dirName))
+    const steps = candidates
+      .filter((r) => keep.has(r.dirName))
+      .map((r) =>
+        skillCopyStep(
+          r.dirName,
+          r.name,
+          primaryEntry(r)!.path,
+          [target],
+          [skillDestPath(paths, target, r.dirName)],
+          t
+        )
+      )
+    if (steps.length === 0) return
+    await run(steps)
+    toast.success(sb.batchCopyDone(steps.length))
+    clearSelection()
+    refresh()
+  }
+
+  // Back up then remove each selected skill, within the chosen delete scope.
+  const batchDelete = async () => {
+    if (!paths) return
+    const steps = selectedRows().flatMap((r) => {
+      const sources =
+        deleteScope === "all"
+          ? SKILL_SOURCES.filter((s) => r.entries[s])
+          : r.entries[deleteScope]
+            ? [deleteScope]
+            : []
+      if (sources.length === 0) return []
+      const dests = sources.map((s) => r.entries[s]!.path)
+      const backup = skillBackupStep(r.dirName, r.entries[sources[0]]!.path, t)
+      const remove = skillRemoveStep(r.dirName, r.name, sources, dests, t)
+      return [backup, { ...remove, dependsOn: [backup.id] }]
+    })
+    if (steps.length === 0) return
+    await run(steps)
+    clearSelection()
+    refresh()
+  }
+
   return (
     <div className="flex flex-col gap-3">
       {/* Update / backups toolbar */}
@@ -318,6 +395,57 @@ export function InstalledSkillsTab({
         </div>
       </div>
 
+      {selected.size > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-2">
+          <span className="text-sm font-medium">{sb.selectedCount(selected.size)}</span>
+          <Button variant="ghost" size="sm" onClick={clearSelection}>
+            {sb.clearSelection}
+          </Button>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-1.5">
+                  <Copy className="size-4" />
+                  {sb.batchCopyTo}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {SKILL_SOURCES.map((s) => (
+                  <DropdownMenuItem key={s} onSelect={() => void batchCopy(s)}>
+                    <SourceDot source={s} /> {sb.sources[s]}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Select
+              value={deleteScope}
+              onValueChange={(v) => setDeleteScope(v as "all" | SkillSource)}
+            >
+              <SelectTrigger size="sm" className="w-40" aria-label={sb.batchDeleteScope}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{sb.deleteScopeAll}</SelectItem>
+                {SKILL_SOURCES.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {sb.sources[s]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => setBatchDeleteOpen(true)}
+            >
+              <Trash2 className="size-4" />
+              {sb.batchDelete}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       {filtered.length === 0 ? (
         <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
           {rows.length === 0 ? sb.empty : sb.emptyFiltered}
@@ -333,7 +461,13 @@ export function InstalledSkillsTab({
             const entryPath = primaryEntry(row)?.path
             return (
               <Card key={row.dirName} className="gap-2 p-4">
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <Checkbox
+                    className="mt-1 shrink-0"
+                    checked={selected.has(row.dirName)}
+                    onCheckedChange={() => toggleSelect(row.dirName)}
+                    aria-label={sb.selectRow}
+                  />
                   <button
                     type="button"
                     onClick={() => setDetail(row)}
@@ -447,6 +581,12 @@ export function InstalledSkillsTab({
                       {sb.nameMismatchBadge(row.name)}
                     </Badge>
                   ) : null}
+                  {deferredQuery.trim() && matchRow(row, deferredQuery).contentOnly ? (
+                    <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
+                      <Search className="size-3" />
+                      {sb.contentMatch}
+                    </Badge>
+                  ) : null}
                 </div>
               </Card>
             )
@@ -494,6 +634,32 @@ export function InstalledSkillsTab({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog open={batchDeleteOpen} onOpenChange={setBatchDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{sb.batchDeleteConfirmTitle(selected.size)}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {sb.batchDeleteConfirmBody(
+                deleteScope === "all" ? sb.deleteScopeAll : sb.sources[deleteScope]
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{sb.cancel}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                void batchDelete()
+                setBatchDeleteOpen(false)
+              }}
+            >
+              {sb.batchDelete}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {guardDialog}
     </div>
   )
 }

@@ -1,4 +1,5 @@
-import { parseMcpImport, type ImportedServer } from "./mcp-import"
+import { exportMcpServers, parseMcpImport, type ImportedServer } from "./mcp-import"
+import type { McpSpec } from "./merge/mcp"
 
 /** Narrow to the success branch and fetch a server by id. */
 function servers(text: string): ImportedServer[] {
@@ -129,5 +130,55 @@ describe("parseMcpImport — errors", () => {
   it("reports unparseable input", () => {
     expect(parseMcpImport("this is not config")).toEqual({ error: "parse" })
     expect(parseMcpImport("{ broken json")).toEqual({ error: "parse" })
+  })
+})
+
+describe("parseMcpImport — sse", () => {
+  it("preserves sse from a `claude mcp add --transport sse` command", () => {
+    const [srv] = servers("claude mcp add --transport sse asana https://mcp.asana.com/sse")
+    expect(srv).toEqual({
+      id: "asana",
+      spec: { transport: "sse", url: "https://mcp.asana.com/sse", headers: {} },
+    })
+  })
+
+  it("preserves sse from a pasted JSON mcpServers block", () => {
+    const [srv] = servers(
+      JSON.stringify({ mcpServers: { s: { type: "sse", url: "https://x/sse" } } })
+    )
+    expect(srv.spec.transport).toBe("sse")
+  })
+})
+
+describe("exportMcpServers", () => {
+  const stdio: McpSpec = {
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "srv"],
+    env: { PLAIN: "v" },
+    envRefs: { API_KEY: "API_KEY" },
+  }
+
+  it("round-trips through parseMcpImport", () => {
+    const json = exportMcpServers([{ id: "srv", spec: stdio }])
+    const [srv] = servers(json)
+    expect(srv).toEqual({ id: "srv", spec: stdio })
+  })
+
+  it("keeps env references but redacts literal secrets when asked", () => {
+    const json = exportMcpServers([{ id: "srv", spec: stdio }], { redactSecrets: true })
+    const parsed = JSON.parse(json)
+    expect(parsed.mcpServers.srv.env).toEqual({ PLAIN: "<redacted>", API_KEY: "${API_KEY}" })
+  })
+
+  it("exports http/sse with a type and redacts the bearer token", () => {
+    const http: McpSpec = {
+      transport: "sse",
+      url: "https://x/sse",
+      headers: { Authorization: "Bearer secret" },
+    }
+    const parsed = JSON.parse(exportMcpServers([{ id: "h", spec: http }], { redactSecrets: true }))
+    expect(parsed.mcpServers.h.type).toBe("sse")
+    expect(parsed.mcpServers.h.headers.Authorization).toBe("Bearer <redacted>")
   })
 })

@@ -20,6 +20,7 @@ pub struct Paths {
   cc_switch_db: String,
   cc_connect_dir: String,
   cc_connect_config: String,
+  mcp_disabled_store: String,
   os: String,
 }
 
@@ -52,6 +53,7 @@ pub fn get_paths() -> Result<Paths, String> {
   let codex = codex_home(&home);
   let ccsw = home.join(".cc-switch");
   let ccconn = home.join(".cc-connect");
+  let agentpack = home.join(".agentpack");
   Ok(Paths {
     home: s(home.clone()),
     claude_settings: s(claude.join("settings.json")),
@@ -73,6 +75,9 @@ pub fn get_paths() -> Result<Paths, String> {
     cc_switch_db: s(ccsw.join("cc-switch.db")),
     cc_connect_dir: s(ccconn.clone()),
     cc_connect_config: s(ccconn.join("config.toml")),
+    // agentpack's own stash for Claude MCP servers disabled via remove-and-remember
+    // (Claude has no native per-server disable flag).
+    mcp_disabled_store: s(agentpack.join("mcp-disabled.json")),
     os: os_family().into(),
   })
 }

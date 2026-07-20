@@ -1,5 +1,5 @@
 import { invoke, Channel } from "@tauri-apps/api/core"
-import type { AgentTarget, Command, Paths } from "@/lib/agentpack/types"
+import type { Command, Paths } from "@/lib/agentpack/types"
 import type { Provider, ProviderApp } from "@/lib/agentpack/ccswitch/types"
 import type { HistorySource, ListResult, SessionDetail } from "@/lib/history/types"
 import type {
@@ -139,6 +139,39 @@ export const probeHost = (host: string, port: number, timeoutMs?: number) =>
     timeoutMs: timeoutMs ?? null,
   })
 
+/** Raw `GET /v0/servers` body from the official MCP registry (TS maps the schema). */
+export const registryFetch = (query?: string, cursor?: string, limit?: number) =>
+  invoke<string>("registry_fetch", {
+    query: query ?? null,
+    cursor: cursor ?? null,
+    limit: limit ?? null,
+  })
+
+/** Structured result of a real MCP `initialize` probe (see `src-tauri/src/mcp.rs`). */
+export interface McpProbeResult {
+  ok: boolean
+  reason: string
+  protocolVersion?: string
+  serverName?: string
+  toolCount?: number
+  latencyMs?: number
+}
+
+/** Real MCP handshake against a remote (http/sse) server — distinguishes unauthorized vs unreachable. */
+export const mcpProbeRemote = (
+  url: string,
+  headers: Record<string, string>,
+  transport: "http" | "sse"
+) => invoke<McpProbeResult>("mcp_probe_remote", { url, headers, transport })
+
+/** Deep-probe a stdio server: spawn it, run `initialize`, read the reply (bounded). */
+export const mcpProbeStdio = (
+  command: string,
+  args: string[],
+  env: Record<string, string>,
+  timeoutMs?: number
+) => invoke<McpProbeResult>("mcp_probe_stdio", { command, args, env, timeoutMs: timeoutMs ?? null })
+
 export const readTextFile = (path: string) => invoke<string>("read_text_file", { path })
 
 export const writeTextFile = (path: string, content: string) =>
@@ -151,7 +184,8 @@ export const pathExists = (path: string) => invoke<boolean>("path_exists", { pat
 /** Installed skill ids in a skills dir — sub-dirs with a `SKILL.md` ([] when missing). */
 export const listSkills = (path: string) => invoke<string[]>("list_skills", { path })
 
-export const installSkill = (id: string, targets: AgentTarget[]) =>
+/** Install a bundled skill into each target root (claude/codex/opencode/agents). */
+export const installSkill = (id: string, targets: string[]) =>
   invoke<string[]>("install_skill", { id, targets })
 
 /** Scan the four global skills roots (claude/codex/opencode/agents) with SKILL.md inline. */
@@ -207,9 +241,13 @@ export const restoreSkillBackup = (id: string, targets: string[]) =>
 /** Permanently delete a skill backup. */
 export const deleteSkillBackup = (id: string) => invoke<void>("delete_skill_backup", { id })
 
-/** Create a new hand-authored skill (`<root>/<name>/SKILL.md`); refuses overwrite. */
-export const createSkill = (name: string, targets: string[], content: string) =>
-  invoke<string[]>("create_skill", { name, targets, content })
+/**
+ * Create a new hand-authored skill (`<root>/<name>/SKILL.md`). Refuses to
+ * overwrite an existing skill unless `overwrite` is true (set only after the
+ * user resolves the install-conflict dialog).
+ */
+export const createSkill = (name: string, targets: string[], content: string, overwrite = false) =>
+  invoke<string[]>("create_skill", { name, targets, content, overwrite })
 
 export const ccLoadProviders = () => invoke<Provider[]>("cc_load_providers")
 

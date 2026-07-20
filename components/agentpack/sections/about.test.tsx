@@ -139,6 +139,7 @@ it("reveals config folders when paths are known", async () => {
       ccSwitchDb: "/home/.cc-switch/db.sqlite",
       ccConnectDir: "/home/.cc-connect",
       ccConnectConfig: "/home/.cc-connect/config.toml",
+      mcpDisabledStore: "/home/.agentpack/mcp-disabled.json",
       os: "mac",
     },
   })

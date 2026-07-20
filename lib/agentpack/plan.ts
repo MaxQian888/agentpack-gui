@@ -22,8 +22,17 @@ import {
   mergeCodexMcp,
   mergeOpencodeMcp,
   resolveCatalogSpec,
+  setCodexMcpEnabled,
+  setOpencodeMcpEnabled,
+  wrapStdioForOs,
   type McpSpec,
 } from "./merge/mcp"
+import {
+  addDisabled,
+  parseDisabledStore,
+  removeDisabled,
+  serializeDisabledStore,
+} from "./mcp-disabled"
 import {
   deleteClaudeRelay,
   deleteCodexProvider,
@@ -45,7 +54,6 @@ import {
   codexConfigFromProvider,
 } from "./ccswitch/sync"
 import type {
-  AgentTarget,
   CliInstallManager,
   CliTool,
   Command,
@@ -441,7 +449,7 @@ export function runtimeUpgradeStep(
 export function skillInstallStep(
   skillId: string,
   title: string,
-  targets: AgentTarget[],
+  targets: string[],
   messages: Messages = en
 ): StepDescriptor {
   return {
@@ -558,7 +566,8 @@ export function skillCreateStep(
   targets: string[],
   content: string,
   dests: string[],
-  messages: Messages = en
+  messages: Messages = en,
+  overwrite = false
 ): StepDescriptor {
   return {
     kind: "skillCreate",
@@ -568,6 +577,7 @@ export function skillCreateStep(
     targets,
     content,
     dests,
+    overwrite,
   }
 }
 
@@ -674,8 +684,10 @@ function mcpAddSpecSteps(
       command: buildClaudeMcpCommandFromSpec(id, spec),
     })
   }
-  if (targets.includes("codex")) {
-    const entry = buildCodexMcpEntryFromSpec(spec)
+  // Codex has no standalone SSE transport — it only speaks streamable-HTTP — so
+  // an sse spec is skipped for Codex (the UI gates the checkbox too).
+  if (targets.includes("codex") && spec.transport !== "sse") {
+    const entry = buildCodexMcpEntryFromSpec(wrapStdioForOs(spec, paths.os))
     steps.push({
       kind: "mergeFile",
       id: `mcp-add-codex-${id}`,
@@ -686,7 +698,7 @@ function mcpAddSpecSteps(
     })
   }
   if (targets.includes("opencode")) {
-    const entry = buildOpencodeMcpEntryFromSpec(spec)
+    const entry = buildOpencodeMcpEntryFromSpec(wrapStdioForOs(spec, paths.os))
     steps.push({
       kind: "mergeFile",
       id: `mcp-add-opencode-${id}`,
@@ -812,6 +824,117 @@ export function mcpRemoveStep(
       label: messages.steps.removeMcpOpencode(title),
       path: paths.opencodeConfig,
       merge: (existing) => deleteOpencodeMcpEntry(existing, id),
+      writtenNote: messages.steps.opencodeMcpWritten(id),
+    })
+  }
+  return steps
+}
+
+/**
+ * Disable an MCP server on the chosen targets without deleting it. Codex /
+ * OpenCode flip their native `enabled = false` flag in place. Claude has no
+ * per-server toggle, so it stashes the current `spec` in agentpack's disabled
+ * store (mergeFile) and then removes the entry from ~/.claude.json — `mcpEnableStep`
+ * restores it. `spec` is the server's current on-disk spec (needed for the stash).
+ */
+export function mcpDisableStep(
+  id: string,
+  spec: McpSpec,
+  targets: McpTarget[],
+  paths: Paths,
+  messages: Messages = en
+): StepDescriptor[] {
+  const title = mcpTitle(id, messages)
+  const steps: StepDescriptor[] = []
+  if (targets.includes("claude")) {
+    steps.push({
+      kind: "mergeFile",
+      id: `mcp-disable-stash-${id}`,
+      label: messages.steps.disableMcp(title),
+      path: paths.mcpDisabledStore,
+      merge: (existing) =>
+        serializeDisabledStore(
+          addDisabled(parseDisabledStore(existing), id, { spec, targets: ["claude"] })
+        ),
+      writtenNote: messages.steps.mcpStashed(id),
+    })
+    steps.push({
+      kind: "command",
+      id: `mcp-disable-remove-claude-${id}`,
+      label: messages.steps.removeMcpClaude(title),
+      command: buildClaudeMcpRemoveCommand(id),
+    })
+  }
+  if (targets.includes("codex")) {
+    steps.push({
+      kind: "mergeFile",
+      id: `mcp-disable-codex-${id}`,
+      label: messages.steps.disableMcp(title),
+      path: paths.codexConfig,
+      merge: (existing) => setCodexMcpEnabled(existing, id, false),
+      writtenNote: messages.steps.codexMcpWritten(id),
+    })
+  }
+  if (targets.includes("opencode")) {
+    steps.push({
+      kind: "mergeFile",
+      id: `mcp-disable-opencode-${id}`,
+      label: messages.steps.disableMcp(title),
+      path: paths.opencodeConfig,
+      merge: (existing) => setOpencodeMcpEnabled(existing, id, false),
+      writtenNote: messages.steps.opencodeMcpWritten(id),
+    })
+  }
+  return steps
+}
+
+/**
+ * Re-enable a disabled MCP server. Codex / OpenCode flip `enabled = true`. Claude
+ * re-adds the server from `spec` (read from the disabled store by the caller) and
+ * then clears its stash entry (mergeFile).
+ */
+export function mcpEnableStep(
+  id: string,
+  spec: McpSpec,
+  targets: McpTarget[],
+  paths: Paths,
+  messages: Messages = en
+): StepDescriptor[] {
+  const title = mcpTitle(id, messages)
+  const steps: StepDescriptor[] = []
+  if (targets.includes("claude")) {
+    steps.push({
+      kind: "command",
+      id: `mcp-enable-add-claude-${id}`,
+      label: messages.steps.enableMcp(title),
+      command: buildClaudeMcpCommandFromSpec(id, spec),
+    })
+    steps.push({
+      kind: "mergeFile",
+      id: `mcp-enable-unstash-${id}`,
+      label: messages.steps.enableMcp(title),
+      path: paths.mcpDisabledStore,
+      merge: (existing) => serializeDisabledStore(removeDisabled(parseDisabledStore(existing), id)),
+      writtenNote: messages.steps.mcpUnstashed(id),
+    })
+  }
+  if (targets.includes("codex")) {
+    steps.push({
+      kind: "mergeFile",
+      id: `mcp-enable-codex-${id}`,
+      label: messages.steps.enableMcp(title),
+      path: paths.codexConfig,
+      merge: (existing) => setCodexMcpEnabled(existing, id, true),
+      writtenNote: messages.steps.codexMcpWritten(id),
+    })
+  }
+  if (targets.includes("opencode")) {
+    steps.push({
+      kind: "mergeFile",
+      id: `mcp-enable-opencode-${id}`,
+      label: messages.steps.enableMcp(title),
+      path: paths.opencodeConfig,
+      merge: (existing) => setOpencodeMcpEnabled(existing, id, true),
       writtenNote: messages.steps.opencodeMcpWritten(id),
     })
   }

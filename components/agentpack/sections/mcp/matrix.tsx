@@ -28,6 +28,7 @@ import { useAppStore } from "@/store/app-store"
 import { isTauri } from "@/lib/tauri"
 import { readTextFile } from "@/lib/tauri/commands"
 import { useIncremental } from "@/hooks/use-incremental"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { findMcp } from "@/lib/agentpack/registry"
 import { mcpAddSpecStep, mcpRemoveStep } from "@/lib/agentpack/plan"
 import {
@@ -90,6 +91,7 @@ export function MatrixTab({ scan, refresh }: { scan: DashboardScan | null; refre
 
   const [query, setQuery] = useState("")
   const [confirm, setConfirm] = useState<{ row: McpRow; target: McpTarget } | null>(null)
+  const isMobile = useIsMobile()
 
   const claudeDisabled = !detections["claude-code"]?.installed
   const titleOf = (id: string) => t.catalog.mcp[id]?.title ?? id
@@ -126,6 +128,29 @@ export function MatrixTab({ scan, refresh }: { scan: DashboardScan | null; refre
     refresh()
   }
 
+  /** One server×target toggle, shared by the desktop table and the mobile cards. */
+  const cellButton = (row: McpRow, tg: McpTarget) => {
+    const on = row.presence[tg]
+    const disabled = (tg === "claude" && claudeDisabled && !on) || (!on && !specForCopy(row))
+    return (
+      <button
+        type="button"
+        disabled={disabled}
+        title={on ? m.removeFromTarget(m.targets[tg]) : m.copyToTarget(m.targets[tg])}
+        onClick={() => (on ? setConfirm({ row, target: tg }) : void addTo(row, tg))}
+        className={cn(
+          "flex size-7 items-center justify-center rounded-full border transition-colors",
+          on ? "border-primary bg-primary/10" : "text-muted-foreground hover:bg-accent/40",
+          disabled && "cursor-not-allowed opacity-40"
+        )}
+      >
+        {on ? <Check className="size-3.5" /> : <Plus className="size-3.5" />}
+      </button>
+    )
+  }
+
+  const shown = filtered.slice(0, visible)
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-2">
@@ -145,8 +170,37 @@ export function MatrixTab({ scan, refresh }: { scan: DashboardScan | null; refre
         <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
           {rows.length === 0 ? m.empty : m.emptyFiltered}
         </div>
+      ) : isMobile ? (
+        // Narrow / split window: the grid becomes a per-server card with the
+        // target toggles stacked, so nothing overflows horizontally.
+        <div className="flex flex-col gap-2">
+          {shown.map((row) => (
+            <div key={row.id} className="flex flex-col gap-2 rounded-lg border p-3">
+              <div className="min-w-0">
+                <span className="font-medium">{titleOf(row.id)}</span>
+                {titleOf(row.id) !== row.id ? (
+                  <span className="ml-2 font-mono text-xs text-muted-foreground">{row.id}</span>
+                ) : null}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {MCP_TARGETS.map((tg) => (
+                  <div key={tg} className="flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-sm">
+                      <TargetDot target={tg} on={row.presence[tg]} />
+                      {m.targets[tg]}
+                    </span>
+                    {cellButton(row, tg)}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          {hasMore ? <div ref={sentinelRef} className="h-8" /> : null}
+        </div>
       ) : (
-        <div className="rounded-lg border">
+        // Wide window: the full server×target grid. The table scrolls inside its
+        // own container so the page body never scrolls horizontally.
+        <div className="overflow-x-auto rounded-lg border">
           <Table>
             <TableHeader>
               <TableRow>
@@ -162,7 +216,7 @@ export function MatrixTab({ scan, refresh }: { scan: DashboardScan | null; refre
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.slice(0, visible).map((row) => (
+              {shown.map((row) => (
                 <TableRow key={row.id}>
                   <TableCell>
                     <span className="font-medium">{titleOf(row.id)}</span>
@@ -170,34 +224,11 @@ export function MatrixTab({ scan, refresh }: { scan: DashboardScan | null; refre
                       <span className="ml-2 font-mono text-xs text-muted-foreground">{row.id}</span>
                     ) : null}
                   </TableCell>
-                  {MCP_TARGETS.map((tg) => {
-                    const on = row.presence[tg]
-                    const disabled =
-                      (tg === "claude" && claudeDisabled && !on) || (!on && !specForCopy(row))
-                    return (
-                      <TableCell key={tg} className="text-center">
-                        <button
-                          type="button"
-                          disabled={disabled}
-                          title={
-                            on ? m.removeFromTarget(m.targets[tg]) : m.copyToTarget(m.targets[tg])
-                          }
-                          onClick={() =>
-                            on ? setConfirm({ row, target: tg }) : void addTo(row, tg)
-                          }
-                          className={cn(
-                            "mx-auto flex size-7 items-center justify-center rounded-full border transition-colors",
-                            on
-                              ? "border-primary bg-primary/10"
-                              : "text-muted-foreground hover:bg-accent/40",
-                            disabled && "cursor-not-allowed opacity-40"
-                          )}
-                        >
-                          {on ? <Check className="size-3.5" /> : <Plus className="size-3.5" />}
-                        </button>
-                      </TableCell>
-                    )
-                  })}
+                  {MCP_TARGETS.map((tg) => (
+                    <TableCell key={tg} className="text-center">
+                      <div className="flex justify-center">{cellButton(row, tg)}</div>
+                    </TableCell>
+                  ))}
                 </TableRow>
               ))}
             </TableBody>
