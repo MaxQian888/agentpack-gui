@@ -120,7 +120,7 @@ pub fn backup_list() -> Result<Vec<BackupEntry>, String> {
       }
     }
   }
-  out.sort_by(|a, b| b.ts.cmp(&a.ts));
+  out.sort_by_key(|b| std::cmp::Reverse(b.ts));
   Ok(out)
 }
 

@@ -3,21 +3,22 @@ import { openApp, navTo } from "./helpers"
 
 test.beforeEach(async ({ page }) => openApp(page))
 
-test("selecting an MCP target and entering its API key", async ({ page }) => {
+test("the MCP section summarises the catalog and defers management to the desktop app", async ({
+  page,
+}) => {
   await navTo(page, "mcp")
-  await expect(page.getByRole("heading", { name: "Select MCP servers to add" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "MCP servers" })).toBeVisible()
 
-  // context7 requires a key — its password field is rendered with an aria-label.
-  const keyField = page.getByLabel("context7 CONTEXT7_API_KEY")
-  await expect(keyField).toBeVisible()
+  // The stat tiles are computed from the built-in catalog, so they render even
+  // without a scan.
+  await expect(page.getByText("Catalog", { exact: true })).toBeVisible()
+  await expect(page.getByText("Installed", { exact: true })).toBeVisible()
+  await expect(page.getByText("Needs key", { exact: true })).toBeVisible()
 
-  // Toggle a target checkbox for the first server.
-  const firstCheckbox = page.getByRole("checkbox").first()
-  await firstCheckbox.click()
-  await expect(firstCheckbox).toBeChecked()
-
-  await keyField.fill("sk-test-123")
-  await expect(keyField).toHaveValue("sk-test-123")
+  // Reading and writing MCP config needs the filesystem, so the manager tabs are
+  // desktop-only; the web build says so instead of rendering them.
+  await expect(page.getByText("MCP management is only available in the desktop app.")).toBeVisible()
+  await expect(page.getByRole("tab", { name: "Catalog" })).toHaveCount(0)
 })
 
 test("network configuration fields accept and retain input", async ({ page }) => {

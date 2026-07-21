@@ -246,7 +246,12 @@ function ComboboxChip({
   )
 }
 
-function ComboboxChipsInput({ className, children, ...props }: ComboboxPrimitive.Input.Props) {
+// Renders a bare <input>, so children are rejected at the type level rather than
+// accepted and silently dropped.
+function ComboboxChipsInput({
+  className,
+  ...props
+}: Omit<ComboboxPrimitive.Input.Props, "children">) {
   return (
     <ComboboxPrimitive.Input
       data-slot="combobox-chip-input"

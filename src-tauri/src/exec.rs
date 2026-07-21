@@ -248,6 +248,7 @@ pub const TIMEOUT_ERR: &str = "agentpack:timeout";
 /// Exit code we return when the user dismissed the UAC prompt (Windows
 /// `ERROR_CANCELLED`). winget never exits with this, so the frontend can map it
 /// to a clear "you declined administrator access" message rather than a raw code.
+#[cfg(windows)]
 pub const ELEVATION_DECLINED: i32 = 1223;
 
 /// Wrap `file args` so it runs **elevated** (triggering a UAC prompt) on Windows,

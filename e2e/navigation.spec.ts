@@ -19,7 +19,7 @@ test("navigates through every sidebar section", async ({ page }) => {
   await expect(page.getByRole("tab", { name: "Installed" })).toBeVisible()
 
   await navTo(page, "mcp")
-  await expect(page.getByRole("heading", { name: "Select MCP servers to add" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "MCP servers" })).toBeVisible()
 
   await navTo(page, "network")
   await expect(page.getByRole("heading", { name: "Network configuration" })).toBeVisible()

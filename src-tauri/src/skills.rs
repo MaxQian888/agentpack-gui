@@ -906,7 +906,7 @@ pub fn list_skill_backups() -> Result<Vec<SkillBackup>, String> {
       }
     }
   }
-  out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+  out.sort_by_key(|b| std::cmp::Reverse(b.created_at));
   Ok(out)
 }
 
@@ -1372,8 +1372,15 @@ mod tests {
     fs::create_dir_all(&root).unwrap();
 
     // Drive the same two steps `install_repo_skills` does, without network.
-    let dests = install_picks(&top, &["skills/web".to_string()], &[root.clone()]).unwrap();
-    write_origins_for_picks(&top, &["skills/web".to_string()], &[root.clone()], "owner/repo", "main").unwrap();
+    let dests = install_picks(&top, &["skills/web".to_string()], std::slice::from_ref(&root)).unwrap();
+    write_origins_for_picks(
+      &top,
+      &["skills/web".to_string()],
+      std::slice::from_ref(&root),
+      "owner/repo",
+      "main",
+    )
+    .unwrap();
 
     let dest = PathBuf::from(&dests[0]);
     let origin = read_origin(&dest).unwrap();
@@ -1399,7 +1406,7 @@ mod tests {
     fs::create_dir_all(&root_b).unwrap();
 
     // A bad name is rejected before any fs work.
-    assert!(create_skill_in_roots("../evil", &[root_a.clone()], "# body", false).is_err());
+    assert!(create_skill_in_roots("../evil", std::slice::from_ref(&root_a), "# body", false).is_err());
 
     // Happy path writes SKILL.md into every root.
     let dests =
@@ -1497,7 +1504,8 @@ mod tests {
       let restore_root = src_base.join("restore-target");
       fs::create_dir_all(&restore_root).unwrap();
       let src = backups_root.join(&backup.id).join("skill");
-      let dests = restore_backup_into_roots(&src, &backup.dir_name, &[restore_root.clone()]).unwrap();
+      let dests =
+        restore_backup_into_roots(&src, &backup.dir_name, std::slice::from_ref(&restore_root)).unwrap();
       assert_eq!(dests.len(), 1);
       let restored = fs::read_to_string(restore_root.join("my-skill").join("SKILL.md")).unwrap();
       assert!(restored.contains("original"), "restore must bring back the backed-up content");
