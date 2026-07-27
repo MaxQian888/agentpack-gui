@@ -4,11 +4,18 @@
 //! * **Claude Code** — one JSONL file per session under
 //!   `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`. Each line is a typed
 //!   record (`user`/`assistant`/`system`/`ai-title`/…); assistant lines carry a
-//!   `message.usage` block.
+//!   `message.usage` block. Sub-agent runs get their own transcripts one level
+//!   deeper, in `<session-id>/subagents/agent-<hash>.jsonl`, and oversized tool
+//!   outputs are externalized to `<session-id>/tool-results/<id>.txt` with only
+//!   a `<persisted-output>` stub left inline.
 //! * **Codex** — one "rollout" JSONL per session under
 //!   `<codexHome>/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl`, every line a
 //!   `{timestamp,type,payload}` envelope. Token totals arrive in `token_count`
-//!   events; a sibling `session_index.jsonl` maps ids → thread names.
+//!   events; a sibling `session_index.jsonl` maps ids → thread names. A spawned
+//!   sub-agent gets a rollout of its own, tagged in `session_meta` with its
+//!   parent thread and its canonical agent path (`/root/<task>`); the agents
+//!   talk to each other through `agent_message` records written to the
+//!   *recipient's* rollout.
 //! * **OpenCode** — a single SQLite database (`opencode.db`) with `session` /
 //!   `message` / `part` tables and precomputed per-session token + cost columns.
 //!
@@ -78,27 +85,94 @@ pub struct SessionSummary {
   /// `history_get_session` reopens the transcript with.
   path: String,
   git_branch: Option<String>,
+  /// Set on a sub-agent transcript: the id of the session that spawned it, so
+  /// the list can nest it under its parent instead of listing it as a peer.
+  #[serde(default)]
+  parent_id: Option<String>,
+  /// Sub-agent label from Claude's `agent-name` record.
+  #[serde(default)]
+  agent_name: Option<String>,
+  /// Wall-clock time actually spent, summed from Claude's
+  /// `system`/`turn_duration` records. `None` for sources that don't record it —
+  /// left absent rather than zeroed so the dashboard can tell the two apart.
+  #[serde(default)]
+  duration_ms: Option<i64>,
 }
 
 /// One normalized content block within a message.
 ///
-/// `kind` ∈ text | thinking | toolCall | toolResult | image | patch | webSearch.
-#[derive(Serialize, Clone)]
+/// `kind` ∈ text | thinking | toolCall | toolResult | image | patch | webSearch
+/// | event | agentMessage | subagentActivity.
+#[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Part {
   kind: String,
   /// Main payload: message text, tool input, tool output, patch body, etc.
+  /// Capped at [`PART_INLINE_LIMIT`] — see `truncated`.
   text: String,
-  /// Tool name for toolCall / toolResult.
+  /// Tool name for toolCall / toolResult; attachment subtype for `event`;
+  /// envelope kind for agentMessage (`FINAL_ANSWER`, …) and subagentActivity
+  /// (`started`, …).
   name: Option<String>,
+  /// The *other* agent a multi-agent part concerns, as its canonical Codex path
+  /// (`/root/pip_i18n`): who sent an agentMessage, whom a subagentActivity is
+  /// about. `None` for every single-agent part kind.
+  #[serde(default)]
+  agent: Option<String>,
   call_id: Option<String>,
   is_error: Option<bool>,
+  /// `true` when `text` is only a prefix of the real payload.
+  truncated: Option<bool>,
+  /// Byte length of the full payload when `truncated`.
+  full_bytes: Option<u64>,
+  /// How `history_get_part_text` finds the full payload: `file:<abs path>` for
+  /// an externalized tool result, or `part:<message id>:<part index>` to
+  /// re-read it from the transcript.
+  #[serde(rename = "ref")]
+  full_ref: Option<String>,
 }
 
 impl Part {
   fn text(kind: &str, text: String) -> Part {
-    Part { kind: kind.into(), text, name: None, call_id: None, is_error: None }
+    Part { kind: kind.into(), text, ..Part::default() }
   }
+}
+
+/// Cap on inline part text handed to the webview. Tool inputs/outputs are
+/// collapsed by default in the transcript, so shipping them whole is pure waste
+/// — measured on real sessions, 88% of a large transcript's bytes are tool
+/// payloads. Anything longer is truncated here and refetched on expand via
+/// `history_get_part_text`.
+const PART_INLINE_LIMIT: usize = 4096;
+
+/// Truncate `part.text` to [`PART_INLINE_LIMIT`] (on a char boundary), recording
+/// the full length and a locator to fetch it back. A part already carrying an
+/// explicit `full_ref` (externalized output) keeps it; otherwise the part is
+/// addressed by its position in the transcript. No-op for short text.
+fn cap_part(mut part: Part, msg_id: &str, index: usize) -> Part {
+  if part.full_ref.is_some() {
+    // Externalized output: `text` is the inline preview, never the whole thing.
+    return part;
+  }
+  if part.text.len() <= PART_INLINE_LIMIT {
+    return part;
+  }
+  let mut cut = PART_INLINE_LIMIT;
+  while cut > 0 && !part.text.is_char_boundary(cut) {
+    cut -= 1;
+  }
+  part.full_bytes = Some(part.text.len() as u64);
+  part.truncated = Some(true);
+  part.full_ref = Some(format!("part:{msg_id}:{index}"));
+  part.text.truncate(cut);
+  part
+}
+
+/// Cap every part of a message in place, addressing each by its index.
+fn cap_message(msg: &mut Message) {
+  let id = msg.id.clone();
+  let parts = std::mem::take(&mut msg.parts);
+  msg.parts = parts.into_iter().enumerate().map(|(i, p)| cap_part(p, &id, i)).collect();
 }
 
 /// One turn in a transcript. Assistant turns bundle thinking, text and tool
@@ -398,6 +472,8 @@ struct ClaudeAcc {
   started: Option<i64>,
   updated: Option<i64>,
   count: u64,
+  agent_name: Option<String>,
+  duration_ms: Option<i64>,
 }
 
 impl ClaudeAcc {
@@ -410,6 +486,20 @@ impl ClaudeAcc {
     }
     if ty == "ai-title" {
       return;
+    }
+    if ty == "agent-name" {
+      if let Some(n) = s(line, "agentName").filter(|n| !n.trim().is_empty()) {
+        self.agent_name = Some(truncate_title(n));
+      }
+      return;
+    }
+    // `turn_duration` reports the wall-clock time of one completed turn; summing
+    // them gives the session's real working time, which token counts don't show.
+    // Falls through so the record's timestamp still widens the session range.
+    if ty == "system" && s(line, "subtype") == Some("turn_duration") {
+      if let Some(ms) = line.get("durationMs").and_then(Value::as_i64) {
+        self.duration_ms = Some(self.duration_ms.unwrap_or(0) + ms);
+      }
     }
     if self.cwd.is_empty() {
       if let Some(c) = s(line, "cwd") {
@@ -458,10 +548,16 @@ impl ClaudeAcc {
   }
 
   fn finish(self, id: String, path: &Path) -> SessionSummary {
+    let parent_id = claude_parent_id(path);
+    let title = self
+      .title
+      .or_else(|| self.agent_name.clone())
+      .or(self.first_user)
+      .unwrap_or_else(|| "Untitled session".into());
     SessionSummary {
       id,
       source: "claude".into(),
-      title: self.title.or(self.first_user).unwrap_or_else(|| "Untitled session".into()),
+      title,
       project_name: if self.cwd.is_empty() { "—".into() } else { basename(&self.cwd) },
       cwd: self.cwd,
       model: self.models.last().cloned().unwrap_or_default(),
@@ -473,8 +569,24 @@ impl ClaudeAcc {
       updated_at: self.updated.unwrap_or(0),
       path: path.to_string_lossy().into_owned(),
       git_branch: self.git_branch,
+      parent_id,
+      agent_name: self.agent_name,
+      duration_ms: self.duration_ms,
     }
   }
+}
+
+/// Parent session id for a sub-agent transcript, from its position on disk:
+/// `<project>/<parent-session-id>/subagents/…/agent-<hash>.jsonl`. The `…` is
+/// usually empty but workflow runs nest one more level (`workflows/<wf-id>/`),
+/// so walk up to the `subagents` directory rather than assuming a fixed depth.
+/// `None` for a top-level session, which lives directly under the project dir.
+fn claude_parent_id(path: &Path) -> Option<String> {
+  let mut dir = path.parent()?;
+  while dir.file_name()? != "subagents" {
+    dir = dir.parent()?;
+  }
+  Some(dir.parent()?.file_name()?.to_string_lossy().into_owned())
 }
 
 fn claude_summary(path: &Path, lines: &[Value]) -> Option<SessionSummary> {
@@ -510,11 +622,23 @@ fn claude_detail(path: &Path, lines: &[Value]) -> SessionDetail {
     updated_at: 0,
     path: path.to_string_lossy().into_owned(),
     git_branch: None,
+    parent_id: claude_parent_id(path),
+    agent_name: None,
+    duration_ms: None,
   });
 
   let mut messages = Vec::new();
   for line in lines {
     let ty = s(line, "type").unwrap_or("");
+    if ty == "attachment" {
+      if let Some(part) = claude_attachment_part(line.get("attachment")) {
+        let mut msg = Message::new(s(line, "uuid").unwrap_or("").to_string(), "system");
+        msg.ts = s(line, "timestamp").and_then(iso_to_epoch_ms);
+        msg.parts.push(part);
+        messages.push(msg);
+      }
+      continue;
+    }
     if ty != "user" && ty != "assistant" {
       continue;
     }
@@ -558,7 +682,7 @@ fn claude_detail(path: &Path, lines: &[Value]) -> SessionDetail {
                 text: input,
                 name,
                 call_id: s(b, "id").map(String::from),
-                is_error: None,
+                ..Part::default()
               });
             }
             Some("tool_result") => {
@@ -571,12 +695,22 @@ fn claude_detail(path: &Path, lines: &[Value]) -> SessionDetail {
                   .join("\n"),
                 _ => String::new(),
               };
+              // Oversized outputs live in a sibling `tool-results/` file; the
+              // inline text is only a preview plus the path. Carry the path as a
+              // `file:` ref so the UI can fetch the real output on expand
+              // instead of showing the reader an absolute path as "content".
+              let external = persisted_output_path(&text, line.get("toolUseResult"));
+              let full_bytes = external.as_ref().and_then(|p| fs::metadata(p).ok()).map(|m| m.len());
               msg.parts.push(Part {
                 kind: "toolResult".into(),
-                text,
+                text: strip_persisted_stub(&text),
                 name: None,
+                agent: None,
                 call_id: s(b, "tool_use_id").map(String::from),
                 is_error: b.get("is_error").and_then(Value::as_bool),
+                truncated: external.as_ref().map(|_| true),
+                full_bytes,
+                full_ref: external.map(|p| format!("file:{p}")),
               });
             }
             Some("image") => msg.parts.push(Part::text("image", "[image]".into())),
@@ -591,6 +725,72 @@ fn claude_detail(path: &Path, lines: &[Value]) -> SessionDetail {
     }
   }
   SessionDetail { summary, messages }
+}
+
+/// Absolute path of an externalized tool result, from either the
+/// `<persisted-output>` stub Claude leaves inline or the `toolUseResult`
+/// sidecar field on the same record. `None` when the output was inline.
+fn persisted_output_path(text: &str, tool_use_result: Option<&Value>) -> Option<String> {
+  if let Some(p) = tool_use_result.and_then(|r| s(r, "persistedOutputPath")) {
+    return Some(p.to_string());
+  }
+  if !text.starts_with("<persisted-output>") {
+    return None;
+  }
+  let rest = text.split("Full output saved to:").nth(1)?;
+  let p = rest.lines().next()?.trim();
+  (!p.is_empty()).then(|| p.to_string())
+}
+
+/// Drop the `<persisted-output>` envelope, keeping just the preview body — the
+/// wrapper's absolute path is carried structurally on the part instead.
+fn strip_persisted_stub(text: &str) -> String {
+  if !text.starts_with("<persisted-output>") {
+    return text.to_string();
+  }
+  match text.split_once("Preview (first ") {
+    Some((_, rest)) => rest.split_once("):").map(|(_, body)| body.trim_start()).unwrap_or(rest).into(),
+    None => text.into(),
+  }
+}
+
+/// Whitelisted `attachment` records rendered as a timeline `event` part.
+///
+/// Claude writes ~20 attachment subtypes, most of them injected machinery
+/// (tool/skill listings, reminders) that would only add noise. Only the ones a
+/// reader would actually want in the transcript are kept; anything else — now
+/// or in a future Claude version — is ignored rather than treated as an error.
+fn claude_attachment_part(att: Option<&Value>) -> Option<Part> {
+  let att = att?;
+  let subtype = s(att, "type")?;
+  let text = match subtype {
+    "hook_success" => {
+      let hook = s(att, "hookName").unwrap_or("hook");
+      let out = [s(att, "stdout"), s(att, "stderr")]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+      if out.is_empty() { hook.to_string() } else { format!("{hook}\n{out}") }
+    }
+    "hook_blocking_error" | "hook_non_blocking_error" | "hook_cancelled" => {
+      let hook = s(att, "hookName").unwrap_or("hook");
+      let err = att
+        .get("blockingError")
+        .and_then(|e| s(e, "blockingError").map(String::from).or_else(|| e.as_str().map(String::from)))
+        .unwrap_or_default();
+      if err.is_empty() { hook.to_string() } else { format!("{hook}\n{err}") }
+    }
+    "plan_mode" => format!("→ {}", s(att, "planFilePath").unwrap_or("plan mode")),
+    "plan_mode_exit" => format!("← {}", s(att, "planFilePath").unwrap_or("plan mode")),
+    "edited_text_file" => s(att, "filename")?.to_string(),
+    "opened_file_in_ide" => s(att, "filename")?.to_string(),
+    "queued_command" => s(att, "prompt")?.trim().to_string(),
+    _ => return None,
+  };
+  Some(Part { kind: "event".into(), text, name: Some(subtype.into()), ..Part::default() })
 }
 
 fn scan_claude(
@@ -609,6 +809,16 @@ fn scan_claude(
     }
     for entry in fs::read_dir(proj.path()).map_err(|e| e.to_string())?.flatten() {
       let p = entry.path();
+      // A session directory sits beside its `<session-id>.jsonl` and holds the
+      // sub-agent transcripts (plus `tool-results/`, which isn't JSONL).
+      // Recurse: workflow runs nest another level, as
+      // `subagents/workflows/<workflow-id>/agent-<hash>.jsonl`.
+      if p.is_dir() {
+        let mut nested = Vec::new();
+        collect_jsonl(&p.join("subagents"), &mut nested);
+        sigs.extend(nested.into_iter().filter_map(file_sig));
+        continue;
+      }
       if p.extension().and_then(|e| e.to_str()) != Some("jsonl") {
         continue;
       }
@@ -677,12 +887,72 @@ fn codex_token_usage(info: &Value) -> Option<TokenUsage> {
   })
 }
 
+/// Sub-agent identity read off a Codex rollout's own `session_meta`.
+///
+/// Codex records a spawned agent's thread as a rollout file of its own, tagged
+/// `thread_source: "subagent"` with a `source.subagent.thread_spawn` block
+/// naming the thread that spawned it and the agent's canonical path. Plain
+/// forks and resumes carry `parent_thread_id` too, so that field alone must
+/// never be read as "this is a sub-agent" — the spawn block (or the
+/// `thread_source` tag) is the marker.
+struct CodexSubagent {
+  parent_id: String,
+  /// Canonical agent path, e.g. `/root/pip_i18n`.
+  path: Option<String>,
+  /// Custom-agent role (`i18n-reviewer`) — absent for the built-in agents.
+  role: Option<String>,
+  /// Random per-thread nickname Codex assigns (`Euclid`).
+  nickname: Option<String>,
+}
+
+impl CodexSubagent {
+  /// Short label naming this agent in the list. The path's last segment is the
+  /// task name the orchestrator chose (`pip_i18n`) and is unique among
+  /// siblings, so it beats the role (shared across runs, often absent) and the
+  /// nickname (random).
+  fn label(&self) -> Option<String> {
+    self
+      .path
+      .as_deref()
+      .map(basename)
+      .or_else(|| self.role.clone())
+      .or_else(|| self.nickname.clone())
+      .filter(|l| !l.trim().is_empty())
+      .map(|l| truncate_title(&l))
+  }
+}
+
+/// Read the sub-agent block out of a `session_meta` payload, or `None` for an
+/// ordinary (user-started, forked, resumed) thread.
+fn codex_subagent(payload: &Value) -> Option<CodexSubagent> {
+  let spawn = payload.pointer("/source/subagent/thread_spawn");
+  if spawn.is_none() && s(payload, "thread_source") != Some("subagent") {
+    return None;
+  }
+  // Fields live in the spawn block; older rollouts only mirror them at the top
+  // level of the payload, so fall back there.
+  let pick = |key: &str| -> Option<String> {
+    spawn
+      .and_then(|v| s(v, key))
+      .or_else(|| s(payload, key))
+      .filter(|v| !v.is_empty())
+      .map(String::from)
+  };
+  Some(CodexSubagent {
+    parent_id: pick("parent_thread_id")?,
+    path: pick("agent_path"),
+    role: pick("agent_role"),
+    nickname: pick("agent_nickname"),
+  })
+}
+
 /// Streaming fold over a Codex rollout's lines (mirrors `ClaudeAcc`). The
 /// session id can be overridden by a `session_meta` record, so `finish` takes
 /// the file-stem fallback and resolves the display title against `titles`.
 #[derive(Default)]
 struct CodexAcc {
   meta_id: Option<String>,
+  subagent: Option<CodexSubagent>,
   cwd: String,
   models: Vec<String>,
   title: Option<String>,
@@ -701,10 +971,14 @@ impl CodexAcc {
     }
     let payload = line.get("payload").unwrap_or(&Value::Null);
     match ty {
-      "session_meta" => {
-        if let Some(mid) = s(payload, "id") {
-          self.meta_id = Some(mid.to_string());
-        }
+      // Only the FIRST `session_meta` describes this file. A forked / sub-agent
+      // rollout replays the parent thread's history, which carries the parent's
+      // own `session_meta` along with it — letting a later record win would
+      // stamp every sibling fork with the parent's id and collapse them into
+      // one duplicated entry in the list.
+      "session_meta" if self.meta_id.is_none() => {
+        self.meta_id = s(payload, "id").map(String::from);
+        self.subagent = codex_subagent(payload);
         if let Some(c) = s(payload, "cwd") {
           self.cwd = c.to_string();
         }
@@ -744,9 +1018,14 @@ impl CodexAcc {
 
   fn finish(self, fallback_id: String, path: &Path, titles: &HashMap<String, String>) -> SessionSummary {
     let id = self.meta_id.unwrap_or(fallback_id);
+    let agent_name = self.subagent.as_ref().and_then(CodexSubagent::label);
+    // A sub-agent rollout opens by replaying the parent thread's history, so its
+    // first user message is the *parent's* prompt — naming it after the agent
+    // keeps siblings apart instead of showing one prompt N times.
     let title = titles
       .get(&id)
       .map(|t| truncate_title(t))
+      .or_else(|| agent_name.clone())
       .or(self.title)
       .unwrap_or_else(|| "Untitled session".into());
     SessionSummary {
@@ -764,6 +1043,9 @@ impl CodexAcc {
       updated_at: self.updated.unwrap_or(0),
       path: path.to_string_lossy().into_owned(),
       git_branch: None,
+      parent_id: self.subagent.map(|sa| sa.parent_id),
+      agent_name,
+      duration_ms: None,
     }
   }
 }
@@ -797,6 +1079,50 @@ fn codex_content_text(content: &Value) -> String {
         .join("\n")
     })
     .unwrap_or_default()
+}
+
+/// Split a Codex inter-agent message into its envelope kind and its body.
+///
+/// The readable `content` blocks join into a small header — `Message Type: …`,
+/// `Task name: …`, `Sender: …`, `Payload:` — followed by the payload itself.
+/// (The rest of the message rides along as an `encrypted_content` block, which
+/// carries no readable text at all.)
+fn split_agent_message(text: &str) -> (Option<String>, String) {
+  let Some(rest) = text.trim_start().strip_prefix("Message Type: ") else {
+    return (None, text.trim().to_string());
+  };
+  let (kind, after) = rest.split_once('\n').unwrap_or((rest, ""));
+  let body = after.split_once("Payload:").map_or(after, |(_, payload)| payload);
+  (Some(kind.trim().to_string()), body.trim().to_string())
+}
+
+/// Codex encrypts the `message` field of its agent-orchestration tool calls
+/// (`spawn_agent`, `send_message`, …): a multi-KB Fernet token that would
+/// otherwise *be* the visible payload of the call. Swap any such blob for a
+/// marker — the readable copy of that same message reaches the recipient's
+/// rollout as an `agent_message` record, which is where the transcript shows
+/// it. Arguments without a blob are returned byte-for-byte.
+fn redact_encrypted_args(input: &str) -> String {
+  // Fernet tokens base64 a leading 0x80 version byte, hence the fixed prefix.
+  if !input.contains("gAAAAA") {
+    return input.to_string();
+  }
+  let Ok(Value::Object(mut map)) = serde_json::from_str::<Value>(input) else {
+    return input.to_string();
+  };
+  let mut redacted = false;
+  for v in map.values_mut() {
+    if let Value::String(blob) = v {
+      if blob.len() > 256 && blob.starts_with("gAAAAA") {
+        *v = Value::String(format!("<encrypted, {} bytes>", blob.len()));
+        redacted = true;
+      }
+    }
+  }
+  if !redacted {
+    return input.to_string();
+  }
+  serde_json::to_string_pretty(&Value::Object(map)).unwrap_or_else(|_| input.to_string())
 }
 
 fn codex_detail(path: &Path, lines: &[Value], titles: &std::collections::HashMap<String, String>) -> SessionDetail {
@@ -863,13 +1189,13 @@ fn codex_detail(path: &Path, lines: &[Value], titles: &std::collections::HashMap
       }
       ("response_item", "function_call") | ("response_item", "custom_tool_call") => {
         let name = s(payload, "name").map(String::from);
-        let input = s(payload, "arguments").or_else(|| s(payload, "input")).unwrap_or("").to_string();
+        let input = redact_encrypted_args(s(payload, "arguments").or_else(|| s(payload, "input")).unwrap_or(""));
         assistant(&mut cur, format!("a{i}"), ts).parts.push(Part {
           kind: "toolCall".into(),
           text: input,
           name,
           call_id: s(payload, "call_id").map(String::from),
-          is_error: None,
+          ..Part::default()
         });
       }
       ("response_item", "function_call_output") | ("response_item", "custom_tool_call_output") => {
@@ -883,7 +1209,33 @@ fn codex_detail(path: &Path, lines: &[Value], titles: &std::collections::HashMap
           text,
           name: None,
           call_id: s(payload, "call_id").map(String::from),
-          is_error: None,
+          ..Part::default()
+        });
+      }
+      // Multi-agent traffic. An `agent_message` is written to the *recipient's*
+      // rollout, so in a parent transcript these are the sub-agents reporting
+      // back — the substance of a delegated run, and invisible anywhere else.
+      ("response_item", "agent_message") => {
+        let raw = codex_content_text(payload.get("content").unwrap_or(&Value::Null));
+        let (envelope, body) = split_agent_message(&raw);
+        if envelope.is_some() || !body.is_empty() {
+          assistant(&mut cur, format!("a{i}"), ts).parts.push(Part {
+            kind: "agentMessage".into(),
+            text: body,
+            name: envelope,
+            agent: s(payload, "author").or_else(|| s(payload, "recipient")).map(String::from),
+            ..Part::default()
+          });
+        }
+      }
+      // Lifecycle of a spawned agent, which lives in its own rollout file — this
+      // is the only trace of it in the thread that started it.
+      ("event_msg", "sub_agent_activity") => {
+        assistant(&mut cur, format!("a{i}"), ts).parts.push(Part {
+          kind: "subagentActivity".into(),
+          name: s(payload, "kind").map(String::from),
+          agent: s(payload, "agent_path").map(String::from),
+          ..Part::default()
         });
       }
       ("response_item", "web_search_call") => {
@@ -895,9 +1247,7 @@ fn codex_detail(path: &Path, lines: &[Value], titles: &std::collections::HashMap
         assistant(&mut cur, format!("a{i}"), ts).parts.push(Part {
           kind: "webSearch".into(),
           text: q,
-          name: None,
-          call_id: None,
-          is_error: None,
+          ..Part::default()
         });
       }
       _ => {}
@@ -1014,6 +1364,9 @@ fn opencode_row_to_summary(r: &rusqlite::Row) -> rusqlite::Result<SessionSummary
     updated_at: r.get::<_, Option<i64>>(12)?.unwrap_or(0),
     path: r.get(0)?,
     git_branch: None,
+    parent_id: None,
+    agent_name: None,
+    duration_ms: None,
   })
 }
 
@@ -1126,7 +1479,7 @@ fn opencode_detail(id: &str) -> Result<SessionDetail, String> {
             text: input,
             name: name.clone(),
             call_id: s(p, "callID").map(String::from),
-            is_error: None,
+            ..Part::default()
           });
           let output = state.get("output");
           let out_text = match output {
@@ -1141,6 +1494,7 @@ fn opencode_detail(id: &str) -> Result<SessionDetail, String> {
               name,
               call_id: s(p, "callID").map(String::from),
               is_error: s(state, "status").map(|st| st == "error"),
+              ..Part::default()
             });
           }
         }
@@ -1205,29 +1559,82 @@ fn cache_changed(old: &SummaryCache, new_cache: &SummaryCache) -> bool {
     })
 }
 
-/// Load one session's full transcript. `path` is the file path (Claude/Codex) or
-/// the session id (OpenCode), exactly as carried on the summary's `path`.
-#[tauri::command(async)]
-pub fn history_get_session(source: String, path: String) -> Result<SessionDetail, String> {
-  match source.as_str() {
+/// Parse one session's transcript at full fidelity, no size caps. Shared by the
+/// two commands below: one caps parts before shipping them, the other reads a
+/// single part back out at full length.
+fn session_detail(source: &str, path: &str) -> Result<SessionDetail, String> {
+  match source {
     "claude" => {
-      let p = PathBuf::from(&path);
+      let p = PathBuf::from(path);
       let lines = read_jsonl(&p)?;
       Ok(claude_detail(&p, &lines))
     }
     "codex" => {
-      let p = PathBuf::from(&path);
+      let p = PathBuf::from(path);
       let lines = read_jsonl(&p)?;
       Ok(codex_detail(&p, &lines, &codex_titles()))
     }
-    "opencode" => opencode_detail(&path),
+    "opencode" => opencode_detail(path),
     other => Err(format!("unknown history source: {other}")),
+  }
+}
+
+/// Load one session's transcript. `path` is the file path (Claude/Codex) or the
+/// session id (OpenCode), exactly as carried on the summary's `path`.
+///
+/// Oversized parts are capped here rather than in the parsers, so the caps are
+/// a property of what crosses the IPC boundary and `history_get_part_text` can
+/// reuse the very same parse to serve the full text back.
+#[tauri::command(async)]
+pub fn history_get_session(source: String, path: String) -> Result<SessionDetail, String> {
+  let mut detail = session_detail(&source, &path)?;
+  for msg in &mut detail.messages {
+    cap_message(msg);
+  }
+  Ok(detail)
+}
+
+/// Fetch the full text behind a truncated part, addressed by the part's `ref`:
+/// `file:<abs path>` for an externalized tool result, or `part:<msg id>:<index>`
+/// to re-read it from the transcript.
+#[tauri::command(async)]
+pub fn history_get_part_text(source: String, path: String, r#ref: String) -> Result<String, String> {
+  if let Some(file) = r#ref.strip_prefix("file:") {
+    let p = PathBuf::from(file);
+    // The ref crosses the IPC boundary, so treat it as untrusted: only files
+    // Claude actually externalizes tool output into are readable through here.
+    if !is_under_claude_root(&p) {
+      return Err("refusing to read outside the Claude history root".into());
+    }
+    return fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()));
+  }
+  let rest = r#ref.strip_prefix("part:").ok_or_else(|| format!("bad part ref: {ref_}", ref_ = r#ref))?;
+  let (msg_id, index) = rest.rsplit_once(':').ok_or_else(|| format!("bad part ref: {rest}"))?;
+  let index: usize = index.parse().map_err(|_| format!("bad part index: {index}"))?;
+  let detail = session_detail(&source, &path)?;
+  detail
+    .messages
+    .into_iter()
+    .find(|m| m.id == msg_id)
+    .and_then(|m| m.parts.into_iter().nth(index))
+    .map(|p| p.text)
+    .ok_or_else(|| format!("part not found: {msg_id}:{index}"))
+}
+
+/// Whether `p` resolves inside `~/.claude/projects`. Both sides are canonicalized
+/// so `..` segments and symlinks can't escape the root.
+fn is_under_claude_root(p: &Path) -> bool {
+  let (Some(root), Ok(target)) = (claude_root(), p.canonicalize()) else { return false };
+  match root.canonicalize() {
+    Ok(root) => target.starts_with(root),
+    Err(_) => false,
   }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+
 
   #[test]
   fn iso_to_epoch_ms_matches_known_instants() {
@@ -1277,6 +1684,23 @@ mod tests {
   }
 
   #[test]
+  fn codex_fork_keeps_its_own_id_not_the_parents() {
+    // A sub-agent / forked rollout opens with its own `session_meta`, then
+    // replays the parent thread's history — parent `session_meta` included.
+    let lines: Vec<Value> = vec![
+      serde_json::from_str(r#"{"type":"session_meta","timestamp":"2026-01-01T00:00:00Z","payload":{"id":"fork-1","session_id":"root-1","forked_from_id":"root-1","parent_thread_id":"root-1","cwd":"/proj/fork"}}"#).unwrap(),
+      serde_json::from_str(r#"{"type":"session_meta","timestamp":"2026-01-01T00:00:01Z","payload":{"id":"root-1","session_id":"root-1","cwd":"/proj"}}"#).unwrap(),
+      serde_json::from_str(r#"{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{"type":"user_message","message":"hi"}}"#).unwrap(),
+    ];
+    let titles = HashMap::from([("root-1".to_string(), "parent title".to_string())]);
+    let sum = codex_summary(Path::new("rollout-fork-1.jsonl"), &lines, &titles).unwrap();
+    assert_eq!(sum.id, "fork-1");
+    assert_eq!(sum.cwd, "/proj/fork");
+    // …so it doesn't borrow the parent's session-index title either.
+    assert_eq!(sum.title, "hi");
+  }
+
+  #[test]
   fn claude_detail_normalizes_blocks() {
     let lines: Vec<Value> = vec![
       serde_json::from_str(r#"{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"hello"}}"#).unwrap(),
@@ -1303,6 +1727,133 @@ mod tests {
     assert_eq!(sum.models, vec!["claude-opus-4-8".to_string()]);
   }
 
+  // ── sub-agents, truncation, externalized output, extra record types ────────
+
+  #[test]
+  fn claude_parent_id_reads_subagent_layout() {
+    // `<project>/<parent-session>/subagents/agent-<hash>.jsonl` is a sub-agent…
+    assert_eq!(
+      claude_parent_id(Path::new("/p/-proj/parent-1/subagents/agent-abc.jsonl")).as_deref(),
+      Some("parent-1")
+    );
+    // Workflow runs nest one more level under `subagents/`.
+    assert_eq!(
+      claude_parent_id(Path::new("/p/-proj/parent-1/subagents/workflows/wf_ab/agent-x.jsonl"))
+        .as_deref(),
+      Some("parent-1")
+    );
+    // …while a file directly under the project dir is a top-level session.
+    assert_eq!(claude_parent_id(Path::new("/p/-proj/sess.jsonl")), None);
+    // A sibling directory that isn't `subagents` must not be mistaken for one.
+    assert_eq!(claude_parent_id(Path::new("/p/-proj/parent-1/tool-results/x.jsonl")), None);
+  }
+
+  #[test]
+  fn cap_part_truncates_on_a_char_boundary() {
+    // 4095 ASCII bytes then multi-byte chars, so the cap lands mid-character.
+    let text = format!("{}{}", "a".repeat(PART_INLINE_LIMIT - 1), "中".repeat(10));
+    let capped = cap_part(Part::text("toolResult", text.clone()), "m1", 3);
+    assert_eq!(capped.truncated, Some(true));
+    assert_eq!(capped.full_bytes, Some(text.len() as u64));
+    assert_eq!(capped.full_ref.as_deref(), Some("part:m1:3"));
+    // Backed off to the boundary rather than splitting the character.
+    assert_eq!(capped.text.len(), PART_INLINE_LIMIT - 1);
+    assert!(capped.text.chars().all(|c| c == 'a'));
+  }
+
+  #[test]
+  fn cap_part_leaves_short_text_and_external_refs_alone() {
+    let short = cap_part(Part::text("text", "hi".into()), "m1", 0);
+    assert_eq!(short.truncated, None);
+    assert_eq!(short.full_ref, None);
+
+    // An externalized result already carries its own ref; `text` is the preview
+    // and must not be re-pointed at the transcript.
+    let external = Part {
+      kind: "toolResult".into(),
+      text: "x".repeat(PART_INLINE_LIMIT * 2),
+      truncated: Some(true),
+      full_ref: Some("file:/tmp/out.txt".into()),
+      ..Part::default()
+    };
+    let capped = cap_part(external, "m1", 0);
+    assert_eq!(capped.full_ref.as_deref(), Some("file:/tmp/out.txt"));
+    assert_eq!(capped.text.len(), PART_INLINE_LIMIT * 2);
+  }
+
+  #[test]
+  fn persisted_output_path_reads_stub_and_sidecar() {
+    let stub = "<persisted-output>\nOutput too large (80.4KB). Full output saved to: /tmp/tr/a.txt\n\nPreview (first 2KB):\nhello\n";
+    assert_eq!(persisted_output_path(stub, None).as_deref(), Some("/tmp/tr/a.txt"));
+    // The `toolUseResult` sidecar wins when present.
+    let sidecar: Value = serde_json::from_str(r#"{"persistedOutputPath":"/tmp/tr/b.txt"}"#).unwrap();
+    assert_eq!(persisted_output_path(stub, Some(&sidecar)).as_deref(), Some("/tmp/tr/b.txt"));
+    // Ordinary inline output is not externalized.
+    assert_eq!(persisted_output_path("just output", None), None);
+  }
+
+  #[test]
+  fn strip_persisted_stub_keeps_only_the_preview_body() {
+    let stub = "<persisted-output>\nOutput too large (80.4KB). Full output saved to: /tmp/a.txt\n\nPreview (first 2KB):\nreal body\n";
+    assert_eq!(strip_persisted_stub(stub), "real body\n");
+    assert_eq!(strip_persisted_stub("plain"), "plain");
+  }
+
+  #[test]
+  fn claude_detail_carries_externalized_tool_result() {
+    let lines: Vec<Value> = vec![serde_json::from_str(
+      r#"{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","toolUseResult":{"persistedOutputPath":"/tmp/tr/a.txt"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"<persisted-output>\nOutput too large (80.4KB). Full output saved to: /tmp/tr/a.txt\n\nPreview (first 2KB):\nbody\n"}]}}"#,
+    )
+    .unwrap()];
+    let d = claude_detail(Path::new("s.jsonl"), &lines);
+    let part = &d.messages[0].parts[0];
+    assert_eq!(part.kind, "toolResult");
+    assert_eq!(part.full_ref.as_deref(), Some("file:/tmp/tr/a.txt"));
+    assert_eq!(part.truncated, Some(true));
+    // The reader sees the preview, not the absolute path wrapper.
+    assert_eq!(part.text, "body\n");
+  }
+
+  #[test]
+  fn claude_attachment_part_keeps_only_whitelisted_subtypes() {
+    let hook: Value = serde_json::from_str(
+      r#"{"type":"hook_success","hookName":"PostToolUse:Write","stdout":"ok\n","stderr":""}"#,
+    )
+    .unwrap();
+    let p = claude_attachment_part(Some(&hook)).unwrap();
+    assert_eq!(p.kind, "event");
+    assert_eq!(p.name.as_deref(), Some("hook_success"));
+    assert_eq!(p.text, "PostToolUse:Write\nok");
+
+    let file: Value =
+      serde_json::from_str(r#"{"type":"opened_file_in_ide","filename":"/a/b.yaml"}"#).unwrap();
+    assert_eq!(claude_attachment_part(Some(&file)).unwrap().text, "/a/b.yaml");
+
+    // Injected machinery is noise — dropped, not rendered and not an error.
+    let noise: Value =
+      serde_json::from_str(r#"{"type":"task_reminder","content":"remember"}"#).unwrap();
+    assert!(claude_attachment_part(Some(&noise)).is_none());
+    assert!(claude_attachment_part(None).is_none());
+  }
+
+  #[test]
+  fn claude_summary_sums_turn_duration_and_titles_by_agent_name() {
+    let lines: Vec<Value> = vec![
+      serde_json::from_str(r#"{"type":"agent-name","agentName":"audit-panel","sessionId":"s"}"#).unwrap(),
+      serde_json::from_str(r#"{"type":"user","timestamp":"2026-01-01T00:00:00Z","cwd":"/proj","message":{"role":"user","content":"hi"}}"#).unwrap(),
+      serde_json::from_str(r#"{"type":"system","subtype":"turn_duration","durationMs":1500,"timestamp":"2026-01-01T00:00:05Z"}"#).unwrap(),
+      serde_json::from_str(r#"{"type":"system","subtype":"turn_duration","durationMs":2500,"timestamp":"2026-01-01T00:00:09Z"}"#).unwrap(),
+      serde_json::from_str(r#"{"type":"system","subtype":"away_summary","timestamp":"2026-01-01T00:00:10Z"}"#).unwrap(),
+    ];
+    let sum = claude_summary(Path::new("s.jsonl"), &lines).unwrap();
+    assert_eq!(sum.duration_ms, Some(4000));
+    assert_eq!(sum.agent_name.as_deref(), Some("audit-panel"));
+    // No `aiTitle`, so the sub-agent's name names the session.
+    assert_eq!(sum.title, "audit-panel");
+    // The `system` records still widen the session's time range.
+    assert_eq!(sum.updated_at, iso_to_epoch_ms("2026-01-01T00:00:10Z").unwrap());
+  }
+
   #[test]
   fn codex_detail_groups_assistant_turn() {
     let lines: Vec<Value> = vec![
@@ -1316,6 +1867,111 @@ mod tests {
     assert_eq!(d.messages[0].role, "user");
     assert_eq!(d.messages[1].role, "assistant");
     assert_eq!(d.messages[1].parts.len(), 2); // thinking + text
+  }
+
+  // ── Codex multi-agent ──────────────────────────────────────────────────────
+
+  /// A spawned agent's rollout, whose `session_meta` names its parent thread and
+  /// its canonical agent path.
+  fn codex_subagent_meta(spawn: &str) -> Value {
+    serde_json::from_str(&format!(
+      r#"{{"type":"session_meta","timestamp":"2026-01-01T00:00:00Z","payload":{{"id":"agent-1","session_id":"root-1","forked_from_id":"root-1","parent_thread_id":"root-1","cwd":"/proj","thread_source":"subagent","source":{{"subagent":{{"thread_spawn":{spawn}}}}}}}}}"#
+    ))
+    .unwrap()
+  }
+
+  #[test]
+  fn codex_subagent_meta_links_parent_and_names_the_agent() {
+    let lines = vec![
+      codex_subagent_meta(
+        r#"{"parent_thread_id":"root-1","depth":1,"agent_path":"/root/pip_i18n","agent_nickname":"Euclid","agent_role":"i18n-reviewer"}"#,
+      ),
+      serde_json::from_str(r#"{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{"type":"user_message","message":"the parent's own prompt"}}"#).unwrap(),
+    ];
+    let sum = codex_summary(Path::new("rollout-agent-1.jsonl"), &lines, &HashMap::new()).unwrap();
+    assert_eq!(sum.parent_id.as_deref(), Some("root-1"));
+    // The path's last segment names the agent — unique among siblings, unlike
+    // the role, and meaningful, unlike the nickname.
+    assert_eq!(sum.agent_name.as_deref(), Some("pip_i18n"));
+    // A sub-agent replays the parent's history, so its first user message is the
+    // parent's prompt; the agent's own name must win the title instead.
+    assert_eq!(sum.title, "pip_i18n");
+  }
+
+  #[test]
+  fn codex_subagent_label_falls_back_to_role_then_nickname() {
+    let role_only = vec![codex_subagent_meta(
+      r#"{"parent_thread_id":"root-1","depth":1,"agent_role":"explorer","agent_nickname":"Gauss"}"#,
+    )];
+    let sum = codex_summary(Path::new("rollout-agent-1.jsonl"), &role_only, &HashMap::new()).unwrap();
+    assert_eq!(sum.agent_name.as_deref(), Some("explorer"));
+
+    let nickname_only =
+      vec![codex_subagent_meta(r#"{"parent_thread_id":"root-1","depth":1,"agent_nickname":"Gauss"}"#)];
+    let sum =
+      codex_summary(Path::new("rollout-agent-1.jsonl"), &nickname_only, &HashMap::new()).unwrap();
+    assert_eq!(sum.agent_name.as_deref(), Some("Gauss"));
+  }
+
+  #[test]
+  fn codex_plain_fork_is_not_treated_as_a_subagent() {
+    // A resumed / forked thread carries `parent_thread_id` too. Nesting it under
+    // that parent would hide a real session, so only a spawn block counts.
+    let lines: Vec<Value> = vec![
+      serde_json::from_str(r#"{"type":"session_meta","timestamp":"2026-01-01T00:00:00Z","payload":{"id":"fork-1","session_id":"root-1","forked_from_id":"root-1","parent_thread_id":"root-1","cwd":"/proj","source":"vscode"}}"#).unwrap(),
+      serde_json::from_str(r#"{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{"type":"user_message","message":"hi"}}"#).unwrap(),
+    ];
+    let sum = codex_summary(Path::new("rollout-fork-1.jsonl"), &lines, &HashMap::new()).unwrap();
+    assert_eq!(sum.parent_id, None);
+    assert_eq!(sum.agent_name, None);
+    assert_eq!(sum.title, "hi");
+  }
+
+  #[test]
+  fn codex_detail_renders_inter_agent_traffic() {
+    let lines: Vec<Value> = vec![
+      serde_json::from_str(r#"{"type":"session_meta","timestamp":"2026-01-01T00:00:00Z","payload":{"id":"root-1","cwd":"/proj"}}"#).unwrap(),
+      serde_json::from_str(r#"{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{"type":"sub_agent_activity","kind":"started","agent_thread_id":"agent-1","agent_path":"/root/pip_i18n"}}"#).unwrap(),
+      serde_json::from_str(r#"{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{"type":"agent_message","author":"/root/pip_i18n","recipient":"/root","content":[{"type":"input_text","text":"Message Type: FINAL_ANSWER\nTask name: /root/pip_i18n\nSender: /root/pip_i18n\nPayload:\n"},{"type":"input_text","text":"Found 3 missing keys."},{"type":"encrypted_content","encrypted_content":"gAAAAAB..."}]}}"#).unwrap(),
+    ];
+    let d = codex_detail(Path::new("r.jsonl"), &lines, &HashMap::new());
+    let parts = &d.messages[0].parts;
+    assert_eq!(parts[0].kind, "subagentActivity");
+    assert_eq!(parts[0].name.as_deref(), Some("started"));
+    assert_eq!(parts[0].agent.as_deref(), Some("/root/pip_i18n"));
+    assert_eq!(parts[1].kind, "agentMessage");
+    assert_eq!(parts[1].name.as_deref(), Some("FINAL_ANSWER"));
+    // Written to the recipient's rollout, so the author is the other agent.
+    assert_eq!(parts[1].agent.as_deref(), Some("/root/pip_i18n"));
+    // Envelope header stripped, encrypted block dropped, body kept.
+    assert_eq!(parts[1].text, "Found 3 missing keys.");
+  }
+
+  #[test]
+  fn split_agent_message_handles_a_headerless_body() {
+    let (kind, body) = split_agent_message("just some text");
+    assert_eq!(kind, None);
+    assert_eq!(body, "just some text");
+    // A task hand-off whose payload is entirely encrypted still names itself.
+    let (kind, body) = split_agent_message("Message Type: NEW_TASK\nSender: /root\nPayload:\n");
+    assert_eq!(kind.as_deref(), Some("NEW_TASK"));
+    assert_eq!(body, "");
+  }
+
+  #[test]
+  fn redact_encrypted_args_replaces_only_the_blob() {
+    let blob = "gAAAAA".to_string() + &"x".repeat(300);
+    let args = format!(r#"{{"agent_type":"explorer","message":"{blob}"}}"#);
+    let out = redact_encrypted_args(&args);
+    assert!(!out.contains(&blob));
+    assert!(out.contains("<encrypted, 306 bytes>"));
+    assert!(out.contains("explorer"));
+    // Ordinary tool arguments are passed through untouched.
+    let plain = r#"{"command":["ls","-la"]}"#;
+    assert_eq!(redact_encrypted_args(plain), plain);
+    // …as is a short string that merely starts like a token.
+    let short = r#"{"message":"gAAAAAshort"}"#;
+    assert_eq!(redact_encrypted_args(short), short);
   }
 
   // ── scan machinery: streaming, parallelism, cache ──────────────────────────

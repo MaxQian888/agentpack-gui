@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/select"
 import { CLI_TOOLS, installMethodsFor, upgradeCommandFor } from "@/lib/agentpack/registry"
 import { cliInstallStep } from "@/lib/agentpack/plan"
-import { isUpgradeAvailable } from "@/lib/agentpack/version"
+import { extractSemver, isUpgradeAvailable } from "@/lib/agentpack/version"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
@@ -74,9 +74,12 @@ export function ClisSection() {
                 {d ? (
                   d.installed ? (
                     <>
-                      <Badge variant="secondary" className="shrink-0 font-normal">
+                      <Badge
+                        variant="secondary"
+                        className="min-w-0 shrink font-normal text-ellipsis"
+                      >
                         {t.envcheck.installed}
-                        {d.version ? ` · ${d.version}` : ""}
+                        {d.version ? ` · ${extractSemver(d.version) ?? d.version}` : ""}
                       </Badge>
                       {canUpgrade ? (
                         <Button variant="outline" size="sm" onClick={() => upgradeNow(tool)}>

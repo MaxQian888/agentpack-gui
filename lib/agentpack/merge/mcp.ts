@@ -36,11 +36,14 @@ export type McpSpec =
   | { transport: "sse"; url: string; headers: Record<string, string>; bearerTokenEnvVar?: string }
 
 /**
- * Resolve a catalog `McpServer` (+ optional API key) into an `McpSpec`, exactly
- * reproducing the historical behavior: stdio runs `npx -y <package> [extraArgs]`
- * with the key injected as `keyEnv`; http points at `url` with the key added as
- * an `Authorization: Bearer` header (inline) and `keyEnv` recorded as the Codex
- * bearer-token env var.
+ * Resolve a catalog `McpServer` (+ optional API key) into an `McpSpec`: stdio
+ * runs `npx -y <package> [extraArgs]` — or `uvx <package> [extraArgs]` for a
+ * PyPI-only server — with the key injected as `keyEnv`; http points at `url`
+ * with the key added as an `Authorization: Bearer` header (inline) and `keyEnv`
+ * recorded as the Codex bearer-token env var.
+ *
+ * `uvx` takes no `-y`: it is already non-interactive, and passing one would be
+ * read as the package name.
  */
 export function resolveCatalogSpec(server: McpServer, key: string | undefined): McpSpec {
   const hasKey = !!key && key.trim().length > 0
@@ -52,9 +55,13 @@ export function resolveCatalogSpec(server: McpServer, key: string | undefined): 
       bearerTokenEnvVar: server.keyEnv,
     }
   }
-  const args = ["-y", server.npmPackage ?? "", ...(server.extraArgs ?? [])]
   const env = hasKey && server.keyEnv ? { [server.keyEnv]: key! } : {}
-  return { transport: "stdio", command: "npx", args, env }
+  const pkg = server.npmPackage ?? ""
+  const extra = server.extraArgs ?? []
+  if (server.runtime === "uvx") {
+    return { transport: "stdio", command: "uvx", args: [pkg, ...extra], env }
+  }
+  return { transport: "stdio", command: "npx", args: ["-y", pkg, ...extra], env }
 }
 
 /**

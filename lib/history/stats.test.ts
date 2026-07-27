@@ -26,6 +26,9 @@ const session = (over: Partial<SessionSummary>): SessionSummary => ({
   updatedAt: 0,
   path: "p",
   gitBranch: null,
+  parentId: null,
+  agentName: null,
+  durationMs: null,
   ...over,
 })
 
@@ -44,7 +47,11 @@ describe("computeUsageStats", () => {
     expect(st.byModel).toEqual([])
     expect(st.byDay).toEqual([])
     expect(st.byProject).toEqual([])
-    expect(st.averages).toEqual({ tokensPerSession: 0, costPerSession: 0 })
+    expect(st.averages).toEqual({
+      tokensPerSession: 0,
+      costPerSession: 0,
+      durationPerSession: 0,
+    })
     // byHour is always a 24-slot zero-filled scaffold, even with no sessions.
     expect(st.byHour).toHaveLength(24)
     expect(st.byHour.every((h) => h.sessions === 0 && h.total === 0)).toBe(true)
@@ -166,5 +173,40 @@ describe("matchesQuery", () => {
   })
   it("rejects a non-match", () => {
     expect(matchesQuery(s, "zzz")).toBe(false)
+  })
+})
+
+describe("computeUsageStats — wall-clock duration", () => {
+  it("sums durations only over sessions that report one", () => {
+    const st = computeUsageStats([
+      session({ id: "a", durationMs: 60_000 }),
+      session({ id: "b", durationMs: 120_000 }),
+      // Codex/OpenCode don't record turn durations — these must not be counted
+      // as zero-length sessions, which would halve the average.
+      session({ id: "c", source: "codex", durationMs: null }),
+      session({ id: "d", source: "opencode", durationMs: 0 }),
+    ])
+    expect(st.totals.sessions).toBe(4)
+    expect(st.totals.durationMs).toBe(180_000)
+    expect(st.totals.durationSessions).toBe(2)
+    expect(st.averages.durationPerSession).toBe(90_000)
+  })
+
+  it("reports zero duration without dividing by zero when no source measures it", () => {
+    const st = computeUsageStats([session({ id: "a", durationMs: null })])
+    expect(st.totals.durationSessions).toBe(0)
+    expect(st.averages.durationPerSession).toBe(0)
+  })
+
+  it("attributes duration to the source that recorded it", () => {
+    const st = computeUsageStats([
+      session({ id: "a", source: "claude", durationMs: 30_000 }),
+      session({ id: "b", source: "codex", durationMs: null }),
+    ])
+    const claude = st.bySource.find((s) => s.source === "claude")
+    const codex = st.bySource.find((s) => s.source === "codex")
+    expect(claude?.durationMs).toBe(30_000)
+    expect(codex?.durationMs).toBe(0)
+    expect(codex?.durationSessions).toBe(0)
   })
 })

@@ -31,6 +31,8 @@ tauri-plugin-store = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-window-state = "2"
+tauri-plugin-os = "2"
+tauri-plugin-clipboard-manager = "2"
 rusqlite = { version = "0.40", features = ["bundled"] }
 dirs = "6"
 # GitHub direct skill install: fetch a repo tarball (rustls; no default features so
@@ -41,6 +43,14 @@ flate2 = "1"
 tar = "0.4"
 # Content hashing for skill update detection (see skills::hash_skill_dir).
 sha2 = "0.10"
+
+# Desktop-only plugins. `single-instance` keeps a second launch from racing the
+# first one's writes to ~/.claude, ~/.codex & the cc-switch DB; `global-shortcut`
+# backs the opt-in hotkey that re-summons the window. Neither exists on mobile,
+# hence the target gate (the same one the plugins' own docs use).
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2"
+tauri-plugin-global-shortcut = "2"
 
 # Read the live persisted PATH from the registry so tools installed mid-session
 # (Node via winget, claude via `npm i -g`) are found without an app restart.

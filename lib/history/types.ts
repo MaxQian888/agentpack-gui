@@ -51,6 +51,18 @@ export interface SessionSummary {
   /** Handle `getSession` reopens the transcript with (file path or session id). */
   path: string
   gitBranch: string | null
+  /**
+   * Set on a sub-agent transcript: the id of the session that spawned it. The
+   * list nests these under their parent instead of showing them as peers.
+   */
+  parentId: string | null
+  /** Sub-agent label from Claude's `agent-name` record. */
+  agentName: string | null
+  /**
+   * Wall-clock time actually spent, summed from Claude's `turn_duration`
+   * records. `null` for sources that don't record it — absent, not zero.
+   */
+  durationMs: number | null
 }
 
 /** Kind of a normalized content block. */
@@ -62,16 +74,39 @@ export type PartKind =
   | "image"
   | "patch"
   | "webSearch"
+  | "event"
+  /** Codex multi-agent: a message from another agent (its report, a hand-off). */
+  | "agentMessage"
+  /** Codex multi-agent: a spawned agent started / was interacted with / stopped. */
+  | "subagentActivity"
 
 /** One normalized content block within a message. */
 export interface Part {
   kind: PartKind
-  /** Main payload: message text, tool input, tool output, patch body, etc. */
+  /**
+   * Main payload: message text, tool input, tool output, patch body, etc.
+   * Capped by the Rust side — when `truncated`, this is only a prefix.
+   */
   text: string
-  /** Tool name for toolCall / toolResult. */
+  /**
+   * Tool name for toolCall / toolResult; attachment subtype for `event`;
+   * envelope kind for `agentMessage` (`FINAL_ANSWER`, …) and `subagentActivity`
+   * (`started`, …).
+   */
   name: string | null
+  /**
+   * The *other* agent a multi-agent part concerns, as its canonical Codex path
+   * (`/root/pip_i18n`). `null` for every single-agent part kind.
+   */
+  agent: string | null
   callId: string | null
   isError: boolean | null
+  /** `true` when `text` is only a prefix of the real payload. */
+  truncated: boolean | null
+  /** Byte length of the full payload when `truncated`. */
+  fullBytes: number | null
+  /** Locator `getPartText` fetches the full payload with. */
+  ref: string | null
 }
 
 /** One turn in a transcript. */

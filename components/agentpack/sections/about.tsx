@@ -1,11 +1,12 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { CheckCircle2, Download, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { Kbd } from "@/components/ui/kbd"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import { Switch } from "@/components/ui/switch"
@@ -18,6 +19,12 @@ import {
   restartApp,
 } from "@/lib/tauri/updater"
 import { saveSettings } from "@/lib/tauri/settings"
+import { osSummary } from "@/lib/tauri/os"
+import {
+  DEFAULT_SUMMON_SHORTCUT,
+  registerSummonShortcut,
+  unregisterSummonShortcut,
+} from "@/lib/tauri/shortcut"
 import { openUrl, revealPath } from "@/lib/tauri/system"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
@@ -41,6 +48,10 @@ export function AboutSection() {
   const setOnboardingOpen = useAppStore((s) => s.setOnboardingOpen)
   const setTourActive = useAppStore((s) => s.setTourActive)
 
+  // Host OS/arch line ("macOS 15.3 · aarch64"), from @tauri-apps/plugin-os.
+  // Null in web mode, where the row is simply not rendered.
+  const [system, setSystem] = useState<string | null>(null)
+
   // Resolve the app version if the startup effect hasn't already (e.g. the user
   // lands here first). No-op in web mode (returns null).
   useEffect(() => {
@@ -51,6 +62,10 @@ export function AboutSection() {
       })
       .catch(() => {})
   }, [appVersion, setAppVersion])
+
+  useEffect(() => {
+    void osSummary().then(setSystem)
+  }, [])
 
   const checking = updateState === "checking"
   const downloading = updateState === "downloading" || updateState === "ready"
@@ -105,6 +120,26 @@ export function AboutSection() {
     void saveSettings({ autoCheckUpdates: checked })
   }
 
+  /**
+   * Claim (or release) the global accelerator. Only persist it once the OS has
+   * actually granted it — another app may already own the combination, and a
+   * switch left on for a hotkey that does nothing is worse than an honest error.
+   */
+  const onToggleSummonShortcut = async (checked: boolean) => {
+    if (!checked) {
+      if (settings.summonShortcut) await unregisterSummonShortcut(settings.summonShortcut)
+      setSettings({ summonShortcut: null })
+      await saveSettings({ summonShortcut: null })
+      return
+    }
+    if (await registerSummonShortcut(DEFAULT_SUMMON_SHORTCUT)) {
+      setSettings({ summonShortcut: DEFAULT_SUMMON_SHORTCUT })
+      await saveSettings({ summonShortcut: DEFAULT_SUMMON_SHORTCUT })
+    } else {
+      toast.error(t.about.shortcutTaken(DEFAULT_SUMMON_SHORTCUT))
+    }
+  }
+
   const lastChecked = settings.lastCheckAt
     ? new Date(settings.lastCheckAt).toLocaleString()
     : t.about.never
@@ -120,6 +155,7 @@ export function AboutSection() {
             <p className="mt-0.5 text-xs text-muted-foreground">
               {t.about.lastChecked(lastChecked)}
             </p>
+            {system ? <p className="mt-0.5 text-xs text-muted-foreground">{system}</p> : null}
           </div>
           <Button
             onClick={onCheck}
@@ -187,6 +223,23 @@ export function AboutSection() {
             id="auto-check"
             checked={settings.autoCheckUpdates}
             onCheckedChange={onToggleAutoCheck}
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-3 border-t pt-4">
+          <div>
+            <Label htmlFor="summon-shortcut" className="cursor-pointer text-sm">
+              {t.about.summonShortcutLabel}
+            </Label>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {t.about.summonShortcutHint} <Kbd>{DEFAULT_SUMMON_SHORTCUT}</Kbd>
+            </p>
+          </div>
+          <Switch
+            id="summon-shortcut"
+            disabled={!isTauri()}
+            checked={settings.summonShortcut !== null}
+            onCheckedChange={(checked) => void onToggleSummonShortcut(checked)}
           />
         </div>
 

@@ -81,7 +81,7 @@ export const en = {
       },
       network: {
         title: "Network",
-        body: "Point the CLIs at a custom API relay and an npm mirror — handy behind a proxy.",
+        body: "Detect and apply a proxy, pick mirrors, or point the CLIs at a custom API relay.",
       },
       ccswitch: {
         title: "cc-switch",
@@ -124,6 +124,8 @@ export const en = {
     mcp: "MCP servers",
     none: "Nothing selected yet. Pick a bundle above, or tick items below.",
     selected: (n: number) => `${n} selected`,
+    /** Which agents the ticked skills / MCP servers get configured for. */
+    writesTo: (agents: string) => `Set up for ${agents}`,
     install: "Install now",
     installPreview: "Preview plan",
   },
@@ -144,7 +146,7 @@ export const en = {
       "Skills are reusable instruction packs that teach the AI how to do specific engineering tasks well.",
     mcp: "MCP servers are plugins that extend the AI with new abilities — web access, memory, GitHub, and more.",
     network:
-      "Point the CLIs at a custom API relay/endpoint and an npm mirror — handy behind a proxy or a slow network.",
+      "Set up a proxy (detected automatically), mirrors, and a custom API relay/endpoint — everything the CLIs need on a restricted or slow network.",
     ccswitch:
       "cc-switch stores multiple API providers/keys and lets you switch the active one with a click.",
     ccconnect:
@@ -388,6 +390,115 @@ export const en = {
     baseUrlLabel: "API base URL / relay endpoint:",
     tokenLabel: "API token (for the relay):",
     registryLabel: "npm registry mirror URL:",
+    desktopOnly: "Proxy detection needs the desktop app.",
+
+    discovery: {
+      title: "Detected proxies",
+      subtitle:
+        "Scans your environment variables, the OS proxy panel, npm/git config and the ports the common proxy apps listen on.",
+      scan: "Scan again",
+      scanning: "Scanning…",
+      empty: "No proxy found on this machine. Enter one manually below if you have one.",
+      use: "Use",
+      test: "Test",
+      pacNote: (url: string) =>
+        `Your system uses an automatic configuration script (${url}). agentpack can't evaluate it — enter the proxy address it hands out manually.`,
+      source: {
+        env: "Environment",
+        system: "System",
+        npm: "npm",
+        git: "git",
+        port: "Local app",
+      } as Record<string, string>,
+    },
+
+    proxy: {
+      title: "Proxy",
+      subtitle: "Where your agent CLIs, npm and git send their traffic.",
+      active: "Active",
+      inactive: "Off",
+      mode: {
+        off: "Off",
+        system: "Follow system",
+        manual: "Manual",
+      } as Record<string, string>,
+      modeHint: {
+        off: "Nothing is written, and existing proxy settings are left as they are.",
+        system:
+          "Adopts what this machine already advertises. The values are still written out, because the CLIs don't read the OS proxy panel themselves.",
+        manual: "Use exactly the addresses you enter below.",
+      } as Record<string, string>,
+      httpLabel: "HTTP proxy",
+      httpsLabel: "HTTPS proxy",
+      httpsHint: "Leave one empty to reuse the other.",
+      allLabel: "SOCKS proxy (ALL_PROXY)",
+      allHint: "Used by npm, git and curl. Claude Code does not support SOCKS.",
+      noProxyLabel: "Bypass list (NO_PROXY)",
+      noProxyHint: "Comma- or space-separated hosts. Use * to bypass everything.",
+      socksWarning:
+        "Only a SOCKS proxy is set, and Claude Code can't use one — add an HTTP proxy address, or drop Claude Code from the targets below.",
+      advanced: "Authentication & TLS",
+      username: "Proxy username",
+      password: "Proxy password",
+      passwordHint:
+        "Written into the proxy URL wherever it is applied (that's how proxy auth works), and never included in an exported config file.",
+      caCert: "Extra CA certificate (NODE_EXTRA_CA_CERTS)",
+      caCertHint: "For a TLS-inspecting corporate proxy that signs traffic with its own root.",
+      insecure: "Skip TLS certificate verification",
+      insecureHint:
+        "Sets NODE_TLS_REJECT_UNAUTHORIZED=0. Unsafe — only as a last resort, and prefer the CA certificate above.",
+      clientCert: "Client certificate (mTLS)",
+      clientKey: "Client private key (mTLS)",
+      clientKeyPassphrase: "Private key passphrase",
+      targets: "Write the proxy into",
+      target: {
+        claude: "Claude Code settings",
+        npm: "npm config",
+        git: "git config",
+        shell: "Shell profile",
+      } as Record<string, string>,
+      targetHint: {
+        claude: "~/.claude/settings.json → env",
+        npm: "proxy · https-proxy · noproxy",
+        git: "http.proxy · https.proxy",
+        shell: "The only way Codex and OpenCode see it",
+      } as Record<string, string>,
+      apply: "Apply proxy",
+      clear: "Clear proxy",
+      needsUrl: "Enter a proxy address first.",
+      testTitle: "Connectivity test",
+      testTargetLabel: "Test against",
+      testRun: "Run test",
+      testing: "Testing…",
+      testDirect: "No proxy (direct)",
+      testOk: (status: number, ms: number) => `Reachable — HTTP ${status} in ${ms} ms`,
+      testFail: (reason: string) => `Failed — ${reason}`,
+      reason: {
+        ok: "ok",
+        "proxy-auth": "the proxy demands credentials (HTTP 407)",
+        "proxy-refused": "the proxy refused the connection",
+        unreachable: "could not connect",
+        dns: "the host name could not be resolved",
+        timeout: "timed out",
+        "bad-proxy-url": "that proxy address can't be parsed",
+        tls: "the TLS handshake failed",
+        failed: "the request failed",
+      } as Record<string, string>,
+    },
+
+    mirrors: {
+      title: "Mirrors",
+      subtitle: "Package and download sources, for when the defaults are slow or blocked.",
+      npmLabel: "npm registry",
+      ghLabel: "GitHub download mirror",
+      ghHint:
+        "Prefix put in front of GitHub downloads when installing skills from a repository. Applies immediately.",
+    },
+
+    relay: {
+      title: "API endpoint",
+      subtitle: "Point the agent CLIs at a relay or gateway instead of the official API.",
+    },
   },
 
   review: {
@@ -423,7 +534,6 @@ export const en = {
 
   verify: {
     claudeVersion: "Verify Claude Code (claude --version)",
-    claudeMcp: "Verify MCP servers (claude mcp list)",
     codexVersion: "Verify Codex (codex --version)",
   },
 
@@ -539,13 +649,9 @@ export const en = {
       },
       exa: { title: "Exa Search", purpose: "Semantic / neural web search." },
       tavily: { title: "Tavily", purpose: "Web search with citations & crawling." },
-      "brave-search": {
-        title: "Brave Search",
-        purpose: "Privacy-focused web search.",
-      },
       github: {
         title: "GitHub",
-        purpose: "Issues, PRs, code search, repo management.",
+        purpose: "Issues, PRs, code search, repo management (hosted remote server).",
       },
       playwright: {
         title: "Playwright",
@@ -554,18 +660,6 @@ export const en = {
       everything: {
         title: "Everything (reference)",
         purpose: "Reference server exercising every MCP feature — handy for testing.",
-      },
-      puppeteer: {
-        title: "Puppeteer",
-        purpose: "Headless-Chrome browser automation & scraping.",
-      },
-      gitlab: {
-        title: "GitLab",
-        purpose: "Projects, issues, merge requests & repo files.",
-      },
-      "google-maps": {
-        title: "Google Maps",
-        purpose: "Geocoding, places, directions & distance.",
       },
       firecrawl: {
         title: "Firecrawl",
@@ -605,6 +699,10 @@ export const en = {
     upgradeCli: (title: string) => `Upgrade ${title}`,
     noInstaller: (title: string) => `No automated installer for ${title} on this OS.`,
     manualInstall: "manual install required",
+    nodeTooOld: (title: string, need: number, found: string) =>
+      `${title} requires Node.js ${need} or newer, but Node ${found} is installed.`,
+    nodeTooOldFix: (need: number) =>
+      `Update Node.js to ${need}+ in the Environment section, or install this CLI with its native installer instead (CLIs section → install method).`,
     saveConfig: (path: string) => `Save config → ${path}`,
     savedConfigTo: (path: string) => `saved replayable config to ${path}`,
     installSkill: (title: string, targets: string) => `Install skill "${title}" → ${targets}`,
@@ -635,6 +733,22 @@ export const en = {
     opencodeMcpWritten: (id: string) => `mcp.${id} written to opencode.json`,
     configureClaudeRelay: "Configure Claude Code API endpoint",
     configureCodexRelay: "Configure Codex API endpoint",
+    proxyClaude: (url: string) => `Point Claude Code at the proxy → ${url}`,
+    proxyNpmSet: (key: string, value: string) => `Set npm ${key} → ${value}`,
+    proxyGitSet: (key: string, value: string) => `Set git ${key} → ${value}`,
+    proxyWinSet: (key: string, value: string) => `Set ${key} for your account → ${value}`,
+    proxyShell: (path: string) => `Add the proxy exports → ${path}`,
+    proxyShellWritten: (path: string) => `updated ${path}`,
+    proxyNote: "What still needs your attention",
+    proxyRestartNote:
+      "Open a new terminal (or reload your shell) so Codex, OpenCode and other tools pick the proxy up.",
+    proxyShellNote:
+      "Codex and OpenCode read the proxy from your shell environment only — add these lines to your shell profile, or turn on the “Shell profile” target above:",
+    proxyClearClaude: "Remove the proxy from Claude Code settings",
+    proxyClearNpm: (key: string) => `Clear npm ${key}`,
+    proxyClearGit: (key: string) => `Clear git ${key}`,
+    proxyClearWin: (key: string) => `Clear ${key} for your account`,
+    proxyClearShell: (path: string) => `Remove the proxy exports ← ${path}`,
     claudeSettingsUpdated: "updated ~/.claude/settings.json env",
     codexProviderUpdated: "updated ~/.codex/config.toml model_providers",
     removeMcpClaude: (title: string) => `Remove MCP "${title}" ← Claude Code`,
@@ -1138,8 +1252,14 @@ export const en = {
     system: "System",
     language: "Language",
     preview: "Preview (dry-run)",
+    settings: "Settings",
     osOverride: "OS",
     osAuto: "Auto",
+    // Custom window controls (Windows/Linux frameless window).
+    minimize: "Minimize",
+    maximize: "Maximize",
+    restore: "Restore",
+    closeWindow: "Close window",
     run: "Run plan",
     runReview: "Review plan",
     quickInstall: "Quick install",
@@ -1199,11 +1319,18 @@ export const en = {
     configInvalid: "unparsable",
     configMissing: "absent",
     hasBackup: "backup available",
-    remove: "Remove",
-    uninstall: "Uninstall",
     restore: "Restore backup",
     fileClaudeSettings: "Claude settings.json",
     fileCodexConfig: "Codex config.toml",
+    // Health banner: the dashboard leads with whatever needs the user's attention.
+    healthAllGood: "Everything looks good",
+    healthAllGoodHint: "No updates pending and every config file parses.",
+    healthNeedsAttention: (n: number) =>
+      n === 1 ? "1 item needs attention" : `${n} items need attention`,
+    healthUpgrade: (name: string, version: string) => `${name} can be upgraded to ${version}`,
+    healthConfig: (file: string, state: string) => `${file} is ${state}`,
+    // Truncated overview lists link out to the section that owns them.
+    viewAll: (n: number) => `${n} total · View all →`,
   },
 
   /** Chat-history reader + usage statistics across Claude Code, Codex, OpenCode. */
@@ -1253,9 +1380,37 @@ export const en = {
     webSearch: "Web search",
     patch: "File change",
     image: "Image",
+    event: (name: string) => name.replace(/_/g, " "),
+    // Codex multi-agent traffic: `kind` is the wire constant, `agent` the other
+    // agent's canonical path (`/root/pip_i18n`).
+    agentMessage: (kind: string, agent: string) => {
+      const kinds: Record<string, string> = {
+        NEW_TASK: "Task hand-off",
+        MESSAGE: "Agent message",
+        FINAL_ANSWER: "Agent report",
+      }
+      const label = kinds[kind] ?? kind.replace(/_/g, " ")
+      return agent ? `${label} · ${agent}` : label
+    },
+    subagentActivity: (kind: string, agent: string) => {
+      const kinds: Record<string, string> = {
+        started: "Sub-agent started",
+        interacted: "Sub-agent interaction",
+        interrupted: "Sub-agent interrupted",
+      }
+      const label = kinds[kind] ?? `Sub-agent ${kind.replace(/_/g, " ")}`
+      return agent ? `${label} · ${agent}` : label
+    },
     loadFailed: "Couldn't load this transcript.",
     transcriptEmpty: "This session has no renderable messages.",
     turns: (n: number) => `${n} turn${n === 1 ? "" : "s"}`,
+    // Oversized payloads arrive truncated and are fetched on demand.
+    loadFullText: (kb: string) => `Load full output (${kb})`,
+    loadingFullText: "Loading…",
+    fullTextFailed: "Couldn't load the full output.",
+    // Sub-agent transcripts, nested under the session that spawned them.
+    subagents: (n: number) => `${n} sub-agent${n === 1 ? "" : "s"}`,
+    subagentParent: "Main session",
     // Usage dashboard.
     usageEmpty: "No usage data yet.",
     statSessions: "Sessions",
@@ -1266,6 +1421,9 @@ export const en = {
     statCache: "Cache read",
     statReasoning: "Reasoning",
     statCost: "Cost",
+    statDuration: "Time spent",
+    statAvgDuration: "Avg time / session",
+    durationCoverage: (covered: number, total: number) => `${covered} of ${total} sessions`,
     statAvgTokens: "Avg tokens / session",
     statAvgCost: "Avg cost / session",
     costNote:
@@ -1307,6 +1465,9 @@ export const en = {
     viewOnGitHub: "View on GitHub",
     checkFailed: "Update check failed. Please try again later.",
     autoCheckLabel: "Check for updates on startup",
+    summonShortcutLabel: "Global hotkey",
+    summonShortcutHint: "Bring agentpack to the front from anywhere with",
+    shortcutTaken: (accel: string) => `${accel} is already used by another app.`,
     lastChecked: (when: string) => `Last checked: ${when}`,
     never: "never",
     configFolders: "Config folders",

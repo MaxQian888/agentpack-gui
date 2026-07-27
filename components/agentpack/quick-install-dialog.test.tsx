@@ -6,12 +6,14 @@ import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
 import { CLI_TOOLS, MCP_SERVERS, SKILLS } from "@/lib/agentpack/registry"
 import { useAppStore } from "@/store/app-store"
-import { QuickInstallDialog, matchPreset } from "./quick-install-dialog"
-import type { Plan } from "@/lib/agentpack/types"
+import { QuickInstallDialog } from "./quick-install-dialog"
 
 beforeEach(() => {
   useAppStore.setState({ dryRun: false, detections: {} })
   useAppStore.getState().resetPlan()
+  // resetPlan keeps network config + MCP keys on purpose; clear them so each test
+  // starts from a genuinely empty plan.
+  useAppStore.setState((s) => ({ plan: { ...s.plan, network: {}, mcpKeys: {} } }))
 })
 
 function renderDialog(overrides: Partial<React.ComponentProps<typeof QuickInstallDialog>> = {}) {
@@ -106,24 +108,44 @@ it("shows a single dialog", () => {
   expect(within(dialog).getByRole("heading", { name: en.installDialog.title })).toBeInTheDocument()
 })
 
-describe("matchPreset", () => {
-  const plan = (over: Partial<Plan>): Plan => ({
-    os: "mac",
-    clis: [],
-    skills: [],
-    mcps: [],
-    mcpKeys: {},
-    network: {},
-    ...over,
+/** Catalog titles contain regex metacharacters like "(", so match them literally. */
+const mcpBox = (id: string) =>
+  screen.getByRole("checkbox", {
+    name: new RegExp(en.catalog.mcp[id].title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
   })
 
-  it("recognizes the minimal bundle by its id sets", () => {
-    expect(
-      matchPreset(plan({ clis: ["claude-code"], mcps: [{ id: "memory", targets: ["claude"] }] }))
-    ).toBe("minimal")
-  })
+it("ticking an MCP server targets the agents the plan installs", async () => {
+  renderDialog()
+  await userEvent.click(screen.getByRole("checkbox", { name: en.catalog.cli["claude-code"].title }))
+  await userEvent.click(screen.getByRole("checkbox", { name: en.catalog.cli["codex"].title }))
+  await userEvent.click(mcpBox("memory"))
+  expect(useAppStore.getState().plan.mcps).toEqual([{ id: "memory", targets: ["claude", "codex"] }])
+})
 
-  it("falls back to custom when nothing matches", () => {
-    expect(matchPreset(plan({ clis: ["codex"] }))).toBe("custom")
-  })
+it("unticking a CLI re-points what is already selected", async () => {
+  renderDialog()
+  await userEvent.click(screen.getByRole("button", { name: en.presets.recommended.title }))
+  // Both the skills and the MCP group announce the same two agents.
+  expect(screen.getAllByText(en.installDialog.writesTo("Claude Code · Codex"))).toHaveLength(2)
+
+  await userEvent.click(screen.getByRole("checkbox", { name: en.catalog.cli["codex"].title }))
+  for (const m of useAppStore.getState().plan.mcps) expect(m.targets).toEqual(["claude"])
+  expect(screen.getAllByText(en.installDialog.writesTo("Claude Code"))).toHaveLength(2)
+})
+
+it("asks for the API key of a ticked key-gated server", async () => {
+  renderDialog()
+  const keyed = MCP_SERVERS.find((s) => s.keyEnv)!
+  const label = `${keyed.id} ${keyed.keyEnv}`
+  expect(screen.queryByLabelText(label)).not.toBeInTheDocument()
+
+  await userEvent.click(mcpBox(keyed.id))
+  await userEvent.type(screen.getByLabelText(label), "sk-test")
+  expect(useAppStore.getState().plan.mcpKeys[keyed.id]).toBe("sk-test")
+})
+
+it("keeps Install enabled for a network-only plan", () => {
+  useAppStore.getState().setNetwork({ npmRegistry: "https://registry.npmmirror.com" })
+  renderDialog()
+  expect(screen.getByRole("button", { name: en.installDialog.install })).toBeEnabled()
 })

@@ -12,6 +12,8 @@ import {
   upgradeCommandFor,
 } from "./registry"
 import { PRESETS, findPreset } from "./presets"
+import { en } from "../i18n/en"
+import { zhCN } from "../i18n/zh-CN"
 
 it("each CLI has an install entry for every OS key", () => {
   for (const c of CLI_TOOLS)
@@ -87,6 +89,71 @@ it("MCP_CATEGORY_ORDER has no category without at least one server", () => {
 
 it("every MCP server links to its docs", () => {
   for (const m of MCP_SERVERS) expect(m.docsUrl).toMatch(/^https?:\/\//)
+})
+
+describe("catalog integrity", () => {
+  // The registry and the i18n catalog are two lists that must stay in lockstep.
+  // Nothing tied them together before, so removing a server left orphan strings
+  // (and adding one would have rendered an untranslated id). Check both ways.
+  const groups = [
+    ["cli", CLI_TOOLS.map((c) => c.id)],
+    ["runtime", RUNTIMES.map((r) => r.id)],
+    ["mcp", MCP_SERVERS.map((m) => m.id)],
+  ] as const
+
+  it.each(groups)("every %s id has en and zh-CN entries, with no orphans", (group, ids) => {
+    for (const cat of [en.catalog, zhCN.catalog] as const) {
+      const entries = cat[group] as Record<string, unknown>
+      expect(Object.keys(entries).sort()).toEqual([...ids].sort())
+    }
+  })
+
+  it("declares a launchable target for every server: stdio needs a package, http a url", () => {
+    for (const m of MCP_SERVERS) {
+      if (m.transport === "stdio") {
+        expect(m.npmPackage).toBeTruthy()
+        expect(m.url).toBeUndefined()
+      } else {
+        expect(m.url).toMatch(/^https?:\/\//)
+        expect(m.npmPackage).toBeUndefined()
+      }
+    }
+  })
+
+  it("runs the fetch server through uvx — it has no npm package", () => {
+    // `@modelcontextprotocol/server-fetch` 404s on npm and never existed there;
+    // the server is published to PyPI only. Configuring it as an npx package
+    // fails silently: `claude mcp add` only writes config, so the breakage
+    // surfaces later, inside the user's agent.
+    const fetchServer = findMcp("fetch")!
+    expect(fetchServer.runtime).toBe("uvx")
+    expect(fetchServer.npmPackage).toBe("mcp-server-fetch")
+  })
+
+  it("ships no npm package that upstream has deprecated", () => {
+    // Point regression guard for the archived reference servers (npm marks each
+    // "Package no longer supported"). The weekly catalog audit covers the general
+    // case against the live registry; this keeps them from creeping back in.
+    const retired = [
+      "@modelcontextprotocol/server-github",
+      "@modelcontextprotocol/server-brave-search",
+      "@modelcontextprotocol/server-puppeteer",
+      "@modelcontextprotocol/server-gitlab",
+      "@modelcontextprotocol/server-google-maps",
+      "@modelcontextprotocol/server-fetch",
+    ]
+    const inUse = MCP_SERVERS.map((m) => m.npmPackage).filter(Boolean)
+    for (const pkg of retired) expect(inUse).not.toContain(pkg)
+  })
+
+  it("every preset references ids that still exist in the registry", () => {
+    const cliIds = new Set<string>(CLI_TOOLS.map((c) => c.id))
+    const mcpIds = new Set<string>(MCP_SERVERS.map((m) => m.id))
+    for (const preset of PRESETS) {
+      for (const id of preset.clis) expect(cliIds.has(id)).toBe(true)
+      for (const id of preset.mcps) expect(mcpIds.has(id)).toBe(true)
+    }
+  })
 })
 
 it("finders work", () => {

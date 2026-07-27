@@ -1,5 +1,10 @@
 import { invoke, Channel } from "@tauri-apps/api/core"
 import type { Command, Paths } from "@/lib/agentpack/types"
+import type {
+  ProxyEnvSnapshot,
+  SystemProxySnapshot,
+  ToolProxySnapshot,
+} from "@/lib/agentpack/network/discovery"
 import type { Provider, ProviderApp } from "@/lib/agentpack/ccswitch/types"
 import type { HistorySource, ListResult, SessionDetail } from "@/lib/history/types"
 import type {
@@ -138,6 +143,49 @@ export const probeHost = (host: string, port: number, timeoutMs?: number) =>
     port,
     timeoutMs: timeoutMs ?? null,
   })
+
+// ── Proxy discovery / verification (src-tauri/src/net.rs) ────────────────────
+
+/** Proxy variables the agentpack process inherited from the user's shell. */
+export const proxyEnvSnapshot = () => invoke<ProxyEnvSnapshot>("proxy_env_snapshot")
+
+/** The OS proxy panel (scutil / Internet Settings / gsettings). */
+export const systemProxySnapshot = () => invoke<SystemProxySnapshot>("system_proxy_snapshot")
+
+/** Proxy-related config already set in npm and git. */
+export const toolProxySnapshot = () => invoke<ToolProxySnapshot>("tool_proxy_snapshot")
+
+/** Outcome of one real request through a proxy (mirrors Rust `ProxyCheckResult`). */
+export interface ProxyCheckResult {
+  ok: boolean
+  status?: number
+  latencyMs?: number
+  /** "ok" | "proxy-auth" | "proxy-refused" | "unreachable" | "dns" | "timeout" | … */
+  reason: string
+}
+
+/**
+ * Send one real GET through `proxyUrl` and report status + latency. Pass null to
+ * test the direct route instead (the "compare without a proxy" baseline).
+ */
+export const proxyCheck = (proxyUrl: string | null, testUrl: string, timeoutMs?: number) =>
+  invoke<ProxyCheckResult>("proxy_check", {
+    proxyUrl,
+    testUrl,
+    timeoutMs: timeoutMs ?? null,
+  })
+
+/**
+ * Point agentpack's OWN traffic at a proxy: its HTTP client (skill tarballs, the
+ * MCP registry) and every child process it spawns (npm, git, the CLIs). Pass an
+ * empty config to go back to direct.
+ */
+export const setProcessProxy = (config: {
+  http?: string
+  https?: string
+  all?: string
+  noProxy?: string
+}) => invoke<void>("set_process_proxy", { config })
 
 /** Raw `GET /v0/servers` body from the official MCP registry (TS maps the schema). */
 export const registryFetch = (query?: string, cursor?: string, limit?: number) =>
@@ -289,6 +337,17 @@ export const backupRestore = (id: string) => invoke<string[]>("backup_restore", 
  */
 export const historyListSessions = () => invoke<ListResult>("history_list_sessions")
 
-/** Load one session's full transcript. `path` is the summary's `path` handle. */
+/**
+ * Load one session's transcript. `path` is the summary's `path` handle.
+ * Oversized tool payloads arrive truncated — see `historyGetPartText`.
+ */
 export const historyGetSession = (source: HistorySource, path: string) =>
   invoke<SessionDetail>("history_get_session", { source, path })
+
+/**
+ * Fetch the full text behind a truncated part, using the part's `ref`. Covers
+ * both inline payloads capped for transport and tool output the CLI externalized
+ * to its own file.
+ */
+export const historyGetPartText = (source: HistorySource, path: string, ref: string) =>
+  invoke<string>("history_get_part_text", { source, path, ref })

@@ -1,7 +1,7 @@
 import { findCli, findMcp, findSkill, installMethodsFor } from "./registry"
 import { en } from "@/lib/i18n/en"
 import type { Messages } from "@/lib/i18n/types"
-import type { Plan } from "./types"
+import { PROXY_TARGETS, type Plan, type ProxyMode, type ProxyTarget } from "./types"
 
 /** Bumped when the on-disk config schema changes incompatibly. */
 export const CONFIG_VERSION = 1
@@ -17,7 +17,17 @@ export interface SerializeOptions {
  * refilled from a provided secrets map via `fillSecrets`.
  */
 export function serializePlan(plan: Plan, opts: SerializeOptions = {}): string {
-  const network = opts.includeSecrets ? plan.network : { ...plan.network, apiToken: undefined }
+  const network = opts.includeSecrets
+    ? plan.network
+    : {
+        ...plan.network,
+        apiToken: undefined,
+        // The proxy password ends up inside the proxy URL wherever it is applied,
+        // but a shared config file must not carry it.
+        proxy: plan.network.proxy
+          ? { ...plan.network.proxy, password: undefined, clientKeyPassphrase: undefined }
+          : undefined,
+      }
   const out = {
     version: CONFIG_VERSION,
     os: plan.os,
@@ -30,6 +40,23 @@ export function serializePlan(plan: Plan, opts: SerializeOptions = {}): string {
     network,
   }
   return JSON.stringify(out, null, 2) + "\n"
+}
+
+/**
+ * Narrow a loaded `network` block to values we're willing to act on. A config
+ * file can be hand-edited or shared, and its proxy settings end up in commands
+ * and config files — so an unknown mode or target is dropped rather than carried
+ * into the plan.
+ */
+function sanitizeNetwork(network: Plan["network"]): Plan["network"] {
+  const raw = network.proxy
+  if (!raw || typeof raw !== "object") return { ...network, proxy: undefined }
+  const mode: ProxyMode =
+    raw.mode === "manual" || raw.mode === "system" || raw.mode === "off" ? raw.mode : "off"
+  const targets = Array.isArray(raw.targets)
+    ? raw.targets.filter((t): t is ProxyTarget => PROXY_TARGETS.includes(t))
+    : []
+  return { ...network, proxy: { ...raw, mode, targets } }
 }
 
 /**
@@ -86,7 +113,7 @@ export function parseConfig(json: string, messages: Messages = en): Plan {
       : {}
   const network =
     data["network"] && typeof data["network"] === "object"
-      ? (data["network"] as Plan["network"])
+      ? sanitizeNetwork(data["network"] as Plan["network"])
       : {}
 
   return {

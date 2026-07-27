@@ -5,12 +5,14 @@ jest.mock("@/lib/tauri/commands", () => ({
   probeHost: jest.fn(async () => ({ reachable: true, latencyMs: 12 })),
 }))
 jest.mock("@/lib/tauri/system", () => ({ openUrl: jest.fn() }))
+jest.mock("@/lib/tauri/clipboard", () => ({ copyText: jest.fn().mockResolvedValue(true) }))
 
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { commandOnPath, readTextFile } from "@/lib/tauri/commands"
+import { copyText } from "@/lib/tauri/clipboard"
 import { openUrl } from "@/lib/tauri/system"
 import { McpDetailDialog } from "./detail-dialog"
 import type { DashboardScan } from "../dashboard"
@@ -108,13 +110,11 @@ it("runs a lightweight health check when Test is clicked", async () => {
 })
 
 it("copies a field's real value to the clipboard", async () => {
-  const writeText = jest.fn().mockResolvedValue(undefined)
-  Object.assign(navigator, { clipboard: { writeText } })
   renderDialog()
   // Wait for the parsed spec fields (not just the header title) to render.
   await screen.findByText(/npx -y @upstash\/context7-mcp/)
   await userEvent.click(screen.getByRole("button", { name: /Copy Command/i }))
-  await waitFor(() => expect(writeText).toHaveBeenCalledWith("npx -y @upstash/context7-mcp"))
+  await waitFor(() => expect(copyText).toHaveBeenCalledWith("npx -y @upstash/context7-mcp"))
 })
 
 it("opens the docs link for a catalog server", async () => {

@@ -489,12 +489,8 @@ fn download_and_extract(url: &str, dest: &Path) -> Result<(), String> {
   let mut builder = ureq::AgentBuilder::new()
     .timeout_connect(std::time::Duration::from_secs(30))
     .timeout_read(std::time::Duration::from_secs(30));
-  if let Ok(proxy_url) =
-    std::env::var("HTTPS_PROXY").or_else(|_| std::env::var("https_proxy"))
-  {
-    if let Ok(proxy) = ureq::Proxy::new(&proxy_url) {
-      builder = builder.proxy(proxy);
-    }
+  if let Some(proxy) = crate::net::proxy_from_env() {
+    builder = builder.proxy(proxy);
   }
   let agent = builder.build();
 

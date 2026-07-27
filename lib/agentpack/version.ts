@@ -23,6 +23,15 @@ function parts(version: string | undefined): [number, number, number] | undefine
 }
 
 /**
+ * The major version number in a raw `--version` string ("v24.1.0" => 24), or
+ * undefined when nothing parseable is there. Used to check a package's declared
+ * `engines.node` floor before handing the install to npm.
+ */
+export function majorVersion(raw: string | undefined): number | undefined {
+  return parts(raw)?.[0]
+}
+
+/**
  * True only when `latest` is strictly newer than `installed`. Returns false when
  * either version is missing/unparseable, so a failed lookup never shows Upgrade.
  */

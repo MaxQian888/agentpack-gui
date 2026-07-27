@@ -26,6 +26,9 @@ const summary = (over: Partial<SessionSummary>): SessionSummary => ({
   updatedAt: 1000,
   path: "p",
   gitBranch: null,
+  parentId: null,
+  agentName: null,
+  durationMs: null,
   ...over,
 })
 

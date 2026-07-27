@@ -22,7 +22,7 @@ import {
 import { useT } from "@/lib/i18n/provider"
 import type { SessionSummary } from "@/lib/history/types"
 import { computeUsageStats } from "@/lib/history/stats"
-import { formatCost, formatNumber, formatTokens } from "@/lib/history/format"
+import { formatCost, formatDuration, formatNumber, formatTokens } from "@/lib/history/format"
 import { priceForModel } from "@/lib/history/pricing"
 import { SOURCE_COLORS, modelColor } from "@/lib/history/display"
 
@@ -116,6 +116,19 @@ export function UsageDashboard({ sessions }: { sessions: SessionSummary[] }) {
         <Stat label={t.statAvgTokens} value={formatTokens(averages.tokensPerSession)} />
         <Stat label={t.statAvgCost} value={formatCost(averages.costPerSession)} />
       </div>
+
+      {/* Wall-clock time — only Claude Code records it, so the cards say how
+          many sessions the numbers actually cover rather than implying all. */}
+      {totals.durationSessions > 0 ? (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <Stat
+            label={t.statDuration}
+            value={formatDuration(totals.durationMs)}
+            sub={t.durationCoverage(totals.durationSessions, totals.sessions)}
+          />
+          <Stat label={t.statAvgDuration} value={formatDuration(averages.durationPerSession)} />
+        </div>
+      ) : null}
 
       {/* Tokens by day */}
       <Card className="gap-3 p-4">
@@ -230,7 +243,12 @@ export function UsageDashboard({ sessions }: { sessions: SessionSummary[] }) {
         {/* By tool */}
         <Card className="gap-3 p-4">
           <h3 className="text-sm font-medium">{t.chartBySource}</h3>
-          <ChartContainer config={sourceConfig} className="mx-auto aspect-square max-h-[240px]">
+          {/* Sized like the charts above (explicit height + `w-full`), NOT with
+              `mx-auto aspect-square max-h-`: `Card` is a flex column, so an auto
+              inline margin cancels the cross-axis stretch and the container
+              collapses to width 0 — and, through `aspect-square`, height 0 —
+              which makes recharts warn and render nothing. */}
+          <ChartContainer config={sourceConfig} className="h-[240px] w-full">
             <PieChart>
               <ChartTooltip content={<ChartTooltipContent nameKey="source" hideLabel />} />
               <Pie data={pieData} dataKey="value" nameKey="source" innerRadius={55} strokeWidth={2}>

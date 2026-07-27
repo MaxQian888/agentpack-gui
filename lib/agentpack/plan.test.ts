@@ -10,6 +10,7 @@ import {
   mcpEditStep,
   mcpEnableStep,
   mcpRemoveStep,
+  planHasSelections,
   relayRemoveStep,
   runtimeUpgradeStep,
   skillInstallStep,
@@ -25,13 +26,16 @@ import {
   snapshotStep,
   visibleAppsStep,
   providerStep,
+  proxyApplySteps,
+  proxyClearSteps,
   syncLiveConfigSteps,
 } from "./plan"
+import { en } from "@/lib/i18n/en"
 import { findMcp } from "./registry"
 import { mergeCodexMcp, type McpSpec } from "./merge/mcp"
 import { mergeClaudeSettings, mergeCodexProvider } from "./merge/network"
 import { DEFAULT_VISIBLE_APPS } from "./ccswitch/settings"
-import type { Paths, Plan, StepDescriptor } from "./types"
+import type { Paths, Plan, ProxyConfig, StepDescriptor } from "./types"
 import type { Provider, ProviderForm } from "./ccswitch/types"
 
 const paths: Paths = {
@@ -50,6 +54,7 @@ const paths: Paths = {
   ccConnectDir: "/h/.cc-connect",
   ccConnectConfig: "/h/.cc-connect/config.toml",
   mcpDisabledStore: "/h/.agentpack/mcp-disabled.json",
+  shellProfile: "/h/.zshrc",
   os: "mac",
 }
 
@@ -136,6 +141,23 @@ it("carries requiresElevation from the Node winget default on Windows", () => {
   expect(node.kind === "command" && node.requiresElevation).toBe(true)
 })
 
+it("wraps an npx server in cmd /c for codex on Windows, but not for claude", () => {
+  // Codex spawns the command it stored, so a bare `npx` shim would fail there;
+  // Claude's own launcher resolves shims, so its command must stay bare.
+  const winPlan: Plan = {
+    ...plan,
+    os: "win",
+    skills: [],
+    mcps: [{ id: "context7", targets: ["claude", "codex"] }],
+    network: {},
+  }
+  const steps = buildSteps(winPlan, { ...paths, os: "win" })
+  const codex = steps.find((s) => s.id === "mcp-codex-context7")!
+  expect(codex.kind === "mergeFile" && codex.merge("")).toContain('command = "cmd"')
+  const claude = steps.find((s) => s.id === "mcp-claude-context7")!
+  expect(claude.kind === "command" && claude.command.args).toContain("npx")
+})
+
 it("claude mcp steps depend on the claude install from the same run", () => {
   const step = buildSteps(plan, paths).find((s) => s.id === "mcp-claude-context7")!
   expect(step.dependsOn).toEqual(["cli-claude-code"])
@@ -197,6 +219,65 @@ it("skips an installed CLI when the latest version is still unknown", () => {
     versions: { "claude-code": "1.0.0" },
   }).map((s) => s.id)
   expect(ids).not.toContain("cli-claude-code")
+})
+
+describe("Node engines floor", () => {
+  // @anthropic-ai/claude-code declares engines.node ">=22.0.0"; npm refuses the
+  // install below that with EBADENGINE buried in its output.
+  const withNode = (version: string) =>
+    buildSteps(plan, paths, undefined, new Set(["node"]), { versions: { node: version } })
+
+  it("replaces the npm install with an actionable note when Node is too old", () => {
+    const step = withNode("v20.11.0").find((s) => s.id === "cli-claude-code")!
+    expect(step.kind).toBe("info")
+    expect(step.kind === "info" && step.manual).toBe(true)
+    expect(step.kind === "info" && step.lines.join(" ")).toContain("Node.js 22")
+    expect(step.kind === "info" && step.lines.join(" ")).toContain("20.11.0")
+  })
+
+  it("installs normally once Node satisfies the floor", () => {
+    const step = withNode("v24.4.0").find((s) => s.id === "cli-claude-code")!
+    expect(step.kind).toBe("command")
+  })
+
+  it("does not fire when Node is absent — the run installs a current LTS first", () => {
+    const steps = buildSteps(plan, paths)
+    expect(steps.find((s) => s.id === "runtime-node")?.kind).toBe("command")
+    expect(steps.find((s) => s.id === "cli-claude-code")?.kind).toBe("command")
+  })
+
+  it("does not fire for a native install, which needs no Node at all", () => {
+    const nativePlan: Plan = { ...plan, cliMethods: { "claude-code": "native" } }
+    const step = buildSteps(nativePlan, paths, undefined, new Set(["node"]), {
+      versions: { node: "v20.11.0" },
+    }).find((s) => s.id === "cli-claude-code")!
+    expect(step.kind).toBe("command")
+  })
+})
+
+describe("uv prerequisite for uvx-launched MCP servers", () => {
+  const fetchPlan: Plan = { ...plan, mcps: [{ id: "fetch", targets: ["claude"] }] }
+
+  it("installs uv when a selected server runs through uvx", () => {
+    const steps = buildSteps(fetchPlan, paths)
+    expect(steps.find((s) => s.id === "runtime-uv")?.kind).toBe("command")
+  })
+
+  it("skips the uv step when uv is already present", () => {
+    const ids = buildSteps(fetchPlan, paths, undefined, new Set(["uv"])).map((s) => s.id)
+    expect(ids).not.toContain("runtime-uv")
+  })
+
+  it("adds no uv step for an all-npx plan", () => {
+    expect(buildSteps(plan, paths).map((s) => s.id)).not.toContain("runtime-uv")
+  })
+
+  it("does not gate the MCP config on uv — writing config succeeds without it", () => {
+    // `claude mcp add` only writes config. Gating it on a failed uv install would
+    // drop config that is correct and starts working as soon as uv appears.
+    const step = buildSteps(fetchPlan, paths).find((s) => s.id === "mcp-claude-fetch")!
+    expect(step.kind === "command" && step.dependsOn).not.toContain("runtime-uv")
+  })
 })
 
 it("skips MCP add steps for agents that already have the server", () => {
@@ -297,11 +378,53 @@ it("emits a codex relay step when codex + apiBaseUrl are present", () => {
   expect(ids).toContain("relay-codex")
 })
 
-it("buildVerifySteps adds an mcp-list check only when an MCP targets claude", () => {
-  const withMcp = buildVerifySteps(plan).map((s) => s.id)
-  expect(withMcp).toContain("verify-claude-mcp")
-  const noMcp = buildVerifySteps({ ...plan, mcps: [] }).map((s) => s.id)
-  expect(noMcp).not.toContain("verify-claude-mcp")
+it("writes the relay for an already-installed CLI the user did not tick", () => {
+  // Configuring a relay for a CLI that's already on the machine is the common
+  // case; gating on the checkbox alone produced a run with zero steps.
+  const p: Plan = {
+    ...plan,
+    clis: [],
+    skills: [],
+    mcps: [],
+    network: { apiBaseUrl: "https://relay", apiToken: "tok" },
+  }
+  const ids = buildSteps(p, paths, en, new Set(["claude-code", "codex"])).map((s) => s.id)
+  expect(ids).toContain("relay-claude")
+  expect(ids).toContain("relay-codex")
+})
+
+it("skips the relay when the CLI is neither ticked nor installed", () => {
+  const p: Plan = {
+    ...plan,
+    clis: [],
+    skills: [],
+    mcps: [],
+    network: { apiBaseUrl: "https://relay", apiToken: "tok" },
+  }
+  expect(buildSteps(p, paths).map((s) => s.id)).toEqual([])
+})
+
+it("buildVerifySteps never runs the slow health-checking mcp list", () => {
+  const ids = buildVerifySteps(plan).map((s) => s.id)
+  expect(ids).toEqual(["verify-claude-version"])
+})
+
+describe("planHasSelections", () => {
+  const bare: Plan = { os: "mac", clis: [], skills: [], mcps: [], mcpKeys: {}, network: {} }
+
+  it("is false for an untouched plan", () => {
+    expect(planHasSelections(bare)).toBe(false)
+    expect(planHasSelections(undefined)).toBe(false)
+  })
+
+  it("counts network-only config as runnable", () => {
+    expect(planHasSelections({ ...bare, network: { npmRegistry: "https://m" } })).toBe(true)
+    expect(planHasSelections({ ...bare, network: { apiBaseUrl: "https://r" } })).toBe(true)
+  })
+
+  it("counts a picked item", () => {
+    expect(planHasSelections({ ...bare, clis: ["codex"] })).toBe(true)
+  })
 })
 
 it("buildVerifySteps includes a codex version check when codex is chosen", () => {
@@ -732,4 +855,99 @@ describe("skills browser step builders", () => {
     const merged = JSON.parse(step.merge(""))
     expect(merged.permission.skill).toEqual({ "internal-docs": "deny" })
   })
+})
+
+// --- Proxy ---------------------------------------------------------------
+
+const proxyCfg = (patch: Partial<ProxyConfig> = {}): ProxyConfig => ({
+  mode: "manual",
+  targets: ["claude", "npm", "git", "shell"],
+  httpUrl: "http://127.0.0.1:7890",
+  ...patch,
+})
+
+it("applies the proxy before the npm mirror and every install", () => {
+  const withProxy: Plan = { ...plan, network: { ...plan.network, proxy: proxyCfg() } }
+  const ids = buildSteps(withProxy, paths).map((s) => s.id)
+  expect(ids.indexOf("proxy-claude")).toBe(0)
+  expect(ids.indexOf("proxy-npm-proxy")).toBeLessThan(ids.indexOf("npm-registry"))
+  expect(ids.indexOf("npm-registry")).toBeLessThan(ids.indexOf("cli-claude-code"))
+})
+
+it("adds no proxy steps when the proxy is off or empty", () => {
+  const off: Plan = { ...plan, network: { ...plan.network, proxy: proxyCfg({ mode: "off" }) } }
+  expect(buildSteps(off, paths).some((s) => s.id.startsWith("proxy-"))).toBe(false)
+  const empty: Plan = {
+    ...plan,
+    network: { ...plan.network, proxy: proxyCfg({ httpUrl: undefined }) },
+  }
+  expect(buildSteps(empty, paths).some((s) => s.id.startsWith("proxy-"))).toBe(false)
+  expect(buildSteps(plan, paths).some((s) => s.id.startsWith("proxy-"))).toBe(false)
+})
+
+it("writes only the targets the user selected", () => {
+  const ids = (targets: ProxyConfig["targets"]) =>
+    proxyApplySteps(proxyCfg({ targets }), paths, "mac").map((s) => s.id)
+  expect(ids(["claude"])).toEqual(["proxy-claude", "proxy-note"])
+  expect(ids(["npm"])).toEqual(["proxy-npm-proxy", "proxy-npm-https-proxy", "proxy-note"])
+  expect(ids(["git"])).toEqual(["proxy-git-http.proxy", "proxy-git-https.proxy", "proxy-note"])
+  expect(ids(["shell"])).toEqual(["proxy-shell", "proxy-note"])
+})
+
+it("targets the right files, and the merge round-trips through the runner's transform", () => {
+  const steps = proxyApplySteps(proxyCfg({ targets: ["claude", "shell"] }), paths, "mac")
+  const claude = steps.find((s) => s.id === "proxy-claude")!
+  expect(claude.kind === "mergeFile" && claude.path).toBe(paths.claudeSettings)
+  expect(claude.kind === "mergeFile" && JSON.parse(claude.merge("")).env.HTTPS_PROXY).toBe(
+    "http://127.0.0.1:7890"
+  )
+  const shell = steps.find((s) => s.id === "proxy-shell")!
+  expect(shell.kind === "mergeFile" && shell.path).toBe(paths.shellProfile)
+  expect(shell.kind === "mergeFile" && shell.merge("export PATH=/x\n")).toContain(
+    'export HTTPS_PROXY="http://127.0.0.1:7890"'
+  )
+})
+
+it("uses setx instead of a shell profile on Windows", () => {
+  const ids = proxyApplySteps(proxyCfg({ targets: ["shell"] }), paths, "win").map((s) => s.id)
+  expect(ids).toEqual(["proxy-win-HTTP_PROXY", "proxy-win-HTTPS_PROXY", "proxy-note"])
+})
+
+it("closes with the note Codex/OpenCode users need, and drops it once shell is covered", () => {
+  const noShell = proxyApplySteps(proxyCfg({ targets: ["claude"] }), paths, "mac").at(-1)!
+  expect(noShell.kind === "info" && noShell.lines.join("\n")).toContain(
+    'export HTTPS_PROXY="http://127.0.0.1:7890"'
+  )
+  const withShell = proxyApplySteps(proxyCfg({ targets: ["shell"] }), paths, "mac").at(-1)!
+  expect(withShell.kind === "info" && withShell.lines).toEqual([en.steps.proxyRestartNote])
+})
+
+it("clear steps are the inverse of apply, per target", () => {
+  const steps = proxyClearSteps(["claude", "npm", "git", "shell"], paths, "mac")
+  expect(steps.map((s) => s.id)).toEqual([
+    "proxy-clear-claude",
+    "proxy-clear-npm-proxy",
+    "proxy-clear-npm-https-proxy",
+    "proxy-clear-npm-noproxy",
+    "proxy-clear-git-http.proxy",
+    "proxy-clear-git-https.proxy",
+    "proxy-clear-shell",
+  ])
+  // Applying then clearing leaves the file exactly as it started.
+  const applied = proxyApplySteps(proxyCfg(), paths, "mac").find((s) => s.id === "proxy-claude")!
+  const cleared = steps.find((s) => s.id === "proxy-clear-claude")!
+  const original = JSON.stringify({ env: { KEEP: "1" } })
+  const roundTrip =
+    applied.kind === "mergeFile" && cleared.kind === "mergeFile"
+      ? JSON.parse(cleared.merge(applied.merge(original)))
+      : null
+  expect(roundTrip.env).toEqual({ KEEP: "1" })
+  // Unsetting a key that was never set must not fail the run.
+  expect(steps.filter((s) => s.kind === "command").every((s) => s.verifyOnly)).toBe(true)
+})
+
+it("clears Windows user-scope variables with setx", () => {
+  const ids = proxyClearSteps(["shell"], paths, "win").map((s) => s.id)
+  expect(ids).toContain("proxy-clear-win-HTTPS_PROXY")
+  expect(ids).toContain("proxy-clear-win-NODE_EXTRA_CA_CERTS")
 })

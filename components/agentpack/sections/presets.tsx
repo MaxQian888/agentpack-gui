@@ -1,10 +1,9 @@
 "use client"
 
-import { useState } from "react"
 import { Check } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Card } from "@/components/ui/card"
-import { PRESETS } from "@/lib/agentpack/presets"
+import { matchPreset, PRESETS } from "@/lib/agentpack/presets"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
@@ -14,12 +13,17 @@ const OPTIONS = ["custom", ...PRESETS.map((p) => p.id)] as const
 
 export function PresetsSection({ onCustomize }: { onCustomize?: () => void }) {
   const t = useT()
+  const plan = useAppStore((s) => s.plan)
   const applyPreset = useAppStore((s) => s.applyPreset)
   const resetPlan = useAppStore((s) => s.resetPlan)
-  const [selected, setSelected] = useState<string | null>(null)
+  // Derived from the plan rather than remembered locally, so the tick agrees with
+  // what will actually be installed — including a bundle picked in the header Run ▾
+  // menu, or one the user has since edited item by item. Nothing picked at all ticks
+  // nothing (an empty plan isn't a "Custom" choice the user made yet).
+  const anyPicked = plan.clis.length + plan.skills.length + plan.mcps.length > 0
+  const selected = anyPicked ? matchPreset(plan) : null
 
   const choose = (id: string) => {
-    setSelected(id)
     // "Custom" clears the plan and opens the one-page customize dialog (the same
     // component the header Run ▾ menu uses) so the user can hand-pick items.
     if (id === "custom") {

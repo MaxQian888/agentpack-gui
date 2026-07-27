@@ -1,4 +1,12 @@
-import { addUsage, dayKey, emptyUsage, formatCost, formatNumber, formatTokens } from "./format"
+import {
+  addUsage,
+  dayKey,
+  emptyUsage,
+  formatCost,
+  formatDuration,
+  formatNumber,
+  formatTokens,
+} from "./format"
 import type { TokenUsage } from "./types"
 
 const u = (over: Partial<TokenUsage>): TokenUsage => ({ ...emptyUsage(), ...over })
@@ -78,5 +86,21 @@ describe("dayKey", () => {
   it("zero-pads month and day", () => {
     const key = dayKey(new Date(2026, 0, 3, 1, 1).getTime())
     expect(key).toBe("2026-01-03")
+  })
+})
+
+describe("formatDuration", () => {
+  it("treats missing, zero and non-finite durations as absent, not instant", () => {
+    expect(formatDuration(null)).toBe("—")
+    expect(formatDuration(undefined)).toBe("—")
+    expect(formatDuration(0)).toBe("—")
+    expect(formatDuration(Infinity)).toBe("—")
+  })
+  it("picks the coarsest unit that still carries information", () => {
+    expect(formatDuration(45_000)).toBe("45s")
+    expect(formatDuration(12 * 60_000)).toBe("12m")
+    expect(formatDuration(3 * 3_600_000 + 20 * 60_000)).toBe("3h 20m")
+    // A whole number of hours drops the empty minutes part.
+    expect(formatDuration(2 * 3_600_000)).toBe("2h")
   })
 })

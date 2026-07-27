@@ -35,7 +35,15 @@ function renderEnv() {
 it("shows the detected runtime version from the store", () => {
   useAppStore.setState({ detections: { node: { installed: true, version: "v20.11.0" } } })
   renderEnv()
-  expect(screen.getByText(/v20\.11\.0/)).toBeInTheDocument()
+  // `detect_runtime` keeps the whole first line of `--version`; the badge shows
+  // just the semver it contains, so the leading "v" is dropped here.
+  expect(screen.getByText(/· 20\.11\.0/)).toBeInTheDocument()
+})
+
+it("falls back to the raw --version line when it holds no semver", () => {
+  useAppStore.setState({ detections: { node: { installed: true, version: "nightly-build" } } })
+  renderEnv()
+  expect(screen.getByText(/nightly-build/)).toBeInTheDocument()
 })
 
 it("offers an install action for a missing runtime and opens the run panel", async () => {

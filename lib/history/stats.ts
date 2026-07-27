@@ -24,6 +24,14 @@ export interface Totals {
   messages: number
   usage: TokenUsage
   cost: number
+  /**
+   * Wall-clock time actually spent, summed over the sessions that report it.
+   * Only Claude Code records per-turn durations, so this covers a subset of
+   * `sessions` — `durationSessions` says how many, so the average isn't diluted
+   * by sources that simply don't measure it.
+   */
+  durationMs: number
+  durationSessions: number
 }
 
 export interface SourceStat extends Totals {
@@ -63,6 +71,8 @@ export interface HourStat {
 export interface Averages {
   tokensPerSession: number
   costPerSession: number
+  /** Averaged over the sessions that report a duration, not over all of them. */
+  durationPerSession: number
 }
 
 export interface UsageStats {
@@ -86,7 +96,14 @@ export interface UsageStats {
  * where the source reported it (OpenCode); null costs contribute 0.
  */
 export function computeUsageStats(sessions: SessionSummary[]): UsageStats {
-  const totals: Totals = { sessions: 0, messages: 0, usage: emptyUsage(), cost: 0 }
+  const totals: Totals = {
+    sessions: 0,
+    messages: 0,
+    usage: emptyUsage(),
+    cost: 0,
+    durationMs: 0,
+    durationSessions: 0,
+  }
   const bySource = new Map<HistorySource, SourceStat>()
   const byModel = new Map<string, ModelStat>()
   const byDay = new Map<string, DayStat>()
@@ -105,18 +122,34 @@ export function computeUsageStats(sessions: SessionSummary[]): UsageStats {
     totals.messages += s.messageCount
     addUsage(totals.usage, s.usage)
     totals.cost += cost
+    if (s.durationMs != null && s.durationMs > 0) {
+      totals.durationMs += s.durationMs
+      totals.durationSessions += 1
+    }
     if (estimated) estimatedCost += cost
     else actualCost += cost
 
     let src = bySource.get(s.source)
     if (!src) {
-      src = { source: s.source, sessions: 0, messages: 0, usage: emptyUsage(), cost: 0 }
+      src = {
+        source: s.source,
+        sessions: 0,
+        messages: 0,
+        usage: emptyUsage(),
+        cost: 0,
+        durationMs: 0,
+        durationSessions: 0,
+      }
       bySource.set(s.source, src)
     }
     src.sessions += 1
     src.messages += s.messageCount
     addUsage(src.usage, s.usage)
     src.cost += cost
+    if (s.durationMs != null && s.durationMs > 0) {
+      src.durationMs += s.durationMs
+      src.durationSessions += 1
+    }
 
     // Attribute a session's usage to its primary model (fallback "unknown").
     const modelKey = s.model || "unknown"
@@ -160,6 +193,8 @@ export function computeUsageStats(sessions: SessionSummary[]): UsageStats {
   const averages: Averages = {
     tokensPerSession: totals.sessions > 0 ? totals.usage.total / totals.sessions : 0,
     costPerSession: totals.sessions > 0 ? totals.cost / totals.sessions : 0,
+    durationPerSession:
+      totals.durationSessions > 0 ? totals.durationMs / totals.durationSessions : 0,
   }
 
   return {

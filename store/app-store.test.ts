@@ -4,6 +4,9 @@ import { DEFAULT_SETTINGS } from "@/lib/tauri/settings"
 beforeEach(() => {
   useAppStore.setState({ osOverride: null, paths: null, profiles: [], currentProfileId: null })
   useAppStore.getState().resetPlan()
+  // resetPlan deliberately preserves network config + MCP keys (they outlive a
+  // bundle switch), so wipe those explicitly for a truly clean slate per test.
+  useAppStore.setState((s) => ({ plan: { ...s.plan, network: {}, mcpKeys: {} } }))
 })
 
 it("setMcp adds then clears by empty targets", () => {
@@ -36,6 +39,67 @@ it("setCliMethod sets/clears a method; deselecting the cli clears it", () => {
 it("applyPreset recommended fills clis", () => {
   useAppStore.getState().applyPreset("recommended")
   expect(useAppStore.getState().plan.clis).toContain("cc-switch")
+})
+
+it("applyPreset targets every agent the bundle installs", () => {
+  useAppStore.getState().applyPreset("recommended")
+  // "recommended" installs Claude Code + Codex, so its MCP servers configure both.
+  for (const m of useAppStore.getState().plan.mcps) {
+    expect(m.targets).toEqual(["claude", "codex"])
+  }
+  useAppStore.getState().applyPreset("minimal")
+  for (const m of useAppStore.getState().plan.mcps) {
+    expect(m.targets).toEqual(["claude"])
+  }
+})
+
+describe("network config and MCP keys survive re-selection", () => {
+  beforeEach(() => {
+    const s = useAppStore.getState()
+    s.setNetwork({ npmRegistry: "https://registry.npmmirror.com", apiBaseUrl: "https://relay" })
+    s.setProxy({ mode: "manual", httpUrl: "http://127.0.0.1:7890" })
+    s.setMcpKey("context7", "secret")
+  })
+
+  it("applyPreset keeps them", () => {
+    useAppStore.getState().applyPreset("recommended")
+    const { network, mcpKeys } = useAppStore.getState().plan
+    expect(network.npmRegistry).toBe("https://registry.npmmirror.com")
+    expect(network.apiBaseUrl).toBe("https://relay")
+    expect(network.proxy?.httpUrl).toBe("http://127.0.0.1:7890")
+    expect(mcpKeys.context7).toBe("secret")
+  })
+
+  it("resetPlan clears the selection but keeps them", () => {
+    useAppStore.getState().applyPreset("recommended")
+    useAppStore.getState().resetPlan()
+    const { clis, network, mcpKeys } = useAppStore.getState().plan
+    expect(clis).toHaveLength(0)
+    expect(network.npmRegistry).toBe("https://registry.npmmirror.com")
+    expect(network.proxy?.httpUrl).toBe("http://127.0.0.1:7890")
+    expect(mcpKeys.context7).toBe("secret")
+  })
+})
+
+it("applyPreset keeps install-method choices only for CLIs it still installs", () => {
+  const s = useAppStore.getState()
+  s.setCliMethod("claude-code", "native")
+  s.setCliMethod("opencode", "bun")
+  // "recommended" installs claude-code but not opencode.
+  s.applyPreset("recommended")
+  expect(useAppStore.getState().plan.cliMethods).toEqual({ "claude-code": "native" })
+})
+
+it("syncTargetsToClis re-points selections at the currently chosen CLIs", () => {
+  const s = useAppStore.getState()
+  s.applyPreset("everything")
+  expect(useAppStore.getState().plan.mcps[0].targets).toEqual(["claude", "codex", "opencode"])
+  useAppStore.getState().toggleCli("opencode")
+  useAppStore.getState().toggleCli("codex")
+  useAppStore.getState().syncTargetsToClis()
+  const { skills, mcps } = useAppStore.getState().plan
+  for (const m of mcps) expect(m.targets).toEqual(["claude"])
+  for (const sk of skills) expect(sk.targets).toEqual(["claude"])
 })
 
 it("osOverride changes effectiveOS + plan.os", () => {

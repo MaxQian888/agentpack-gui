@@ -8,14 +8,11 @@ import {
   installMethodsFor,
   upgradeCommandFor,
 } from "./registry"
-import { isUpgradeAvailable } from "./version"
+import { isUpgradeAvailable, majorVersion } from "./version"
 import {
-  buildClaudeMcpCommand,
   buildClaudeMcpCommandFromSpec,
   buildClaudeMcpRemoveCommand,
-  buildCodexMcpEntry,
   buildCodexMcpEntryFromSpec,
-  buildOpencodeMcpEntry,
   buildOpencodeMcpEntryFromSpec,
   deleteCodexMcpEntry,
   deleteOpencodeMcpEntry,
@@ -34,12 +31,29 @@ import {
   serializeDisabledStore,
 } from "./mcp-disabled"
 import {
+  deleteClaudeProxy,
   deleteClaudeRelay,
   deleteCodexProvider,
+  deleteShellProxyBlock,
+  gitProxyClearCommands,
+  gitProxyCommands,
+  mergeClaudeProxy,
   mergeClaudeSettings,
   mergeCodexProvider,
+  mergeShellProxyBlock,
+  npmProxyClearCommands,
+  npmProxyCommands,
   npmRegistryCommand,
+  winProxyClearCommands,
+  winProxyCommands,
 } from "./merge/network"
+import {
+  effectiveProxy,
+  hasTarget,
+  isProxyActive,
+  shellExportLines,
+  shellFlavor,
+} from "./network/proxy"
 import {
   mergeClaudeSkillOverride,
   mergeOpencodeSkillPermission,
@@ -60,8 +74,11 @@ import type {
   CommandStep,
   McpServer,
   McpTarget,
+  OS,
   Paths,
   Plan,
+  ProxyConfig,
+  ProxyTarget,
   Runtime,
   StepDescriptor,
 } from "./types"
@@ -127,6 +144,10 @@ export function buildSteps(
   const opencodeMcps = new Set(state.opencodeMcps ?? [])
   const claudeSkills = new Set(state.claudeSkills ?? [])
   const codexSkills = new Set(state.codexSkills ?? [])
+
+  // 0. Proxy before anything that touches the network, so the mirror lookup and
+  // every install below already go through it.
+  steps.push(...proxyApplySteps(plan.network.proxy, paths, plan.os, messages))
 
   // 1. npm registry mirror first, so subsequent npm installs use it.
   if (plan.network.npmRegistry) {
@@ -226,6 +247,38 @@ export function buildSteps(
     }
   }
 
+  // 2b. uv prerequisite — a uvx-launched MCP server (published to PyPI, not npm)
+  // needs uv on PATH. Unlike Node this is NOT a `dependsOn` for the MCP steps:
+  // `claude mcp add` only writes config and succeeds without uv, so gating on a
+  // failed uv install would drop config that is otherwise correct and would start
+  // working the moment uv appears.
+  const needsUv = plan.mcps.some((m) => {
+    if (m.targets.length === 0) return false
+    return findMcp(m.id)?.runtime === "uvx"
+  })
+  if (needsUv && !installed.has("uv")) {
+    const uv = findRuntime("uv")
+    const title = cat.runtime["uv"]?.title ?? "uv"
+    const method = uv ? installMethodsFor(uv, plan.os)[0] : undefined
+    steps.push(
+      method
+        ? {
+            kind: "command",
+            id: "runtime-uv",
+            label: t.installRuntime(title),
+            command: method.command,
+            requiresElevation: method.requiresElevation || undefined,
+          }
+        : {
+            kind: "info",
+            id: "runtime-uv",
+            label: t.installRuntime(title),
+            lines: [uv?.manualNote ?? t.noInstaller(title), t.manualInstall],
+            manual: true,
+          }
+    )
+  }
+
   // 3. CLI installs — missing ones install; installed-but-behind ones upgrade;
   // installed-and-current ones are skipped (no redundant re-install).
   for (const id of plan.clis) {
@@ -235,6 +288,27 @@ export function buildSteps(
     if (skip) continue
     const title = cat.cli[id]?.title ?? id
     const npmBased = Boolean(tool.npmPackage) && isNpmBased(methodId)
+
+    // An npm install against a Node older than the package's `engines.node`
+    // floor fails with EBADENGINE buried in npm's output. Catch it up front and
+    // say what to do instead. Only when Node is already on the machine and too
+    // old — when it's absent we install a current LTS above every floor.
+    const nodeFound = installed.has("node") ? state.versions?.["node"] : undefined
+    const nodeMajor = majorVersion(nodeFound)
+    if (npmBased && tool.minNodeMajor && nodeMajor !== undefined && nodeMajor < tool.minNodeMajor) {
+      steps.push({
+        kind: "info",
+        id: `cli-${id}`,
+        label: upgrade ? t.upgradeCli(title) : t.installCli(title),
+        lines: [
+          t.nodeTooOld(title, tool.minNodeMajor, nodeFound ?? String(nodeMajor)),
+          t.nodeTooOldFix(tool.minNodeMajor),
+        ],
+        manual: true,
+      })
+      continue
+    }
+
     if (cmd) {
       steps.push({
         kind: "command",
@@ -291,20 +365,25 @@ export function buildSteps(
     const server = findMcp(m.id)
     if (!server || m.targets.length === 0) continue
     const title = cat.mcp[m.id]?.title ?? m.id
-    const key = plan.mcpKeys[m.id]
+    const spec = resolveCatalogSpec(server, plan.mcpKeys[m.id])
+    // Codex and OpenCode spawn the command they stored, so an npm shim (`npx`) has
+    // to be wrapped in `cmd /c` on Windows or it can't be spawned at all — the same
+    // treatment the MCP section's direct adds apply. Claude's own launcher resolves
+    // shims, so its command stays bare.
+    const stored = wrapStdioForOs(spec, plan.os)
 
     if (m.targets.includes("claude") && !claudeMcps.has(m.id)) {
       steps.push({
         kind: "command",
         id: `mcp-claude-${m.id}`,
         label: t.addMcpClaude(title),
-        command: buildClaudeMcpCommand(server, key),
+        command: buildClaudeMcpCommandFromSpec(server.id, spec),
         // `claude mcp add` needs the claude binary that step installs.
         dependsOn: claudeDep,
       })
     }
     if (m.targets.includes("codex") && !codexMcps.has(m.id)) {
-      const entry = buildCodexMcpEntry(server, key)
+      const entry = buildCodexMcpEntryFromSpec(stored)
       steps.push({
         kind: "mergeFile",
         id: `mcp-codex-${m.id}`,
@@ -315,7 +394,7 @@ export function buildSteps(
       })
     }
     if (m.targets.includes("opencode") && !opencodeMcps.has(m.id)) {
-      const entry = buildOpencodeMcpEntry(server, key)
+      const entry = buildOpencodeMcpEntryFromSpec(stored)
       steps.push({
         kind: "mergeFile",
         id: `mcp-opencode-${m.id}`,
@@ -327,10 +406,14 @@ export function buildSteps(
     }
   }
 
-  // 6. Relay / API endpoint config.
+  // 6. Relay / API endpoint config. Written for an agent this run installs OR one
+  // the machine already has: configuring a relay for an already-installed CLI is
+  // the common case, and gating on the checkbox alone produced a run with zero
+  // steps (the user filled in the endpoint, pressed Run, and nothing happened).
   const net = plan.network
+  const willHave = (id: string) => plan.clis.includes(id as CliTool["id"]) || installed.has(id)
   if (net.apiBaseUrl || net.apiToken) {
-    if (plan.clis.includes("claude-code")) {
+    if (willHave("claude-code")) {
       steps.push({
         kind: "mergeFile",
         id: "relay-claude",
@@ -340,7 +423,7 @@ export function buildSteps(
         writtenNote: t.claudeSettingsUpdated,
       })
     }
-    if (plan.clis.includes("codex") && net.apiBaseUrl) {
+    if (willHave("codex") && net.apiBaseUrl) {
       steps.push({
         kind: "mergeFile",
         id: "relay-codex",
@@ -356,8 +439,34 @@ export function buildSteps(
 }
 
 /**
- * Read-only post-install verify steps (claude --version, claude mcp list,
- * codex --version). All marked verifyOnly so failures surface as info.
+ * Whether a plan carries anything worth running — a CLI, a skill, an MCP server,
+ * or network config. Network counts: a relay endpoint or an npm mirror on its own
+ * is a complete, runnable plan, so neither the runner's "your plan is empty" toast
+ * nor the quick-install dialog's disabled button may treat it as nothing.
+ */
+export function planHasSelections(plan: Plan | undefined): boolean {
+  if (!plan) return false
+  const net = plan.network
+  return (
+    plan.clis.length > 0 ||
+    plan.skills.length > 0 ||
+    plan.mcps.length > 0 ||
+    !!net.apiBaseUrl ||
+    !!net.apiToken ||
+    !!net.npmRegistry ||
+    isProxyActive(net.proxy)
+  )
+}
+
+/**
+ * Read-only post-install verify steps (`claude --version`, `codex --version`).
+ * Both marked verifyOnly so failures surface as info.
+ *
+ * Deliberately does NOT run `claude mcp list`: that command health-checks every
+ * configured server, which takes tens of seconds and can hang — it would park the
+ * run panel on a "running" step long after the install finished. The post-run
+ * dashboard re-scan reads the same servers straight from `~/.claude.json`, so the
+ * user still gets confirmation, immediately.
  */
 export function buildVerifySteps(plan: Plan, messages: Messages = en): CommandStep[] {
   const v = messages.verify
@@ -370,15 +479,6 @@ export function buildVerifySteps(plan: Plan, messages: Messages = en): CommandSt
       verifyOnly: true,
       command: { file: "claude", args: ["--version"] },
     })
-    if (plan.mcps.some((m) => m.targets.includes("claude"))) {
-      steps.push({
-        kind: "command",
-        id: "verify-claude-mcp",
-        label: v.claudeMcp,
-        verifyOnly: true,
-        command: { file: "claude", args: ["mcp", "list"] },
-      })
-    }
   }
   if (plan.clis.includes("codex")) {
     steps.push({
@@ -388,6 +488,171 @@ export function buildVerifySteps(plan: Plan, messages: Messages = en): CommandSt
       verifyOnly: true,
       command: { file: "codex", args: ["--version"] },
     })
+  }
+  return steps
+}
+
+// ── Proxy steps ──────────────────────────────────────────────────────────────
+
+/**
+ * Write the proxy into every surface the user selected. Ordered so the config
+ * files land before any command that might use them, and returned as ordinary
+ * descriptors so preview mode renders "would …" lines and changes nothing.
+ *
+ * Only `claude` has a documented config field for a proxy; Codex and OpenCode
+ * read the process environment, which is why the `shell` target (an rc-file
+ * block on macOS/Linux, `setx` on Windows) is what reaches them — and why a
+ * closing note spells that out when the user left that target off.
+ */
+export function proxyApplySteps(
+  cfg: ProxyConfig | undefined,
+  paths: Paths,
+  os: OS,
+  messages: Messages = en
+): StepDescriptor[] {
+  if (!cfg || !isProxyActive(cfg)) return []
+  const t = messages.steps
+  const eff = effectiveProxy(cfg)
+  const shown = eff.https ?? eff.http ?? eff.all ?? ""
+  const steps: StepDescriptor[] = []
+
+  if (hasTarget(cfg, "claude")) {
+    steps.push({
+      kind: "mergeFile",
+      id: "proxy-claude",
+      label: t.proxyClaude(shown),
+      path: paths.claudeSettings,
+      merge: (existing) => mergeClaudeProxy(existing, cfg),
+      writtenNote: t.claudeSettingsUpdated,
+    })
+  }
+  if (hasTarget(cfg, "npm")) {
+    for (const command of npmProxyCommands(cfg)) {
+      steps.push({
+        kind: "command",
+        id: `proxy-npm-${command.args[2]}`,
+        label: t.proxyNpmSet(command.args[2], command.args[3]),
+        command,
+      })
+    }
+  }
+  if (hasTarget(cfg, "git")) {
+    for (const command of gitProxyCommands(cfg)) {
+      steps.push({
+        kind: "command",
+        id: `proxy-git-${command.args[2]}`,
+        label: t.proxyGitSet(command.args[2], command.args[3]),
+        command,
+      })
+    }
+  }
+  if (hasTarget(cfg, "shell")) {
+    if (os === "win") {
+      for (const command of winProxyCommands(cfg)) {
+        steps.push({
+          kind: "command",
+          id: `proxy-win-${command.args[0]}`,
+          label: t.proxyWinSet(command.args[0], command.args[1]),
+          command,
+        })
+      }
+    } else if (paths.shellProfile) {
+      const flavor = shellFlavor(paths.shellProfile)
+      steps.push({
+        kind: "mergeFile",
+        id: "proxy-shell",
+        label: t.proxyShell(paths.shellProfile),
+        path: paths.shellProfile,
+        merge: (existing) => mergeShellProxyBlock(existing, cfg, flavor),
+        writtenNote: t.proxyShellWritten(paths.shellProfile),
+      })
+    }
+  }
+
+  // What the user still has to do themselves: restart terminals, or (when the
+  // shell target is off) export the variables for Codex / OpenCode by hand.
+  steps.push({
+    kind: "info",
+    id: "proxy-note",
+    label: t.proxyNote,
+    lines: hasTarget(cfg, "shell")
+      ? [t.proxyRestartNote]
+      : [
+          t.proxyShellNote,
+          ...shellExportLines(cfg, os === "win" ? "posix" : shellFlavor(paths.shellProfile)),
+        ],
+  })
+  return steps
+}
+
+/**
+ * Remove everything `proxyApplySteps` writes, for the targets given. Clearing is
+ * unconditional per target (not derived from the current values) so a key left
+ * behind by an earlier, different proxy is cleaned up too. The command steps are
+ * `verifyOnly`: `git config --unset` and `setx` on an absent key are nothing to
+ * report as a failure.
+ */
+export function proxyClearSteps(
+  targets: readonly ProxyTarget[],
+  paths: Paths,
+  os: OS,
+  messages: Messages = en
+): StepDescriptor[] {
+  const t = messages.steps
+  const steps: StepDescriptor[] = []
+  if (targets.includes("claude")) {
+    steps.push({
+      kind: "mergeFile",
+      id: "proxy-clear-claude",
+      label: t.proxyClearClaude,
+      path: paths.claudeSettings,
+      merge: deleteClaudeProxy,
+      writtenNote: t.claudeSettingsUpdated,
+    })
+  }
+  if (targets.includes("npm")) {
+    for (const command of npmProxyClearCommands()) {
+      steps.push({
+        kind: "command",
+        id: `proxy-clear-npm-${command.args[2]}`,
+        label: t.proxyClearNpm(command.args[2]),
+        command,
+        verifyOnly: true,
+      })
+    }
+  }
+  if (targets.includes("git")) {
+    for (const command of gitProxyClearCommands()) {
+      steps.push({
+        kind: "command",
+        id: `proxy-clear-git-${command.args[3]}`,
+        label: t.proxyClearGit(command.args[3]),
+        command,
+        verifyOnly: true,
+      })
+    }
+  }
+  if (targets.includes("shell")) {
+    if (os === "win") {
+      for (const command of winProxyClearCommands()) {
+        steps.push({
+          kind: "command",
+          id: `proxy-clear-win-${command.args[0]}`,
+          label: t.proxyClearWin(command.args[0]),
+          command,
+          verifyOnly: true,
+        })
+      }
+    } else if (paths.shellProfile) {
+      steps.push({
+        kind: "mergeFile",
+        id: "proxy-clear-shell",
+        label: t.proxyClearShell(paths.shellProfile),
+        path: paths.shellProfile,
+        merge: deleteShellProxyBlock,
+        writtenNote: t.proxyShellWritten(paths.shellProfile),
+      })
+    }
   }
   return steps
 }

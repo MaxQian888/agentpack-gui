@@ -20,14 +20,26 @@ import {
   type McpSpec,
 } from "./mcp"
 import {
+  SHELL_BLOCK_END,
+  SHELL_BLOCK_START,
+  deleteClaudeProxy,
   deleteClaudeRelay,
   deleteCodexProvider,
+  deleteShellProxyBlock,
+  gitProxyClearCommands,
+  gitProxyCommands,
+  mergeClaudeProxy,
   mergeClaudeSettings,
   mergeCodexProvider,
+  mergeShellProxyBlock,
+  npmProxyClearCommands,
+  npmProxyCommands,
   npmRegistryCommand,
+  winProxyClearCommands,
+  winProxyCommands,
 } from "./network"
 import { findMcp } from "../registry"
-import type { McpServer } from "../types"
+import type { McpServer, ProxyConfig } from "../types"
 
 it("http MCP adds bearer header for Claude", () => {
   const cmd = buildClaudeMcpCommand(findMcp("supermemory")!, "k")
@@ -247,6 +259,23 @@ it("custom http spec: Codex uses bearer env var, Claude/OpenCode inline headers"
     enabled: true,
     headers: { Authorization: "Bearer secret", "X-Extra": "1" },
   })
+})
+
+it("launches a uvx server without npx's -y flag", () => {
+  // uvx is already non-interactive; a leading `-y` would be read as the package
+  // name and the server would never start.
+  const spec = resolveCatalogSpec(findMcp("fetch")!, undefined)
+  expect(spec).toEqual({
+    transport: "stdio",
+    command: "uvx",
+    args: ["mcp-server-fetch"],
+    env: {},
+  })
+})
+
+it("leaves a uvx command unwrapped on Windows (it is a real exe, not a shim)", () => {
+  const spec = resolveCatalogSpec(findMcp("fetch")!, undefined)
+  expect(wrapStdioForOs(spec, "win")).toEqual(spec)
 })
 
 it("reverse parsers round-trip a catalog server per target", () => {
@@ -482,4 +511,102 @@ it("wrapStdioForOs wraps npm-family shims through cmd /c on Windows only", () =>
   expect(wrapStdioForOs(wrapped, "win")).toBe(wrapped)
   const http: McpSpec = { transport: "http", url: "https://x", headers: {} }
   expect(wrapStdioForOs(http, "win")).toBe(http)
+})
+
+// --- Proxy ---------------------------------------------------------------
+
+const proxy = (patch: Partial<ProxyConfig> = {}): ProxyConfig => ({
+  mode: "manual",
+  targets: ["claude", "npm", "git", "shell"],
+  httpUrl: "http://127.0.0.1:7890",
+  ...patch,
+})
+
+it("mergeClaudeProxy writes the proxy env vars and leaves the rest of the file alone", () => {
+  const existing = JSON.stringify({ model: "opus", env: { KEEP: "1" } })
+  const out = JSON.parse(mergeClaudeProxy(existing, proxy({ noProxy: "localhost" })))
+  expect(out.model).toBe("opus")
+  expect(out.env).toEqual({
+    KEEP: "1",
+    HTTP_PROXY: "http://127.0.0.1:7890",
+    HTTPS_PROXY: "http://127.0.0.1:7890",
+    NO_PROXY: "localhost",
+  })
+})
+
+it("deleteClaudeProxy is the exact inverse and spares the relay vars", () => {
+  const withRelay = mergeClaudeSettings(JSON.stringify({ env: { KEEP: "1" } }), {
+    apiBaseUrl: "https://r",
+    apiToken: "t",
+  })
+  const applied = mergeClaudeProxy(
+    withRelay,
+    proxy({ noProxy: "localhost", caCertPath: "/ca.pem", insecureTls: true })
+  )
+  const out = JSON.parse(deleteClaudeProxy(applied))
+  expect(out.env).toEqual({
+    KEEP: "1",
+    ANTHROPIC_BASE_URL: "https://r",
+    ANTHROPIC_AUTH_TOKEN: "t",
+  })
+})
+
+it("deleteClaudeProxy returns empty input unchanged", () => {
+  expect(deleteClaudeProxy("")).toBe("")
+})
+
+it("npm and git proxy commands cover exactly the keys those tools support", () => {
+  const cfg = proxy({ noProxy: "localhost", allUrl: "socks5://127.0.0.1:1080" })
+  expect(npmProxyCommands(cfg)).toEqual([
+    { file: "npm", args: ["config", "set", "proxy", "http://127.0.0.1:7890"] },
+    { file: "npm", args: ["config", "set", "https-proxy", "http://127.0.0.1:7890"] },
+    { file: "npm", args: ["config", "set", "noproxy", "localhost"] },
+  ])
+  // git has no bypass-list key, and neither tool takes ALL_PROXY.
+  expect(gitProxyCommands(cfg)).toEqual([
+    { file: "git", args: ["config", "--global", "http.proxy", "http://127.0.0.1:7890"] },
+    { file: "git", args: ["config", "--global", "https.proxy", "http://127.0.0.1:7890"] },
+  ])
+  expect(npmProxyClearCommands().map((c) => c.args[2])).toEqual(["proxy", "https-proxy", "noproxy"])
+  expect(gitProxyClearCommands().map((c) => c.args[3])).toEqual(["http.proxy", "https.proxy"])
+})
+
+it("shell block is replaced in place, never stacked", () => {
+  const original = "export PATH=/usr/bin\n"
+  const once = mergeShellProxyBlock(original, proxy())
+  expect(once).toContain("export PATH=/usr/bin")
+  expect(once).toContain('export HTTP_PROXY="http://127.0.0.1:7890"')
+  const twice = mergeShellProxyBlock(once, proxy({ httpUrl: "http://127.0.0.1:7897" }))
+  expect(twice.match(new RegExp(SHELL_BLOCK_START, "g"))).toHaveLength(1)
+  expect(twice).toContain("7897")
+  expect(twice).not.toContain("7890")
+  expect(twice).toContain("export PATH=/usr/bin")
+})
+
+it("deleteShellProxyBlock restores the profile to what the user wrote", () => {
+  const original = "export PATH=/usr/bin\n"
+  const applied = mergeShellProxyBlock(original, proxy())
+  expect(deleteShellProxyBlock(applied).trim()).toBe(original.trim())
+  // Idempotent, and a profile we never touched is returned verbatim.
+  expect(deleteShellProxyBlock("nothing here\n")).toBe("nothing here\n")
+})
+
+it("shell block uses the profile's dialect and ends with its fence", () => {
+  const fish = mergeShellProxyBlock("", proxy(), "fish")
+  expect(fish).toContain('set -gx HTTP_PROXY "http://127.0.0.1:7890"')
+  expect(fish.trim().endsWith(SHELL_BLOCK_END)).toBe(true)
+})
+
+it("an inactive proxy writes no block at all", () => {
+  expect(mergeShellProxyBlock("keep me\n", { mode: "off", targets: [] })).toBe("keep me\n")
+})
+
+it("Windows setx commands mirror the env vars and clear the full key set", () => {
+  expect(winProxyCommands(proxy({ noProxy: "localhost" }))).toEqual([
+    { file: "setx", args: ["HTTP_PROXY", "http://127.0.0.1:7890"] },
+    { file: "setx", args: ["HTTPS_PROXY", "http://127.0.0.1:7890"] },
+    { file: "setx", args: ["NO_PROXY", "localhost"] },
+  ])
+  expect(winProxyClearCommands().every((c) => c.args[1] === "")).toBe(true)
+  expect(winProxyClearCommands().map((c) => c.args[0])).toContain("HTTPS_PROXY")
 })

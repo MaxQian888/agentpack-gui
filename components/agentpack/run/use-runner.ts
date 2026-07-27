@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react"
 import { toast } from "sonner"
 import { runSteps } from "@/lib/agentpack/runner"
-import { buildVerifySteps } from "@/lib/agentpack/plan"
+import { buildVerifySteps, planHasSelections } from "@/lib/agentpack/plan"
 import type { Plan, StepDescriptor, StepReport } from "@/lib/agentpack/types"
 import { useAppStore } from "@/store/app-store"
 import { useT } from "@/lib/i18n/provider"
@@ -35,20 +35,6 @@ export interface RunnerState {
    * the UI can re-detect installed tools and re-scan. Returns an unsubscribe.
    */
   onAfterRun: (fn: () => void) => () => void
-}
-
-/** Whether a plan carries any user selection (CLIs / skills / MCP / network). */
-function planHasSelections(plan: Plan | undefined): boolean {
-  if (!plan) return false
-  const net = plan.network
-  return (
-    plan.clis.length > 0 ||
-    plan.skills.length > 0 ||
-    plan.mcps.length > 0 ||
-    !!net.apiBaseUrl ||
-    !!net.apiToken ||
-    !!net.npmRegistry
-  )
 }
 
 export function useRunner(): RunnerState {

@@ -12,12 +12,15 @@ import {
   latestVersion,
   npmOwns,
   pkgManagerOwns,
+  setProcessProxy,
   skillsScan,
 } from "@/lib/tauri/commands"
 import { checkForUpdate, getAppVersion } from "@/lib/tauri/updater"
 import { loadSettings, saveSettings } from "@/lib/tauri/settings"
+import { registerSummonShortcut } from "@/lib/tauri/shortcut"
 import { notify } from "@/lib/tauri/system"
 import { buildSteps, type InstalledState } from "@/lib/agentpack/plan"
+import { effectiveProxy } from "@/lib/agentpack/network/proxy"
 import { CLI_TOOLS, RUNTIMES, runtimePkgManager } from "@/lib/agentpack/registry"
 import { useAppStore } from "@/store/app-store"
 import { useT } from "@/lib/i18n/provider"
@@ -53,6 +56,7 @@ function ShellBody() {
   const setUpdateState = useAppStore((s) => s.setUpdateState)
   const setUpdateInfo = useAppStore((s) => s.setUpdateInfo)
   const setSettings = useAppStore((s) => s.setSettings)
+  const setProxy = useAppStore((s) => s.setProxy)
   const applyPreset = useAppStore((s) => s.applyPreset)
   const onboardingOpen = useAppStore((s) => s.onboardingOpen)
   const setOnboardingOpen = useAppStore((s) => s.setOnboardingOpen)
@@ -204,6 +208,29 @@ function ShellBody() {
       const settings = await loadSettings()
       if (cancelled) return
       setSettings(settings)
+      // Restore the proxy the user applied last time: the plan isn't persisted,
+      // so without this agentpack's own downloads would go direct until they
+      // re-applied it.
+      if (settings.proxy) {
+        setProxy(settings.proxy)
+        const eff = effectiveProxy(settings.proxy)
+        void setProcessProxy({
+          http: eff.http,
+          https: eff.https,
+          all: eff.all,
+          noProxy: eff.noProxy,
+        })
+      }
+      // Global shortcuts don't survive a restart — re-claim the accelerator the
+      // user opted into. If another app took it meanwhile, drop it from settings
+      // so About doesn't show a switch that's on but does nothing.
+      if (settings.summonShortcut) {
+        const ok = await registerSummonShortcut(settings.summonShortcut)
+        if (!cancelled && !ok) {
+          setSettings({ summonShortcut: null })
+          void saveSettings({ summonShortcut: null })
+        }
+      }
       // Greet a first-time user once; About can reopen the wizard later.
       if (!settings.onboarded) setOnboardingOpen(true)
       const version = await getAppVersion()
@@ -222,7 +249,7 @@ function ShellBody() {
     return () => {
       cancelled = true
     }
-  }, [t, setSettings, setAppVersion, setUpdateInfo, setUpdateState, setOnboardingOpen])
+  }, [t, setSettings, setProxy, setAppVersion, setUpdateInfo, setUpdateState, setOnboardingOpen])
 
   // Lazily scan chat history the first time the user opens that section. Set
   // state only in the async continuation (like the dashboard scan above) so no
@@ -377,6 +404,7 @@ function ShellBody() {
             scan={dashboardScan}
             scanning={dashboardScanning}
             rescan={rescanDashboard}
+            onNavigate={setSection}
           />
         )
       case "history":
@@ -419,7 +447,7 @@ function ShellBody() {
   }
 
   return (
-    <div className="flex h-screen bg-background text-foreground">
+    <div className="flex h-dvh bg-background text-foreground">
       <SidebarNav active={section} onSelect={setSection} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Header

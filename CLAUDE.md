@@ -143,6 +143,37 @@ All components are pre-installed — import directly, do not run `shadcn add` fo
   - `beforeDevCommand`: runs `pnpm dev`
   - `beforeBuildCommand`: runs `pnpm build`
 
+**Plugins** (`src-tauri/src/lib.rs`, each with a `lib/tauri/*.ts` bridge):
+`updater`, `window-state`, `dialog`, `process`, `store`, `opener`,
+`notification`, `os`, `clipboard-manager`, plus desktop-gated `single-instance`
+and `global-shortcut`. Every plugin permission lives in
+`capabilities/desktop.json` — `default.json` stays minimal. `single-instance`
+**must remain the first registered plugin** (plugins run in registration order,
+and it has to reject a duplicate launch before anything else touches state).
+
+**Frameless window.** The window has no OS title bar; `components/agentpack/
+window-chrome.tsx` decides what to draw from `@tauri-apps/plugin-os`:
+
+- **macOS** — `tauri.macos.conf.json` keeps `decorations: true` with
+  `titleBarStyle: "Overlay"` + `hiddenTitle`, so the _native_ traffic lights
+  float over the content at `trafficLightPosition`. We draw no buttons; the
+  sidebar just takes `MACOS_TRAFFIC_LIGHT_INSET` of top padding to clear them.
+- **Windows / Linux** — `decorations: false` in the base config, and
+  `<WindowControls>` renders minimize / maximize / close into the header.
+
+⚠️ `tauri.conf.json` and `tauri.macos.conf.json` **both carry the full window
+object**: Tauri merges platform config with RFC 7386 JSON Merge Patch, which
+replaces arrays wholesale rather than merging them. Change one, change both.
+
+The header (and the sidebar's brand block) carry `data-tauri-drag-region="deep"`,
+which makes the whole subtree draggable _except_ clickable elements — Tauri's
+drag script bails on `BUTTON`/`INPUT`/`SELECT`/`TEXTAREA`/`LABEL`/`A`/`SUMMARY`,
+anything `contenteditable`, and anything with an interactive `role` or a real
+`tabindex`. Keep header controls as real interactive elements and they keep
+working; swap one for a bare `<div>` and it becomes a drag handle. Edge-resizing
+needs no code — tao hit-tests borders on Windows and calls `begin_resize_drag`
+on GTK.
+
 ### Styling System
 
 - **Tailwind v4** via PostCSS (`@tailwindcss/postcss`)

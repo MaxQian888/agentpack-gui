@@ -20,6 +20,7 @@ import {
   runtimeUpgradeCommandFor,
 } from "@/lib/agentpack/registry"
 import { runtimeInstallStep, runtimeUpgradeStep } from "@/lib/agentpack/plan"
+import { extractSemver } from "@/lib/agentpack/version"
 import { openUrl } from "@/lib/tauri/system"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
@@ -114,9 +115,12 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
                 {d ? (
                   d.installed ? (
                     <>
-                      <Badge variant="secondary" className="shrink-0 font-normal">
+                      <Badge
+                        variant="secondary"
+                        className="min-w-0 shrink font-normal text-ellipsis"
+                      >
                         {t.envcheck.installed}
-                        {d.version ? ` · ${d.version}` : ""}
+                        {d.version ? ` · ${extractSemver(d.version) ?? d.version}` : ""}
                       </Badge>
                       {notManaged ? (
                         <Button

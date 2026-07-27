@@ -6,6 +6,7 @@ mod fsops;
 mod history;
 mod history_cache;
 mod mcp;
+mod net;
 mod paths;
 mod skills;
 
@@ -17,6 +18,28 @@ mod skills;
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Bring the main window back to the front, whatever state it's in.
+///
+/// The order matters and every step earns its place:
+///  1. macOS only — un-hide the *application* first. After Cmd+H the whole app
+///     is hidden, so its windows report `isVisible == false`, and tao's
+///     `set_focus` bails out early on exactly that condition. Without this, a
+///     second launch would silently do nothing.
+///  2. `unminimize` — a minimized window also fails tao's `set_focus` guard.
+///  3. `show` — the window itself may have been ordered out.
+///  4. `set_focus` — only now does it reach `activateIgnoringOtherApps`.
+#[cfg(desktop)]
+fn focus_main_window(app: &tauri::AppHandle) {
+  use tauri::Manager;
+  #[cfg(target_os = "macos")]
+  let _ = app.show();
+  if let Some(window) = app.get_webview_window("main") {
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+  }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let mut builder = tauri::Builder::default();
@@ -24,9 +47,21 @@ pub fn run() {
   #[cfg(desktop)]
   {
     builder = builder
+      // MUST stay the first registered plugin — plugins run in registration
+      // order, so this has to reject the duplicate launch before anything else
+      // touches state. Two agentpack windows would race each other writing
+      // ~/.claude, ~/.codex and the cc-switch DB, so the second launch just
+      // re-summons the first window instead of opening its own.
+      .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        focus_main_window(app);
+      }))
       .plugin(tauri_plugin_updater::Builder::new().build())
       // Persist and restore the window's size/position across launches.
-      .plugin(tauri_plugin_window_state::Builder::new().build());
+      .plugin(tauri_plugin_window_state::Builder::new().build())
+      // Backs the opt-in "summon agentpack" hotkey. Shortcuts are registered
+      // from the frontend (lib/tauri/shortcut.ts) so the accelerator stays a
+      // user setting; this only installs the plugin.
+      .plugin(tauri_plugin_global_shortcut::Builder::new().build());
   }
 
   builder
@@ -38,6 +73,11 @@ pub fn run() {
     .plugin(tauri_plugin_store::Builder::new().build())
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_notification::init())
+    // `os` tells the frontend which window chrome to draw (native traffic
+    // lights on macOS vs. our own buttons elsewhere); `clipboard-manager`
+    // replaces `navigator.clipboard`, which silently fails in WebKitGTK.
+    .plugin(tauri_plugin_os::init())
+    .plugin(tauri_plugin_clipboard_manager::init())
     .invoke_handler(tauri::generate_handler![
       commands::greet,
       paths::get_paths,
@@ -76,6 +116,11 @@ pub fn run() {
       mcp::registry_fetch,
       mcp::mcp_probe_remote,
       mcp::mcp_probe_stdio,
+      net::proxy_env_snapshot,
+      net::system_proxy_snapshot,
+      net::tool_proxy_snapshot,
+      net::proxy_check,
+      net::set_process_proxy,
       ccswitch::cc_load_providers,
       ccswitch::cc_write_provider,
       backup::backup_snapshot,
@@ -83,6 +128,7 @@ pub fn run() {
       backup::backup_restore,
       history::history_list_sessions,
       history::history_get_session,
+      history::history_get_part_text,
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

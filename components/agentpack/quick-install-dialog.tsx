@@ -15,45 +15,12 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { CLI_TOOLS, MCP_SERVERS, SKILLS } from "@/lib/agentpack/registry"
-import { PRESETS } from "@/lib/agentpack/presets"
-import type { AgentTarget, Plan } from "@/lib/agentpack/types"
+import { matchPreset, mcpTargetsFor, PRESETS, skillTargetsFor } from "@/lib/agentpack/presets"
+import { planHasSelections } from "@/lib/agentpack/plan"
 import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-
-/** Targets a preset assigns: skills → both agents; MCP servers → Claude only. */
-const SKILL_TARGETS: AgentTarget[] = ["claude", "codex"]
-const MCP_TARGETS: AgentTarget[] = ["claude"]
-
-const sameSet = (a: readonly string[], b: readonly string[]): boolean => {
-  if (a.length !== b.length) return false
-  const sb = new Set(b)
-  return a.every((x) => sb.has(x))
-}
-
-/**
- * Which preset the current plan exactly matches (by id sets), else "custom" —
- * drives the highlighted chip. Only ids are compared, so it stays true even
- * though the plan also carries per-item targets.
- */
-export function matchPreset(plan: Plan): string {
-  for (const p of PRESETS) {
-    if (
-      sameSet(plan.clis, p.clis) &&
-      sameSet(
-        plan.skills.map((s) => s.id),
-        p.skills
-      ) &&
-      sameSet(
-        plan.mcps.map((m) => m.id),
-        p.mcps
-      )
-    ) {
-      return p.id
-    }
-  }
-  return "custom"
-}
+import { KeyInput } from "./sections/mcp/helpers"
 
 /**
  * One-page quick-install dialog opened from the header "Run ▾" menu. Lets the
@@ -78,6 +45,8 @@ export function QuickInstallDialog({
   const toggleCli = useAppStore((s) => s.toggleCli)
   const setSkill = useAppStore((s) => s.setSkill)
   const setMcp = useAppStore((s) => s.setMcp)
+  const setMcpKey = useAppStore((s) => s.setMcpKey)
+  const syncTargetsToClis = useAppStore((s) => s.syncTargetsToClis)
   const applyPreset = useAppStore((s) => s.applyPreset)
   const resetPlan = useAppStore((s) => s.resetPlan)
   const detections = useAppStore((s) => s.detections)
@@ -89,8 +58,20 @@ export function QuickInstallDialog({
   const selectedSkills = new Set(plan.skills.map((s) => s.id))
   const selectedMcps = new Set(plan.mcps.map((m) => m.id))
   const total = selectedClis.size + selectedSkills.size + selectedMcps.size
+  // Where skills / MCP servers land: the agent CLIs this selection sets up.
+  const skillTargets = skillTargetsFor(plan.clis)
+  const mcpTargets = mcpTargetsFor(plan.clis)
+  const targetNames = (targets: readonly string[]) =>
+    targets.map((tg) => t.mcp.targets[tg] ?? tg).join(" · ")
 
   const choosePreset = (id: string) => (id === "custom" ? resetPlan() : applyPreset(id))
+
+  // Changing the CLI selection re-points what's already ticked, so the "writes to"
+  // line below never promises an agent the user just unticked.
+  const toggleCliAndRetarget = (id: Parameters<typeof toggleCli>[0]) => {
+    toggleCli(id)
+    syncTargetsToClis()
+  }
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
@@ -140,11 +121,11 @@ export function QuickInstallDialog({
                 checked={selectedClis.has(tool.id)}
                 installed={detections[tool.id]?.installed}
                 installedLabel={t.envcheck.installed}
-                onToggle={() => toggleCli(tool.id)}
+                onToggle={() => toggleCliAndRetarget(tool.id)}
               />
             ))}
           </Group>
-          <Group icon={Wrench} title={d.skills}>
+          <Group icon={Wrench} title={d.skills} note={d.writesTo(targetNames(skillTargets))}>
             {SKILLS.map((skill) => (
               <CheckRow
                 key={skill.id}
@@ -152,21 +133,39 @@ export function QuickInstallDialog({
                 label={t.catalog.skills[skill.id]?.title ?? skill.id}
                 checked={selectedSkills.has(skill.id)}
                 onToggle={() =>
-                  setSkill(skill.id, selectedSkills.has(skill.id) ? [] : SKILL_TARGETS)
+                  setSkill(skill.id, selectedSkills.has(skill.id) ? [] : skillTargets)
                 }
               />
             ))}
           </Group>
-          <Group icon={Server} title={d.mcp}>
-            {MCP_SERVERS.map((server) => (
-              <CheckRow
-                key={server.id}
-                id={`qi-mcp-${server.id}`}
-                label={t.catalog.mcp[server.id]?.title ?? server.id}
-                checked={selectedMcps.has(server.id)}
-                onToggle={() => setMcp(server.id, selectedMcps.has(server.id) ? [] : MCP_TARGETS)}
-              />
-            ))}
+          <Group icon={Server} title={d.mcp} note={d.writesTo(targetNames(mcpTargets))}>
+            {MCP_SERVERS.map((server) => {
+              const checked = selectedMcps.has(server.id)
+              return (
+                <div key={server.id} className="flex flex-col gap-1">
+                  <CheckRow
+                    id={`qi-mcp-${server.id}`}
+                    label={t.catalog.mcp[server.id]?.title ?? server.id}
+                    checked={checked}
+                    badge={server.keyEnv ? t.mcp.needsKeyBadge : undefined}
+                    onToggle={() => setMcp(server.id, checked ? [] : mcpTargets)}
+                  />
+                  {/* Ask for the key here rather than sending the user to the MCP
+                      page: a bundle can select a key-gated server (context7,
+                      github), and without one the server installs degraded. */}
+                  {checked && server.keyEnv ? (
+                    <div className="pl-6">
+                      <KeyInput
+                        ariaLabel={`${server.id} ${server.keyEnv}`}
+                        placeholder={server.keyEnv}
+                        value={plan.mcpKeys[server.id] ?? ""}
+                        onChange={(v) => setMcpKey(server.id, v)}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              )
+            })}
           </Group>
         </div>
 
@@ -189,7 +188,9 @@ export function QuickInstallDialog({
             <Button variant="ghost" onClick={onClose}>
               {t.shell.cancel}
             </Button>
-            <Button disabled={total === 0} onClick={onInstall}>
+            {/* Network-only plans (a relay endpoint, an npm mirror, a proxy) are
+                runnable too, so the button follows the plan, not the tick count. */}
+            <Button disabled={!planHasSelections(plan)} onClick={onInstall}>
               {dryRun ? d.installPreview : d.install}
             </Button>
           </div>
@@ -199,22 +200,25 @@ export function QuickInstallDialog({
   )
 }
 
-/** A titled column of check rows. */
+/** A titled column of check rows, with an optional sub-line (e.g. where it writes). */
 function Group({
   icon: Icon,
   title,
+  note,
   children,
 }: {
   icon: LucideIcon
   title: string
+  note?: string
   children: React.ReactNode
 }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className="flex items-center gap-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         <Icon className="size-3.5" aria-hidden="true" />
         {title}
       </div>
+      {note ? <p className="-mt-1 text-xs text-muted-foreground">{note}</p> : null}
       <div className="flex flex-col gap-0.5">{children}</div>
     </div>
   )
@@ -227,6 +231,7 @@ function CheckRow({
   checked,
   installed,
   installedLabel,
+  badge,
   onToggle,
 }: {
   id: string
@@ -234,6 +239,8 @@ function CheckRow({
   checked: boolean
   installed?: boolean
   installedLabel?: string
+  /** Short marker after the label, e.g. "key" for a server that needs an API key. */
+  badge?: string
   onToggle: () => void
 }) {
   return (
@@ -243,6 +250,11 @@ function CheckRow({
     >
       <Checkbox id={id} checked={checked} onCheckedChange={onToggle} />
       <span className="min-w-0 flex-1 truncate">{label}</span>
+      {badge ? (
+        <span className="shrink-0 rounded-full border px-1.5 text-[10px] text-muted-foreground">
+          {badge}
+        </span>
+      ) : null}
       {installed ? (
         <span
           className="size-1.5 shrink-0 rounded-full bg-emerald-500"

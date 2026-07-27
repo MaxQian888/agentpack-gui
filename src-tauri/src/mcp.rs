@@ -11,16 +11,14 @@ use std::time::{Duration, Instant};
 const REGISTRY_BASE: &str = "https://registry.modelcontextprotocol.io/v0/servers";
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
-/// Shared ureq agent: bounded timeouts + honor the ambient HTTPS proxy (mirrors
-/// the skills tarball downloader).
+/// Shared ureq agent: bounded timeouts + the proxy resolved by `net`
+/// (the one applied in the UI, else the ambient environment).
 fn http_agent() -> ureq::Agent {
   let mut builder = ureq::AgentBuilder::new()
     .timeout_connect(Duration::from_secs(10))
     .timeout_read(Duration::from_secs(15));
-  if let Ok(proxy_url) = std::env::var("HTTPS_PROXY").or_else(|_| std::env::var("https_proxy")) {
-    if let Ok(proxy) = ureq::Proxy::new(&proxy_url) {
-      builder = builder.proxy(proxy);
-    }
+  if let Some(proxy) = crate::net::proxy_from_env() {
+    builder = builder.proxy(proxy);
   }
   builder.build()
 }

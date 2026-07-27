@@ -27,6 +27,21 @@ it("Custom resets the plan", async () => {
   expect(useAppStore.getState().plan.clis).toHaveLength(0)
 })
 
+it("ticks the bundle the plan already matches, even when chosen elsewhere", async () => {
+  useAppStore.getState().applyPreset("minimal")
+  render(
+    <I18nProvider>
+      <PresetsSection />
+    </I18nProvider>
+  )
+  const card = (await screen.findByText("Minimal")).closest("[role=button]")!
+  expect(card).toHaveAttribute("class", expect.stringContaining("ring-primary"))
+  // Editing the selection by hand drops it back to Custom.
+  useAppStore.getState().toggleCli("codex")
+  const custom = (await screen.findByText("Custom")).closest("[role=button]")!
+  expect(custom).toHaveAttribute("class", expect.stringContaining("ring-primary"))
+})
+
 it("Custom opens the customize dialog when a handler is provided", async () => {
   const onCustomize = jest.fn()
   render(

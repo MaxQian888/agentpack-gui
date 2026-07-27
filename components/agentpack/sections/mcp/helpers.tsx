@@ -4,6 +4,7 @@ import { useState } from "react"
 import { Check, Copy, Eye, EyeOff, Plus } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
+import { copyText } from "@/lib/tauri/clipboard"
 import { useT } from "@/lib/i18n/provider"
 import { MCP_REGISTRY_IDS } from "@/lib/agentpack/scan"
 import {
@@ -13,12 +14,12 @@ import {
   mergeOpencodeMcp,
   type McpSpec,
 } from "@/lib/agentpack/merge/mcp"
-import type { McpTarget } from "@/lib/agentpack/types"
+import { MCP_TARGETS, type McpTarget } from "@/lib/agentpack/types"
 import type { ClassifiedIds } from "@/lib/agentpack/scan"
 import type { DashboardScan } from "../dashboard"
 
-/** The three MCP write targets, in display order. */
-export const MCP_TARGETS: readonly McpTarget[] = ["claude", "codex", "opencode"]
+/** The three MCP write targets, in display order (canonical list lives with the types). */
+export { MCP_TARGETS }
 
 /** Per-target dot colors — shared with the skills/history source palette. */
 export const MCP_TARGET_COLORS: Record<McpTarget, string> = {
@@ -180,12 +181,12 @@ export function CopyButton({ value, ariaLabel }: { value: string; ariaLabel?: st
   const t = useT().mcp
   const [done, setDone] = useState(false)
   const copy = async () => {
-    try {
-      await navigator.clipboard?.writeText(value)
+    // Goes through the clipboard-manager plugin under Tauri — `navigator.
+    // clipboard` is rejected outright by WebKitGTK, so copying a key silently
+    // did nothing on Linux.
+    if (await copyText(value)) {
       setDone(true)
       setTimeout(() => setDone(false), 1500)
-    } catch {
-      // Clipboard unavailable (e.g. denied) — silently ignore.
     }
   }
   return (

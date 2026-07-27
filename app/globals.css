@@ -119,4 +119,33 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  /*
+   * The default WebView scrollbar is a heavy, opaque bar — very visible on
+   * Windows/Linux, where it never auto-hides. Derive both states from
+   * `--muted-foreground` (defined in light and dark alike) so the track stays
+   * invisible and the thumb only asserts itself on hover. `--border` is too
+   * faint to reuse here: in dark mode it is `oklch(1 0 0 / 10%)`.
+   */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, var(--muted-foreground) 30%, transparent) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--muted-foreground) 30%, transparent);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklch, var(--muted-foreground) 55%, transparent);
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 }

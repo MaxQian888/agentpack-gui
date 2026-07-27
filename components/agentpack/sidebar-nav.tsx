@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import type { Messages } from "@/lib/i18n/types"
 import { useAppStore } from "@/store/app-store"
+import { MACOS_TRAFFIC_LIGHT_INSET, useWindowChrome } from "./window-chrome"
 
 export type SectionKey =
   | "dashboard"
@@ -63,9 +64,22 @@ export function SidebarNav({
 }) {
   const t = useT()
   const hasUpdate = useAppStore((s) => s.hasUpdate())
+  const chrome = useWindowChrome()
   return (
-    <nav data-tour="nav" className="flex w-60 shrink-0 flex-col gap-1 border-r bg-sidebar p-3">
-      <div className="px-2 pb-3 pt-1">
+    <nav
+      data-tour="nav"
+      className={cn(
+        "flex w-60 shrink-0 flex-col gap-1 border-r bg-sidebar p-3",
+        // The window's top-left corner is the sidebar's, so this is where the
+        // macOS traffic lights land — push the brand block below them.
+        chrome === "macos" && MACOS_TRAFFIC_LIGHT_INSET
+      )}
+    >
+      {/* Draggable alongside the header, so the whole top strip moves the window. */}
+      <div
+        data-tauri-drag-region={chrome === "none" ? undefined : "deep"}
+        className="px-2 pb-3 pt-1"
+      >
         <div className="text-lg font-semibold tracking-tight">{t.brand}</div>
         <p className="text-xs text-muted-foreground">{t.header.tagline}</p>
       </div>

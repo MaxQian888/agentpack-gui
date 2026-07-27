@@ -1,0 +1,115 @@
+name: Catalog Audit
+
+# ============================================================================
+# Weekly staleness audit of the hardcoded tool catalog.
+# ============================================================================
+# lib/agentpack/registry.ts pins npm/PyPI packages and installer URLs that
+# upstream is free to rename, deprecate or delete. That breakage is SILENT:
+# `claude mcp add` happily writes a config for a package that no longer exists,
+# and the user only discovers it later inside their agent.
+#
+# This job checks every catalog target against the live registries once a week
+# and opens (or updates) a single tracking issue when something has rotted.
+# ============================================================================
+
+on:
+  schedule:
+    # Mondays 03:17 UTC — off the hour to avoid the GitHub-wide cron stampede
+    # that delays jobs scheduled at :00.
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: catalog-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: Audit catalog freshness
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          # Must match packageManager in package.json.
+          version: 10.30.3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20.x
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Audit catalog
+        id: audit
+        run: |
+          set +e
+          pnpm audit:catalog 2>&1 | tee audit-output.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the tracking issue
+        if: steps.audit.outputs.exit_code != '0'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs')
+            const output = fs.readFileSync('audit-output.txt', 'utf8')
+            const title = 'Catalog audit: stale entries detected'
+            const body = [
+              'The weekly catalog audit found entries that no longer match upstream.',
+              '',
+              'A package that has been unpublished or deprecated still gets written',
+              "into the user's agent config and fails silently at run time, so treat",
+              'these as user-facing breakage rather than cleanup.',
+              '',
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              '',
+              '<details><summary>Audit output</summary>',
+              '',
+              '```',
+              output.trim(),
+              '```',
+              '',
+              '</details>',
+            ].join('\n')
+
+            // Reuse one tracking issue so a persistent problem doesn't open a
+            // new issue every Monday.
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'catalog-audit',
+            })
+
+            if (existing.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.data[0].number,
+                body,
+              })
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['catalog-audit'],
+              })
+            }
+
+      - name: Fail the run when the catalog is stale
+        if: steps.audit.outputs.exit_code != '0'
+        run: exit 1

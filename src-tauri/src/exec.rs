@@ -187,6 +187,12 @@ fn augmented_path() -> OsString {
 /// are visible without an app restart.
 fn apply_env(c: &mut Command) {
   c.env("PATH", augmented_path());
+  // Hand the proxy the user applied in agentpack to every child (npm, git, the
+  // agent CLIs), so an install works the moment the proxy is set rather than
+  // only after the user restarts their shell.
+  for (key, value) in crate::net::child_proxy_env() {
+    c.env(key, value);
+  }
 }
 
 /// Build a `Command` that can actually launch the target on every OS.
@@ -197,7 +203,7 @@ fn apply_env(c: &mut Command) {
 /// PATH — which is why detection and installs silently broke on Windows. Routing
 /// through `cmd /c` makes Windows honour PATHEXT and run batch shims. On Unix the
 /// binary is launched directly.
-fn build_command<I, S>(file: &str, args: I) -> Command
+pub(crate) fn build_command<I, S>(file: &str, args: I) -> Command
 where
   I: IntoIterator<Item = S>,
   S: AsRef<OsStr>,
@@ -473,6 +479,21 @@ pub fn cancel_command(op_id: String) {
   }
 }
 
+/// Whether a human-facing app name refers to cc-switch. The name is NOT stable
+/// across platforms and installers: Windows `DisplayName` reads "CC Switch", the
+/// macOS bundle on disk is `CC Switch.app`, and older/brew builds use
+/// `cc-switch.app`. Stripping non-alphanumerics and lowercasing collapses all of
+/// them to `ccswitch`, so one predicate covers every spelling.
+#[cfg(any(windows, target_os = "macos"))]
+fn is_cc_switch_name(name: &str) -> bool {
+  name
+    .chars()
+    .filter(|c| c.is_alphanumeric())
+    .collect::<String>()
+    .to_lowercase()
+    .contains("ccswitch")
+}
+
 /// Resolve the cc-switch desktop app's launch target. winget (Windows) and
 /// brew-cask (macOS) install it OUTSIDE PATH, so a plain `cc-switch` lookup
 /// misses it — which is why detection and the DB-init launch used to fail on a
@@ -503,9 +524,7 @@ fn cc_switch_exe() -> Option<std::path::PathBuf> {
         continue;
       };
       let display: String = entry.get_value("DisplayName").unwrap_or_default();
-      // Normalize "CC Switch" / "CC-Switch" / "cc-switch" → "ccswitch".
-      let norm: String = display.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase();
-      if !norm.contains("ccswitch") {
+      if !is_cc_switch_name(&display) {
         continue;
       }
       // Prefer DisplayIcon when it points at a real .exe; else InstallLocation.
@@ -529,13 +548,34 @@ fn cc_switch_exe() -> Option<std::path::PathBuf> {
 
 #[cfg(target_os = "macos")]
 fn cc_switch_exe() -> Option<std::path::PathBuf> {
-  // brew --cask cc-switch drops the bundle in /Applications (or ~/Applications);
-  // we hand the .app to `open` rather than exec its inner binary.
-  let mut candidates = vec![std::path::PathBuf::from("/Applications/cc-switch.app")];
+  // The bundle lands in /Applications (or ~/Applications) — but its FILE name is
+  // not the CLI id: the shipped bundle is `CC Switch.app`, while older/brew
+  // builds use `cc-switch.app`. Matching either literal path missed the real
+  // install, so scan both dirs and match on the normalized stem instead. We hand
+  // the .app to `open` rather than exec its inner binary.
+  let mut roots = vec![std::path::PathBuf::from("/Applications")];
   if let Some(home) = dirs::home_dir() {
-    candidates.push(home.join("Applications/cc-switch.app"));
+    roots.push(home.join("Applications"));
   }
-  candidates.into_iter().find(|p| p.exists())
+  roots.into_iter().find_map(|root| {
+    let mut hits: Vec<std::path::PathBuf> = std::fs::read_dir(root)
+      .into_iter()
+      .flatten()
+      .flatten()
+      .map(|e| e.path())
+      .filter(|p| {
+        p.extension().is_some_and(|e| e.eq_ignore_ascii_case("app"))
+          && p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .is_some_and(is_cc_switch_name)
+      })
+      .collect();
+    // read_dir order is filesystem-defined; sort so the pick is deterministic
+    // when a machine somehow carries both spellings.
+    hits.sort();
+    hits.into_iter().next()
+  })
 }
 
 #[cfg(all(not(windows), not(target_os = "macos")))]
@@ -544,9 +584,10 @@ fn cc_switch_exe() -> Option<std::path::PathBuf> {
 }
 
 /// Whether the cc-switch desktop app is actually installed right now. It's a GUI
-/// app winget/brew install OFF PATH, so a PATH lookup alone under-reports it —
-/// hence the resolved install-location check (which requires the real exe/bundle
-/// to exist on disk). We deliberately do NOT treat a leftover ~/.cc-switch config
+/// app winget/brew install OFF PATH (and on macOS it ships no CLI shim at all),
+/// so a PATH lookup alone under-reports it — hence the resolved install-location
+/// check (which requires the real exe/bundle to exist on disk, under any of its
+/// name spellings). We deliberately do NOT treat a leftover ~/.cc-switch config
 /// dir as "installed": it survives an uninstall, so keying off it would report a
 /// removed app as still present.
 fn cc_switch_installed() -> bool {
@@ -986,6 +1027,33 @@ mod tests {
     // neither guaranteed to hold cc-switch on the test machine. It must return a
     // bool without panicking regardless.
     let _ = detect_cli("cc-switch".into(), true).installed;
+  }
+
+  #[cfg(any(windows, target_os = "macos"))]
+  #[test]
+  fn cc_switch_name_matches_every_spelling() {
+    // The shipped macOS bundle is "CC Switch.app" and the Windows DisplayName is
+    // "CC Switch", but the CLI id is "cc-switch". Matching the id literally was
+    // the detection bug: an installed app reported as missing.
+    for name in ["CC Switch", "cc-switch", "CC-Switch", "ccswitch", "CC Switch 1.2.3"] {
+      assert!(is_cc_switch_name(name), "should match: {name}");
+    }
+    for name in ["Switch Control", "CC Cleaner", ""] {
+      assert!(!is_cc_switch_name(name), "should not match: {name}");
+    }
+  }
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn cc_switch_exe_resolves_a_bundle_when_installed() {
+    // Only asserts the shape: when the resolver finds something it must be an
+    // existing .app bundle whose name really is cc-switch. Machines without it
+    // installed simply skip — the resolver must not panic there either.
+    if let Some(app) = cc_switch_exe() {
+      assert!(app.exists(), "resolved a bundle that does not exist: {app:?}");
+      assert_eq!(app.extension().unwrap(), "app");
+      assert!(is_cc_switch_name(app.file_stem().unwrap().to_str().unwrap()));
+    }
   }
 
   #[test]

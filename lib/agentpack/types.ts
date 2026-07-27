@@ -12,6 +12,12 @@ export type AgentTarget = "claude" | "codex"
  */
 export type McpTarget = "claude" | "codex" | "opencode"
 
+/**
+ * Every MCP target, in the order the UI lists them — and therefore the order a
+ * derived target list comes out in, so it never depends on the user's click order.
+ */
+export const MCP_TARGETS: readonly McpTarget[] = ["claude", "codex", "opencode"]
+
 /** A concrete command to run, described declaratively so it can be dry-run printed. */
 export interface Command {
   /** Executable, e.g. "npm" or "claude". */
@@ -54,6 +60,13 @@ export interface CliTool {
   gui?: boolean
   /** npm package name, used to query the latest published version (npm-based CLIs only). */
   npmPackage?: string
+  /**
+   * Minimum Node.js MAJOR version the package declares in its `engines` field.
+   * npm refuses to install below it, so the plan checks the detected Node first
+   * and surfaces a readable note instead of letting the install fail on an
+   * EBADENGINE deep in the log. Only meaningful for npm-installed CLIs.
+   */
+  minNodeMajor?: number
   /** Per-OS install command. `null` => not installable that way on this OS. */
   install: Record<OS, Command | null>
   /**
@@ -123,13 +136,22 @@ export type McpTransport = "stdio" | "http"
  */
 export type McpCategory = "memory" | "search" | "web" | "dev" | "reasoning"
 
+/**
+ * Launcher for a stdio catalog server. `npx` runs an npm package; `uvx` runs a
+ * PyPI package (some reference servers are published only to PyPI — notably
+ * `mcp-server-fetch`, which has no npm counterpart). Defaults to `npx`.
+ */
+export type McpRuntime = "npx" | "uvx"
+
 /** An MCP server offered in the catalog. Display text lives in the i18n catalog. */
 export interface McpServer {
   id: string
   transport: McpTransport
   /** Which catalog section this server is grouped under in the management UI. */
   category: McpCategory
-  /** For stdio: the npx package spec, e.g. "@upstash/context7-mcp". */
+  /** How a stdio server is launched. Omit for the `npx` default. */
+  runtime?: McpRuntime
+  /** For stdio: the package spec, e.g. "@upstash/context7-mcp" (npx) or "mcp-server-fetch" (uvx). */
   npmPackage?: string
   /** Extra args appended after the package (stdio only). */
   extraArgs?: string[]
@@ -144,6 +166,59 @@ export interface McpServer {
 /** User-entered API key per MCP id (empty string => skipped / placeholder). */
 export type McpKeys = Record<string, string>
 
+/**
+ * How the proxy section behaves. `off` leaves every surface untouched; `system`
+ * adopts whatever the OS / ambient environment already advertises (discovered,
+ * then written like a manual value so the CLIs see it too); `manual` uses the
+ * URLs typed into the form.
+ */
+export type ProxyMode = "off" | "system" | "manual"
+
+/**
+ * A config surface the proxy is written into. `claude` is the only agent CLI
+ * with a documented config field (`settings.json` → `env`); Codex and OpenCode
+ * read the process environment only, so `shell` is what reaches them.
+ */
+export type ProxyTarget = "claude" | "npm" | "git" | "shell"
+
+/** Every target, in the order the UI lists them (also the plan's step order). */
+export const PROXY_TARGETS: readonly ProxyTarget[] = ["claude", "npm", "git", "shell"]
+
+/**
+ * Proxy settings, rich enough for the corporate cases the agent CLIs document:
+ * per-scheme URLs, a bypass list, basic auth, a custom CA bundle and mTLS client
+ * certificates. `allUrl` (SOCKS) is honored by npm/git/curl but NOT by Claude
+ * Code, which documents no SOCKS support — the UI warns instead of silently
+ * writing something that won't work.
+ */
+export interface ProxyConfig {
+  mode: ProxyMode
+  /** Proxy for http:// traffic (HTTP_PROXY). Falls back to `httpsUrl`. */
+  httpUrl?: string
+  /** Proxy for https:// traffic (HTTPS_PROXY). Falls back to `httpUrl`. */
+  httpsUrl?: string
+  /** SOCKS / catch-all proxy (ALL_PROXY). Not supported by Claude Code. */
+  allUrl?: string
+  /** Bypass list (NO_PROXY): comma- or space-separated hosts, or `*`. */
+  noProxy?: string
+  /** Basic-auth user, merged into the proxy URL when applied. */
+  username?: string
+  /** Basic-auth password — a secret: masked in the UI, redacted on export. */
+  password?: string
+  /** Extra CA bundle for a TLS-inspecting proxy (NODE_EXTRA_CA_CERTS). */
+  caCertPath?: string
+  /** Skip TLS verification (NODE_TLS_REJECT_UNAUTHORIZED=0) — unsafe, opt-in. */
+  insecureTls?: boolean
+  /** mTLS client certificate (CLAUDE_CODE_CLIENT_CERT). */
+  clientCertPath?: string
+  /** mTLS client private key (CLAUDE_CODE_CLIENT_KEY). */
+  clientKeyPath?: string
+  /** Passphrase for an encrypted client key — a secret, like `password`. */
+  clientKeyPassphrase?: string
+  /** Which config surfaces to write the proxy into. */
+  targets: ProxyTarget[]
+}
+
 /** Network configuration the user opted into. */
 export interface NetworkConfig {
   /** Custom API base URL / relay endpoint for the agent CLIs. */
@@ -152,6 +227,8 @@ export interface NetworkConfig {
   apiToken?: string
   /** npm registry mirror URL. */
   npmRegistry?: string
+  /** Proxy settings; absent => never configured (same effect as `mode: "off"`). */
+  proxy?: ProxyConfig
 }
 
 /** The full plan collected by the wizard, consumed by the runner. */
@@ -197,6 +274,13 @@ export interface Paths {
   ccConnectConfig: string
   /** `~/.agentpack/mcp-disabled.json` — agentpack's stash for Claude servers disabled via remove-and-remember. */
   mcpDisabledStore: string
+  /**
+   * The login shell's rc file (`~/.zshrc`, `~/.bashrc`, `config.fish`), where the
+   * proxy export block goes so Codex / OpenCode — which read the process
+   * environment and have no proxy config of their own — see it. Empty on Windows,
+   * which uses `setx` instead of an rc file.
+   */
+  shellProfile: string
   os: OS
 }
 

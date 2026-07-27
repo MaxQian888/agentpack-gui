@@ -16,8 +16,14 @@ use std::path::PathBuf;
 
 use crate::history::SessionSummary;
 
-/// Bump when the cached shape changes; a mismatch discards the whole file.
-pub const CACHE_VERSION: u32 = 1;
+/// Bump when the cached shape *or* the parsed values change; a mismatch
+/// discards the whole file.
+/// v2 added `parentId` / `agentName` / `durationMs` to the cached summary.
+/// v3 fixed Codex fork ids (a fork used to inherit its parent's `id`) — the
+/// files themselves didn't change, so only a version bump can evict them.
+/// v4 gave Codex sub-agent rollouts their `parentId` / `agentName` / label —
+/// same story, unchanged files holding stale (null) values.
+pub const CACHE_VERSION: u32 = 4;
 
 /// One cached file: the signature we validate against plus its parsed summary.
 #[derive(Serialize, Deserialize, Clone)]

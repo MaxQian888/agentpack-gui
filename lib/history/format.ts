@@ -47,6 +47,22 @@ export function formatCost(n: number | null | undefined): string {
   return `$${n.toFixed(2)}`
 }
 
+/**
+ * Wall-clock duration in milliseconds, rendered at the coarsest unit that still
+ * carries information ("45s", "12m", "3h 20m"). Returns "—" for null/zero, so a
+ * source that doesn't measure duration reads as absent rather than instant.
+ */
+export function formatDuration(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms <= 0) return "—"
+  const totalSeconds = Math.round(ms / 1000)
+  if (totalSeconds < 60) return `${totalSeconds}s`
+  const totalMinutes = Math.round(totalSeconds / 60)
+  if (totalMinutes < 60) return `${totalMinutes}m`
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`
+}
+
 /** Local calendar-day key (YYYY-MM-DD) for an epoch-ms instant. */
 export function dayKey(ms: number): string {
   const d = new Date(ms)

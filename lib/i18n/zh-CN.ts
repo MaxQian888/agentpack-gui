@@ -79,7 +79,7 @@ export const zhCN = {
       },
       network: {
         title: "网络",
-        body: "把 CLI 指向自定义 API 中转和 npm 镜像 —— 走代理时很有用。",
+        body: "自动发现并应用代理、选择镜像源，或把 CLI 指向自定义 API 中转。",
       },
       ccswitch: {
         title: "cc-switch",
@@ -118,6 +118,7 @@ export const zhCN = {
     mcp: "MCP 服务",
     none: "还没选任何项。在上面选个套餐，或在下面勾选。",
     selected: (n: number) => `已选 ${n} 项`,
+    writesTo: (agents: string) => `将配置到 ${agents}`,
     install: "立即安装",
     installPreview: "预览方案",
   },
@@ -133,7 +134,8 @@ export const zhCN = {
     runtime: "Node.js、Python 这类运行时，是 CLI 和部分 MCP 服务运行所需的引擎。",
     skills: "技能是可复用的指令包，教 AI 把某类工程任务做好。",
     mcp: "MCP 服务是给 AI 扩能力的插件 —— 联网、记忆、GitHub 等等。",
-    network: "把 CLI 指向自定义 API 中转/端点和 npm 镜像 —— 走代理或网络较慢时很有用。",
+    network:
+      "配置代理（可自动发现）、镜像源和自定义 API 中转端点 —— 受限或缓慢网络下 CLI 需要的都在这里。",
     ccswitch: "cc-switch 保存多套 API 供应商/密钥，点一下就切换当前使用的那套。",
     ccconnect:
       "cc-connect 把本地编码代理桥接到聊天软件（飞书、Slack、Telegram 等），随时随地远程驱动它们。",
@@ -374,6 +376,112 @@ export const zhCN = {
     baseUrlLabel: "API base URL / 中转端点：",
     tokenLabel: "API token（用于中转）：",
     registryLabel: "npm 镜像源 URL：",
+    desktopOnly: "代理检测需要在桌面端运行。",
+
+    discovery: {
+      title: "检测到的代理",
+      subtitle: "会扫描环境变量、系统代理设置、npm/git 配置，以及常见代理软件监听的本地端口。",
+      scan: "重新扫描",
+      scanning: "扫描中…",
+      empty: "没有在本机发现代理。如果你有代理，请在下方手动填写。",
+      use: "使用",
+      test: "测试",
+      pacNote: (url: string) =>
+        `系统使用的是自动配置脚本（${url}）。agentpack 无法解析 PAC，请手动填写它实际分配的代理地址。`,
+      source: {
+        env: "环境变量",
+        system: "系统设置",
+        npm: "npm",
+        git: "git",
+        port: "本地软件",
+      } as Record<string, string>,
+    },
+
+    proxy: {
+      title: "代理",
+      subtitle: "决定 agent CLI、npm 和 git 的流量走向。",
+      active: "已启用",
+      inactive: "未启用",
+      mode: {
+        off: "关闭",
+        system: "跟随系统",
+        manual: "手动",
+      } as Record<string, string>,
+      modeHint: {
+        off: "不写入任何配置，也不会动你已有的代理设置。",
+        system:
+          "采用本机已有的代理设置。这些值仍会被写进各处配置 —— 因为这些 CLI 自己并不会去读系统代理面板。",
+        manual: "完全使用你在下面填写的地址。",
+      } as Record<string, string>,
+      httpLabel: "HTTP 代理",
+      httpsLabel: "HTTPS 代理",
+      httpsHint: "只填一个时，另一个会自动沿用。",
+      allLabel: "SOCKS 代理（ALL_PROXY）",
+      allHint: "npm、git、curl 会使用；Claude Code 不支持 SOCKS。",
+      noProxyLabel: "绕行列表（NO_PROXY）",
+      noProxyHint: "用逗号或空格分隔的主机名；填 * 表示全部绕行。",
+      socksWarning:
+        "只填了 SOCKS 代理，而 Claude Code 用不了 SOCKS —— 请补一个 HTTP 代理地址，或在下方目标里去掉 Claude Code。",
+      advanced: "认证与 TLS",
+      username: "代理用户名",
+      password: "代理密码",
+      passwordHint: "会被写进代理 URL（代理认证本来就是这么做的），导出配置文件时不会包含它。",
+      caCert: "额外的 CA 证书（NODE_EXTRA_CA_CERTS）",
+      caCertHint: "用于会用自签根证书解密流量的企业 TLS 审计代理。",
+      insecure: "跳过 TLS 证书校验",
+      insecureHint:
+        "即设置 NODE_TLS_REJECT_UNAUTHORIZED=0。不安全 —— 只作为最后手段，优先用上面的 CA 证书。",
+      clientCert: "客户端证书（mTLS）",
+      clientKey: "客户端私钥（mTLS）",
+      clientKeyPassphrase: "私钥口令",
+      targets: "把代理写入",
+      target: {
+        claude: "Claude Code 配置",
+        npm: "npm 配置",
+        git: "git 配置",
+        shell: "Shell 配置文件",
+      } as Record<string, string>,
+      targetHint: {
+        claude: "~/.claude/settings.json 的 env",
+        npm: "proxy · https-proxy · noproxy",
+        git: "http.proxy · https.proxy",
+        shell: "Codex 和 OpenCode 只能通过它读到代理",
+      } as Record<string, string>,
+      apply: "应用代理",
+      clear: "清除代理",
+      needsUrl: "请先填写代理地址。",
+      testTitle: "连通性测试",
+      testTargetLabel: "测试目标",
+      testRun: "开始测试",
+      testing: "测试中…",
+      testDirect: "不走代理（直连）",
+      testOk: (status: number, ms: number) => `可达 —— HTTP ${status}，耗时 ${ms} ms`,
+      testFail: (reason: string) => `失败 —— ${reason}`,
+      reason: {
+        ok: "正常",
+        "proxy-auth": "代理要求认证（HTTP 407）",
+        "proxy-refused": "代理拒绝了连接",
+        unreachable: "连不上",
+        dns: "域名解析失败",
+        timeout: "超时",
+        "bad-proxy-url": "这个代理地址无法解析",
+        tls: "TLS 握手失败",
+        failed: "请求失败",
+      } as Record<string, string>,
+    },
+
+    mirrors: {
+      title: "镜像源",
+      subtitle: "在默认源慢或不可达时，改用这里的包与下载源。",
+      npmLabel: "npm 镜像源",
+      ghLabel: "GitHub 下载镜像",
+      ghHint: "从仓库安装技能时，加在 GitHub 下载地址前面的前缀。修改后立即生效。",
+    },
+
+    relay: {
+      title: "API 端点",
+      subtitle: "让 agent CLI 走中转 / 网关，而不是官方 API。",
+    },
   },
 
   review: {
@@ -409,7 +517,6 @@ export const zhCN = {
 
   verify: {
     claudeVersion: "校验 Claude Code（claude --version）",
-    claudeMcp: "校验 MCP 服务（claude mcp list）",
     codexVersion: "校验 Codex（codex --version）",
   },
 
@@ -520,13 +627,9 @@ export const zhCN = {
       },
       exa: { title: "Exa Search", purpose: "语义 / 神经网络网页搜索。" },
       tavily: { title: "Tavily", purpose: "带引用与爬取的网页搜索。" },
-      "brave-search": {
-        title: "Brave Search",
-        purpose: "注重隐私的网页搜索。",
-      },
       github: {
         title: "GitHub",
-        purpose: "Issue、PR、代码搜索、仓库管理。",
+        purpose: "Issue、PR、代码搜索、仓库管理（官方托管远程服务）。",
       },
       playwright: {
         title: "Playwright",
@@ -535,18 +638,6 @@ export const zhCN = {
       everything: {
         title: "Everything（示例）",
         purpose: "覆盖全部 MCP 能力的示例服务器，便于测试。",
-      },
-      puppeteer: {
-        title: "Puppeteer",
-        purpose: "无头 Chrome 浏览器自动化与抓取。",
-      },
-      gitlab: {
-        title: "GitLab",
-        purpose: "项目、议题、合并请求与仓库文件。",
-      },
-      "google-maps": {
-        title: "Google 地图",
-        purpose: "地理编码、地点、路线与距离。",
       },
       firecrawl: {
         title: "Firecrawl",
@@ -579,6 +670,10 @@ export const zhCN = {
     upgradeCli: (title: string) => `升级 ${title}`,
     noInstaller: (title: string) => `本系统没有 ${title} 的自动安装方式。`,
     manualInstall: "需要手动安装",
+    nodeTooOld: (title: string, need: number, found: string) =>
+      `${title} 需要 Node.js ${need} 或更高版本，但当前安装的是 Node ${found}。`,
+    nodeTooOldFix: (need: number) =>
+      `请在「运行环境」中把 Node.js 升级到 ${need}+，或在「命令行工具」里改用该 CLI 的原生安装方式。`,
     saveConfig: (path: string) => `保存配置 → ${path}`,
     savedConfigTo: (path: string) => `已保存可重放的配置到 ${path}`,
     installSkill: (title: string, targets: string) => `安装技能 “${title}” → ${targets}`,
@@ -609,6 +704,21 @@ export const zhCN = {
     opencodeMcpWritten: (id: string) => `已写入 mcp.${id} 到 opencode.json`,
     configureClaudeRelay: "配置 Claude Code API 端点",
     configureCodexRelay: "配置 Codex API 端点",
+    proxyClaude: (url: string) => `让 Claude Code 走代理 → ${url}`,
+    proxyNpmSet: (key: string, value: string) => `设置 npm ${key} → ${value}`,
+    proxyGitSet: (key: string, value: string) => `设置 git ${key} → ${value}`,
+    proxyWinSet: (key: string, value: string) => `为当前账户设置 ${key} → ${value}`,
+    proxyShell: (path: string) => `写入代理环境变量 → ${path}`,
+    proxyShellWritten: (path: string) => `已更新 ${path}`,
+    proxyNote: "还需要你手动处理的部分",
+    proxyRestartNote: "请新开一个终端（或重新加载 shell），Codex、OpenCode 等工具才会读到代理。",
+    proxyShellNote:
+      "Codex 和 OpenCode 只从 shell 环境变量读代理 —— 请把下面几行加进 shell 配置文件，或在上面勾选「Shell 配置文件」这个目标：",
+    proxyClearClaude: "从 Claude Code 配置中移除代理",
+    proxyClearNpm: (key: string) => `清除 npm ${key}`,
+    proxyClearGit: (key: string) => `清除 git ${key}`,
+    proxyClearWin: (key: string) => `清除当前账户的 ${key}`,
+    proxyClearShell: (path: string) => `移除代理环境变量 ← ${path}`,
     claudeSettingsUpdated: "已更新 ~/.claude/settings.json 的 env",
     codexProviderUpdated: "已更新 ~/.codex/config.toml 的 model_providers",
     removeMcpClaude: (title: string) => `移除 MCP “${title}” ← Claude Code`,
@@ -1096,8 +1206,13 @@ export const zhCN = {
     system: "跟随系统",
     language: "语言",
     preview: "预览（演练）",
+    settings: "设置",
     osOverride: "系统",
     osAuto: "自动",
+    minimize: "最小化",
+    maximize: "最大化",
+    restore: "还原",
+    closeWindow: "关闭窗口",
     run: "执行计划",
     runReview: "确认计划",
     quickInstall: "快速安装",
@@ -1156,11 +1271,17 @@ export const zhCN = {
     configInvalid: "无法解析",
     configMissing: "不存在",
     hasBackup: "有备份可恢复",
-    remove: "移除",
-    uninstall: "卸载",
     restore: "恢复备份",
     fileClaudeSettings: "Claude settings.json",
     fileCodexConfig: "Codex config.toml",
+    // Health banner: the dashboard leads with whatever needs the user's attention.
+    healthAllGood: "一切正常",
+    healthAllGoodHint: "没有待更新项，配置文件也都能正常解析。",
+    healthNeedsAttention: (n: number) => `${n} 项需要处理`,
+    healthUpgrade: (name: string, version: string) => `${name} 可升级到 ${version}`,
+    healthConfig: (file: string, state: string) => `${file} ${state}`,
+    // Truncated overview lists link out to the section that owns them.
+    viewAll: (n: number) => `共 ${n} 项 · 查看全部 →`,
   },
 
   history: {
@@ -1207,9 +1328,33 @@ export const zhCN = {
     webSearch: "网络搜索",
     patch: "文件改动",
     image: "图片",
+    event: (name: string) => name.replace(/_/g, " "),
+    agentMessage: (kind: string, agent: string) => {
+      const kinds: Record<string, string> = {
+        NEW_TASK: "任务派发",
+        MESSAGE: "子 agent 消息",
+        FINAL_ANSWER: "子 agent 汇报",
+      }
+      const label = kinds[kind] ?? kind.replace(/_/g, " ")
+      return agent ? `${label} · ${agent}` : label
+    },
+    subagentActivity: (kind: string, agent: string) => {
+      const kinds: Record<string, string> = {
+        started: "子 agent 已启动",
+        interacted: "与子 agent 交互",
+        interrupted: "子 agent 被中断",
+      }
+      const label = kinds[kind] ?? `子 agent ${kind.replace(/_/g, " ")}`
+      return agent ? `${label} · ${agent}` : label
+    },
     loadFailed: "无法加载此对话。",
     transcriptEmpty: "该会话没有可渲染的消息。",
     turns: (n: number) => `${n} 轮`,
+    loadFullText: (kb: string) => `加载完整输出（${kb}）`,
+    loadingFullText: "加载中…",
+    fullTextFailed: "无法加载完整输出。",
+    subagents: (n: number) => `${n} 个子 agent`,
+    subagentParent: "主会话",
     usageEmpty: "暂无用量数据。",
     statSessions: "会话数",
     statMessages: "消息数",
@@ -1219,6 +1364,9 @@ export const zhCN = {
     statCache: "缓存读取",
     statReasoning: "推理",
     statCost: "费用",
+    statDuration: "实际耗时",
+    statAvgDuration: "平均耗时/会话",
+    durationCoverage: (covered: number, total: number) => `${total} 个会话中的 ${covered} 个`,
     statAvgTokens: "平均 Token/会话",
     statAvgCost: "平均费用/会话",
     costNote:
@@ -1259,6 +1407,9 @@ export const zhCN = {
     viewOnGitHub: "在 GitHub 查看",
     checkFailed: "检查更新失败，请稍后重试。",
     autoCheckLabel: "启动时检查更新",
+    summonShortcutLabel: "全局快捷键",
+    summonShortcutHint: "在任意位置按下即可唤起 agentpack：",
+    shortcutTaken: (accel: string) => `${accel} 已被其他应用占用。`,
     lastChecked: (when: string) => `上次检查：${when}`,
     never: "从未",
     configFolders: "配置目录",

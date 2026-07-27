@@ -1,5 +1,6 @@
 import { isTauri } from "@/lib/tauri"
 import type { RepoSource } from "@/lib/skills/types"
+import type { ProxyConfig } from "@/lib/agentpack/types"
 
 // Persisted app settings, backed by `@tauri-apps/plugin-store` (a small JSON KV
 // store in the app's data dir). The Zustand store (store/app-store.ts) has no
@@ -40,6 +41,18 @@ export interface AppSettings {
    * to add.
    */
   skillRepoSources: RepoSource[]
+  /**
+   * The proxy the user applied, kept so agentpack's own downloads keep going
+   * through it after a restart (the plan itself isn't persisted). Re-applied to
+   * the backend on startup. Null = never configured / cleared.
+   */
+  proxy: ProxyConfig | null
+  /**
+   * Global accelerator that re-summons the window from anywhere, or null when
+   * the user hasn't enabled one. Off by default on purpose: a global hotkey is
+   * system-wide, so agentpack shouldn't claim a key combination uninvited.
+   */
+  summonShortcut: string | null
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -50,6 +63,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   quickStartDismissed: false,
   ghMirrorPrefix: null,
   skillRepoSources: [],
+  proxy: null,
+  summonShortcut: null,
 }
 
 const STORE_FILE = "settings.json"

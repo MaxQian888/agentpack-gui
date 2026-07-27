@@ -18,6 +18,10 @@ const nextConfig: NextConfig = {
   },
   // Configure assetPrefix or else the server won't properly resolve your assets.
   assetPrefix: isProd ? undefined : `http://${internalHost}:3000`,
+  // The window is frameless, so its top-left corner belongs to the macOS
+  // traffic lights — the dev indicator's default `bottom-left` is fine, but
+  // pinning it keeps it from ever landing on top of them.
+  devIndicators: { position: "bottom-right" },
 }
 
 export default withNextIntl(nextConfig)

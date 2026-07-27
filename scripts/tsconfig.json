@@ -1,0 +1,15 @@
+{
+  // ts-node config for the maintenance scripts in this folder. The root tsconfig
+  // targets the Next.js bundler (esnext modules, noEmit), which ts-node cannot
+  // execute directly — so run these under plain CommonJS instead.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2022",
+    "noEmit": false,
+    "isolatedModules": false,
+    "types": ["node"]
+  },
+  "include": ["./*.ts", "../lib/agentpack/**/*.ts"]
+}

@@ -105,9 +105,9 @@ export const RUNTIMES: readonly Runtime[] = [
     install: {
       // PowerShell installer; the script string is quoted (it contains spaces),
       // so the `|` stays inside quotes and cmd /c does not treat it as a pipe.
-      win: { file: "powershell", args: ["-c", "irm bun.sh/install.ps1 | iex"] },
-      mac: { file: "bash", args: ["-c", "curl -fsSL https://bun.sh/install | bash"] },
-      linux: { file: "bash", args: ["-c", "curl -fsSL https://bun.sh/install | bash"] },
+      win: { file: "powershell", args: ["-c", "irm bun.com/install.ps1 | iex"] },
+      mac: { file: "bash", args: ["-c", "curl -fsSL https://bun.com/install | bash"] },
+      linux: { file: "bash", args: ["-c", "curl -fsSL https://bun.com/install | bash"] },
     },
     // Bun self-updates in place, no package manager needed.
     upgrade: {
@@ -115,7 +115,7 @@ export const RUNTIMES: readonly Runtime[] = [
       mac: { file: "bun", args: ["upgrade"] },
       linux: { file: "bun", args: ["upgrade"] },
     },
-    manualNote: "See https://bun.sh for manual installation instructions.",
+    manualNote: "See https://bun.com for manual installation instructions.",
   },
   {
     id: "python",
@@ -129,7 +129,7 @@ export const RUNTIMES: readonly Runtime[] = [
           "install",
           "-e",
           "--id",
-          "Python.Python.3.13",
+          "Python.Python.3.14",
           "--accept-source-agreements",
           "--accept-package-agreements",
           "--disable-interactivity",
@@ -144,12 +144,12 @@ export const RUNTIMES: readonly Runtime[] = [
         args: [
           "upgrade",
           // Match the installed Python by FAMILY, not the pinned install minor:
-          // winget publishes each minor as its own package (Python.Python.3.14),
-          // so `-e --id Python.Python.3.13` would refuse to update a 3.14 install
+          // winget publishes each minor as its own package (Python.Python.3.15),
+          // so `-e --id Python.Python.3.14` would refuse to update a 3.15 install
           // ("no installed package found"). A substring `--id Python.Python.3`
           // (no `-e`) targets whatever 3.x is installed. This same id drives the
           // ownership check (runtimePkgManager reads it), so a winget-installed
-          // 3.14 is correctly recognized as updatable instead of unmanaged.
+          // 3.15 is correctly recognized as updatable instead of unmanaged.
           "--id",
           "Python.Python.3",
           "--accept-source-agreements",
@@ -193,6 +193,8 @@ export const CLI_TOOLS: readonly CliTool[] = [
     id: "claude-code",
     bin: "claude",
     npmPackage: "@anthropic-ai/claude-code",
+    // package.json engines: { node: ">=22.0.0" }
+    minNodeMajor: 22,
     install: {
       win: { file: "npm", args: ["install", "-g", "@anthropic-ai/claude-code"] },
       mac: { file: "npm", args: ["install", "-g", "@anthropic-ai/claude-code"] },
@@ -446,10 +448,13 @@ export const MCP_SERVERS: readonly McpServer[] = [
     docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking",
   },
   {
+    // Published to PyPI only — `@modelcontextprotocol/server-fetch` has never
+    // existed on npm (404), so this must run through uvx, not npx.
     id: "fetch",
     transport: "stdio",
     category: "web",
-    npmPackage: "@modelcontextprotocol/server-fetch",
+    runtime: "uvx",
+    npmPackage: "mcp-server-fetch",
     docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/fetch",
   },
   {
@@ -477,20 +482,14 @@ export const MCP_SERVERS: readonly McpServer[] = [
     docsUrl: "https://github.com/tavily-ai/tavily-mcp",
   },
   {
-    id: "brave-search",
-    transport: "stdio",
-    category: "search",
-    npmPackage: "@modelcontextprotocol/server-brave-search",
-    keyEnv: "BRAVE_API_KEY",
-    docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/brave-search",
-  },
-  {
+    // The npm `@modelcontextprotocol/server-github` package is deprecated
+    // ("Package no longer supported"). GitHub now ships a hosted remote server.
     id: "github",
-    transport: "stdio",
+    transport: "http",
     category: "dev",
-    npmPackage: "@modelcontextprotocol/server-github",
+    url: "https://api.githubcopilot.com/mcp/",
     keyEnv: "GITHUB_PERSONAL_ACCESS_TOKEN",
-    docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/github",
+    docsUrl: "https://github.com/github/github-mcp-server",
   },
   {
     id: "playwright",
@@ -505,29 +504,6 @@ export const MCP_SERVERS: readonly McpServer[] = [
     category: "dev",
     npmPackage: "@modelcontextprotocol/server-everything",
     docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/everything",
-  },
-  {
-    id: "puppeteer",
-    transport: "stdio",
-    category: "web",
-    npmPackage: "@modelcontextprotocol/server-puppeteer",
-    docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/puppeteer",
-  },
-  {
-    id: "gitlab",
-    transport: "stdio",
-    category: "dev",
-    npmPackage: "@modelcontextprotocol/server-gitlab",
-    keyEnv: "GITLAB_PERSONAL_ACCESS_TOKEN",
-    docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/gitlab",
-  },
-  {
-    id: "google-maps",
-    transport: "stdio",
-    category: "web",
-    npmPackage: "@modelcontextprotocol/server-google-maps",
-    keyEnv: "GOOGLE_MAPS_API_KEY",
-    docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/google-maps",
   },
   {
     id: "firecrawl",

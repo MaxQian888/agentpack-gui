@@ -36,6 +36,8 @@ describe("loadSettings", () => {
       quickStartDismissed: false,
       ghMirrorPrefix: null,
       skillRepoSources: [],
+      proxy: null,
+      summonShortcut: null,
     })
   })
 

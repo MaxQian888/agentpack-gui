@@ -6,9 +6,11 @@ import type {
   OS,
   Paths,
   Plan,
+  ProxyConfig,
 } from "@/lib/agentpack/types"
+import { DEFAULT_PROXY } from "@/lib/agentpack/network/proxy"
 import type { Profile } from "@/lib/agentpack/profile"
-import { findPreset } from "@/lib/agentpack/presets"
+import { findPreset, mcpTargetsFor, skillTargetsFor } from "@/lib/agentpack/presets"
 import type { UpdateInfo } from "@/lib/tauri/updater"
 import { type AppSettings, DEFAULT_SETTINGS } from "@/lib/tauri/settings"
 
@@ -24,6 +26,20 @@ const emptyPlan = (os: OS): Plan => ({
   mcps: [],
   mcpKeys: {},
   network: {},
+})
+
+/**
+ * The parts of a plan that survive switching bundles or clearing the selection.
+ * A bundle only describes WHAT to install; the network config (proxy, npm mirror,
+ * relay endpoint) and the MCP API keys are the user's own environment, set up in
+ * other sections and often already applied to disk and to this process. Wiping
+ * them with the selection silently dropped the mirror/proxy from the very run
+ * that needed it, and left the proxy card reading "off" while the proxy it wrote
+ * was still live.
+ */
+const keptOnReselect = (plan: Plan): Pick<Plan, "network" | "mcpKeys"> => ({
+  network: plan.network,
+  mcpKeys: plan.mcpKeys,
 })
 
 export type Detection = { installed: boolean; version?: string }
@@ -98,9 +114,21 @@ interface State {
   setMcp: (id: string, targets: McpTarget[]) => void
   setMcpKey: (id: string, key: string) => void
   setNetwork: (patch: Partial<Plan["network"]>) => void
+  /** Merge into `plan.network.proxy`, seeding the default config on first touch. */
+  setProxy: (patch: Partial<ProxyConfig>) => void
+  /** Replace the selection with a bundle's, keeping network config + MCP keys. */
   applyPreset: (presetId: string) => void
   loadPlan: (plan: Plan) => void
+  /** Clear the selection (CLIs / skills / MCP), keeping network config + MCP keys. */
   resetPlan: () => void
+  /**
+   * Re-point every selected skill / MCP server at the agent CLIs the plan now
+   * installs. Called only by the quick-install dialog: that's the one surface
+   * where the CLI list and the skill / MCP list are authored together, so a stale
+   * target there would write config for an agent the user just unticked. The MCP
+   * section's per-server toggles are deliberate and are never retargeted.
+   */
+  syncTargetsToClis: () => void
 
   setProfiles: (profiles: Profile[]) => void
   /** Snapshot the current plan as a new profile; returns it so callers persist. */
@@ -197,21 +225,44 @@ export const useAppStore = create<State>((set, get) => ({
     set((s) => ({ plan: { ...s.plan, mcpKeys: { ...s.plan.mcpKeys, [id]: key } } })),
   setNetwork: (patch) =>
     set((s) => ({ plan: { ...s.plan, network: { ...s.plan.network, ...patch } } })),
+  setProxy: (patch) =>
+    set((s) => {
+      const proxy = { ...DEFAULT_PROXY, ...s.plan.network.proxy, ...patch }
+      return { plan: { ...s.plan, network: { ...s.plan.network, proxy } } }
+    }),
   applyPreset: (presetId) =>
     set((s) => {
       const p = findPreset(presetId)
-      if (!p) return { plan: emptyPlan(s.plan.os) }
+      const base = { ...emptyPlan(s.plan.os), ...keptOnReselect(s.plan) }
+      if (!p) return { plan: base }
+      // Keep a deliberate install-channel choice (e.g. Claude Code via the native
+      // script instead of npm) for every CLI the bundle still installs; drop the
+      // rest, like toggleCli does when a CLI is deselected.
+      const cliMethods = Object.fromEntries(
+        Object.entries(s.plan.cliMethods ?? {}).filter(([id]) => p.clis.includes(id))
+      )
       return {
         plan: {
-          ...emptyPlan(s.plan.os),
+          ...base,
           clis: p.clis as Plan["clis"],
-          skills: p.skills.map((id) => ({ id, targets: ["claude", "codex"] as AgentTarget[] })),
-          mcps: p.mcps.map((id) => ({ id, targets: ["claude"] as McpTarget[] })),
+          // Targets follow the bundle's own CLIs, so a bundle that installs Codex
+          // configures Codex too instead of writing Claude-only config.
+          skills: p.skills.map((id) => ({ id, targets: skillTargetsFor(p.clis) })),
+          mcps: p.mcps.map((id) => ({ id, targets: mcpTargetsFor(p.clis) })),
+          ...(Object.keys(cliMethods).length > 0 ? { cliMethods } : {}),
         },
       }
     }),
   loadPlan: (plan) => set({ plan }),
-  resetPlan: () => set((s) => ({ plan: emptyPlan(s.plan.os) })),
+  resetPlan: () => set((s) => ({ plan: { ...emptyPlan(s.plan.os), ...keptOnReselect(s.plan) } })),
+  syncTargetsToClis: () =>
+    set((s) => ({
+      plan: {
+        ...s.plan,
+        skills: s.plan.skills.map((x) => ({ ...x, targets: skillTargetsFor(s.plan.clis) })),
+        mcps: s.plan.mcps.map((x) => ({ ...x, targets: mcpTargetsFor(s.plan.clis) })),
+      },
+    })),
 
   setProfiles: (profiles) => set({ profiles }),
   saveCurrentAsProfile: (name) => {

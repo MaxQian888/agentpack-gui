@@ -1,6 +1,6 @@
 "use client"
 
-import { ChevronDown, Download, Moon, Play, Sun } from "lucide-react"
+import { ChevronDown, Download, Moon, Play, Settings2, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 import { Button } from "@/components/ui/button"
 import { ButtonGroup } from "@/components/ui/button-group"
@@ -11,22 +11,22 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { PRESETS } from "@/lib/agentpack/presets"
 import { useLocale, useT } from "@/lib/i18n/provider"
 import type { Lang } from "@/lib/i18n/types"
 import type { OS } from "@/lib/agentpack/types"
+import { cn } from "@/lib/utils"
 import { useAppStore } from "@/store/app-store"
 import { HelpTip } from "./help-tip"
+import { useWindowChrome, WindowControls } from "./window-chrome"
 
 const OS_OPTIONS: OS[] = ["win", "mac", "linux"]
 
@@ -52,9 +52,17 @@ export function Header({
   const setOsOverride = useAppStore((s) => s.setOsOverride)
   const hasUpdate = useAppStore((s) => s.hasUpdate())
   const updateVersion = useAppStore((s) => s.updateInfo?.version)
+  const chrome = useWindowChrome()
 
   return (
-    <header className="flex items-center gap-4 border-b px-6 py-3">
+    // Doubles as the window's title bar once the frame is gone. `deep` makes the
+    // whole subtree draggable *except* clickable elements — Tauri's drag script
+    // bails on BUTTON/INPUT/SELECT/LABEL and anything with an interactive role,
+    // so every control below keeps working untouched.
+    <header
+      data-tauri-drag-region={chrome === "none" ? undefined : "deep"}
+      className={cn("flex items-center gap-4 border-b px-6 py-3", chrome === "custom" && "pr-0")}
+    >
       <div data-tour="preview" className="flex items-center gap-2">
         <Switch id="dry-run" checked={dryRun} onCheckedChange={toggleDryRun} />
         <Label htmlFor="dry-run" className="cursor-pointer text-sm">
@@ -63,36 +71,42 @@ export function Header({
         <HelpTip text={t.help.dryRun} />
       </div>
 
-      <div className="ml-auto flex items-center gap-3">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">{t.shell.osOverride}</span>
-          <Select
-            value={osOverride ?? "auto"}
-            onValueChange={(v) => setOsOverride(v === "auto" ? null : (v as OS))}
-          >
-            <SelectTrigger size="sm" className="w-28" aria-label={t.shell.osOverride}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="auto">{t.shell.osAuto}</SelectItem>
-              {OS_OPTIONS.map((os) => (
-                <SelectItem key={os} value={os}>
-                  {os}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <Select value={lang} onValueChange={(v) => setLang(v as Lang)}>
-          <SelectTrigger size="sm" className="w-24" aria-label={t.shell.language}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="en">EN</SelectItem>
-            <SelectItem value="zh-CN">中文</SelectItem>
-          </SelectContent>
-        </Select>
+      <div className="ml-auto flex items-center gap-2">
+        {/* Language and the OS override are set-once preferences — parking them
+            behind one gear keeps the top bar down to Preview + Run, so the
+            primary action reads as primary. Radio items rather than a nested
+            <Select>: Radix Select inside a DropdownMenu fights over focus. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" aria-label={t.shell.settings}>
+              <Settings2 className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44">
+            <DropdownMenuLabel>{t.shell.language}</DropdownMenuLabel>
+            <DropdownMenuRadioGroup value={lang} onValueChange={(v) => setLang(v as Lang)}>
+              <DropdownMenuRadioItem value="en">EN</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="zh-CN">中文</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>{t.shell.osOverride}</DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuRadioGroup
+                  value={osOverride ?? "auto"}
+                  onValueChange={(v) => setOsOverride(v === "auto" ? null : (v as OS))}
+                >
+                  <DropdownMenuRadioItem value="auto">{t.shell.osAuto}</DropdownMenuRadioItem>
+                  {OS_OPTIONS.map((os) => (
+                    <DropdownMenuRadioItem key={os} value={os}>
+                      {os}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         {hasUpdate && onShowUpdates ? (
           <Button
@@ -150,6 +164,8 @@ export function Header({
           </Button>
         )}
       </div>
+
+      <WindowControls chrome={chrome} />
     </header>
   )
 }

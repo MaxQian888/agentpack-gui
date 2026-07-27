@@ -21,6 +21,7 @@ pub struct Paths {
   cc_connect_dir: String,
   cc_connect_config: String,
   mcp_disabled_store: String,
+  shell_profile: String,
   os: String,
 }
 
@@ -36,6 +37,26 @@ pub fn os_family() -> &'static str {
     "mac"
   } else {
     "linux"
+  }
+}
+
+/// The login shell's rc file — where an `export HTTP_PROXY=…` block has to go for
+/// Codex / OpenCode (which read the process environment and have no proxy config
+/// field of their own) to see it. Picked from `$SHELL`, defaulting to zsh on
+/// macOS and bash elsewhere. Empty on Windows, which has no rc file to edit:
+/// there the proxy is written with `setx` instead.
+fn shell_profile(home: &std::path::Path) -> PathBuf {
+  if cfg!(windows) {
+    return PathBuf::new();
+  }
+  let shell = std::env::var("SHELL").unwrap_or_default();
+  let name = shell.rsplit('/').next().unwrap_or("");
+  match name {
+    "fish" => home.join(".config").join("fish").join("config.fish"),
+    "bash" => home.join(".bashrc"),
+    "zsh" => home.join(".zshrc"),
+    _ if cfg!(target_os = "macos") => home.join(".zshrc"),
+    _ => home.join(".bashrc"),
   }
 }
 
@@ -78,6 +99,7 @@ pub fn get_paths() -> Result<Paths, String> {
     // agentpack's own stash for Claude MCP servers disabled via remove-and-remember
     // (Claude has no native per-server disable flag).
     mcp_disabled_store: s(agentpack.join("mcp-disabled.json")),
+    shell_profile: s(shell_profile(&home)),
     os: os_family().into(),
   })
 }

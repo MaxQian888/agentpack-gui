@@ -3,15 +3,14 @@
 import {
   AlertTriangle,
   ArrowLeftRight,
+  ArrowRight,
   CheckCircle2,
-  FileJson,
   Globe,
   RefreshCw,
   Server,
   Sparkles,
   Terminal,
   Wrench,
-  X,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -19,20 +18,9 @@ import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
-import { CLI_TOOLS, RUNTIMES, findCli, upgradeCommandFor } from "@/lib/agentpack/registry"
-import {
-  cliInstallStep,
-  cliUninstallStep,
-  fileRestoreStep,
-  mcpRemoveStep,
-  relayRemoveStep,
-  skillRemoveStep,
-  visibleAppsStep,
-  providerStep,
-  BACKUP_SUFFIX,
-} from "@/lib/agentpack/plan"
-import { isUpgradeAvailable } from "@/lib/agentpack/version"
-import { DEFAULT_VISIBLE_APPS } from "@/lib/agentpack/ccswitch/settings"
+import { CLI_TOOLS, RUNTIMES, upgradeCommandFor } from "@/lib/agentpack/registry"
+import { cliInstallStep, fileRestoreStep, BACKUP_SUFFIX } from "@/lib/agentpack/plan"
+import { extractSemver, isUpgradeAvailable } from "@/lib/agentpack/version"
 import {
   classifyAgainstRegistry,
   MCP_REGISTRY_IDS,
@@ -45,7 +33,7 @@ import {
   type ClaudeRelayState,
 } from "@/lib/agentpack/scan"
 import { ccLoadProviders, listSkills, pathExists, readTextFile } from "@/lib/tauri/commands"
-import type { AgentTarget, CliTool, Paths } from "@/lib/agentpack/types"
+import type { Paths } from "@/lib/agentpack/types"
 import type { Provider } from "@/lib/agentpack/ccswitch/types"
 import { isTauri } from "@/lib/tauri"
 import { saveSettings } from "@/lib/tauri/settings"
@@ -53,6 +41,7 @@ import { useMounted } from "@/hooks/use-mounted"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
+import type { SectionKey } from "../sidebar-nav"
 import { useRunnerCtx } from "../run/runner-context"
 
 type FileStatus = "ok" | "invalid" | "missing"
@@ -86,6 +75,14 @@ const emptyScan = (): DashboardScan => ({
   claudeSettings: { status: "missing", hasBackup: false },
   codexConfig: { status: "missing", hasBackup: false },
 })
+
+/**
+ * How many entries an overview card shows before it defers to its own section.
+ * The dashboard is a summary with entry points, not a second copy of the MCP /
+ * Skills / cc-switch managers — capping the lists is what keeps every card a
+ * predictable height and the page down to a single scrollbar.
+ */
+const OVERVIEW_LIMIT = 5
 
 /** Try to parse JSON; classify the file's health for the dashboard. */
 function jsonHealth(text: string): FileStatus {
@@ -141,6 +138,44 @@ export async function scanEnvironment(paths: Paths): Promise<DashboardScan> {
   }
 }
 
+/** One id as it appears across every agent that has it configured. */
+interface OverviewEntry {
+  id: string
+  /** Agents this id is configured for, e.g. ["claude", "codex"]. */
+  targets: string[]
+  /** True when at least one agent has it outside agentpack's registry. */
+  custom: boolean
+}
+
+/**
+ * Fold the per-agent `ClassifiedIds` into one deduplicated list. The dashboard
+ * used to render a separate block per agent, which triple-counted anything
+ * installed everywhere and made "first 5" meaningless; here each id appears once
+ * and carries the agents it belongs to.
+ */
+function mergeEntries(groups: { target: string; ids: ClassifiedIds }[]): OverviewEntry[] {
+  const byId = new Map<string, OverviewEntry>()
+  for (const { target, ids } of groups) {
+    for (const id of [...ids.known, ...ids.custom]) {
+      const entry = byId.get(id) ?? { id, targets: [], custom: false }
+      if (!entry.targets.includes(target)) entry.targets.push(target)
+      if (ids.custom.includes(id)) entry.custom = true
+      byId.set(id, entry)
+    }
+  }
+  // Registry entries first, then custom ones; alphabetical within each group.
+  return [...byId.values()].sort(
+    (a, b) => Number(a.custom) - Number(b.custom) || a.id.localeCompare(b.id)
+  )
+}
+
+/** Something the user should act on, with the one-click fix when we have one. */
+interface HealthIssue {
+  key: string
+  label: string
+  action?: { label: string; onClick: () => void }
+}
+
 /**
  * The dashboard scan is owned by `ShellBody` (which never unmounts) and passed
  * in, so navigating away and back to the home page reuses the cached result
@@ -150,9 +185,11 @@ export interface DashboardSectionProps {
   scan: DashboardScan | null
   scanning: boolean
   rescan: () => Promise<void>
+  /** Jump to the section that owns a truncated list ("View all"). */
+  onNavigate: (key: SectionKey) => void
 }
 
-export function DashboardSection({ scan, scanning, rescan }: DashboardSectionProps) {
+export function DashboardSection({ scan, scanning, rescan, onNavigate }: DashboardSectionProps) {
   const t = useT()
   const d = t.dashboard
   const detections = useAppStore((s) => s.detections)
@@ -185,24 +222,62 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
   const loading = mounted && isTauri() && !scan
   const busy = scanning || loading
 
-  // At-a-glance counts for the overview strip.
+  const mcpEntries = mergeEntries([
+    { target: "claude", ids: view.claudeMcps },
+    { target: "codex", ids: view.codexMcps },
+    { target: "opencode", ids: view.opencodeMcps },
+  ])
+  const skillEntries = mergeEntries([
+    { target: "claude", ids: view.claudeSkills },
+    { target: "codex", ids: view.codexSkills },
+  ])
+
+  // At-a-glance counts for the overview strip — derived from the same merged
+  // lists the cards render, so a tile and its card can never disagree.
   const allTools = [...CLI_TOOLS, ...RUNTIMES]
   const installedTools = allTools.filter((tool) => detections[tool.id]?.installed).length
-  const mcpCount = new Set([
-    ...view.claudeMcps.known,
-    ...view.claudeMcps.custom,
-    ...view.codexMcps.known,
-    ...view.codexMcps.custom,
-    ...view.opencodeMcps.known,
-    ...view.opencodeMcps.custom,
-  ]).size
-  const skillCount = new Set([
-    ...view.claudeSkills.known,
-    ...view.claudeSkills.custom,
-    ...view.codexSkills.known,
-    ...view.codexSkills.custom,
-  ]).size
   const relayConfigured = !!(view.relay.baseUrl || view.relay.hasToken || view.hasCodexRelay)
+
+  // Everything that needs the user's attention, leading the page. Derived from
+  // the existing scan + detections — no extra probing.
+  const issues: HealthIssue[] = []
+  for (const tool of CLI_TOOLS) {
+    const det = detections[tool.id]
+    const latest = latestVersions[tool.id]
+    if (!det?.installed || !latest || !isUpgradeAvailable(det.version, latest)) continue
+    const cmd = upgradeCommandFor(tool, os, cliManagers[tool.id])
+    const title = t.catalog.cli[tool.id]?.title ?? tool.id
+    issues.push({
+      key: `upgrade-${tool.id}`,
+      label: d.healthUpgrade(title, latest),
+      action: cmd
+        ? {
+            label: t.shell.upgrade,
+            onClick: () => runThen([cliInstallStep(tool.id, cmd, true, t)]),
+          }
+        : undefined,
+    })
+  }
+  for (const file of [
+    { label: d.fileClaudeSettings, health: view.claudeSettings, path: paths?.claudeSettings },
+    { label: d.fileCodexConfig, health: view.codexConfig, path: paths?.codexConfig },
+  ]) {
+    // "missing" alone is the normal state on a machine that never set that agent
+    // up — flagging it would make the banner shout forever. It only becomes an
+    // issue once a backup proves the file used to exist.
+    const broken = file.health.status === "invalid"
+    const vanished = file.health.status === "missing" && file.health.hasBackup
+    if (!broken && !vanished) continue
+    const path = file.path
+    issues.push({
+      key: `config-${file.label}`,
+      label: d.healthConfig(file.label, broken ? d.configInvalid : d.configMissing),
+      action:
+        file.health.hasBackup && path
+          ? { label: d.restore, onClick: () => runThen([fileRestoreStep(path, t)]) }
+          : undefined,
+    })
+  }
 
   // The quick-start card is a safety net for anyone who skipped the welcome
   // wizard: shown until they've set up an assistant (Claude Code / Codex) or
@@ -215,7 +290,23 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
   }
 
   return (
-    <SectionShell title={d.title} subtitle={d.subtitle} wide>
+    <SectionShell
+      title={d.title}
+      subtitle={d.subtitle}
+      wide
+      actions={
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-2"
+          onClick={() => void rescan()}
+          disabled={busy}
+        >
+          <RefreshCw className={cn("size-4", busy && "animate-spin")} />
+          {busy ? d.scanning : d.refresh}
+        </Button>
+      }
+    >
       {showQuickStart ? (
         <QuickStartCard
           q={t.quickStart}
@@ -230,6 +321,8 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
         </div>
       ) : null}
 
+      <HealthBanner issues={issues} loading={loading} d={d} />
+
       {/* Overview */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatTile
@@ -241,14 +334,14 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
         <StatTile
           icon={Server}
           label={d.overviewMcp}
-          value={mcpCount}
+          value={mcpEntries.length}
           loading={loading}
           tint="violet"
         />
         <StatTile
           icon={Wrench}
           label={d.overviewSkills}
-          value={skillCount}
+          value={skillEntries.length}
           loading={loading}
           tint="amber"
         />
@@ -261,22 +354,10 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
         />
       </div>
 
-      <div className="flex items-center justify-end">
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-2"
-          onClick={() => void rescan()}
-          disabled={busy}
-        >
-          <RefreshCw className={cn("size-4", busy && "animate-spin")} />
-          {busy ? d.scanning : d.refresh}
-        </Button>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {/* CLIs & runtimes — the primary card, spanning the full width. */}
-        <Card className="flex flex-col gap-3 p-4 lg:col-span-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {/* CLIs & runtimes — read-only status; installs and removals live in
+            the CLIs / Environment sections. */}
+        <Card className="flex flex-col gap-3 p-4 sm:col-span-2 xl:col-span-3">
           <CardHead icon={Terminal} title={d.sectionClis} />
           <div className="flex flex-col gap-0.5 sm:grid sm:grid-cols-2 sm:gap-x-6">
             {allTools.map((tool) => {
@@ -286,64 +367,32 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
               const isCli = CLI_TOOLS.some((c) => c.id === tool.id)
               // Same semver-aware check as the CLIs section, so the two agree.
               const hasUpdate = !!installed && isUpgradeAvailable(det?.version, latest)
-              const cli = findCli(tool.id)
-              const upgradeCmd = cli ? upgradeCommandFor(cli, os, cliManagers[tool.id]) : undefined
               const title =
                 (isCli ? t.catalog.cli[tool.id] : t.catalog.runtime[tool.id])?.title ?? tool.id
+              // `detect_cli` keeps the whole first line of `--version`, which for
+              // uv/python is "uv 0.9.7 (3d9460278 2026-…)" — far too long for a
+              // badge. Show the semver when there is one, the raw line when there
+              // isn't, and let the badge ellipsize either way.
+              const version = extractSemver(det?.version) ?? det?.version
               return (
                 <div
                   key={tool.id}
-                  className="-mx-2 flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/50"
+                  className="-mx-2 flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/50"
                 >
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span
-                      className={cn(
-                        "size-1.5 shrink-0 rounded-full",
-                        installed ? "bg-emerald-500" : "bg-muted-foreground/40"
-                      )}
-                      aria-hidden="true"
-                    />
-                    <span className="truncate font-medium">{title}</span>
-                    <Badge variant={installed ? "secondary" : "outline"} className="font-normal">
-                      {installed
-                        ? `${t.envcheck.installed}${det?.version ? ` · ${det.version}` : ""}`
-                        : t.envcheck.notFound}
+                  <StatusDot on={!!installed} />
+                  <span className="truncate font-medium">{title}</span>
+                  <Badge
+                    variant={installed ? "secondary" : "outline"}
+                    className="min-w-0 shrink font-normal text-ellipsis"
+                  >
+                    {installed
+                      ? `${t.envcheck.installed}${version ? ` · ${version}` : ""}`
+                      : t.envcheck.notFound}
+                  </Badge>
+                  {hasUpdate ? (
+                    <Badge variant="default" className="shrink-0 font-normal">
+                      {d.updateAvailable(latest)}
                     </Badge>
-                    {hasUpdate ? (
-                      <Badge variant="default" className="font-normal">
-                        {d.updateAvailable(latest)}
-                      </Badge>
-                    ) : null}
-                  </div>
-                  {isCli && installed ? (
-                    <div className="flex shrink-0 items-center gap-1">
-                      {hasUpdate && upgradeCmd ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            runThen([cliInstallStep(tool.id as CliTool["id"], upgradeCmd, true, t)])
-                          }
-                        >
-                          {t.shell.upgrade}
-                        </Button>
-                      ) : null}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          runThen([
-                            cliUninstallStep(
-                              tool.id as CliTool["id"],
-                              findCli(tool.id)?.uninstall?.[os],
-                              t
-                            ),
-                          ])
-                        }
-                      >
-                        {d.uninstall}
-                      </Button>
-                    </div>
                   ) : null}
                 </div>
               )
@@ -352,99 +401,64 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
         </Card>
 
         {/* MCP servers */}
-        <Card className="flex h-full min-h-[13rem] flex-col gap-3 p-4">
-          <CardHead icon={Server} title={d.sectionMcp} />
-          {loading ? (
-            <SkeletonRows rows={3} />
-          ) : (
-            <ScrollList>
-              <EntityList
-                target="claude"
-                ids={view.claudeMcps}
-                onRemove={(id) => paths && void runThen(mcpRemoveStep(id, ["claude"], paths, t))}
-                customLabel={d.custom}
-                removeLabel={d.remove}
-                emptyLabel={d.none}
-              />
-              <EntityList
-                target="codex"
-                ids={view.codexMcps}
-                onRemove={(id) => paths && void runThen(mcpRemoveStep(id, ["codex"], paths, t))}
-                customLabel={d.custom}
-                removeLabel={d.remove}
-                emptyLabel={d.none}
-              />
-            </ScrollList>
-          )}
-        </Card>
+        <OverviewCard
+          icon={Server}
+          title={d.sectionMcp}
+          entries={mcpEntries}
+          loading={loading}
+          d={d}
+          onViewAll={() => onNavigate("mcp")}
+        />
 
         {/* Skills */}
-        <Card className="flex h-full min-h-[13rem] flex-col gap-3 p-4">
-          <CardHead icon={Wrench} title={d.sectionSkills} />
+        <OverviewCard
+          icon={Wrench}
+          title={d.sectionSkills}
+          entries={skillEntries}
+          loading={loading}
+          d={d}
+          onViewAll={() => onNavigate("skills")}
+        />
+
+        {/* cc-switch providers */}
+        <Card className="flex flex-col gap-3 p-4">
+          <CardHead icon={ArrowLeftRight} title={d.sectionCcswitch} />
           {loading ? (
             <SkeletonRows rows={3} />
+          ) : view.providers.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{d.none}</p>
           ) : (
-            <ScrollList>
-              <EntityList
-                target="claude"
-                ids={view.claudeSkills}
-                onRemove={(id) =>
-                  paths &&
-                  void runThen([
-                    skillRemoveStep(id, id, ["claude"], [`${paths.claudeSkillsDir}/${id}`], t),
-                  ])
-                }
-                customLabel={d.custom}
-                removeLabel={d.remove}
-                emptyLabel={d.none}
+            <>
+              <div className="flex flex-col gap-0.5">
+                {view.providers.slice(0, OVERVIEW_LIMIT).map((p) => (
+                  <div
+                    key={p.id}
+                    className="-mx-2 flex items-center justify-between gap-2 rounded-md px-2 py-1 text-sm transition-colors hover:bg-muted/50"
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      <StatusDot on={p.is_current} />
+                      <span className="truncate font-medium">{p.name}</span>
+                    </span>
+                    <span className="shrink-0 text-[11px] text-muted-foreground">{p.app_type}</span>
+                  </div>
+                ))}
+              </div>
+              <ViewAll
+                label={d.viewAll(view.providers.length)}
+                onClick={() => onNavigate("ccswitch")}
               />
-              <EntityList
-                target="codex"
-                ids={view.codexSkills}
-                onRemove={(id) =>
-                  paths &&
-                  void runThen([
-                    skillRemoveStep(id, id, ["codex"], [`${paths.codexSkillsDir}/${id}`], t),
-                  ])
-                }
-                customLabel={d.custom}
-                removeLabel={d.remove}
-                emptyLabel={d.none}
-              />
-            </ScrollList>
+            </>
           )}
         </Card>
 
-        {/* Relay */}
-        <Card className="flex h-full min-h-[13rem] flex-col gap-3 p-4">
-          <CardHead
-            icon={Globe}
-            title={d.sectionRelay}
-            action={
-              relayConfigured ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() =>
-                    paths && void runThen(relayRemoveStep(["claude-code", "codex"], paths, t))
-                  }
-                >
-                  {d.remove}
-                </Button>
-              ) : undefined
-            }
-          />
+        {/* Relay — one line; it used to be padded out to a full card height. */}
+        <Card className="flex flex-col gap-3 p-4 sm:col-span-2 xl:col-span-3">
+          <CardHead icon={Globe} title={d.sectionRelay} />
           {loading ? (
             <SkeletonRows rows={1} />
           ) : (
             <div className="flex items-center gap-2 text-sm">
-              <span
-                className={cn(
-                  "size-1.5 shrink-0 rounded-full",
-                  relayConfigured ? "bg-emerald-500" : "bg-muted-foreground/40"
-                )}
-                aria-hidden="true"
-              />
+              <StatusDot on={relayConfigured} />
               {relayConfigured ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="secondary" className="font-normal">
@@ -463,88 +477,6 @@ export function DashboardSection({ scan, scanning, rescan }: DashboardSectionPro
                 <span className="text-muted-foreground">{d.relayNone}</span>
               )}
             </div>
-          )}
-        </Card>
-
-        {/* cc-switch providers */}
-        <Card className="flex h-full min-h-[13rem] flex-col gap-3 p-4">
-          <CardHead
-            icon={ArrowLeftRight}
-            title={d.sectionCcswitch}
-            action={
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  paths &&
-                  void runThen([visibleAppsStep(paths.ccSwitchSettings, DEFAULT_VISIBLE_APPS, t)])
-                }
-              >
-                {t.shell.apply}
-              </Button>
-            }
-          />
-          {loading ? (
-            <SkeletonRows rows={2} />
-          ) : view.providers.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{d.none}</p>
-          ) : (
-            <div className="flex max-h-72 min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pr-1">
-              {view.providers.map((p) => (
-                <div
-                  key={p.id}
-                  className="-mx-2 flex items-center justify-between gap-3 rounded-md px-2 py-1 text-sm transition-colors hover:bg-muted/50"
-                >
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate font-medium">{p.name}</span>
-                    <Badge variant="outline" className="font-normal">
-                      {p.app_type}
-                    </Badge>
-                    {p.is_current ? (
-                      <Badge variant="secondary" className="font-normal">
-                        {t.ccswitch.current}
-                      </Badge>
-                    ) : null}
-                  </div>
-                  {!p.is_current ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() =>
-                        void runThen([
-                          providerStep("delete", p.app_type, p.name, undefined, p.id, t),
-                        ])
-                      }
-                    >
-                      {d.remove}
-                    </Button>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-
-        {/* Config file health */}
-        <Card className="flex flex-col gap-3 p-4 lg:col-span-2">
-          <CardHead icon={FileJson} title={d.sectionHealth} />
-          {loading ? (
-            <SkeletonRows rows={2} />
-          ) : (
-            <>
-              <HealthRow
-                label={d.fileClaudeSettings}
-                health={view.claudeSettings}
-                d={d}
-                onRestore={() => paths && void runThen([fileRestoreStep(paths.claudeSettings, t)])}
-              />
-              <HealthRow
-                label={d.fileCodexConfig}
-                health={view.codexConfig}
-                d={d}
-                onRestore={() => paths && void runThen([fileRestoreStep(paths.codexConfig, t)])}
-              />
-            </>
           )}
         </Card>
       </div>
@@ -602,6 +534,72 @@ function QuickStartCard({
   )
 }
 
+/**
+ * The page's lead: what needs doing, with its fix inline. When there is nothing
+ * to do it collapses to a single quiet line rather than a reassuring banner —
+ * "all good" should not out-shout the real content below it.
+ */
+function HealthBanner({
+  issues,
+  loading,
+  d,
+}: {
+  issues: HealthIssue[]
+  loading: boolean
+  d: ReturnType<typeof useT>["dashboard"]
+}) {
+  if (loading) {
+    return (
+      <Card className="p-4">
+        <SkeletonRows rows={2} />
+      </Card>
+    )
+  }
+  if (issues.length === 0) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-2.5 text-sm">
+        <CheckCircle2
+          className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
+          aria-hidden="true"
+        />
+        <span className="font-medium">{d.healthAllGood}</span>
+        <span className="truncate text-muted-foreground">{d.healthAllGoodHint}</span>
+      </div>
+    )
+  }
+  return (
+    <Card className="gap-3 border-amber-500/30 bg-amber-500/5 p-4">
+      <div className="flex items-center gap-2">
+        <AlertTriangle
+          className="size-4 shrink-0 text-amber-600 dark:text-amber-500"
+          aria-hidden="true"
+        />
+        <h3 className="font-semibold">{d.healthNeedsAttention(issues.length)}</h3>
+      </div>
+      <div className="flex flex-col gap-1">
+        {issues.map((issue) => (
+          <div
+            key={issue.key}
+            className="-mx-2 flex items-center justify-between gap-3 rounded-md px-2 py-1 text-sm"
+          >
+            <span className="min-w-0 truncate">{issue.label}</span>
+            {issue.action ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 shrink-0 bg-background"
+                onClick={issue.action.onClick}
+              >
+                {issue.action.label}
+              </Button>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </Card>
+  )
+}
+
 const STAT_TINTS = {
   sky: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
   violet: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
@@ -624,7 +622,7 @@ function StatTile({
   tint: keyof typeof STAT_TINTS
 }) {
   return (
-    <Card className="flex-row items-center gap-3 p-4 transition-shadow hover:shadow-sm">
+    <Card className="flex-row items-center gap-3 p-4">
       <span
         className={cn(
           "flex size-10 shrink-0 items-center justify-center rounded-lg",
@@ -668,16 +666,16 @@ function CardHead({
   )
 }
 
-/**
- * Bounds a card's list region: it fills the card's flexible body (so every card
- * in a stretched grid row stays the same height) and long MCP/skill lists scroll
- * inside instead of pushing the card taller and unbalancing the grid.
- */
-function ScrollList({ children }: { children: React.ReactNode }) {
+/** The small on/off dot shared by the CLI, provider and relay rows. */
+function StatusDot({ on }: { on: boolean }) {
   return (
-    <div className="flex max-h-72 min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
-      {children}
-    </div>
+    <span
+      className={cn(
+        "size-1.5 shrink-0 rounded-full",
+        on ? "bg-emerald-500" : "bg-muted-foreground/40"
+      )}
+      aria-hidden="true"
+    />
   )
 }
 
@@ -692,102 +690,69 @@ function SkeletonRows({ rows = 2 }: { rows?: number }) {
   )
 }
 
-function EntityList({
-  target,
-  ids,
-  onRemove,
-  customLabel,
-  removeLabel,
-  emptyLabel,
-}: {
-  target: AgentTarget
-  ids: ClassifiedIds
-  onRemove: (id: string) => void
-  customLabel: string
-  removeLabel: string
-  emptyLabel: string
-}) {
-  const all = [...ids.known, ...ids.custom]
+/** Footer link handing the user off to the section that owns the full list. */
+function ViewAll({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <div>
-      <div className="mb-1.5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-        {target}
-      </div>
-      {all.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{emptyLabel}</p>
-      ) : (
-        <div className="flex flex-col gap-0.5">
-          {all.map((id) => (
-            <div
-              key={id}
-              className="group -mx-2 flex items-center justify-between gap-2 rounded-md px-2 py-1 text-sm transition-colors hover:bg-muted/60"
-            >
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="truncate">{id}</span>
-                {ids.custom.includes(id) ? (
-                  <Badge variant="outline" className="font-normal">
-                    {customLabel}
-                  </Badge>
-                ) : null}
-              </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-6 shrink-0 text-muted-foreground hover:text-destructive"
-                aria-label={`${removeLabel} ${id}`}
-                onClick={() => onRemove(id)}
-              >
-                <X className="size-3.5" />
-              </Button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    <Button
+      variant="ghost"
+      size="sm"
+      className="-mx-2 mt-auto h-7 justify-start gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+      onClick={onClick}
+    >
+      {label}
+      <ArrowRight className="size-3" aria-hidden="true" />
+    </Button>
   )
 }
 
-function HealthRow({
-  label,
-  health,
+/** An MCP / skills summary card: the first few ids, then a link to the rest. */
+function OverviewCard({
+  icon,
+  title,
+  entries,
+  loading,
   d,
-  onRestore,
+  onViewAll,
 }: {
-  label: string
-  health: FileHealth
+  icon: LucideIcon
+  title: string
+  entries: OverviewEntry[]
+  loading: boolean
   d: ReturnType<typeof useT>["dashboard"]
-  onRestore: () => void
+  onViewAll: () => void
 }) {
-  const ok = health.status === "ok"
-  const StatusIcon = ok ? CheckCircle2 : AlertTriangle
-  const color = ok
-    ? "text-emerald-600 dark:text-emerald-400"
-    : health.status === "invalid"
-      ? "text-destructive"
-      : "text-amber-600 dark:text-amber-500"
-  const statusLabel =
-    health.status === "ok"
-      ? d.configOk
-      : health.status === "invalid"
-        ? d.configInvalid
-        : d.configMissing
   return (
-    <div className="flex items-center justify-between gap-3 text-sm">
-      <div className="flex min-w-0 items-center gap-2">
-        <StatusIcon className={cn("size-4 shrink-0", color)} aria-hidden="true" />
-        <span className="truncate font-medium">{label}</span>
-        <span className={cn("text-xs", color)}>{statusLabel}</span>
-        {health.hasBackup ? (
-          <Badge variant="outline" className="font-normal">
-            {d.hasBackup}
-          </Badge>
-        ) : null}
-      </div>
-      {health.hasBackup ? (
-        <Button variant="ghost" size="sm" onClick={onRestore}>
-          {d.restore}
-        </Button>
-      ) : null}
-    </div>
+    <Card className="flex flex-col gap-3 p-4">
+      <CardHead icon={icon} title={title} />
+      {loading ? (
+        <SkeletonRows rows={3} />
+      ) : entries.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{d.none}</p>
+      ) : (
+        <>
+          <div className="flex flex-col gap-0.5">
+            {entries.slice(0, OVERVIEW_LIMIT).map((entry) => (
+              <div
+                key={entry.id}
+                className="-mx-2 flex items-center justify-between gap-2 rounded-md px-2 py-1 text-sm transition-colors hover:bg-muted/50"
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="truncate">{entry.id}</span>
+                  {entry.custom ? (
+                    <Badge variant="outline" className="shrink-0 font-normal">
+                      {d.custom}
+                    </Badge>
+                  ) : null}
+                </span>
+                <span className="shrink-0 text-[11px] text-muted-foreground">
+                  {entry.targets.join(" · ")}
+                </span>
+              </div>
+            ))}
+          </div>
+          <ViewAll label={d.viewAll(entries.length)} onClick={onViewAll} />
+        </>
+      )}
+    </Card>
   )
 }

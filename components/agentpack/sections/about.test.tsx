@@ -16,6 +16,14 @@ jest.mock("@/lib/tauri/settings", () => ({
   },
 }))
 jest.mock("@/lib/tauri/system", () => ({ openUrl: jest.fn(), revealPath: jest.fn() }))
+jest.mock("@/lib/tauri/os", () => ({
+  osSummary: jest.fn().mockResolvedValue("macOS 15.3 · aarch64"),
+}))
+jest.mock("@/lib/tauri/shortcut", () => ({
+  DEFAULT_SUMMON_SHORTCUT: "CommandOrControl+Shift+A",
+  registerSummonShortcut: jest.fn().mockResolvedValue(true),
+  unregisterSummonShortcut: jest.fn().mockResolvedValue(undefined),
+}))
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }))
 
 import { render, screen, waitFor } from "@testing-library/react"
@@ -23,6 +31,11 @@ import userEvent from "@testing-library/user-event"
 import { toast } from "sonner"
 import { checkForUpdate, downloadAndInstallUpdate, restartApp } from "@/lib/tauri/updater"
 import { saveSettings } from "@/lib/tauri/settings"
+import {
+  DEFAULT_SUMMON_SHORTCUT,
+  registerSummonShortcut,
+  unregisterSummonShortcut,
+} from "@/lib/tauri/shortcut"
 import { revealPath } from "@/lib/tauri/system"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
@@ -46,6 +59,8 @@ beforeEach(() => {
       quickStartDismissed: false,
       ghMirrorPrefix: null,
       skillRepoSources: [],
+      proxy: null,
+      summonShortcut: null,
     },
     paths: null,
   })
@@ -111,8 +126,41 @@ it("toasts when the update check fails", async () => {
 
 it("persists the auto-check preference on toggle", async () => {
   renderAbout()
-  await userEvent.click(screen.getByRole("switch"))
+  await userEvent.click(screen.getByRole("switch", { name: en.about.autoCheckLabel }))
   expect(saveSettings).toHaveBeenCalledWith({ autoCheckUpdates: false })
+})
+
+it("claims the global hotkey and persists it once the OS grants it", async () => {
+  ;(registerSummonShortcut as jest.Mock).mockResolvedValue(true)
+  renderAbout()
+  await userEvent.click(screen.getByRole("switch", { name: en.about.summonShortcutLabel }))
+  await waitFor(() =>
+    expect(saveSettings).toHaveBeenCalledWith({ summonShortcut: DEFAULT_SUMMON_SHORTCUT })
+  )
+})
+
+it("keeps the hotkey off and explains why when the accelerator is taken", async () => {
+  ;(registerSummonShortcut as jest.Mock).mockResolvedValue(false)
+  renderAbout()
+  await userEvent.click(screen.getByRole("switch", { name: en.about.summonShortcutLabel }))
+  await waitFor(() =>
+    expect(toast.error).toHaveBeenCalledWith(en.about.shortcutTaken(DEFAULT_SUMMON_SHORTCUT))
+  )
+  expect(saveSettings).not.toHaveBeenCalledWith(
+    expect.objectContaining({ summonShortcut: DEFAULT_SUMMON_SHORTCUT })
+  )
+})
+
+it("releases the hotkey when switched back off", async () => {
+  useAppStore.setState({
+    settings: { ...useAppStore.getState().settings, summonShortcut: DEFAULT_SUMMON_SHORTCUT },
+  })
+  renderAbout()
+  await userEvent.click(screen.getByRole("switch", { name: en.about.summonShortcutLabel }))
+  await waitFor(() =>
+    expect(unregisterSummonShortcut).toHaveBeenCalledWith(DEFAULT_SUMMON_SHORTCUT)
+  )
+  expect(saveSettings).toHaveBeenCalledWith({ summonShortcut: null })
 })
 
 it("reopens the welcome wizard on demand", async () => {
@@ -140,6 +188,7 @@ it("reveals config folders when paths are known", async () => {
       ccConnectDir: "/home/.cc-connect",
       ccConnectConfig: "/home/.cc-connect/config.toml",
       mcpDisabledStore: "/home/.agentpack/mcp-disabled.json",
+      shellProfile: "/home/.zshrc",
       os: "mac",
     },
   })

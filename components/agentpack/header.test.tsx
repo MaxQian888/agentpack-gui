@@ -1,11 +1,24 @@
-import { render, screen } from "@testing-library/react"
+jest.mock("@/lib/tauri/os", () => ({ detectOs: jest.fn().mockResolvedValue(null) }))
+jest.mock("@/lib/tauri/window", () => ({
+  minimizeWindow: jest.fn(),
+  toggleMaximizeWindow: jest.fn(),
+  closeWindow: jest.fn(),
+  isWindowMaximized: jest.fn().mockResolvedValue(false),
+  onWindowResized: jest.fn().mockResolvedValue(() => {}),
+}))
+
+import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { detectOs } from "@/lib/tauri/os"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { Header } from "./header"
 import { en } from "@/lib/i18n/en"
 
-beforeEach(() => useAppStore.setState({ dryRun: false, osOverride: null }))
+beforeEach(() => {
+  useAppStore.setState({ dryRun: false, osOverride: null })
+  ;(detectOs as jest.Mock).mockResolvedValue(null)
+})
 
 function renderHeader(onRun = jest.fn()) {
   render(
@@ -65,4 +78,41 @@ it("opens the customize dialog from the Run ▾ menu", async () => {
   await userEvent.click(screen.getByRole("button", { name: en.shell.quickInstall }))
   await userEvent.click(screen.getByRole("menuitem", { name: en.shell.customize }))
   expect(onCustomize).toHaveBeenCalled()
+})
+
+// The header doubles as the title bar once the window frame is gone.
+describe("frameless window", () => {
+  it("stays a plain header in web mode — no drag region, no window buttons", async () => {
+    renderHeader()
+    await waitFor(() => expect(detectOs).toHaveBeenCalled())
+    expect(document.querySelector("header")).not.toHaveAttribute("data-tauri-drag-region")
+    expect(screen.queryByRole("button", { name: en.shell.closeWindow })).not.toBeInTheDocument()
+  })
+
+  it("becomes a deep drag region on macOS, where the system draws the buttons", async () => {
+    ;(detectOs as jest.Mock).mockResolvedValue("mac")
+    renderHeader()
+    await waitFor(() =>
+      expect(document.querySelector("header")).toHaveAttribute("data-tauri-drag-region", "deep")
+    )
+    expect(screen.queryByRole("button", { name: en.shell.closeWindow })).not.toBeInTheDocument()
+  })
+
+  it("adds our own window buttons on Windows/Linux", async () => {
+    ;(detectOs as jest.Mock).mockResolvedValue("win")
+    renderHeader()
+    expect(await screen.findByRole("button", { name: en.shell.minimize })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: en.shell.maximize })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: en.shell.closeWindow })).toBeInTheDocument()
+    expect(document.querySelector("header")).toHaveAttribute("data-tauri-drag-region", "deep")
+  })
+
+  it("keeps the header's own controls clickable inside the drag region", async () => {
+    // Tauri's drag script bails on BUTTON/LABEL/role-bearing elements, so this
+    // guards the thing that would break if we ever swapped a control for a div.
+    ;(detectOs as jest.Mock).mockResolvedValue("win")
+    const { onRun } = renderHeader()
+    await userEvent.click(await screen.findByRole("button", { name: en.shell.run }))
+    expect(onRun).toHaveBeenCalled()
+  })
 })
