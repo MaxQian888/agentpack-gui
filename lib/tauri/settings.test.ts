@@ -38,6 +38,7 @@ describe("loadSettings", () => {
       skillRepoSources: [],
       proxy: null,
       summonShortcut: null,
+      monthlySubscriptionUsd: null,
     })
   })
 

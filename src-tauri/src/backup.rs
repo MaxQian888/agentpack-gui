@@ -34,8 +34,17 @@ fn backup_root() -> PathBuf {
     .join(".cc-switch/backups/agentpack")
 }
 
+/// How many snapshots to keep. Every provider write takes one, so without a cap the
+/// folder grows for the life of the install.
+const MAX_SNAPSHOTS: usize = 20;
+
 /// Absolute paths agentpack snapshots: the cc-switch DB plus the live agent
 /// configs it can rewrite. Only files that exist are copied.
+///
+/// `~/.codex/auth.json` is deliberately absent. It holds the official ChatGPT login
+/// (OAuth refresh token in plaintext) and agentpack never writes it, so copying it on
+/// every provider write would scatter credentials for no rollback value — and
+/// restoring a stale refresh token can log the user out.
 fn tracked_files() -> Vec<PathBuf> {
   let home = dirs::home_dir().unwrap_or_default();
   let codex = crate::paths::codex_home(&home);
@@ -43,8 +52,17 @@ fn tracked_files() -> Vec<PathBuf> {
     crate::ccswitch::db_path(),
     home.join(".claude/settings.json"),
     codex.join("config.toml"),
-    codex.join("auth.json"),
   ]
+}
+
+/// Drop all but the newest `MAX_SNAPSHOTS` snapshots. Best-effort: a folder that
+/// won't delete is skipped rather than failing the write that triggered it.
+fn prune() {
+  let Ok(entries) = backup_list() else { return };
+  let root = backup_root();
+  for stale in entries.iter().skip(MAX_SNAPSHOTS) {
+    let _ = fs::remove_dir_all(root.join(&stale.id));
+  }
 }
 
 fn now_millis() -> u128 {
@@ -52,6 +70,17 @@ fn now_millis() -> u128 {
     .duration_since(UNIX_EPOCH)
     .unwrap_or_default()
     .as_millis()
+}
+
+/// Nanosecond stamp for the snapshot folder name. A provider write snapshots and then
+/// writes, so two snapshots can land inside the same millisecond — with a
+/// millisecond-named folder the second would silently overwrite the first, losing the
+/// rollback point it was taken for.
+fn now_nanos() -> u128 {
+  SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .unwrap_or_default()
+    .as_nanos()
 }
 
 /// Snapshot the tracked files into a new timestamped folder. Internal helper so
@@ -62,7 +91,7 @@ pub(crate) fn snapshot(reason: &str) -> Result<BackupEntry, String> {
 
 fn snapshot_files(reason: &str, files: &[PathBuf]) -> Result<BackupEntry, String> {
   let ts = now_millis();
-  let id = format!("snapshot-{ts}");
+  let id = format!("snapshot-{}", now_nanos());
   let dir = backup_root().join(&id);
   fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
@@ -93,6 +122,7 @@ fn snapshot_files(reason: &str, files: &[PathBuf]) -> Result<BackupEntry, String
   };
   let manifest = serde_json::to_string_pretty(&entry).map_err(|e| e.to_string())?;
   fs::write(dir.join("manifest.json"), manifest).map_err(|e| e.to_string())?;
+  prune();
   Ok(entry)
 }
 
@@ -146,9 +176,17 @@ pub fn backup_restore(id: String) -> Result<Vec<String>, String> {
     fs::read_to_string(dir.join("manifest.json")).map_err(|_| "backup not found".to_string())?;
   let entry: BackupEntry = serde_json::from_str(&text).map_err(|e| e.to_string())?;
 
+  let tracked = tracked_files();
   let mut restored = Vec::new();
   for f in &entry.files {
     let dest = PathBuf::from(&f.original_path);
+    // Snapshots taken by an older agentpack also captured ~/.codex/auth.json. Putting
+    // that back would roll the official login to an older refresh token and can sign
+    // the user out, so a restore only ever rewrites what agentpack currently manages.
+    if !tracked.contains(&dest) {
+      restored.push(format!("skipped (not managed): {}", f.original_path));
+      continue;
+    }
     if let Some(parent) = dest.parent() {
       fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -166,6 +204,7 @@ mod tests {
   fn snapshot_list_restore_roundtrip() {
     // Shared with ccswitch tests: both mutate the same global env vars.
     let _g = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = crate::TestEnvGuard;
 
     let tmp = std::env::temp_dir().join(format!("apbk-{}", now_millis()));
     let root = tmp.join("backups");
@@ -189,8 +228,64 @@ mod tests {
     backup_restore(entry.id.clone()).unwrap();
     assert_eq!(fs::read(&db).unwrap(), b"ORIGINAL");
 
-    std::env::remove_var("AGENTPACK_BACKUP_ROOT");
-    std::env::remove_var("AGENTPACK_CCSWITCH_DB");
+    let _ = fs::remove_dir_all(&tmp);
+  }
+
+  #[test]
+  fn snapshots_are_capped_and_never_carry_credentials() {
+    let _g = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = crate::TestEnvGuard;
+
+    let tmp = std::env::temp_dir().join(format!("apbk-cap-{}", now_nanos()));
+    let root = tmp.join("backups");
+    let db = tmp.join("cc-switch.db");
+    fs::create_dir_all(&tmp).unwrap();
+    fs::write(&db, b"X").unwrap();
+    std::env::set_var("AGENTPACK_BACKUP_ROOT", &root);
+    std::env::set_var("AGENTPACK_CCSWITCH_DB", &db);
+
+    // auth.json holds the official ChatGPT login; agentpack never writes it, so it
+    // must never be copied into a snapshot either.
+    assert!(
+      !tracked_files().iter().any(|p| p.ends_with("auth.json")),
+      "auth.json must not be snapshotted"
+    );
+
+    for _ in 0..(MAX_SNAPSHOTS + 5) {
+      snapshot("cap test").unwrap();
+    }
+    assert_eq!(backup_list().unwrap().len(), MAX_SNAPSHOTS);
+
+    let _ = fs::remove_dir_all(&tmp);
+  }
+
+  #[test]
+  fn restore_skips_files_agentpack_no_longer_manages() {
+    let _g = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = crate::TestEnvGuard;
+
+    let tmp = std::env::temp_dir().join(format!("apbk-skip-{}", now_nanos()));
+    let root = tmp.join("backups");
+    let db = tmp.join("cc-switch.db");
+    let auth = tmp.join("auth.json");
+    fs::create_dir_all(&tmp).unwrap();
+    fs::write(&db, b"DB").unwrap();
+    fs::write(&auth, b"OLD-LOGIN").unwrap();
+    std::env::set_var("AGENTPACK_BACKUP_ROOT", &root);
+    std::env::set_var("AGENTPACK_CCSWITCH_DB", &db);
+    std::env::set_var("AGENTPACK_SKIP_RUNNING_CHECK", "1");
+
+    // Stands in for a snapshot taken by an older agentpack, which also captured
+    // ~/.codex/auth.json.
+    let entry = snapshot_files("legacy", &[db.clone(), auth.clone()]).unwrap();
+    fs::write(&auth, b"CURRENT-LOGIN").unwrap();
+
+    let log = backup_restore(entry.id.clone()).unwrap();
+    // The DB rolls back; the credential file is left exactly as it is.
+    assert_eq!(fs::read(&db).unwrap(), b"DB");
+    assert_eq!(fs::read(&auth).unwrap(), b"CURRENT-LOGIN");
+    assert!(log.iter().any(|l| l.contains("skipped")), "log: {log:?}");
+
     let _ = fs::remove_dir_all(&tmp);
   }
 }

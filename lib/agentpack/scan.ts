@@ -1,4 +1,5 @@
 import { parse } from "smol-toml"
+import { CODEX_PROVIDER_KEY, LEGACY_CODEX_PROVIDER_KEY } from "./ccswitch/sync"
 import { MCP_SERVERS, SKILLS } from "./registry"
 
 /**
@@ -27,7 +28,11 @@ export interface ClassifiedIds {
   custom: string[]
 }
 
-/** Read the relay env vars from Claude settings.json (inverts mergeClaudeSettings). */
+/**
+ * Read the relay env vars from Claude settings.json — the same `env` keys a
+ * cc-switch provider writes, so this reports the live endpoint whether it was
+ * set by a provider switch or by hand.
+ */
 export function parseClaudeRelay(json: string): ClaudeRelayState {
   if (!json.trim()) return { hasToken: false }
   let data: Record<string, unknown>
@@ -55,7 +60,9 @@ export function parseCodexConfig(toml: string): CodexConfigState {
   const providers = (data["model_providers"] as Record<string, unknown> | undefined) ?? {}
   return {
     mcpServers: Object.keys(servers),
-    hasRelayProvider: "agentpack" in providers,
+    // The legacy table is the one the removed relay card wrote; still recognized
+    // so a machine that hasn't run a provider sync yet reports its endpoint too.
+    hasRelayProvider: CODEX_PROVIDER_KEY in providers || LEGACY_CODEX_PROVIDER_KEY in providers,
   }
 }
 

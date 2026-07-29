@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { format } from "date-fns"
-import { Search } from "lucide-react"
+import { Search, X } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import {
@@ -28,7 +28,7 @@ import {
   type SessionDetail,
   type SessionSummary,
 } from "@/lib/history/types"
-import { formatCost, formatTokens } from "@/lib/history/format"
+import { dayKey, formatCost, formatTokens } from "@/lib/history/format"
 import { matchesQuery, sessionCost } from "@/lib/history/stats"
 import { SOURCE_COLORS } from "@/lib/history/display"
 import { detailCacheKey, getCachedDetail, setCachedDetail } from "@/lib/history/detail-cache"
@@ -226,12 +226,48 @@ function TranscriptDialog({
   )
 }
 
-export function SessionBrowser({ sessions }: { sessions: SessionSummary[] }) {
+/**
+ * A drill-down request from the usage dashboard: "show me the sessions behind
+ * this bar". `nonce` is what makes re-clicking the same bar work — the props are
+ * otherwise identical, so without it the second click would change nothing.
+ */
+export interface BrowserFocus {
+  /** Seeds the search box; matches title / project / cwd / model. */
+  query?: string
+  source?: HistorySource | "all"
+  /** Restrict to sessions last active on this local day (`YYYY-MM-DD`). */
+  day?: string
+  nonce: number
+}
+
+export function SessionBrowser({
+  sessions,
+  focus,
+}: {
+  sessions: SessionSummary[]
+  focus?: BrowserFocus
+}) {
   const t = useT().history
   const [source, setSource] = useState<HistorySource | "all">("all")
   const [query, setQuery] = useState("")
+  const [day, setDay] = useState<string | null>(null)
   const [sort, setSort] = useState<SortKey>("recent")
   const [selected, setSelected] = useState<SessionSummary | null>(null)
+
+  // Apply an incoming drill-down by adjusting state during render (React's
+  // "changed a prop, reset some state" pattern) rather than in an effect, which
+  // would render the stale filters first and then immediately re-render.
+  // Keyed on the nonce so clicking the same chart element twice re-applies it,
+  // and so editing the filters by hand afterwards isn't undone.
+  // Starts `undefined`, not at the incoming nonce: switching tabs unmounts this
+  // subtree, so a drill-down arrives on a *fresh* mount and must still apply.
+  const [appliedNonce, setAppliedNonce] = useState<number | undefined>(undefined)
+  if (focus && focus.nonce !== appliedNonce) {
+    setAppliedNonce(focus.nonce)
+    setQuery(focus.query ?? "")
+    setSource(focus.source ?? "all")
+    setDay(focus.day ?? null)
+  }
 
   // Sub-agent runs are separate transcripts on disk but belong to the session
   // that spawned them — listing them as peers buries the real sessions (they
@@ -274,20 +310,23 @@ export function SessionBrowser({ sessions }: { sessions: SessionSummary[] }) {
 
   const filtered = useMemo(() => {
     const list = roots.filter(
-      (s) => (source === "all" || s.source === source) && matchesQuery(s, query)
+      (s) =>
+        (source === "all" || s.source === source) &&
+        (day === null || dayKey(s.updatedAt) === day) &&
+        matchesQuery(s, query)
     )
     const sorted = [...list]
     if (sort === "tokens") sorted.sort((a, b) => b.usage.total - a.usage.total)
     else if (sort === "messages") sorted.sort((a, b) => b.messageCount - a.messageCount)
     else sorted.sort((a, b) => b.updatedAt - a.updatedAt)
     return sorted
-  }, [roots, source, query, sort])
+  }, [roots, source, query, day, sort])
 
   // Render the list in windows so a few thousand sessions don't all mount at
   // once. Window resets whenever the filter/sort changes.
   const { visible, sentinelRef, hasMore } = useIncremental(
     filtered.length,
-    `${source}|${query}|${sort}`,
+    `${source}|${query}|${day}|${sort}`,
     50
   )
 
@@ -313,6 +352,16 @@ export function SessionBrowser({ sessions }: { sessions: SessionSummary[] }) {
             </button>
           ))}
         </div>
+        {day !== null ? (
+          <button
+            type="button"
+            onClick={() => setDay(null)}
+            className="flex items-center gap-1.5 rounded-full border border-primary bg-primary/10 px-3 py-1 text-sm"
+          >
+            {t.dayFilter(day)}
+            <X className="size-3.5" />
+          </button>
+        ) : null}
         <div className="ml-auto flex items-center gap-2">
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />

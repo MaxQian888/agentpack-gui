@@ -21,14 +21,17 @@ import {
   installSkill,
   ccLoadProviders,
   launchCcSwitch,
+  ccSchemaStatus,
+  ccInitDb,
   listSkills,
   backupSnapshot,
   backupList,
   backupRestore,
   historyListSessions,
+  historyUsageSeries,
   historyGetSession,
 } from "./commands"
-import { invoke } from "@tauri-apps/api/core"
+import { Channel, invoke } from "@tauri-apps/api/core"
 
 it("getPaths invokes get_paths", async () => {
   expect(await getPaths()).toEqual({ os: "mac" })
@@ -110,6 +113,12 @@ it("simple wrappers forward their arguments to the right command", async () => {
   await ccLoadProviders()
   expect(invoke).toHaveBeenCalledWith("cc_load_providers")
 
+  await ccSchemaStatus()
+  expect(invoke).toHaveBeenCalledWith("cc_schema_status")
+
+  await ccInitDb()
+  expect(invoke).toHaveBeenCalledWith("cc_init_db")
+
   await launchCcSwitch()
   expect(invoke).toHaveBeenCalledWith("launch_cc_switch")
 
@@ -125,8 +134,17 @@ it("simple wrappers forward their arguments to the right command", async () => {
   await backupRestore("snapshot-1")
   expect(invoke).toHaveBeenCalledWith("backup_restore", { id: "snapshot-1" })
 
+  // Rust takes the progress channel unconditionally (Tauri can't deserialize an
+  // optional one), so a caller that doesn't want progress still sends one.
   await historyListSessions()
-  expect(invoke).toHaveBeenCalledWith("history_list_sessions")
+  expect(invoke).toHaveBeenCalledWith("history_list_sessions", {
+    progress: expect.any(Channel),
+  })
+
+  await historyUsageSeries()
+  expect(invoke).toHaveBeenCalledWith("history_usage_series", {
+    progress: expect.any(Channel),
+  })
 
   await historyGetSession("codex", "/x/rollout.jsonl")
   expect(invoke).toHaveBeenCalledWith("history_get_session", {

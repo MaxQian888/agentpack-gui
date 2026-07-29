@@ -534,6 +534,81 @@ pub fn proxy_check(
   }
 }
 
+/// Outcome of `http_get`. An HTTP response — including 401 or 404 — is a success
+/// as far as this command is concerned: it reached the server, and the caller is
+/// the one who knows what a given status means for it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpGetResult {
+  /// HTTP status, or `None` when the request never got a response.
+  status: Option<u16>,
+  latency_ms: Option<u64>,
+  /// Response body, capped — callers parse only small metadata payloads here.
+  body: String,
+  /// Transport-level failure (DNS, TLS, timeout); `None` when a status came back.
+  error: Option<String>,
+}
+
+/// Cap on the body we read back. The endpoint probe wants a model list, not a
+/// stream, and an unbounded read would let a hostile or misconfigured endpoint
+/// balloon the app's memory.
+const HTTP_GET_BODY_CAP: usize = 256 * 1024;
+
+/// Plain authenticated GET, used to check that an API endpoint is reachable and
+/// that its credentials work. Generic on purpose: the URL and headers are built
+/// on the TS side (`ccswitch/probe.ts`), which is where the knowledge of each
+/// CLI's auth scheme already lives, so Rust never duplicates it.
+#[tauri::command(async)]
+pub fn http_get(
+  url: String,
+  headers: std::collections::HashMap<String, String>,
+  timeout_ms: Option<u64>,
+) -> Result<HttpGetResult, String> {
+  let timeout = Duration::from_millis(timeout_ms.unwrap_or(10_000).clamp(500, 60_000));
+  let mut builder = ureq::AgentBuilder::new().timeout(timeout).redirects(2);
+  if let Some(proxy) = proxy_from_env() {
+    builder = builder.proxy(proxy);
+  }
+  let mut req = builder.build().get(&url);
+  for (k, v) in &headers {
+    req = req.set(k, v);
+  }
+
+  let started = Instant::now();
+  let elapsed = || Some(started.elapsed().as_millis() as u64);
+  let read_capped = |resp: ureq::Response| {
+    use std::io::Read;
+    let mut buf = String::new();
+    let _ = resp
+      .into_reader()
+      .take(HTTP_GET_BODY_CAP as u64)
+      .read_to_string(&mut buf);
+    buf
+  };
+  match req.call() {
+    Ok(resp) => Ok(HttpGetResult {
+      status: Some(resp.status()),
+      latency_ms: elapsed(),
+      body: read_capped(resp),
+      error: None,
+    }),
+    // A 401/404 is the most useful answer this probe can give — a wrong token or
+    // a base URL missing its `/v1` — so it is reported, not raised.
+    Err(ureq::Error::Status(code, resp)) => Ok(HttpGetResult {
+      status: Some(code),
+      latency_ms: elapsed(),
+      body: read_capped(resp),
+      error: None,
+    }),
+    Err(ureq::Error::Transport(t)) => Ok(HttpGetResult {
+      status: None,
+      latency_ms: None,
+      body: String::new(),
+      error: Some(transport_reason(&t).into()),
+    }),
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;

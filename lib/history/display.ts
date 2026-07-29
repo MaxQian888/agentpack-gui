@@ -23,3 +23,24 @@ export function modelToSource(model: string): HistorySource {
 export function modelColor(model: string): string {
   return SOURCE_COLORS[modelToSource(model)]
 }
+
+/**
+ * Colors for the generic chart series (as opposed to {@link SOURCE_COLORS},
+ * which encodes a CLI's identity). One table for every usage panel — three
+ * files each minting their own palette is how a dashboard ends up with two
+ * different blues.
+ *
+ * Literal hex, picked to read on both themes, for the same reason
+ * `SOURCE_COLORS` is: these are consumed as SVG presentation attributes
+ * (`fill`, `stroke`, `stopColor`), where `var(--chart-N)` is not reliably
+ * substituted across the engines Tauri ships on — WebKit on macOS/Linux,
+ * Chromium on Windows. A token that silently fails to resolve renders an
+ * uncolored chart, so the value is inlined and theme-neutral instead.
+ */
+export const CHART_SERIES = {
+  input: "#3b82f6",
+  output: "#10b981",
+  hour: "#6366f1",
+  cost: "#f59e0b",
+  histogram: "#8b5cf6",
+} as const

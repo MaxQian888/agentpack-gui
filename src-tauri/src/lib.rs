@@ -5,6 +5,7 @@ mod exec;
 mod fsops;
 mod history;
 mod history_cache;
+mod login;
 mod mcp;
 mod net;
 mod paths;
@@ -17,6 +18,30 @@ mod skills;
 /// this serializes them.
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Clears every test env var when it drops, however the test ends.
+///
+/// Cleaning up on the success path only isn't enough: a failing assertion
+/// unwinds past the `remove_var` calls and leaves the vars set for whichever
+/// sibling test acquires [`TEST_ENV_LOCK`] next — turning one real failure into
+/// a cascade of unrelated ones. `Drop` runs during unwind, so this holds either
+/// way.
+#[cfg(test)]
+pub(crate) struct TestEnvGuard;
+
+#[cfg(test)]
+impl Drop for TestEnvGuard {
+  fn drop(&mut self) {
+    for key in [
+      "AGENTPACK_CCSWITCH_DB",
+      "AGENTPACK_BACKUP_ROOT",
+      "AGENTPACK_SKIP_RUNNING_CHECK",
+      "AGENTPACK_HISTORY_CACHE",
+    ] {
+      std::env::remove_var(key);
+    }
+  }
+}
 
 /// Bring the main window back to the front, whatever state it's in.
 ///
@@ -120,13 +145,18 @@ pub fn run() {
       net::system_proxy_snapshot,
       net::tool_proxy_snapshot,
       net::proxy_check,
+      net::http_get,
       net::set_process_proxy,
       ccswitch::cc_load_providers,
       ccswitch::cc_write_provider,
+      ccswitch::cc_schema_status,
+      ccswitch::cc_init_db,
+      login::login_status,
       backup::backup_snapshot,
       backup::backup_list,
       backup::backup_restore,
       history::history_list_sessions,
+      history::history_usage_series,
       history::history_get_session,
       history::history_get_part_text,
     ])

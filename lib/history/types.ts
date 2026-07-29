@@ -134,3 +134,68 @@ export interface ListResult {
   sessions: SessionSummary[]
   errors: SourceError[]
 }
+
+/** How far a scan has got, streamed while gigabytes of JSONL are re-parsed. */
+export interface ScanProgress {
+  done: number
+  total: number
+}
+
+/**
+ * One priced unit of work, packed as
+ * `[ts, modelIndex, input, output, cacheRead, cacheWrite, reasoning]`.
+ *
+ * `modelIndex` points into the owning `SessionSeries.models`, or is `-1` when
+ * the record named no model. Packed rather than an object because a real
+ * history holds ~600k of these; see the Rust `PackedEvent`.
+ */
+export type PackedEvent = [
+  ts: number,
+  modelIndex: number,
+  input: number,
+  output: number,
+  cacheRead: number,
+  cacheWrite: number,
+  reasoning: number,
+]
+
+/** Field offsets into a {@link PackedEvent}, so callers never index by magic number. */
+export const EV = {
+  ts: 0,
+  model: 1,
+  input: 2,
+  output: 3,
+  cacheRead: 4,
+  cacheWrite: 5,
+  reasoning: 6,
+} as const
+
+/**
+ * How often one tool was called in a session, and how often it failed.
+ * `errors` stays 0 for Codex, which writes tool output as free text with no
+ * failure flag — absent data, not a claim of success.
+ */
+export interface ToolStat {
+  name: string
+  calls: number
+  errors: number
+}
+
+/** The message-level detail behind a session — see the Rust `SessionSeries`. */
+export interface SessionSeries {
+  id: string
+  source: HistorySource
+  projectName: string
+  gitBranch: string | null
+  parentId: string | null
+  /** Model ids referenced by `events[i][EV.model]`, in first-seen order. */
+  models: string[]
+  events: PackedEvent[]
+  /** Sorted most-called first by the Rust side. */
+  tools: ToolStat[]
+}
+
+export interface UsageSeriesResult {
+  sessions: SessionSeries[]
+  errors: SourceError[]
+}

@@ -13,7 +13,7 @@ const plan: Plan = {
   skills: [{ id: "rust", targets: ["claude"] }],
   mcps: [{ id: "memory", targets: ["claude"] }],
   mcpKeys: { context7: "secret" },
-  network: { apiToken: "t" },
+  network: { npmRegistry: "https://m" },
 }
 
 const profile: Profile = { id: "p1", name: "Work", createdAt: 123, plan }
@@ -23,7 +23,28 @@ it("serialize → parse round-trips a profile with secrets intact", () => {
   const out = parseProfiles(serializeProfiles(store))
   expect(out.profiles).toHaveLength(1)
   expect(out.profiles[0].plan.mcpKeys.context7).toBe("secret")
-  expect(out.profiles[0].plan.network.apiToken).toBe("t")
+  expect(out.profiles[0].plan.network.npmRegistry).toBe("https://m")
+})
+
+it("parseProfiles strips relay fields from a profile saved before providers", () => {
+  // Applying such a profile must not re-introduce a second writer for the agent
+  // CLIs' endpoint — that config is owned by the provider list now.
+  const json = JSON.stringify({
+    profiles: [
+      {
+        id: "p1",
+        name: "Work",
+        plan: {
+          ...plan,
+          network: { npmRegistry: "https://m", apiBaseUrl: "https://r", apiToken: "t" },
+        },
+      },
+    ],
+  })
+  const net = parseProfiles(json).profiles[0].plan.network as Record<string, unknown>
+  expect(net["npmRegistry"]).toBe("https://m")
+  expect(net["apiBaseUrl"]).toBeUndefined()
+  expect(net["apiToken"]).toBeUndefined()
 })
 
 it("parseProfiles degrades to empty store on invalid / empty input", () => {

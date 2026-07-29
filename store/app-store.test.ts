@@ -56,7 +56,7 @@ it("applyPreset targets every agent the bundle installs", () => {
 describe("network config and MCP keys survive re-selection", () => {
   beforeEach(() => {
     const s = useAppStore.getState()
-    s.setNetwork({ npmRegistry: "https://registry.npmmirror.com", apiBaseUrl: "https://relay" })
+    s.setNetwork({ npmRegistry: "https://registry.npmmirror.com" })
     s.setProxy({ mode: "manual", httpUrl: "http://127.0.0.1:7890" })
     s.setMcpKey("context7", "secret")
   })
@@ -65,7 +65,6 @@ describe("network config and MCP keys survive re-selection", () => {
     useAppStore.getState().applyPreset("recommended")
     const { network, mcpKeys } = useAppStore.getState().plan
     expect(network.npmRegistry).toBe("https://registry.npmmirror.com")
-    expect(network.apiBaseUrl).toBe("https://relay")
     expect(network.proxy?.httpUrl).toBe("http://127.0.0.1:7890")
     expect(mcpKeys.context7).toBe("secret")
   })

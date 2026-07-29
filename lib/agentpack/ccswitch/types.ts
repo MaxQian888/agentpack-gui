@@ -4,8 +4,8 @@
  * touch the two agent CLIs we support.
  */
 
-/** Provider app types agentpack can manage. cc-switch also has gemini/opencode/… */
-export type ProviderApp = "claude" | "codex"
+/** Provider app types agentpack can manage. cc-switch also has gemini/hermes/… */
+export type ProviderApp = "claude" | "codex" | "opencode"
 
 /** Which auth env var a Claude provider uses (relays usually want AUTH_TOKEN). */
 export type ClaudeAuthKind = "auth_token" | "api_key"
@@ -47,4 +47,10 @@ export interface ProviderForm {
   model?: string
   notes?: string
   websiteUrl?: string
+  /**
+   * Hand-written `settings_config`, from the form's "raw" tab. Set only when the
+   * user edited it directly; it then wins over every field above, because those
+   * can't express what they went to the raw tab for.
+   */
+  rawSettingsConfig?: string
 }

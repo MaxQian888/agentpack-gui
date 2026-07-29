@@ -4,11 +4,15 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Columns agentpack reads/writes — `assert_schema` refuses a DB missing any.
+/// `website_url` belongs here even though nothing else in this file validates it:
+/// `cc_load_providers` SELECTs it, so leaving it out let an old DB pass the check
+/// and then fail mid-query with a raw SQLite error instead of the guidance below.
 const REQUIRED: &[&str] = &[
   "id",
   "app_type",
   "name",
   "settings_config",
+  "website_url",
   "category",
   "created_at",
   "sort_index",
@@ -16,6 +20,27 @@ const REQUIRED: &[&str] = &[
   "meta",
   "is_current",
 ];
+
+/// The `providers` table as cc-switch declares it. Used only to create the DB when
+/// cc-switch has never been launched (or isn't installed) — agentpack never
+/// migrates an existing one.
+const PROVIDERS_DDL: &str = "CREATE TABLE IF NOT EXISTS providers (
+  id TEXT NOT NULL,
+  app_type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  settings_config TEXT NOT NULL,
+  website_url TEXT,
+  category TEXT,
+  created_at INTEGER,
+  sort_index INTEGER,
+  notes TEXT,
+  icon TEXT,
+  icon_color TEXT,
+  meta TEXT NOT NULL DEFAULT '{}',
+  is_current BOOLEAN NOT NULL DEFAULT 0,
+  in_failover_queue BOOLEAN NOT NULL DEFAULT 0,
+  PRIMARY KEY (id, app_type)
+)";
 
 // NOTE: snake_case fields (no rename) to match the ported TS `Provider` type
 // (app_type, settings_config, website_url, is_current).
@@ -64,7 +89,7 @@ fn exists() -> bool {
   db_path().exists()
 }
 
-fn assert_schema(conn: &Connection) -> Result<(), String> {
+fn provider_columns(conn: &Connection) -> Result<Vec<String>, String> {
   let mut cols = Vec::new();
   let mut stmt = conn
     .prepare("PRAGMA table_info(providers)")
@@ -75,14 +100,72 @@ fn assert_schema(conn: &Connection) -> Result<(), String> {
   for r in rows {
     cols.push(r.map_err(|e| e.to_string())?);
   }
-  for c in REQUIRED {
-    if !cols.iter().any(|x| x == c) {
-      return Err(
-        "unsupported cc-switch database schema — update agentpack before editing providers.".into(),
-      );
-    }
+  Ok(cols)
+}
+
+/// Columns from `REQUIRED` the `providers` table lacks. Empty => usable.
+fn missing_columns(conn: &Connection) -> Result<Vec<String>, String> {
+  let cols = provider_columns(conn)?;
+  let missing = REQUIRED.iter().filter(|c| !cols.iter().any(|x| x == *c));
+  Ok(missing.map(|c| (*c).to_string()).collect())
+}
+
+fn assert_schema(conn: &Connection) -> Result<(), String> {
+  if missing_columns(conn)?.is_empty() {
+    return Ok(());
   }
-  Ok(())
+  Err(
+    "this cc-switch database predates the columns agentpack needs. Launch cc-switch \
+     once — it migrates the database on startup — then come back."
+      .into(),
+  )
+}
+
+/// What agentpack can tell about the cc-switch DB without touching it, so the UI can
+/// distinguish "never created" (offer to create it) from "too old" (tell the user to
+/// launch cc-switch) instead of showing one opaque error for both.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaStatus {
+  exists: bool,
+  /// `PRAGMA user_version`; 0 for a DB agentpack created itself.
+  user_version: i64,
+  missing_columns: Vec<String>,
+}
+
+#[tauri::command(async)]
+pub fn cc_schema_status() -> Result<SchemaStatus, String> {
+  if !exists() {
+    return Ok(SchemaStatus { exists: false, user_version: 0, missing_columns: Vec::new() });
+  }
+  let conn = Connection::open(db_path()).map_err(|e| e.to_string())?;
+  let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap_or(0);
+  Ok(SchemaStatus {
+    exists: true,
+    user_version,
+    missing_columns: missing_columns(&conn)?,
+  })
+}
+
+/// Create the cc-switch database when it doesn't exist yet, so managing providers
+/// doesn't require installing and launching cc-switch first. No-op if the file is
+/// already there — agentpack never migrates someone else's database.
+///
+/// `user_version` is deliberately left at 0 rather than pinned to cc-switch's current
+/// SCHEMA_VERSION. cc-switch refuses to start against a database whose version is
+/// *newer* than the one it knows, so claiming a version would brick an older
+/// cc-switch; leaving it at 0 makes cc-switch replay its migrations, which are
+/// idempotent (`add_column_if_missing`), and then stamp its own version.
+#[tauri::command(async)]
+pub fn cc_init_db() -> Result<(), String> {
+  if exists() {
+    return Ok(());
+  }
+  if let Some(parent) = db_path().parent() {
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+  }
+  let conn = Connection::open(db_path()).map_err(|e| e.to_string())?;
+  conn.execute_batch(PROVIDERS_DDL).map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -95,7 +178,8 @@ pub fn cc_load_providers() -> Result<Vec<Provider>, String> {
   let mut stmt = conn
     .prepare(
       "SELECT id, app_type, name, settings_config, website_url, notes, is_current \
-       FROM providers WHERE app_type IN ('claude','codex') ORDER BY app_type, sort_index",
+       FROM providers WHERE app_type IN ('claude','codex','opencode') \
+       ORDER BY app_type, sort_index",
     )
     .map_err(|e| e.to_string())?;
   let rows = stmt
@@ -294,7 +378,7 @@ mod tests {
   // cc_write_provider reads the DB path from a process-global env var, so the
   // env-touching tests must not run concurrently — with each other or with the
   // backup tests (both mutate the same vars). Use the crate-wide lock.
-  use crate::TEST_ENV_LOCK as ENV_LOCK;
+  use crate::{TestEnvGuard, TEST_ENV_LOCK as ENV_LOCK};
 
   fn seed(path: &str) {
     let c = Connection::open(path).unwrap();
@@ -307,7 +391,11 @@ mod tests {
   }
 
   /// Seed a fresh DB, point the env var at it, and skip the running-process check.
-  fn setup_db() -> String {
+  ///
+  /// The returned guard clears the vars on drop — bind it (`let (p, _g) = …`)
+  /// rather than discarding it, or they leak into the next test even when this
+  /// one passes.
+  fn setup_db() -> (String, TestEnvGuard) {
     let p = std::env::temp_dir()
       .join(format!("ccsw-{}.db", unique_id()))
       .to_string_lossy()
@@ -317,7 +405,7 @@ mod tests {
     std::env::set_var("AGENTPACK_SKIP_RUNNING_CHECK", "1");
     // Keep the pre-write snapshot (crate::backup::snapshot) out of the real home.
     std::env::set_var("AGENTPACK_BACKUP_ROOT", format!("{p}.backups"));
-    p
+    (p, TestEnvGuard)
   }
 
   fn form(name: &str) -> Option<ProviderForm> {
@@ -331,7 +419,7 @@ mod tests {
   #[test]
   fn add_then_load() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let p = setup_db();
+    let (p, _env) = setup_db();
 
     let req = WriteReq {
       op: "add".into(),
@@ -348,14 +436,13 @@ mod tests {
     assert_eq!(list[0].name, "Test");
     assert!(list[0].is_current); // first provider becomes current
 
-    std::env::remove_var("AGENTPACK_CCSWITCH_DB");
     let _ = std::fs::remove_file(&p);
   }
 
   #[test]
   fn update_missing_row_errors() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let p = setup_db();
+    let (p, _env) = setup_db();
 
     // No row with this id exists → the UPDATE touches 0 rows and must surface a
     // stale-state error rather than reporting a phantom success.
@@ -370,7 +457,112 @@ mod tests {
     let err = cc_write_provider(req).unwrap_err();
     assert!(err.contains("not found"), "unexpected error: {err}");
 
-    std::env::remove_var("AGENTPACK_CCSWITCH_DB");
+    let _ = std::fs::remove_file(&p);
+  }
+
+  /// Point the env vars at a path without creating the file, so `cc_init_db` is the
+  /// thing that brings the database into existence.
+  fn setup_empty() -> (String, TestEnvGuard) {
+    let p = std::env::temp_dir()
+      .join(format!("ccsw-{}.db", unique_id()))
+      .to_string_lossy()
+      .to_string();
+    std::env::set_var("AGENTPACK_CCSWITCH_DB", &p);
+    std::env::set_var("AGENTPACK_SKIP_RUNNING_CHECK", "1");
+    std::env::set_var("AGENTPACK_BACKUP_ROOT", format!("{p}.backups"));
+    (p, TestEnvGuard)
+  }
+
+  fn add_req(name: &str) -> WriteReq {
+    WriteReq {
+      op: "add".into(),
+      dry_run: false,
+      id: None,
+      app: "claude".into(),
+      form: form(name),
+      settings_config: Some("{\"env\":{}}".into()),
+    }
+  }
+
+  #[test]
+  fn init_db_creates_a_usable_database() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (p, _env) = setup_empty();
+
+    assert!(!cc_schema_status().unwrap().exists);
+    cc_init_db().unwrap();
+
+    let st = cc_schema_status().unwrap();
+    assert!(st.exists);
+    assert!(st.missing_columns.is_empty(), "missing: {:?}", st.missing_columns);
+    // Left at 0 on purpose: claiming a version would brick an older cc-switch,
+    // which refuses to start against a database newer than it understands.
+    assert_eq!(st.user_version, 0);
+
+    // The freshly created schema must actually accept a write, not just look right.
+    cc_write_provider(add_req("Fresh")).unwrap();
+    assert_eq!(cc_load_providers().unwrap().len(), 1);
+
+    let _ = std::fs::remove_file(&p);
+  }
+
+  #[test]
+  fn init_db_never_touches_an_existing_database() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (p, _env) = setup_db();
+    cc_write_provider(add_req("Keep")).unwrap();
+
+    cc_init_db().unwrap();
+    let list = cc_load_providers().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].name, "Keep");
+
+    let _ = std::fs::remove_file(&p);
+  }
+
+  /// `REQUIRED` and `PROVIDERS_DDL` declare the column set independently — the
+  /// DDL is a faithful copy of cc-switch's own table (it carries `icon`,
+  /// `icon_color`, `in_failover_queue`, which agentpack never reads), so neither
+  /// can be generated from the other. This is the guard instead: add a column to
+  /// `REQUIRED` and forget the DDL, and `cc_init_db` would build a database that
+  /// `assert_schema` rejects on the very next call.
+  #[test]
+  fn our_own_ddl_satisfies_our_own_schema_check() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (p, _env) = setup_empty();
+
+    cc_init_db().unwrap();
+    let conn = Connection::open(&p).unwrap();
+    assert!(
+      missing_columns(&conn).unwrap().is_empty(),
+      "PROVIDERS_DDL is missing columns REQUIRED lists: {:?}",
+      missing_columns(&conn).unwrap()
+    );
+
+    let _ = std::fs::remove_file(&p);
+  }
+
+  #[test]
+  fn an_old_schema_is_named_not_just_rejected() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (p, _env) = setup_empty();
+    // `website_url` is SELECTed by cc_load_providers but used to be absent from
+    // REQUIRED, so a DB like this passed the check and then failed mid-query.
+    Connection::open(&p)
+      .unwrap()
+      .execute_batch(
+        "CREATE TABLE providers (id TEXT, app_type TEXT, name TEXT, settings_config TEXT, \
+         category TEXT, created_at INTEGER, sort_index INTEGER, notes TEXT, meta TEXT, \
+         is_current INTEGER);",
+      )
+      .unwrap();
+
+    let st = cc_schema_status().unwrap();
+    assert_eq!(st.missing_columns, vec!["website_url".to_string()]);
+
+    let err = cc_load_providers().err().expect("old schema must be rejected");
+    assert!(err.contains("Launch cc-switch"), "unexpected error: {err}");
+
     let _ = std::fs::remove_file(&p);
   }
 }

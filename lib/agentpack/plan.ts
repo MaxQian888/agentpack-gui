@@ -32,14 +32,10 @@ import {
 } from "./mcp-disabled"
 import {
   deleteClaudeProxy,
-  deleteClaudeRelay,
-  deleteCodexProvider,
   deleteShellProxyBlock,
   gitProxyClearCommands,
   gitProxyCommands,
   mergeClaudeProxy,
-  mergeClaudeSettings,
-  mergeCodexProvider,
   mergeShellProxyBlock,
   npmProxyClearCommands,
   npmProxyCommands,
@@ -64,8 +60,8 @@ import { mergeVisibleApps } from "./ccswitch/settings"
 import { buildSettingsConfig } from "./ccswitch/provider"
 import {
   claudeSettingsFromProvider,
-  codexAuthFromProvider,
   codexConfigFromProvider,
+  opencodeConfigFromProvider,
 } from "./ccswitch/sync"
 import type {
   CliInstallManager,
@@ -406,42 +402,13 @@ export function buildSteps(
     }
   }
 
-  // 6. Relay / API endpoint config. Written for an agent this run installs OR one
-  // the machine already has: configuring a relay for an already-installed CLI is
-  // the common case, and gating on the checkbox alone produced a run with zero
-  // steps (the user filled in the endpoint, pressed Run, and nothing happened).
-  const net = plan.network
-  const willHave = (id: string) => plan.clis.includes(id as CliTool["id"]) || installed.has(id)
-  if (net.apiBaseUrl || net.apiToken) {
-    if (willHave("claude-code")) {
-      steps.push({
-        kind: "mergeFile",
-        id: "relay-claude",
-        label: t.configureClaudeRelay,
-        path: paths.claudeSettings,
-        merge: (existing) => mergeClaudeSettings(existing, net),
-        writtenNote: t.claudeSettingsUpdated,
-      })
-    }
-    if (willHave("codex") && net.apiBaseUrl) {
-      steps.push({
-        kind: "mergeFile",
-        id: "relay-codex",
-        label: t.configureCodexRelay,
-        path: paths.codexConfig,
-        merge: (existing) => mergeCodexProvider(existing, net),
-        writtenNote: t.codexProviderUpdated,
-      })
-    }
-  }
-
   return steps
 }
 
 /**
  * Whether a plan carries anything worth running — a CLI, a skill, an MCP server,
- * or network config. Network counts: a relay endpoint or an npm mirror on its own
- * is a complete, runnable plan, so neither the runner's "your plan is empty" toast
+ * or network config. Network counts: an npm mirror or a proxy on its own is a
+ * complete, runnable plan, so neither the runner's "your plan is empty" toast
  * nor the quick-install dialog's disabled button may treat it as nothing.
  */
 export function planHasSelections(plan: Plan | undefined): boolean {
@@ -451,8 +418,6 @@ export function planHasSelections(plan: Plan | undefined): boolean {
     plan.clis.length > 0 ||
     plan.skills.length > 0 ||
     plan.mcps.length > 0 ||
-    !!net.apiBaseUrl ||
-    !!net.apiToken ||
     !!net.npmRegistry ||
     isProxyActive(net.proxy)
   )
@@ -1206,39 +1171,6 @@ export function mcpEnableStep(
   return steps
 }
 
-/**
- * Remove the agentpack relay config: Claude env vars from settings.json and the
- * agentpack provider from Codex config.toml. Returns one step per chosen CLI.
- */
-export function relayRemoveStep(
-  clis: Plan["clis"],
-  paths: Paths,
-  messages: Messages = en
-): StepDescriptor[] {
-  const steps: StepDescriptor[] = []
-  if (clis.includes("claude-code")) {
-    steps.push({
-      kind: "mergeFile",
-      id: "relay-remove-claude",
-      label: messages.steps.removeRelayClaude,
-      path: paths.claudeSettings,
-      merge: (existing) => deleteClaudeRelay(existing),
-      writtenNote: messages.steps.claudeSettingsUpdated,
-    })
-  }
-  if (clis.includes("codex")) {
-    steps.push({
-      kind: "mergeFile",
-      id: "relay-remove-codex",
-      label: messages.steps.removeRelayCodex,
-      path: paths.codexConfig,
-      merge: (existing) => deleteCodexProvider(existing),
-      writtenNote: messages.steps.codexProviderUpdated,
-    })
-  }
-  return steps
-}
-
 /** Uninstall a CLI. No automated uninstaller on this OS => an info note. */
 export function cliUninstallStep(
   id: Plan["clis"][number],
@@ -1274,13 +1206,35 @@ export function fileRestoreStep(path: string, messages: Messages = en): StepDesc
   }
 }
 
-export function providerStep(
+/** Step id of a provider write, so callers can depend on exactly that one. */
+export function providerStepId(op: string, app: ProviderApp): string {
+  return `cc-provider-${op}-${app}`
+}
+
+/**
+ * Identity fields a provider row carries besides its `settings_config`. Rides
+ * in the payload under `form`, which is the field name `cc_write_provider`
+ * expects on the wire.
+ */
+interface ProviderMeta {
+  name: string
+  websiteUrl?: string
+  notes?: string
+}
+
+/**
+ * Shared core: everything about a provider write except *where* the
+ * `settings_config` came from — built from form fields, or carried verbatim
+ * from an imported bundle.
+ */
+function ccProviderStep(
   op: "add" | "update" | "delete" | "setCurrent",
   app: ProviderApp,
   name: string,
-  form: ProviderForm | undefined,
   id: string | undefined,
-  messages: Messages = en
+  settingsConfig: string | undefined,
+  meta: ProviderMeta | undefined,
+  messages: Messages
 ): StepDescriptor {
   const s = messages.steps
   const label =
@@ -1293,16 +1247,69 @@ export function providerStep(
           : s.ccProviderSetCurrent(name)
   return {
     kind: "ccProvider",
-    id: `cc-provider-${op}`,
+    // Scoped by app so a run that switches several apps at once (applying an
+    // account profile) has one id per step: the runner tracks failed
+    // dependencies by id, and a shared one would let a single app's failed
+    // write skip the live-config sync of every other app in the same run.
+    id: providerStepId(op, app),
     label,
     op,
-    payload: {
-      app,
-      id,
-      settingsConfig: form ? buildSettingsConfig(form) : undefined,
-      form: form ? { name: form.name, websiteUrl: form.websiteUrl, notes: form.notes } : undefined,
-    },
+    payload: { app, id, settingsConfig, form: meta },
   }
+}
+
+export function providerStep(
+  op: "add" | "update" | "delete" | "setCurrent",
+  app: ProviderApp,
+  name: string,
+  form: ProviderForm | undefined,
+  id: string | undefined,
+  messages: Messages = en
+): StepDescriptor {
+  return ccProviderStep(
+    op,
+    app,
+    name,
+    id,
+    form ? buildSettingsConfig(form) : undefined,
+    form ? { name: form.name, websiteUrl: form.websiteUrl, notes: form.notes } : undefined,
+    messages
+  )
+}
+
+/** A provider entry from an exported bundle, as `providerImportStep` needs it. */
+export interface ImportedProvider {
+  app: ProviderApp
+  name: string
+  /** The stored `settings_config`, carried through untouched. */
+  settingsConfig: string
+  websiteUrl?: string
+  notes?: string
+}
+
+/**
+ * Write step for a provider whose `settings_config` is already decided.
+ *
+ * Separate from {@link providerStep} because an imported config may hold
+ * hand-written keys (custom headers, query params) that no form field models —
+ * rebuilding it from fields would silently drop exactly the parts someone went
+ * out of their way to configure. This takes the stored config verbatim instead
+ * of fabricating empty `baseUrl` / `token` fields to smuggle it through a form.
+ */
+export function providerImportStep(
+  entry: ImportedProvider,
+  existingId: string | undefined,
+  messages: Messages = en
+): StepDescriptor {
+  return ccProviderStep(
+    existingId ? "update" : "add",
+    entry.app,
+    entry.name,
+    existingId,
+    entry.settingsConfig,
+    { name: entry.name, websiteUrl: entry.websiteUrl, notes: entry.notes },
+    messages
+  )
 }
 
 /** Snapshot the cc-switch DB + live configs into the listable backup history. */
@@ -1344,6 +1351,22 @@ export function syncLiveConfigSteps(
       },
     ]
   }
+  if (provider.app_type === "opencode") {
+    return [
+      {
+        kind: "mergeFile",
+        id: "cc-sync-opencode",
+        label: s.syncOpencode,
+        path: paths.opencodeConfig,
+        merge: (existing) => opencodeConfigFromProvider(existing, cfg),
+        writtenNote: s.opencodeProviderUpdated,
+        dependsOn,
+      },
+    ]
+  }
+  // Only config.toml: `~/.codex/auth.json` holds the official ChatGPT login and
+  // is never written — the relay token rides in config.toml instead. See the
+  // module comment in `ccswitch/sync.ts`.
   return [
     {
       kind: "mergeFile",
@@ -1351,15 +1374,6 @@ export function syncLiveConfigSteps(
       label: s.syncCodex,
       path: paths.codexConfig,
       merge: (existing) => codexConfigFromProvider(existing, cfg),
-      writtenNote: s.codexProviderUpdated,
-      dependsOn,
-    },
-    {
-      kind: "mergeFile",
-      id: "cc-sync-codex-auth",
-      label: s.syncCodexAuth,
-      path: paths.codexAuth,
-      merge: (existing) => codexAuthFromProvider(existing, cfg),
       writtenNote: s.codexProviderUpdated,
       dependsOn,
     },

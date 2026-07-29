@@ -12,16 +12,15 @@ export interface SerializeOptions {
 }
 
 /**
- * Serialize a Plan to a shareable JSON config. Secrets (MCP keys, relay token)
- * are redacted by default so the file is safe to commit; on load they are
- * refilled from a provided secrets map via `fillSecrets`.
+ * Serialize a Plan to a shareable JSON config. Secrets (MCP keys, proxy
+ * credentials) are redacted by default so the file is safe to commit; on load
+ * they are refilled from a provided secrets map via `fillSecrets`.
  */
 export function serializePlan(plan: Plan, opts: SerializeOptions = {}): string {
   const network = opts.includeSecrets
     ? plan.network
     : {
         ...plan.network,
-        apiToken: undefined,
         // The proxy password ends up inside the proxy URL wherever it is applied,
         // but a shared config file must not carry it.
         proxy: plan.network.proxy
@@ -49,14 +48,19 @@ export function serializePlan(plan: Plan, opts: SerializeOptions = {}): string {
  * into the plan.
  */
 function sanitizeNetwork(network: Plan["network"]): Plan["network"] {
+  // Rebuilt from known fields rather than spread: a config written by an older
+  // agentpack still carries `apiBaseUrl` / `apiToken` from the removed relay
+  // card, and carrying those forward would resurrect a second writer for the
+  // agent CLIs' endpoint. Relay config lives in the provider list now.
+  const kept: Plan["network"] = { npmRegistry: network.npmRegistry }
   const raw = network.proxy
-  if (!raw || typeof raw !== "object") return { ...network, proxy: undefined }
+  if (!raw || typeof raw !== "object") return kept
   const mode: ProxyMode =
     raw.mode === "manual" || raw.mode === "system" || raw.mode === "off" ? raw.mode : "off"
   const targets = Array.isArray(raw.targets)
     ? raw.targets.filter((t): t is ProxyTarget => PROXY_TARGETS.includes(t))
     : []
-  return { ...network, proxy: { ...raw, mode, targets } }
+  return { ...kept, proxy: { ...raw, mode, targets } }
 }
 
 /**
@@ -128,10 +132,9 @@ export function parseConfig(json: string, messages: Messages = en): Plan {
 }
 
 /**
- * Fill missing MCP keys (and the relay token) from a provided secrets map.
- * Used after loading a redacted config so a replay can still authenticate.
- * Keys are looked up by each server's `keyEnv`; the relay token by
- * `AGENTPACK_API_KEY`.
+ * Fill missing MCP keys from a provided secrets map. Used after loading a
+ * redacted config so a replay can still authenticate. Keys are looked up by each
+ * server's `keyEnv`.
  */
 export function fillSecrets(plan: Plan, secrets: Record<string, string | undefined> = {}): Plan {
   const mcpKeys = { ...plan.mcpKeys }
@@ -141,9 +144,5 @@ export function fillSecrets(plan: Plan, secrets: Record<string, string | undefin
       mcpKeys[m.id] = secrets[server.keyEnv]!
     }
   }
-  const network = { ...plan.network }
-  if (!network.apiToken && secrets["AGENTPACK_API_KEY"]) {
-    network.apiToken = secrets["AGENTPACK_API_KEY"]
-  }
-  return { ...plan, mcpKeys, network }
+  return { ...plan, mcpKeys }
 }

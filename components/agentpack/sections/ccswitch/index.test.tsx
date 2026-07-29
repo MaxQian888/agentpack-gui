@@ -1,4 +1,8 @@
 jest.mock("@/lib/tauri", () => ({ isTauri: () => true }))
+jest.mock("@tauri-apps/plugin-dialog", () => ({
+  open: jest.fn(async () => null),
+  save: jest.fn(async () => null),
+}))
 jest.mock("sonner", () => ({
   toast: { success: jest.fn(), error: jest.fn(), message: jest.fn() },
 }))
@@ -14,7 +18,13 @@ jest.mock("@/lib/tauri/commands", () => ({
   readTextFile: jest.fn(async () => "{}"),
   writeTextFile: jest.fn(async () => undefined),
   ccWriteProvider: jest.fn(async () => ["ok"]),
+  ccSchemaStatus: jest.fn(async () => ({ exists: true, userVersion: 0, missingColumns: [] })),
+  ccInitDb: jest.fn(async () => undefined),
   launchCcSwitch: jest.fn(async () => undefined),
+  loginStatus: jest.fn(async () => ({
+    claude: { signedIn: false, mode: null, plan: null, expiresAt: null, source: "not signed in" },
+    codex: { signedIn: false, mode: null, plan: null, expiresAt: null, source: "not signed in" },
+  })),
   isProcessRunning: jest.fn(async () => false),
   pathExists: jest.fn(async () => true),
   backupList: jest.fn(async () => [] as unknown[]),
@@ -25,7 +35,7 @@ jest.mock("@/lib/tauri/commands", () => ({
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
-import { RunnerProvider } from "../run/runner-context"
+import { RunnerProvider } from "../../run/runner-context"
 import { useAppStore } from "@/store/app-store"
 import { toast } from "sonner"
 import {
@@ -37,11 +47,14 @@ import {
   isProcessRunning,
   detectCli,
   pathExists,
-  launchCcSwitch,
+  ccSchemaStatus,
+  ccInitDb,
+  loginStatus,
   backupList,
   backupRestore,
 } from "@/lib/tauri/commands"
-import { CcSwitchSection } from "./ccswitch"
+import { open as openDialog } from "@tauri-apps/plugin-dialog"
+import { CcSwitchSection } from "./index"
 import { en } from "@/lib/i18n/en"
 
 const CC_SETTINGS = "/h/.cc-switch/settings.json"
@@ -51,6 +64,8 @@ const paths = {
   claudeSettings: "/h/.claude/settings.json",
   codexConfig: "/h/.codex/config.toml",
   codexAuth: "/h/.codex/auth.json",
+  opencodeConfig: "/h/.config/opencode/opencode.json",
+  home: "/h",
   os: "mac",
 } as never
 
@@ -62,6 +77,21 @@ beforeEach(() => {
   ;(isProcessRunning as jest.Mock).mockResolvedValue(false)
   ;(detectCli as jest.Mock).mockResolvedValue({ installed: false })
   ;(pathExists as jest.Mock).mockResolvedValue(true)
+  ;(ccSchemaStatus as jest.Mock).mockResolvedValue({
+    exists: true,
+    userVersion: 0,
+    missingColumns: [],
+  })
+  // The import tests install a path-aware implementation; without resetting it
+  // here every later test would see an unmanaged endpoint on disk.
+  ;(readTextFile as jest.Mock).mockImplementation(async () => "{}")
+  // Account-profile tests need a provider list that survives the reload after a
+  // write, so they use a persistent mock — restore the default row here.
+  ;(ccLoadProviders as jest.Mock).mockResolvedValue([
+    { id: "1", app_type: "claude", name: "Mine", settings_config: "{}", is_current: false },
+  ])
+  // The import tests point this at a bundle; left set, a later test would open it.
+  ;(openDialog as jest.Mock).mockResolvedValue(null)
   useAppStore.setState({ paths, dryRun: false, panelOpen: false, osOverride: null })
 })
 
@@ -189,16 +219,29 @@ it("falls back to the no-db message when the list is empty", async () => {
   expect(await screen.findByText(en.ccswitch.empty)).toBeInTheDocument()
 })
 
-it("auto-launches cc-switch to create the DB when detected but the DB is missing", async () => {
-  ;(detectCli as jest.Mock).mockResolvedValue({ installed: true })
-  // No DB on the initial scan → needsDb → auto-launch (no click); the launch
-  // creates it, so the first poll tick finds it and the section flips to ready.
-  ;(pathExists as jest.Mock).mockResolvedValueOnce(false).mockResolvedValue(true)
+it("creates the DB itself when missing, without needing cc-switch", async () => {
+  // cc-switch not installed: creating the database used to mean launching it and
+  // polling for up to a minute, which made it a hard prerequisite.
+  ;(detectCli as jest.Mock).mockResolvedValue({ installed: false })
+  ;(ccSchemaStatus as jest.Mock)
+    .mockResolvedValueOnce({ exists: false, userVersion: 0, missingColumns: [] })
+    .mockResolvedValue({ exists: true, userVersion: 0, missingColumns: [] })
   renderCc()
-  await waitFor(() => expect(launchCcSwitch).toHaveBeenCalledTimes(1))
-  expect(
-    await screen.findByText(en.ccswitch.dbReady, undefined, { timeout: 3000 })
-  ).toBeInTheDocument()
+  await waitFor(() => expect(ccInitDb).toHaveBeenCalledTimes(1))
+  expect(await screen.findByText(en.ccswitch.dbReady)).toBeInTheDocument()
+})
+
+it("points an out-of-date DB at cc-switch instead of touching its schema", async () => {
+  // Migrating someone else's database is cc-switch's job; agentpack names the
+  // missing columns and stops.
+  ;(ccSchemaStatus as jest.Mock).mockResolvedValue({
+    exists: true,
+    userVersion: 3,
+    missingColumns: ["website_url"],
+  })
+  renderCc()
+  expect(await screen.findByText(en.ccswitch.schemaStale("website_url"))).toBeInTheDocument()
+  expect(ccInitDb).not.toHaveBeenCalled()
 })
 
 it("reflects the visible-apps selection read from disk", async () => {
@@ -209,6 +252,182 @@ it("reflects the visible-apps selection read from disk", async () => {
   )
   renderCc()
   await waitFor(() => expect(screen.getByLabelText(en.ccswitch.appLabels.gemini)).toBeChecked())
+})
+
+it("offers to import a relay found in the live config that no provider covers", async () => {
+  // Anyone who configured an endpoint by hand (or with the removed relay card)
+  // would otherwise see an empty list and lose it on the first switch.
+  ;(ccLoadProviders as jest.Mock).mockResolvedValueOnce([])
+  ;(readTextFile as jest.Mock).mockImplementation(async (path: string) =>
+    path === "/h/.claude/settings.json"
+      ? JSON.stringify({
+          env: { ANTHROPIC_BASE_URL: "https://hand.example", ANTHROPIC_AUTH_TOKEN: "sk-hand" },
+        })
+      : "{}"
+  )
+  renderCc()
+
+  await userEvent.click(
+    await screen.findByRole("button", {
+      name: en.ccswitch.importOne("claude", "https://hand.example"),
+    })
+  )
+  // The candidate lands in the normal add form so the user reviews it first.
+  const dialog = await screen.findByRole("dialog")
+  expect(within(dialog).getByLabelText(en.ccswitch.fieldBaseUrl)).toHaveValue(
+    "https://hand.example"
+  )
+})
+
+it("stays quiet when every live endpoint already has a provider row", async () => {
+  ;(ccLoadProviders as jest.Mock).mockResolvedValueOnce([
+    {
+      id: "1",
+      app_type: "claude",
+      name: "Mine",
+      settings_config: JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://hand.example" } }),
+      is_current: true,
+    },
+  ])
+  ;(readTextFile as jest.Mock).mockImplementation(async (path: string) =>
+    path === "/h/.claude/settings.json"
+      ? JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://hand.example" } })
+      : "{}"
+  )
+  renderCc()
+  await screen.findByText("Mine")
+  expect(screen.queryByText(en.ccswitch.unmanagedTitle(1))).not.toBeInTheDocument()
+})
+
+it("shows each CLI's own login without ever reading a credential", async () => {
+  ;(loginStatus as jest.Mock).mockResolvedValueOnce({
+    claude: {
+      signedIn: true,
+      mode: "oauth",
+      plan: "max",
+      expiresAt: null,
+      source: "macOS Keychain",
+    },
+    codex: { signedIn: true, mode: "chatgpt", plan: null, expiresAt: null, source: "auth.json" },
+  })
+  renderCc()
+  expect(await screen.findByText(/max/)).toBeInTheDocument()
+  // `auth_mode` is the field that decides whether a codex relay applies at all.
+  expect(screen.getByText(/chatgpt/)).toBeInTheDocument()
+})
+
+it("offers an official-login row for an app that has none, and it overrides nothing", async () => {
+  // Without this row there is no way back from a relay to the CLI's own account.
+  ;(ccLoadProviders as jest.Mock).mockResolvedValueOnce([])
+  renderCc()
+
+  await userEvent.click(
+    await screen.findByRole("button", { name: en.ccswitch.addOfficial("claude") })
+  )
+  const dialog = await screen.findByRole("dialog")
+  expect(within(dialog).getByLabelText(en.ccswitch.fieldBaseUrl)).toHaveValue("")
+  await userEvent.click(within(dialog).getByRole("button", { name: en.shell.save }))
+
+  await waitFor(() => expect(ccWriteProvider).toHaveBeenCalled())
+  const req = (ccWriteProvider as jest.Mock).mock.calls[0][0]
+  expect(JSON.parse(req.settingsConfig).env).toEqual({})
+})
+
+it("imports a bundle straight through when no name collides", async () => {
+  ;(openDialog as jest.Mock).mockResolvedValue("/tmp/bundle.json")
+  ;(readTextFile as jest.Mock).mockImplementation(async (path: string) =>
+    path === "/tmp/bundle.json"
+      ? JSON.stringify({
+          version: 1,
+          providers: [
+            {
+              app: "claude",
+              name: "Imported",
+              settingsConfig: JSON.stringify({
+                env: { ANTHROPIC_BASE_URL: "https://i", ANTHROPIC_CUSTOM_HEADERS: "X: 1" },
+              }),
+            },
+          ],
+        })
+      : "{}"
+  )
+  renderCc()
+  await screen.findByText("Mine")
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.importProviders }))
+
+  await waitFor(() => expect(ccWriteProvider).toHaveBeenCalled())
+  const req = (ccWriteProvider as jest.Mock).mock.calls[0][0]
+  expect(req.op).toBe("add")
+  // The stored config rides through verbatim, so hand-written fields survive.
+  expect(JSON.parse(req.settingsConfig).env.ANTHROPIC_CUSTOM_HEADERS).toBe("X: 1")
+})
+
+it("asks before replacing a provider an import collides with", async () => {
+  ;(openDialog as jest.Mock).mockResolvedValue("/tmp/bundle.json")
+  ;(readTextFile as jest.Mock).mockImplementation(async (path: string) =>
+    path === "/tmp/bundle.json"
+      ? JSON.stringify({
+          version: 1,
+          providers: [{ app: "claude", name: "Mine", settingsConfig: "{}" }],
+        })
+      : "{}"
+  )
+  renderCc()
+  await screen.findByText("Mine")
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.importProviders }))
+
+  const dialog = await screen.findByRole("alertdialog")
+  expect(ccWriteProvider).not.toHaveBeenCalled()
+  await userEvent.click(within(dialog).getByRole("button", { name: en.ccswitch.importOverwrite }))
+  await waitFor(() =>
+    expect(ccWriteProvider).toHaveBeenCalledWith(expect.objectContaining({ op: "update", id: "1" }))
+  )
+})
+
+it("saves the current selection as an account profile", async () => {
+  ;(ccLoadProviders as jest.Mock).mockResolvedValue([
+    { id: "a", app_type: "claude", name: "Gateway", settings_config: "{}", is_current: true },
+    { id: "b", app_type: "codex", name: "Official", settings_config: "{}", is_current: true },
+  ])
+  renderCc()
+  await screen.findByText("Gateway")
+  await userEvent.type(screen.getByLabelText(en.ccswitch.accountNewLabel), "Work")
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.accountSave }))
+
+  await waitFor(() => expect(writeTextFile).toHaveBeenCalled())
+  const [path, body] = (writeTextFile as jest.Mock).mock.calls.find(([p]: [string]) =>
+    p.endsWith("accounts.json")
+  )!
+  expect(path).toContain(".agentpack/accounts.json")
+  const saved = JSON.parse(body).profiles[0]
+  expect(saved.name).toBe("Work")
+  // A profile records which row each app points at — no config copy, no secret.
+  expect(saved.picks).toEqual({ claude: "a", codex: "b" })
+  expect(body).not.toContain("settings_config")
+})
+
+it("applying a profile switches every app through the same setCurrent path", async () => {
+  ;(ccLoadProviders as jest.Mock).mockResolvedValue([
+    { id: "a", app_type: "claude", name: "Gateway", settings_config: "{}", is_current: false },
+    { id: "b", app_type: "codex", name: "Official", settings_config: "{}", is_current: false },
+  ])
+  ;(readTextFile as jest.Mock).mockImplementation(async (path: string) =>
+    path.endsWith("accounts.json")
+      ? JSON.stringify({
+          version: 1,
+          profiles: [{ id: "p1", name: "Work", picks: { claude: "a", codex: "b" } }],
+        })
+      : "{}"
+  )
+  renderCc()
+  await userEvent.click(await screen.findByRole("button", { name: en.ccswitch.accountApply }))
+
+  await waitFor(() => expect(ccWriteProvider).toHaveBeenCalledTimes(2))
+  const ops = (ccWriteProvider as jest.Mock).mock.calls.map(([r]) => [r.op, r.app, r.id])
+  expect(ops).toEqual([
+    ["setCurrent", "claude", "a"],
+    ["setCurrent", "codex", "b"],
+  ])
 })
 
 it("syncs the live config when setting a provider as current", async () => {

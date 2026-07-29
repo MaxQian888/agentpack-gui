@@ -11,7 +11,6 @@ import {
   mcpEnableStep,
   mcpRemoveStep,
   planHasSelections,
-  relayRemoveStep,
   runtimeUpgradeStep,
   skillInstallStep,
   skillRemoveStep,
@@ -33,7 +32,6 @@ import {
 import { en } from "@/lib/i18n/en"
 import { findMcp } from "./registry"
 import { mergeCodexMcp, type McpSpec } from "./merge/mcp"
-import { mergeClaudeSettings, mergeCodexProvider } from "./merge/network"
 import { DEFAULT_VISIBLE_APPS } from "./ccswitch/settings"
 import type { Paths, Plan, ProxyConfig, StepDescriptor } from "./types"
 import type { Provider, ProviderForm } from "./ccswitch/types"
@@ -64,10 +62,10 @@ const plan: Plan = {
   skills: [{ id: "rust", targets: ["claude"] }],
   mcps: [{ id: "context7", targets: ["claude", "codex"] }],
   mcpKeys: { context7: "k" },
-  network: { npmRegistry: "https://m", apiBaseUrl: "https://r" },
+  network: { npmRegistry: "https://m" },
 }
 
-it("orders steps registry→install→skills→mcp→relay", () => {
+it("orders steps registry→install→skills→mcp", () => {
   const ids = buildSteps(plan, paths).map((s) => s.id)
   expect(ids[0]).toBe("npm-registry")
   expect(ids).toEqual(
@@ -76,7 +74,6 @@ it("orders steps registry→install→skills→mcp→relay", () => {
       "skill-rust",
       "mcp-claude-context7",
       "mcp-codex-context7",
-      "relay-claude",
     ])
   )
 })
@@ -365,43 +362,12 @@ it("emits only the claude mcp step when codex is not targeted", () => {
   expect(ids).not.toContain("mcp-codex-context7")
 })
 
-it("emits a codex relay step when codex + apiBaseUrl are present", () => {
-  const p: Plan = {
-    ...plan,
-    clis: ["claude-code", "codex"],
-    skills: [],
-    mcps: [],
-    network: { apiBaseUrl: "https://relay", apiToken: "tok" },
-  }
-  const ids = buildSteps(p, paths).map((s) => s.id)
-  expect(ids).toContain("relay-claude")
-  expect(ids).toContain("relay-codex")
-})
-
-it("writes the relay for an already-installed CLI the user did not tick", () => {
-  // Configuring a relay for a CLI that's already on the machine is the common
-  // case; gating on the checkbox alone produced a run with zero steps.
-  const p: Plan = {
-    ...plan,
-    clis: [],
-    skills: [],
-    mcps: [],
-    network: { apiBaseUrl: "https://relay", apiToken: "tok" },
-  }
+it("a plan run never writes the agent CLIs' API endpoint", () => {
+  // Endpoints are provider rows now; a run that also wrote them would give the
+  // live config two writers and a provider switch could be silently undone.
+  const p: Plan = { ...plan, clis: ["claude-code", "codex"], skills: [], mcps: [] }
   const ids = buildSteps(p, paths, en, new Set(["claude-code", "codex"])).map((s) => s.id)
-  expect(ids).toContain("relay-claude")
-  expect(ids).toContain("relay-codex")
-})
-
-it("skips the relay when the CLI is neither ticked nor installed", () => {
-  const p: Plan = {
-    ...plan,
-    clis: [],
-    skills: [],
-    mcps: [],
-    network: { apiBaseUrl: "https://relay", apiToken: "tok" },
-  }
-  expect(buildSteps(p, paths).map((s) => s.id)).toEqual([])
+  expect(ids.filter((id) => id.startsWith("relay-"))).toEqual([])
 })
 
 it("buildVerifySteps never runs the slow health-checking mcp list", () => {
@@ -419,7 +385,6 @@ describe("planHasSelections", () => {
 
   it("counts network-only config as runnable", () => {
     expect(planHasSelections({ ...bare, network: { npmRegistry: "https://m" } })).toBe(true)
-    expect(planHasSelections({ ...bare, network: { apiBaseUrl: "https://r" } })).toBe(true)
   })
 
   it("counts a picked item", () => {
@@ -632,11 +597,6 @@ describe("menu-action builders", () => {
     expect(unstash.kind === "mergeFile" && JSON.parse(unstash.merge(store))).toEqual({})
   })
 
-  it("relayRemoveStep removes claude + codex relay config for chosen clis", () => {
-    const ids = relayRemoveStep(["claude-code", "codex"], paths).map((s) => s.id)
-    expect(ids).toEqual(["relay-remove-claude", "relay-remove-codex"])
-  })
-
   it("cliUninstallStep uses the command when present, an info note otherwise", () => {
     const withCmd = cliUninstallStep("claude-code", { file: "npm", args: ["uninstall"] })
     expect(withCmd.kind).toBe("command")
@@ -679,9 +639,48 @@ describe("menu-action builders", () => {
       settings_config: "{}",
       is_current: true,
     }
-    const steps = syncLiveConfigSteps(provider, paths, undefined, ["cc-provider-setCurrent"])
-    expect(steps.map((s) => s.id)).toEqual(["cc-sync-codex-config", "cc-sync-codex-auth"])
-    for (const s of steps) expect(s.dependsOn).toEqual(["cc-provider-setCurrent"])
+    const steps = syncLiveConfigSteps(provider, paths, undefined, ["cc-provider-setCurrent-codex"])
+    expect(steps.map((s) => s.id)).toEqual(["cc-sync-codex-config"])
+    for (const s of steps) expect(s.dependsOn).toEqual(["cc-provider-setCurrent-codex"])
+  })
+
+  it("syncs an opencode provider into opencode.json", () => {
+    const provider: Provider = {
+      id: "1",
+      app_type: "opencode",
+      name: "prov",
+      settings_config: JSON.stringify({
+        npm: "@ai-sdk/openai-compatible",
+        options: { baseURL: "https://oc/v1" },
+      }),
+      is_current: true,
+    }
+    const steps = syncLiveConfigSteps(provider, paths)
+    expect(steps.map((s) => s.id)).toEqual(["cc-sync-opencode"])
+    expect(steps[0].kind === "mergeFile" && steps[0].path).toBe(paths.opencodeConfig)
+  })
+
+  it("never writes ~/.codex/auth.json — that file holds the official login", () => {
+    // Codex resolves its explicit `auth_mode` ahead of everything else, so an
+    // OPENAI_API_KEY written beside a ChatGPT login is silently ignored and the
+    // switch only *looks* like it worked. Nothing agentpack emits may touch it.
+    for (const app of ["claude", "codex"] as const) {
+      const provider: Provider = {
+        id: "1",
+        app_type: app,
+        name: "prov",
+        settings_config: JSON.stringify({
+          env: { ANTHROPIC_AUTH_TOKEN: "t" },
+          auth: { OPENAI_API_KEY: "sk-1" },
+          config: 'model_provider = "custom"\n',
+        }),
+        is_current: true,
+      }
+      const written = syncLiveConfigSteps(provider, paths).map((s) =>
+        s.kind === "mergeFile" ? s.path : ""
+      )
+      expect(written).not.toContain(paths.codexAuth)
+    }
   })
 
   it("snapshotStep threads its reason into a snapshot descriptor", () => {
@@ -709,22 +708,11 @@ describe("mergeFile closures delegate to the expected transform", () => {
     skills: [],
     mcps: [{ id: "context7", targets: ["codex"] }],
     mcpKeys: { context7: "k" },
-    network: { apiBaseUrl: "https://relay", apiToken: "tok" },
   }
 
   it("codex mcp step writes the server entry into config.toml", () => {
     const step = buildSteps(codexPlan, paths).find((s) => s.id === "mcp-codex-context7")
     expect(mergeOf(step)("")).toContain("context7")
-  })
-
-  it("claude relay step sets the ANTHROPIC base URL", () => {
-    const step = buildSteps(codexPlan, paths).find((s) => s.id === "relay-claude")
-    expect(JSON.parse(mergeOf(step)("")).env.ANTHROPIC_BASE_URL).toBe("https://relay")
-  })
-
-  it("codex relay step writes the agentpack provider", () => {
-    const step = buildSteps(codexPlan, paths).find((s) => s.id === "relay-codex")
-    expect(mergeOf(step)("")).toContain("agentpack")
   })
 
   it("codex mcp-remove step deletes the named server table", () => {
@@ -735,25 +723,13 @@ describe("mergeFile closures delegate to the expected transform", () => {
     expect(mergeOf(step)(existing)).not.toContain("context7")
   })
 
-  it("claude relay-remove step clears the relay env vars", () => {
-    const existing = mergeClaudeSettings("", { apiBaseUrl: "https://r", apiToken: "t" })
-    const step = relayRemoveStep(["claude-code"], paths).find((s) => s.id === "relay-remove-claude")
-    expect(JSON.parse(mergeOf(step)(existing)).env.ANTHROPIC_BASE_URL).toBeUndefined()
-  })
-
-  it("codex relay-remove step drops the agentpack provider", () => {
-    const existing = mergeCodexProvider("", { apiBaseUrl: "https://r" })
-    const step = relayRemoveStep(["codex"], paths).find((s) => s.id === "relay-remove-codex")
-    expect(mergeOf(step)(existing)).not.toContain("agentpack")
-  })
-
-  it("codex sync steps write config.toml and auth.json from the provider", () => {
+  it("codex sync step writes config.toml from the provider", () => {
     const provider: Provider = {
       id: "1",
       app_type: "codex",
       name: "prov",
       settings_config: JSON.stringify({
-        config: 'model_provider = "openai"\n[model_providers.openai]\nname = "OpenAI"\n',
+        config: 'model_provider = "custom"\n[model_providers.custom]\nname = "Relay"\n',
         auth: { OPENAI_API_KEY: "sk-1" },
       }),
       is_current: true,
@@ -761,8 +737,6 @@ describe("mergeFile closures delegate to the expected transform", () => {
     const steps = syncLiveConfigSteps(provider, paths)
     const cfg = steps.find((s) => s.id === "cc-sync-codex-config")
     expect(mergeOf(cfg)("")).toContain("model_provider")
-    const auth = steps.find((s) => s.id === "cc-sync-codex-auth")
-    expect(JSON.parse(mergeOf(auth)("")).OPENAI_API_KEY).toBe("sk-1")
   })
 })
 

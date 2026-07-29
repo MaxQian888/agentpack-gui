@@ -43,6 +43,8 @@ describe("computeUsageStats", () => {
     expect(st.totals.usage.total).toBe(0)
     expect(st.actualCost).toBe(0)
     expect(st.estimatedCost).toBe(0)
+    expect(st.unpriced).toEqual({ transcripts: 0, tokens: 0 })
+    expect(st.subagents).toEqual({ transcripts: 0, tokens: 0, cost: 0 })
     expect(st.bySource).toEqual([])
     expect(st.byModel).toEqual([])
     expect(st.byDay).toEqual([])
@@ -104,6 +106,7 @@ describe("computeUsageStats", () => {
     expect(models).toContain("unknown")
     expect(models).toContain("gpt-5.3-codex")
     expect(st.byModel[0].model).toBe("gpt-5.3-codex")
+    expect(st.byModel[0].transcripts).toBe(1)
   })
 
   it("buckets by local day, sorted ascending", () => {
@@ -151,6 +154,85 @@ describe("computeUsageStats", () => {
     expect(st.byHour[14]).toEqual({ hour: 14, sessions: 2, total: 12 })
     expect(st.byHour[9]).toEqual({ hour: 9, sessions: 1, total: 3 })
     expect(st.byHour[0].sessions).toBe(0)
+  })
+})
+
+describe("computeUsageStats — sub-agent transcripts", () => {
+  const parent = session({
+    id: "root-1",
+    usage: usage({ input: 1e6, total: 1e6 }),
+    messageCount: 4,
+    durationMs: 90_000,
+    startedAt: new Date(2026, 2, 10, 14).getTime(),
+    updatedAt: DAY_A,
+  })
+  const child = session({
+    id: "agent-1",
+    parentId: "root-1",
+    agentName: "Explore",
+    model: "claude-haiku-4-5",
+    models: ["claude-haiku-4-5"],
+    usage: usage({ input: 2e6, total: 2e6 }),
+    messageCount: 6,
+    // A sub-agent runs *inside* a parent turn, so its wall clock is already in
+    // the parent's — counting it again would invent time that never elapsed.
+    durationMs: 60_000,
+    startedAt: new Date(2026, 2, 10, 14).getTime(),
+    updatedAt: DAY_A,
+  })
+
+  it("counts sub-agent tokens but not sub-agent sessions", () => {
+    const st = computeUsageStats([parent, child])
+    expect(st.totals.sessions).toBe(1)
+    expect(st.totals.messages).toBe(10)
+    expect(st.totals.usage.total).toBe(3e6)
+    // $5/M input for Opus 4.8 + $1/M for Haiku 4.5.
+    expect(st.totals.cost).toBeCloseTo(5 + 2)
+    expect(st.subagents).toEqual({ transcripts: 1, tokens: 2e6, cost: 2 })
+    // The average is per top-level session, sub-agent tokens included.
+    expect(st.averages.tokensPerSession).toBe(3e6)
+  })
+
+  it("keeps the sub-agent's own model visible in the model split", () => {
+    const st = computeUsageStats([parent, child])
+    const haiku = st.byModel.find((m) => m.model === "claude-haiku-4-5")
+    expect(haiku?.usage.total).toBe(2e6)
+    expect(haiku?.transcripts).toBe(1)
+  })
+
+  it("excludes sub-agent duration, which elapsed inside the parent turn", () => {
+    const st = computeUsageStats([parent, child])
+    expect(st.totals.durationMs).toBe(90_000)
+    expect(st.totals.durationSessions).toBe(1)
+  })
+
+  it("counts sub-agent activity once in the hour and project buckets", () => {
+    const st = computeUsageStats([parent, child])
+    expect(st.byHour[14].sessions).toBe(1)
+    expect(st.byHour[14].total).toBe(3e6)
+    expect(st.byProject[0].sessions).toBe(1)
+    expect(st.byProject[0].total).toBe(3e6)
+  })
+
+  it("promotes an orphan whose parent was not scanned", () => {
+    const st = computeUsageStats([child])
+    expect(st.totals.sessions).toBe(1)
+    expect(st.subagents.transcripts).toBe(0)
+  })
+})
+
+describe("computeUsageStats — unpriced models", () => {
+  it("reports an unknown model as unpriced instead of a real $0", () => {
+    const st = computeUsageStats([
+      session({ model: "some-local-llm", usage: usage({ input: 5e6, total: 5e6 }) }),
+      session({ source: "opencode", usage: usage({ total: 1 }), cost: 0.5 }),
+    ])
+    expect(st.unpriced).toEqual({ transcripts: 1, tokens: 5e6 })
+    // The unpriced session contributes nothing to either cost bucket — before,
+    // its 0 landed in `actualCost` and read as a genuinely free session.
+    expect(st.actualCost).toBeCloseTo(0.5)
+    expect(st.estimatedCost).toBe(0)
+    expect(st.totals.cost).toBeCloseTo(0.5)
   })
 })
 

@@ -61,6 +61,7 @@ beforeEach(() => {
       skillRepoSources: [],
       proxy: null,
       summonShortcut: null,
+      monthlySubscriptionUsd: null,
     },
     paths: null,
   })

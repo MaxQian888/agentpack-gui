@@ -5,11 +5,14 @@ import {
   parseCodexConfig,
   parseOpencodeMcpConfig,
 } from "./scan"
-import { mergeClaudeSettings, mergeCodexProvider } from "./merge/network"
+import { claudeSettingsFromProvider, codexConfigFromProvider } from "./ccswitch/sync"
 import { mergeCodexMcp, mergeOpencodeMcp } from "./merge/mcp"
 
-it("parseClaudeRelay inverts mergeClaudeSettings", () => {
-  const json = mergeClaudeSettings("", { apiBaseUrl: "https://r", apiToken: "t" })
+it("parseClaudeRelay reads back what a provider sync wrote", () => {
+  const json = claudeSettingsFromProvider(
+    "",
+    JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://r", ANTHROPIC_AUTH_TOKEN: "t" } })
+  )
   const out = parseClaudeRelay(json)
   expect(out.baseUrl).toBe("https://r")
   expect(out.hasToken).toBe(true)
@@ -24,10 +27,20 @@ it("parseClaudeRelay tolerates empty / malformed input", () => {
 it("parseCodexConfig lists mcp servers and detects relay provider", () => {
   let toml = mergeCodexMcp("", "context7", { command: "npx", args: [] })
   toml = mergeCodexMcp(toml, "memory", { command: "npx", args: [] })
-  toml = mergeCodexProvider(toml, { apiBaseUrl: "https://r" })
+  toml = codexConfigFromProvider(
+    toml,
+    JSON.stringify({
+      config: 'model_provider = "custom"\n\n[model_providers.custom]\nbase_url = "https://r"\n',
+    })
+  )
   const out = parseCodexConfig(toml)
   expect(out.mcpServers.sort()).toEqual(["context7", "memory"])
   expect(out.hasRelayProvider).toBe(true)
+})
+
+it("parseCodexConfig still detects a config left by the removed relay card", () => {
+  const legacy = '[model_providers.agentpack]\nbase_url = "https://old"\n'
+  expect(parseCodexConfig(legacy).hasRelayProvider).toBe(true)
 })
 
 it("parseCodexConfig tolerates empty / malformed input", () => {

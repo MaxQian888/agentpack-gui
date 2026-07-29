@@ -23,15 +23,14 @@
 //! shape (`SessionSummary` for the list, `SessionDetail` for a transcript) so the
 //! webview renders one model instead of three. Everything here is read-only.
 
-use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::history_cache::{CachedEntry, SummaryCache};
-use crate::paths::codex_home;
+use tauri::ipc::Channel;
+
+use crate::history_cache::ScanCache;
 
 /// Unified token accounting. Component fields are the disjoint parts that make up
 /// `total` for a given source (see `finish_total`), so summing `total` across
@@ -99,6 +98,224 @@ pub struct SessionSummary {
   duration_ms: Option<i64>,
 }
 
+/// One priced unit of work inside a session, packed as
+/// `[ts, modelIndex, input, output, cacheRead, cacheWrite, reasoning]`.
+///
+/// `ts` is epoch ms; `modelIndex` indexes [`SessionSeries::models`], or is `-1`
+/// when the record didn't name a model. Packed as a fixed array rather than a
+/// struct because a real history holds ~200k of these — field names would
+/// roughly triple both the cache file and the IPC payload while carrying no
+/// extra information.
+pub type PackedEvent = [i64; 7];
+
+/// How often one tool was called in a session, and how often it failed.
+///
+/// `errors` is only populated for sources that mark failure explicitly (Claude's
+/// `is_error` on a `tool_result`, OpenCode's `state.status`). Codex writes tool
+/// output as free text with no failure flag, so its `errors` stay 0 — absent
+/// data rather than a claim of success.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolStat {
+  pub name: String,
+  pub calls: u64,
+  pub errors: u64,
+}
+
+/// The per-message detail behind a session, split out of [`SessionSummary`].
+///
+/// Everything that needs message-level resolution lives here: 5-hour billing
+/// windows and burn rate need real timestamps, per-model cost attribution needs
+/// which model spent which tokens, and the tool profile needs call counts. The
+/// split is what lets the session list stay cheap while the usage dashboard
+/// still gets the raw material.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSeries {
+  pub id: String,
+  pub source: String,
+  pub project_name: String,
+  pub git_branch: Option<String>,
+  pub parent_id: Option<String>,
+  /// Model ids referenced by `events[i][1]`, in first-seen order.
+  pub models: Vec<String>,
+  pub events: Vec<PackedEvent>,
+  pub tools: Vec<ToolStat>,
+}
+
+/// A file parsed once, feeding both caches.
+pub struct ParsedSession {
+  pub summary: SessionSummary,
+  pub series: SessionSeries,
+}
+
+/// The identity a finished parse stamps onto **both** halves.
+///
+/// [`SessionSummary`] and [`SessionSeries`] each carry the id, source, project,
+/// branch, parent and model list. Spelling them out twice per source is what
+/// invites drift: a `parent_id` set on the summary but left `None` on the series
+/// would make the session list and the usage dashboard disagree about which runs
+/// are sub-agents — and that single flag drives the "only top-level ones count
+/// as sessions" rule. Naming the shared part once makes them agree by
+/// construction.
+struct SessionIdentity {
+  id: String,
+  source: &'static str,
+  project_name: String,
+  git_branch: Option<String>,
+  parent_id: Option<String>,
+  models: Vec<String>,
+}
+
+/// The rest of the summary — the parts the series deliberately drops.
+struct SummaryFields {
+  title: String,
+  cwd: String,
+  message_count: u64,
+  usage: TokenUsage,
+  started_at: i64,
+  updated_at: i64,
+  path: String,
+  agent_name: Option<String>,
+  duration_ms: Option<i64>,
+}
+
+impl ParsedSession {
+  /// Build both halves from one description of the session.
+  ///
+  /// `cost` is always `None` here: only OpenCode records a real figure, and it
+  /// builds its summary straight from SQL without going through a parse.
+  fn assemble(
+    identity: SessionIdentity,
+    fields: SummaryFields,
+    events: Vec<PackedEvent>,
+    tools: Vec<ToolStat>,
+  ) -> ParsedSession {
+    let SessionIdentity {
+      id,
+      source,
+      project_name,
+      git_branch,
+      parent_id,
+      models,
+    } = identity;
+    ParsedSession {
+      series: SessionSeries {
+        id: id.clone(),
+        source: source.into(),
+        project_name: project_name.clone(),
+        git_branch: git_branch.clone(),
+        parent_id: parent_id.clone(),
+        models: models.clone(),
+        events,
+        tools,
+      },
+      summary: SessionSummary {
+        id,
+        source: source.into(),
+        title: fields.title,
+        cwd: fields.cwd,
+        project_name,
+        // Primary model is the last one seen, matching what the series' own
+        // model table ends on.
+        model: models.last().cloned().unwrap_or_default(),
+        models,
+        message_count: fields.message_count,
+        usage: fields.usage,
+        cost: None,
+        started_at: fields.started_at,
+        updated_at: fields.updated_at,
+        path: fields.path,
+        git_branch,
+        parent_id,
+        agent_name: fields.agent_name,
+        duration_ms: fields.duration_ms,
+      },
+    }
+  }
+}
+
+/// Running tool tallies, kept name-keyed while folding and flattened on finish.
+#[derive(Default)]
+struct ToolTally {
+  counts: HashMap<String, (u64, u64)>,
+  /// `tool_use_id` → tool name, so a later `tool_result` can attribute its
+  /// error to the tool that produced it.
+  call_names: HashMap<String, String>,
+}
+
+impl ToolTally {
+  fn call(&mut self, name: &str, call_id: Option<&str>) {
+    self.counts.entry(name.to_string()).or_default().0 += 1;
+    if let Some(id) = call_id {
+      self.call_names.insert(id.to_string(), name.to_string());
+    }
+  }
+
+  fn error(&mut self, call_id: Option<&str>) {
+    let Some(name) = call_id.and_then(|id| self.call_names.get(id)).cloned() else {
+      return;
+    };
+    self.counts.entry(name).or_default().1 += 1;
+  }
+
+  /// Record a call whose outcome is already known — OpenCode reports the status
+  /// on the very part that names the tool, so it needs no call-id round trip.
+  fn call_with_outcome(&mut self, name: &str, failed: bool) {
+    let e = self.counts.entry(name.to_string()).or_default();
+    e.0 += 1;
+    if failed {
+      e.1 += 1;
+    }
+  }
+
+  /// Flattened, most-called first, so the UI's "top tools" needs no re-sort.
+  fn finish(self) -> Vec<ToolStat> {
+    let mut out: Vec<ToolStat> = self
+      .counts
+      .into_iter()
+      .map(|(name, (calls, errors))| ToolStat {
+        name,
+        calls,
+        errors,
+      })
+      .collect();
+    out.sort_by(|a, b| b.calls.cmp(&a.calls).then_with(|| a.name.cmp(&b.name)));
+    out
+  }
+}
+
+/// Index of `model` in `models`, appending it when new; `-1` for an unnamed one.
+fn model_index(models: &mut Vec<String>, model: Option<&str>) -> i64 {
+  let Some(model) = model.filter(|m| !m.is_empty() && *m != "<synthetic>") else {
+    return -1;
+  };
+  match models.iter().position(|m| m == model) {
+    Some(i) => i as i64,
+    None => {
+      models.push(model.to_string());
+      (models.len() - 1) as i64
+    }
+  }
+}
+
+/// Pack one usage record; `None` when it carries no tokens at all (nothing to
+/// aggregate, and 200k empty rows is pure payload).
+fn pack_event(ts: i64, model_idx: i64, u: &TokenUsage) -> Option<PackedEvent> {
+  if u.total == 0 {
+    return None;
+  }
+  Some([
+    ts,
+    model_idx,
+    u.input as i64,
+    u.output as i64,
+    u.cache_read as i64,
+    u.cache_write as i64,
+    u.reasoning as i64,
+  ])
+}
+
 /// One normalized content block within a message.
 ///
 /// `kind` ∈ text | thinking | toolCall | toolResult | image | patch | webSearch
@@ -134,7 +351,11 @@ pub struct Part {
 
 impl Part {
   fn text(kind: &str, text: String) -> Part {
-    Part { kind: kind.into(), text, ..Part::default() }
+    Part {
+      kind: kind.into(),
+      text,
+      ..Part::default()
+    }
   }
 }
 
@@ -172,7 +393,11 @@ fn cap_part(mut part: Part, msg_id: &str, index: usize) -> Part {
 fn cap_message(msg: &mut Message) {
   let id = msg.id.clone();
   let parts = std::mem::take(&mut msg.parts);
-  msg.parts = parts.into_iter().enumerate().map(|(i, p)| cap_part(p, &id, i)).collect();
+  msg.parts = parts
+    .into_iter()
+    .enumerate()
+    .map(|(i, p)| cap_part(p, &id, i))
+    .collect();
 }
 
 /// One turn in a transcript. Assistant turns bundle thinking, text and tool
@@ -191,7 +416,14 @@ pub struct Message {
 
 impl Message {
   fn new(id: String, role: &str) -> Message {
-    Message { id, role: role.into(), ts: None, model: None, parts: Vec::new(), usage: None }
+    Message {
+      id,
+      role: role.into(),
+      ts: None,
+      model: None,
+      parts: Vec::new(),
+      usage: None,
+    }
   }
 }
 
@@ -218,1344 +450,147 @@ pub struct ListResult {
   errors: Vec<SourceError>,
 }
 
-// ── small JSON / time helpers ────────────────────────────────────────────────
-
-fn s<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
-  v.get(key).and_then(Value::as_str)
-}
-fn u(v: &Value, key: &str) -> u64 {
-  v.get(key).and_then(Value::as_u64).unwrap_or(0)
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageSeriesResult {
+  sessions: Vec<SessionSeries>,
+  errors: Vec<SourceError>,
 }
 
-fn basename(p: &str) -> String {
-  let norm = p.replace('\\', "/");
-  norm
-    .trim_end_matches('/')
-    .rsplit('/')
-    .next()
-    .unwrap_or(p)
-    .to_string()
-}
+mod util;
 
-fn truncate_title(s: &str) -> String {
-  let clean = s.trim().replace(['\n', '\r'], " ");
-  let clean = clean.trim();
-  let mut out: String = clean.chars().take(80).collect();
-  if clean.chars().count() > 80 {
-    out.push('…');
-  }
-  out
-}
+use util::read_jsonl;
 
-/// Days since the Unix epoch for a proleptic-Gregorian date (Howard Hinnant's
-/// algorithm) — avoids pulling in `chrono` just to turn an ISO string into ms.
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-  let y = if m <= 2 { y - 1 } else { y };
-  let era = (if y >= 0 { y } else { y - 399 }) / 400;
-  let yoe = y - era * 400;
-  let mp = if m > 2 { m - 3 } else { m + 9 };
-  let doy = (153 * mp + 2) / 5 + d - 1;
-  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-  era * 146097 + doe - 719468
-}
+mod scan;
 
-/// Parse an ISO-8601 UTC timestamp (`YYYY-MM-DDTHH:MM:SS[.fff]Z`) to epoch ms.
-fn iso_to_epoch_ms(t: &str) -> Option<i64> {
-  if t.len() < 19 {
-    return None;
-  }
-  let year: i64 = t.get(0..4)?.parse().ok()?;
-  let month: i64 = t.get(5..7)?.parse().ok()?;
-  let day: i64 = t.get(8..10)?.parse().ok()?;
-  let hour: i64 = t.get(11..13)?.parse().ok()?;
-  let min: i64 = t.get(14..16)?.parse().ok()?;
-  let sec: i64 = t.get(17..19)?.parse().ok()?;
-  let ms: i64 = if t.len() > 20 && &t[19..20] == "." {
-    let frac: String = t[20..].chars().take_while(|c| c.is_ascii_digit()).collect();
-    let take = frac.len().min(3);
-    format!("{:0<3}", &frac[..take]).parse().unwrap_or(0)
-  } else {
-    0
-  };
-  let days = days_from_civil(year, month, day);
-  Some((days * 86400 + hour * 3600 + min * 60 + sec) * 1000 + ms)
-}
+use scan::{scan_files, Progress, ScanProgressEvent};
 
-/// Read a JSONL file into parsed values, silently dropping unparsable lines.
-/// Used by the *detail* path (a single session, reopened on demand). The *scan*
-/// path uses the streaming `*_summary_from_file` readers instead, so it never
-/// holds a whole file's parsed tree in memory.
-fn read_jsonl(path: &Path) -> Result<Vec<Value>, String> {
-  let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-  Ok(
-    text
-      .lines()
-      .filter(|l| !l.trim().is_empty())
-      .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-      .collect(),
-  )
-}
 
-/// Feed each non-empty JSONL line of `path`, parsed one at a time and dropped
-/// immediately, to `push`. Peak memory is a single line's `Value`, not the whole
-/// file — the streaming counterpart to `read_jsonl` for summary scanning.
-fn stream_jsonl<F: FnMut(&Value)>(path: &Path, mut push: F) -> Option<()> {
-  let text = fs::read_to_string(path).ok()?;
-  for line in text.lines() {
-    let line = line.trim();
-    if line.is_empty() {
-      continue;
-    }
-    if let Ok(v) = serde_json::from_str::<Value>(line) {
-      push(&v);
-    }
-  }
-  Some(())
-}
+mod claude;
 
-// ── incremental-scan plumbing ────────────────────────────────────────────────
+use claude::{claude_detail, claude_parse_from_file, claude_root, claude_sigs};
 
-/// A candidate history file plus a cheap change-signature (a `stat`, no read).
-/// The signature is what the summary cache keys on: an unchanged `(mtime, size)`
-/// means the file's parsed summary can be reused verbatim.
-struct FileSig {
-  path: PathBuf,
-  mtime_ms: i64,
-  size: u64,
-}
+mod opencode;
 
-/// Signature for one path, or `None` if it can't be `stat`ed.
-fn file_sig(path: PathBuf) -> Option<FileSig> {
-  let md = fs::metadata(&path).ok()?;
-  let size = md.len();
-  let mtime_ms = md
-    .modified()
-    .ok()
-    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-    .map(|d| d.as_millis() as i64)
-    .unwrap_or(0);
-  Some(FileSig { path, mtime_ms, size })
-}
+use opencode::{opencode_detail, opencode_series, scan_opencode};
 
-/// Map `f` over `items` across up to one thread per CPU core (contiguous
-/// chunks), falling back to a serial map for tiny inputs. Result order is not
-/// preserved — callers here don't depend on it (the session list is re-sorted).
-fn parallel_map<T, R, F>(items: Vec<T>, f: F) -> Vec<R>
-where
-  T: Send + Sync,
-  R: Send,
-  F: Fn(&T) -> R + Sync,
-{
-  let len = items.len();
-  let workers = std::thread::available_parallelism()
-    .map(|n| n.get())
-    .unwrap_or(1)
-    .min(len.max(1));
-  if workers <= 1 {
-    return items.iter().map(&f).collect();
-  }
-  let chunk = len.div_ceil(workers);
-  let mut out: Vec<R> = Vec::with_capacity(len);
-  std::thread::scope(|scope| {
-    let handles: Vec<_> = items
-      .chunks(chunk)
-      .map(|c| scope.spawn(|| c.iter().map(&f).collect::<Vec<R>>()))
-      .collect();
-    for h in handles {
-      out.extend(h.join().unwrap());
-    }
-  });
-  out
-}
+mod codex;
 
-/// Cache-aware, parallel scan shared by the file-based sources. Files whose
-/// `(mtime, size)` matches `cache` are reused without re-reading; the rest are
-/// parsed in parallel via `parse`. Every current file's entry lands in
-/// `new_cache` (so vanished files are pruned for free), and summaries with at
-/// least one message are appended to `out`.
-fn scan_files<F>(
-  cache: &SummaryCache,
-  new_cache: &mut SummaryCache,
-  out: &mut Vec<SessionSummary>,
-  sigs: Vec<FileSig>,
-  parse: F,
-) where
-  F: Fn(&Path) -> Option<SessionSummary> + Sync,
-{
-  let mut misses = Vec::new();
-  for sig in sigs {
-    let key = sig.path.to_string_lossy().into_owned();
-    if let Some(hit) = cache.entries.get(&key) {
-      if hit.mtime_ms == sig.mtime_ms && hit.size == sig.size {
-        if hit.summary.message_count > 0 {
-          out.push(hit.summary.clone());
-        }
-        new_cache.entries.insert(key, hit.clone());
-        continue;
-      }
-    }
-    misses.push(sig);
-  }
-  let parsed = parallel_map(misses, |sig| {
-    parse(&sig.path).map(|summary| {
-      (
-        sig.path.to_string_lossy().into_owned(),
-        CachedEntry { mtime_ms: sig.mtime_ms, size: sig.size, summary },
-      )
-    })
-  });
-  for (key, entry) in parsed.into_iter().flatten() {
-    if entry.summary.message_count > 0 {
-      out.push(entry.summary.clone());
-    }
-    new_cache.entries.insert(key, entry);
-  }
-}
-
-// ── Claude Code ──────────────────────────────────────────────────────────────
-
-fn claude_root() -> Option<PathBuf> {
-  let home = dirs::home_dir()?;
-  let root = std::env::var("CLAUDE_CONFIG_DIR")
-    .map(PathBuf::from)
-    .unwrap_or_else(|_| home.join(".claude"));
-  Some(root.join("projects"))
-}
-
-/// Pull the four disjoint token components out of a Claude `message.usage`.
-fn claude_usage(usage: &Value) -> TokenUsage {
-  let input = u(usage, "input_tokens");
-  let output = u(usage, "output_tokens");
-  let cache_read = u(usage, "cache_read_input_tokens");
-  let cache_write = u(usage, "cache_creation_input_tokens");
-  TokenUsage {
-    input,
-    output,
-    cache_read,
-    cache_write,
-    reasoning: 0,
-    total: input + output + cache_read + cache_write,
-  }
-}
-
-/// Text preview of a Claude message content (string or block array).
-fn claude_content_text(content: &Value) -> String {
-  match content {
-    Value::String(s) => s.clone(),
-    Value::Array(blocks) => {
-      let mut out = String::new();
-      for b in blocks {
-        if let Some("text") = s(b, "type") {
-          if let Some(t) = s(b, "text") {
-            out.push_str(t);
-            out.push(' ');
-          }
-        }
-      }
-      out
-    }
-    _ => String::new(),
-  }
-}
-
-/// Streaming fold over a Claude session's lines. `push` absorbs one record at a
-/// time so a summary can be built without materializing the whole file; `finish`
-/// turns the accumulated state into a `SessionSummary`.
-#[derive(Default)]
-struct ClaudeAcc {
-  title: Option<String>,
-  first_user: Option<String>,
-  cwd: String,
-  git_branch: Option<String>,
-  models: Vec<String>,
-  usage: TokenUsage,
-  started: Option<i64>,
-  updated: Option<i64>,
-  count: u64,
-  agent_name: Option<String>,
-  duration_ms: Option<i64>,
-}
-
-impl ClaudeAcc {
-  fn push(&mut self, line: &Value) {
-    let ty = s(line, "type").unwrap_or("");
-    if let Some(t) = s(line, "aiTitle") {
-      if !t.trim().is_empty() {
-        self.title = Some(truncate_title(t));
-      }
-    }
-    if ty == "ai-title" {
-      return;
-    }
-    if ty == "agent-name" {
-      if let Some(n) = s(line, "agentName").filter(|n| !n.trim().is_empty()) {
-        self.agent_name = Some(truncate_title(n));
-      }
-      return;
-    }
-    // `turn_duration` reports the wall-clock time of one completed turn; summing
-    // them gives the session's real working time, which token counts don't show.
-    // Falls through so the record's timestamp still widens the session range.
-    if ty == "system" && s(line, "subtype") == Some("turn_duration") {
-      if let Some(ms) = line.get("durationMs").and_then(Value::as_i64) {
-        self.duration_ms = Some(self.duration_ms.unwrap_or(0) + ms);
-      }
-    }
-    if self.cwd.is_empty() {
-      if let Some(c) = s(line, "cwd") {
-        self.cwd = c.to_string();
-      }
-    }
-    if self.git_branch.is_none() {
-      if let Some(b) = s(line, "gitBranch").filter(|b| !b.is_empty()) {
-        self.git_branch = Some(b.to_string());
-      }
-    }
-    if let Some(ms) = s(line, "timestamp").and_then(iso_to_epoch_ms) {
-      self.started = Some(self.started.map_or(ms, |v: i64| v.min(ms)));
-      self.updated = Some(self.updated.map_or(ms, |v: i64| v.max(ms)));
-    }
-    if ty == "user" || ty == "assistant" {
-      let msg = line.get("message");
-      let has_body = msg.map(|m| m.get("content").is_some()).unwrap_or(false);
-      if has_body {
-        self.count += 1;
-      }
-      if ty == "user" && self.first_user.is_none() {
-        if let Some(m) = msg {
-          let txt = claude_content_text(m.get("content").unwrap_or(&Value::Null));
-          let txt = txt.trim();
-          if !txt.is_empty() && !txt.starts_with('<') {
-            self.first_user = Some(truncate_title(txt));
-          }
-        }
-      }
-      if ty == "assistant" {
-        if let Some(m) = msg {
-          // Skip Claude Code's `<synthetic>` marker (hook/injected turns) so the
-          // session's primary model and pricing reflect the real model.
-          if let Some(model) = s(m, "model").filter(|m| !m.is_empty() && *m != "<synthetic>") {
-            if !self.models.iter().any(|x| x == model) {
-              self.models.push(model.to_string());
-            }
-          }
-          if let Some(us) = m.get("usage") {
-            self.usage.add(&claude_usage(us));
-          }
-        }
-      }
-    }
-  }
-
-  fn finish(self, id: String, path: &Path) -> SessionSummary {
-    let parent_id = claude_parent_id(path);
-    let title = self
-      .title
-      .or_else(|| self.agent_name.clone())
-      .or(self.first_user)
-      .unwrap_or_else(|| "Untitled session".into());
-    SessionSummary {
-      id,
-      source: "claude".into(),
-      title,
-      project_name: if self.cwd.is_empty() { "—".into() } else { basename(&self.cwd) },
-      cwd: self.cwd,
-      model: self.models.last().cloned().unwrap_or_default(),
-      models: self.models,
-      message_count: self.count,
-      usage: self.usage,
-      cost: None,
-      started_at: self.started.unwrap_or(0),
-      updated_at: self.updated.unwrap_or(0),
-      path: path.to_string_lossy().into_owned(),
-      git_branch: self.git_branch,
-      parent_id,
-      agent_name: self.agent_name,
-      duration_ms: self.duration_ms,
-    }
-  }
-}
-
-/// Parent session id for a sub-agent transcript, from its position on disk:
-/// `<project>/<parent-session-id>/subagents/…/agent-<hash>.jsonl`. The `…` is
-/// usually empty but workflow runs nest one more level (`workflows/<wf-id>/`),
-/// so walk up to the `subagents` directory rather than assuming a fixed depth.
-/// `None` for a top-level session, which lives directly under the project dir.
-fn claude_parent_id(path: &Path) -> Option<String> {
-  let mut dir = path.parent()?;
-  while dir.file_name()? != "subagents" {
-    dir = dir.parent()?;
-  }
-  Some(dir.parent()?.file_name()?.to_string_lossy().into_owned())
-}
-
-fn claude_summary(path: &Path, lines: &[Value]) -> Option<SessionSummary> {
-  let id = path.file_stem()?.to_string_lossy().into_owned();
-  let mut acc = ClaudeAcc::default();
-  for line in lines {
-    acc.push(line);
-  }
-  Some(acc.finish(id, path))
-}
-
-/// Streaming summary read straight from disk — the scan path's entry point.
-fn claude_summary_from_file(path: &Path) -> Option<SessionSummary> {
-  let id = path.file_stem()?.to_string_lossy().into_owned();
-  let mut acc = ClaudeAcc::default();
-  stream_jsonl(path, |line| acc.push(line))?;
-  Some(acc.finish(id, path))
-}
-
-fn claude_detail(path: &Path, lines: &[Value]) -> SessionDetail {
-  let summary = claude_summary(path, lines).unwrap_or_else(|| SessionSummary {
-    id: String::new(),
-    source: "claude".into(),
-    title: "Untitled session".into(),
-    cwd: String::new(),
-    project_name: "—".into(),
-    model: String::new(),
-    models: Vec::new(),
-    message_count: 0,
-    usage: TokenUsage::default(),
-    cost: None,
-    started_at: 0,
-    updated_at: 0,
-    path: path.to_string_lossy().into_owned(),
-    git_branch: None,
-    parent_id: claude_parent_id(path),
-    agent_name: None,
-    duration_ms: None,
-  });
-
-  let mut messages = Vec::new();
-  for line in lines {
-    let ty = s(line, "type").unwrap_or("");
-    if ty == "attachment" {
-      if let Some(part) = claude_attachment_part(line.get("attachment")) {
-        let mut msg = Message::new(s(line, "uuid").unwrap_or("").to_string(), "system");
-        msg.ts = s(line, "timestamp").and_then(iso_to_epoch_ms);
-        msg.parts.push(part);
-        messages.push(msg);
-      }
-      continue;
-    }
-    if ty != "user" && ty != "assistant" {
-      continue;
-    }
-    let Some(m) = line.get("message") else { continue };
-    let Some(content) = m.get("content") else { continue };
-    let id = s(line, "uuid").unwrap_or("").to_string();
-    let ts = s(line, "timestamp").and_then(iso_to_epoch_ms);
-    let mut msg = Message::new(id, ty);
-    msg.ts = ts;
-    if ty == "assistant" {
-      msg.model = s(m, "model").map(String::from);
-      if let Some(us) = m.get("usage") {
-        msg.usage = Some(claude_usage(us));
-      }
-    }
-    match content {
-      Value::String(text) if !text.trim().is_empty() => {
-        msg.parts.push(Part::text("text", text.clone()));
-      }
-      Value::Array(blocks) => {
-        for b in blocks {
-          match s(b, "type") {
-            Some("text") => {
-              if let Some(t) = s(b, "text") {
-                msg.parts.push(Part::text("text", t.to_string()));
-              }
-            }
-            Some("thinking") => {
-              if let Some(t) = s(b, "thinking").filter(|t| !t.is_empty()) {
-                msg.parts.push(Part::text("thinking", t.to_string()));
-              }
-            }
-            Some("tool_use") => {
-              let name = s(b, "name").map(String::from);
-              let input = b
-                .get("input")
-                .map(|i| serde_json::to_string_pretty(i).unwrap_or_default())
-                .unwrap_or_default();
-              msg.parts.push(Part {
-                kind: "toolCall".into(),
-                text: input,
-                name,
-                call_id: s(b, "id").map(String::from),
-                ..Part::default()
-              });
-            }
-            Some("tool_result") => {
-              let text = match b.get("content") {
-                Some(Value::String(t)) => t.clone(),
-                Some(Value::Array(arr)) => arr
-                  .iter()
-                  .filter_map(|x| s(x, "text"))
-                  .collect::<Vec<_>>()
-                  .join("\n"),
-                _ => String::new(),
-              };
-              // Oversized outputs live in a sibling `tool-results/` file; the
-              // inline text is only a preview plus the path. Carry the path as a
-              // `file:` ref so the UI can fetch the real output on expand
-              // instead of showing the reader an absolute path as "content".
-              let external = persisted_output_path(&text, line.get("toolUseResult"));
-              let full_bytes = external.as_ref().and_then(|p| fs::metadata(p).ok()).map(|m| m.len());
-              msg.parts.push(Part {
-                kind: "toolResult".into(),
-                text: strip_persisted_stub(&text),
-                name: None,
-                agent: None,
-                call_id: s(b, "tool_use_id").map(String::from),
-                is_error: b.get("is_error").and_then(Value::as_bool),
-                truncated: external.as_ref().map(|_| true),
-                full_bytes,
-                full_ref: external.map(|p| format!("file:{p}")),
-              });
-            }
-            Some("image") => msg.parts.push(Part::text("image", "[image]".into())),
-            _ => {}
-          }
-        }
-      }
-      _ => {}
-    }
-    if !msg.parts.is_empty() {
-      messages.push(msg);
-    }
-  }
-  SessionDetail { summary, messages }
-}
-
-/// Absolute path of an externalized tool result, from either the
-/// `<persisted-output>` stub Claude leaves inline or the `toolUseResult`
-/// sidecar field on the same record. `None` when the output was inline.
-fn persisted_output_path(text: &str, tool_use_result: Option<&Value>) -> Option<String> {
-  if let Some(p) = tool_use_result.and_then(|r| s(r, "persistedOutputPath")) {
-    return Some(p.to_string());
-  }
-  if !text.starts_with("<persisted-output>") {
-    return None;
-  }
-  let rest = text.split("Full output saved to:").nth(1)?;
-  let p = rest.lines().next()?.trim();
-  (!p.is_empty()).then(|| p.to_string())
-}
-
-/// Drop the `<persisted-output>` envelope, keeping just the preview body — the
-/// wrapper's absolute path is carried structurally on the part instead.
-fn strip_persisted_stub(text: &str) -> String {
-  if !text.starts_with("<persisted-output>") {
-    return text.to_string();
-  }
-  match text.split_once("Preview (first ") {
-    Some((_, rest)) => rest.split_once("):").map(|(_, body)| body.trim_start()).unwrap_or(rest).into(),
-    None => text.into(),
-  }
-}
-
-/// Whitelisted `attachment` records rendered as a timeline `event` part.
-///
-/// Claude writes ~20 attachment subtypes, most of them injected machinery
-/// (tool/skill listings, reminders) that would only add noise. Only the ones a
-/// reader would actually want in the transcript are kept; anything else — now
-/// or in a future Claude version — is ignored rather than treated as an error.
-fn claude_attachment_part(att: Option<&Value>) -> Option<Part> {
-  let att = att?;
-  let subtype = s(att, "type")?;
-  let text = match subtype {
-    "hook_success" => {
-      let hook = s(att, "hookName").unwrap_or("hook");
-      let out = [s(att, "stdout"), s(att, "stderr")]
-        .into_iter()
-        .flatten()
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
-      if out.is_empty() { hook.to_string() } else { format!("{hook}\n{out}") }
-    }
-    "hook_blocking_error" | "hook_non_blocking_error" | "hook_cancelled" => {
-      let hook = s(att, "hookName").unwrap_or("hook");
-      let err = att
-        .get("blockingError")
-        .and_then(|e| s(e, "blockingError").map(String::from).or_else(|| e.as_str().map(String::from)))
-        .unwrap_or_default();
-      if err.is_empty() { hook.to_string() } else { format!("{hook}\n{err}") }
-    }
-    "plan_mode" => format!("→ {}", s(att, "planFilePath").unwrap_or("plan mode")),
-    "plan_mode_exit" => format!("← {}", s(att, "planFilePath").unwrap_or("plan mode")),
-    "edited_text_file" => s(att, "filename")?.to_string(),
-    "opened_file_in_ide" => s(att, "filename")?.to_string(),
-    "queued_command" => s(att, "prompt")?.trim().to_string(),
-    _ => return None,
-  };
-  Some(Part { kind: "event".into(), text, name: Some(subtype.into()), ..Part::default() })
-}
-
-fn scan_claude(
-  cache: &SummaryCache,
-  new_cache: &mut SummaryCache,
-  out: &mut Vec<SessionSummary>,
-) -> Result<(), String> {
-  let Some(root) = claude_root() else { return Ok(()) };
-  if !root.is_dir() {
-    return Ok(());
-  }
-  let mut sigs = Vec::new();
-  for proj in fs::read_dir(&root).map_err(|e| e.to_string())?.flatten() {
-    if !proj.path().is_dir() {
-      continue;
-    }
-    for entry in fs::read_dir(proj.path()).map_err(|e| e.to_string())?.flatten() {
-      let p = entry.path();
-      // A session directory sits beside its `<session-id>.jsonl` and holds the
-      // sub-agent transcripts (plus `tool-results/`, which isn't JSONL).
-      // Recurse: workflow runs nest another level, as
-      // `subagents/workflows/<workflow-id>/agent-<hash>.jsonl`.
-      if p.is_dir() {
-        let mut nested = Vec::new();
-        collect_jsonl(&p.join("subagents"), &mut nested);
-        sigs.extend(nested.into_iter().filter_map(file_sig));
-        continue;
-      }
-      if p.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-        continue;
-      }
-      if let Some(sig) = file_sig(p) {
-        sigs.push(sig);
-      }
-    }
-  }
-  scan_files(cache, new_cache, out, sigs, claude_summary_from_file);
-  Ok(())
-}
-
-// ── Codex ────────────────────────────────────────────────────────────────────
-
-fn codex_sessions_root() -> Option<PathBuf> {
-  let home = dirs::home_dir()?;
-  Some(codex_home(&home).join("sessions"))
-}
-
-/// Map of session id → thread name from `<codexHome>/session_index.jsonl`.
-fn codex_titles() -> std::collections::HashMap<String, String> {
-  let mut map = std::collections::HashMap::new();
-  if let Some(home) = dirs::home_dir() {
-    let idx = codex_home(&home).join("session_index.jsonl");
-    if let Ok(text) = fs::read_to_string(&idx) {
-      for line in text.lines() {
-        if let Ok(v) = serde_json::from_str::<Value>(line) {
-          if let (Some(id), Some(name)) = (s(&v, "id"), s(&v, "thread_name")) {
-            if !name.trim().is_empty() {
-              map.insert(id.to_string(), name.to_string());
-            }
-          }
-        }
-      }
-    }
-  }
-  map
-}
-
-/// Recursively collect every `*.jsonl` under `dir`.
-fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>) {
-  let Ok(rd) = fs::read_dir(dir) else { return };
-  for entry in rd.flatten() {
-    let p = entry.path();
-    if p.is_dir() {
-      collect_jsonl(&p, out);
-    } else if p.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-      out.push(p);
-    }
-  }
-}
-
-fn codex_token_usage(info: &Value) -> Option<TokenUsage> {
-  let t = info.get("total_token_usage")?;
-  let input = u(t, "input_tokens");
-  let output = u(t, "output_tokens");
-  Some(TokenUsage {
-    input,
-    output,
-    cache_read: u(t, "cached_input_tokens"),
-    cache_write: 0,
-    reasoning: u(t, "reasoning_output_tokens"),
-    // Codex's input already includes cached, output already includes reasoning,
-    // so total is simply its authoritative `total_tokens` (input + output).
-    total: t.get("total_tokens").and_then(Value::as_u64).unwrap_or(input + output),
-  })
-}
-
-/// Sub-agent identity read off a Codex rollout's own `session_meta`.
-///
-/// Codex records a spawned agent's thread as a rollout file of its own, tagged
-/// `thread_source: "subagent"` with a `source.subagent.thread_spawn` block
-/// naming the thread that spawned it and the agent's canonical path. Plain
-/// forks and resumes carry `parent_thread_id` too, so that field alone must
-/// never be read as "this is a sub-agent" — the spawn block (or the
-/// `thread_source` tag) is the marker.
-struct CodexSubagent {
-  parent_id: String,
-  /// Canonical agent path, e.g. `/root/pip_i18n`.
-  path: Option<String>,
-  /// Custom-agent role (`i18n-reviewer`) — absent for the built-in agents.
-  role: Option<String>,
-  /// Random per-thread nickname Codex assigns (`Euclid`).
-  nickname: Option<String>,
-}
-
-impl CodexSubagent {
-  /// Short label naming this agent in the list. The path's last segment is the
-  /// task name the orchestrator chose (`pip_i18n`) and is unique among
-  /// siblings, so it beats the role (shared across runs, often absent) and the
-  /// nickname (random).
-  fn label(&self) -> Option<String> {
-    self
-      .path
-      .as_deref()
-      .map(basename)
-      .or_else(|| self.role.clone())
-      .or_else(|| self.nickname.clone())
-      .filter(|l| !l.trim().is_empty())
-      .map(|l| truncate_title(&l))
-  }
-}
-
-/// Read the sub-agent block out of a `session_meta` payload, or `None` for an
-/// ordinary (user-started, forked, resumed) thread.
-fn codex_subagent(payload: &Value) -> Option<CodexSubagent> {
-  let spawn = payload.pointer("/source/subagent/thread_spawn");
-  if spawn.is_none() && s(payload, "thread_source") != Some("subagent") {
-    return None;
-  }
-  // Fields live in the spawn block; older rollouts only mirror them at the top
-  // level of the payload, so fall back there.
-  let pick = |key: &str| -> Option<String> {
-    spawn
-      .and_then(|v| s(v, key))
-      .or_else(|| s(payload, key))
-      .filter(|v| !v.is_empty())
-      .map(String::from)
-  };
-  Some(CodexSubagent {
-    parent_id: pick("parent_thread_id")?,
-    path: pick("agent_path"),
-    role: pick("agent_role"),
-    nickname: pick("agent_nickname"),
-  })
-}
-
-/// Streaming fold over a Codex rollout's lines (mirrors `ClaudeAcc`). The
-/// session id can be overridden by a `session_meta` record, so `finish` takes
-/// the file-stem fallback and resolves the display title against `titles`.
-#[derive(Default)]
-struct CodexAcc {
-  meta_id: Option<String>,
-  subagent: Option<CodexSubagent>,
-  cwd: String,
-  models: Vec<String>,
-  title: Option<String>,
-  usage: TokenUsage,
-  started: Option<i64>,
-  updated: Option<i64>,
-  count: u64,
-}
-
-impl CodexAcc {
-  fn push(&mut self, line: &Value) {
-    let ty = s(line, "type").unwrap_or("");
-    if let Some(ms) = s(line, "timestamp").and_then(iso_to_epoch_ms) {
-      self.started = Some(self.started.map_or(ms, |v: i64| v.min(ms)));
-      self.updated = Some(self.updated.map_or(ms, |v: i64| v.max(ms)));
-    }
-    let payload = line.get("payload").unwrap_or(&Value::Null);
-    match ty {
-      // Only the FIRST `session_meta` describes this file. A forked / sub-agent
-      // rollout replays the parent thread's history, which carries the parent's
-      // own `session_meta` along with it — letting a later record win would
-      // stamp every sibling fork with the parent's id and collapse them into
-      // one duplicated entry in the list.
-      "session_meta" if self.meta_id.is_none() => {
-        self.meta_id = s(payload, "id").map(String::from);
-        self.subagent = codex_subagent(payload);
-        if let Some(c) = s(payload, "cwd") {
-          self.cwd = c.to_string();
-        }
-      }
-      "turn_context" => {
-        if let Some(model) = s(payload, "model") {
-          if !self.models.iter().any(|x| x == model) {
-            self.models.push(model.to_string());
-          }
-        }
-      }
-      "event_msg" => match s(payload, "type") {
-        Some("user_message") => {
-          self.count += 1;
-          if self.title.is_none() {
-            if let Some(msg) = s(payload, "message") {
-              let msg = msg.trim();
-              if !msg.is_empty() && !msg.starts_with('#') && !msg.starts_with('<') {
-                self.title = Some(truncate_title(msg));
-              }
-            }
-          }
-        }
-        Some("agent_message") => self.count += 1,
-        Some("token_count") => {
-          if let Some(info) = payload.get("info").filter(|i| !i.is_null()) {
-            if let Some(us) = codex_token_usage(info) {
-              self.usage = us; // total_token_usage is cumulative → keep the latest.
-            }
-          }
-        }
-        _ => {}
-      },
-      _ => {}
-    }
-  }
-
-  fn finish(self, fallback_id: String, path: &Path, titles: &HashMap<String, String>) -> SessionSummary {
-    let id = self.meta_id.unwrap_or(fallback_id);
-    let agent_name = self.subagent.as_ref().and_then(CodexSubagent::label);
-    // A sub-agent rollout opens by replaying the parent thread's history, so its
-    // first user message is the *parent's* prompt — naming it after the agent
-    // keeps siblings apart instead of showing one prompt N times.
-    let title = titles
-      .get(&id)
-      .map(|t| truncate_title(t))
-      .or_else(|| agent_name.clone())
-      .or(self.title)
-      .unwrap_or_else(|| "Untitled session".into());
-    SessionSummary {
-      id,
-      source: "codex".into(),
-      title,
-      project_name: if self.cwd.is_empty() { "—".into() } else { basename(&self.cwd) },
-      cwd: self.cwd,
-      model: self.models.last().cloned().unwrap_or_default(),
-      models: self.models,
-      message_count: self.count,
-      usage: self.usage,
-      cost: None,
-      started_at: self.started.unwrap_or(0),
-      updated_at: self.updated.unwrap_or(0),
-      path: path.to_string_lossy().into_owned(),
-      git_branch: None,
-      parent_id: self.subagent.map(|sa| sa.parent_id),
-      agent_name,
-      duration_ms: None,
-    }
-  }
-}
-
-fn codex_summary(path: &Path, lines: &[Value], titles: &HashMap<String, String>) -> Option<SessionSummary> {
-  let fallback_id = path.file_stem()?.to_string_lossy().into_owned();
-  let mut acc = CodexAcc::default();
-  for line in lines {
-    acc.push(line);
-  }
-  Some(acc.finish(fallback_id, path, titles))
-}
-
-/// Streaming summary read straight from disk — the scan path's entry point.
-fn codex_summary_from_file(path: &Path, titles: &HashMap<String, String>) -> Option<SessionSummary> {
-  let fallback_id = path.file_stem()?.to_string_lossy().into_owned();
-  let mut acc = CodexAcc::default();
-  stream_jsonl(path, |line| acc.push(line))?;
-  Some(acc.finish(fallback_id, path, titles))
-}
-
-/// Flatten a Codex `content` array (input_text / output_text blocks) to text.
-fn codex_content_text(content: &Value) -> String {
-  content
-    .as_array()
-    .map(|arr| {
-      arr
-        .iter()
-        .filter_map(|b| s(b, "text"))
-        .collect::<Vec<_>>()
-        .join("\n")
-    })
-    .unwrap_or_default()
-}
-
-/// Split a Codex inter-agent message into its envelope kind and its body.
-///
-/// The readable `content` blocks join into a small header — `Message Type: …`,
-/// `Task name: …`, `Sender: …`, `Payload:` — followed by the payload itself.
-/// (The rest of the message rides along as an `encrypted_content` block, which
-/// carries no readable text at all.)
-fn split_agent_message(text: &str) -> (Option<String>, String) {
-  let Some(rest) = text.trim_start().strip_prefix("Message Type: ") else {
-    return (None, text.trim().to_string());
-  };
-  let (kind, after) = rest.split_once('\n').unwrap_or((rest, ""));
-  let body = after.split_once("Payload:").map_or(after, |(_, payload)| payload);
-  (Some(kind.trim().to_string()), body.trim().to_string())
-}
-
-/// Codex encrypts the `message` field of its agent-orchestration tool calls
-/// (`spawn_agent`, `send_message`, …): a multi-KB Fernet token that would
-/// otherwise *be* the visible payload of the call. Swap any such blob for a
-/// marker — the readable copy of that same message reaches the recipient's
-/// rollout as an `agent_message` record, which is where the transcript shows
-/// it. Arguments without a blob are returned byte-for-byte.
-fn redact_encrypted_args(input: &str) -> String {
-  // Fernet tokens base64 a leading 0x80 version byte, hence the fixed prefix.
-  if !input.contains("gAAAAA") {
-    return input.to_string();
-  }
-  let Ok(Value::Object(mut map)) = serde_json::from_str::<Value>(input) else {
-    return input.to_string();
-  };
-  let mut redacted = false;
-  for v in map.values_mut() {
-    if let Value::String(blob) = v {
-      if blob.len() > 256 && blob.starts_with("gAAAAA") {
-        *v = Value::String(format!("<encrypted, {} bytes>", blob.len()));
-        redacted = true;
-      }
-    }
-  }
-  if !redacted {
-    return input.to_string();
-  }
-  serde_json::to_string_pretty(&Value::Object(map)).unwrap_or_else(|_| input.to_string())
-}
-
-fn codex_detail(path: &Path, lines: &[Value], titles: &std::collections::HashMap<String, String>) -> SessionDetail {
-  let summary = codex_summary(path, lines, titles).unwrap();
-  let mut messages: Vec<Message> = Vec::new();
-  // Group consecutive assistant-side items (reasoning, text, tool calls) into a
-  // single assistant turn; a user message flushes the current turn.
-  let mut cur: Option<Message> = None;
-  fn flush(cur: &mut Option<Message>, messages: &mut Vec<Message>) {
-    if let Some(m) = cur.take() {
-      if !m.parts.is_empty() {
-        messages.push(m);
-      }
-    }
-  }
-  fn assistant(cur: &mut Option<Message>, id: String, ts: Option<i64>) -> &mut Message {
-    if cur.is_none() {
-      let mut m = Message::new(id, "assistant");
-      m.ts = ts;
-      *cur = Some(m);
-    }
-    cur.as_mut().unwrap()
-  }
-
-  for (i, line) in lines.iter().enumerate() {
-    let ty = s(line, "type").unwrap_or("");
-    let ts = s(line, "timestamp").and_then(iso_to_epoch_ms);
-    let payload = line.get("payload").unwrap_or(&Value::Null);
-    let pty = s(payload, "type").unwrap_or("");
-    match (ty, pty) {
-      ("event_msg", "user_message") => {
-        flush(&mut cur, &mut messages);
-        if let Some(text) = s(payload, "message") {
-          let mut m = Message::new(format!("u{i}"), "user");
-          m.ts = ts;
-          m.parts.push(Part::text("text", text.to_string()));
-          messages.push(m);
-        }
-      }
-      ("event_msg", "agent_message") => {
-        if let Some(text) = s(payload, "message").filter(|t| !t.trim().is_empty()) {
-          assistant(&mut cur, format!("a{i}"), ts)
-            .parts
-            .push(Part::text("text", text.to_string()));
-        }
-      }
-      ("response_item", "reasoning") => {
-        // Only the summary is human-readable; encrypted content is skipped.
-        let text = payload
-          .get("summary")
-          .and_then(Value::as_array)
-          .map(|a| a.iter().filter_map(|x| s(x, "text")).collect::<Vec<_>>().join("\n"))
-          .unwrap_or_default();
-        if !text.trim().is_empty() {
-          assistant(&mut cur, format!("a{i}"), ts).parts.push(Part::text("thinking", text));
-        }
-      }
-      ("response_item", "message") if s(payload, "role") == Some("assistant") => {
-        // Assistant output_text turns (some flows use these instead of agent_message).
-        let text = codex_content_text(payload.get("content").unwrap_or(&Value::Null));
-        if !text.trim().is_empty() {
-          assistant(&mut cur, format!("a{i}"), ts).parts.push(Part::text("text", text));
-        }
-      }
-      ("response_item", "function_call") | ("response_item", "custom_tool_call") => {
-        let name = s(payload, "name").map(String::from);
-        let input = redact_encrypted_args(s(payload, "arguments").or_else(|| s(payload, "input")).unwrap_or(""));
-        assistant(&mut cur, format!("a{i}"), ts).parts.push(Part {
-          kind: "toolCall".into(),
-          text: input,
-          name,
-          call_id: s(payload, "call_id").map(String::from),
-          ..Part::default()
-        });
-      }
-      ("response_item", "function_call_output") | ("response_item", "custom_tool_call_output") => {
-        let text = match payload.get("output") {
-          Some(Value::String(t)) => t.clone(),
-          Some(other) => serde_json::to_string(other).unwrap_or_default(),
-          None => String::new(),
-        };
-        assistant(&mut cur, format!("a{i}"), ts).parts.push(Part {
-          kind: "toolResult".into(),
-          text,
-          name: None,
-          call_id: s(payload, "call_id").map(String::from),
-          ..Part::default()
-        });
-      }
-      // Multi-agent traffic. An `agent_message` is written to the *recipient's*
-      // rollout, so in a parent transcript these are the sub-agents reporting
-      // back — the substance of a delegated run, and invisible anywhere else.
-      ("response_item", "agent_message") => {
-        let raw = codex_content_text(payload.get("content").unwrap_or(&Value::Null));
-        let (envelope, body) = split_agent_message(&raw);
-        if envelope.is_some() || !body.is_empty() {
-          assistant(&mut cur, format!("a{i}"), ts).parts.push(Part {
-            kind: "agentMessage".into(),
-            text: body,
-            name: envelope,
-            agent: s(payload, "author").or_else(|| s(payload, "recipient")).map(String::from),
-            ..Part::default()
-          });
-        }
-      }
-      // Lifecycle of a spawned agent, which lives in its own rollout file — this
-      // is the only trace of it in the thread that started it.
-      ("event_msg", "sub_agent_activity") => {
-        assistant(&mut cur, format!("a{i}"), ts).parts.push(Part {
-          kind: "subagentActivity".into(),
-          name: s(payload, "kind").map(String::from),
-          agent: s(payload, "agent_path").map(String::from),
-          ..Part::default()
-        });
-      }
-      ("response_item", "web_search_call") => {
-        let q = payload
-          .get("action")
-          .and_then(|a| s(a, "query").or_else(|| s(a, "url")))
-          .unwrap_or("")
-          .to_string();
-        assistant(&mut cur, format!("a{i}"), ts).parts.push(Part {
-          kind: "webSearch".into(),
-          text: q,
-          ..Part::default()
-        });
-      }
-      _ => {}
-    }
-  }
-  flush(&mut cur, &mut messages);
-  SessionDetail { summary, messages }
-}
-
-fn scan_codex(
-  cache: &SummaryCache,
-  new_cache: &mut SummaryCache,
-  out: &mut Vec<SessionSummary>,
-) -> Result<(), String> {
-  let Some(root) = codex_sessions_root() else { return Ok(()) };
-  if !root.is_dir() {
-    return Ok(());
-  }
-  let titles = codex_titles();
-  let mut files = Vec::new();
-  collect_jsonl(&root, &mut files);
-  let sigs: Vec<FileSig> = files.into_iter().filter_map(file_sig).collect();
-  scan_files(cache, new_cache, out, sigs, |p| codex_summary_from_file(p, &titles));
-  Ok(())
-}
-
-// ── OpenCode ─────────────────────────────────────────────────────────────────
-
-/// First existing OpenCode data directory across the platform-specific
-/// candidates. OpenCode follows XDG on all platforms, but honors overrides.
-fn opencode_db() -> Option<PathBuf> {
-  let home = dirs::home_dir();
-  let mut candidates: Vec<PathBuf> = Vec::new();
-  if let Ok(p) = std::env::var("XDG_DATA_HOME") {
-    if !p.is_empty() {
-      candidates.push(PathBuf::from(p).join("opencode"));
-    }
-  }
-  if let Some(h) = &home {
-    candidates.push(h.join(".local/share/opencode"));
-    candidates.push(h.join(".opencode"));
-  }
-  if let Some(d) = dirs::data_dir() {
-    candidates.push(d.join("opencode"));
-  }
-  if let Ok(p) = std::env::var("APPDATA") {
-    candidates.push(PathBuf::from(p).join("opencode"));
-  }
-  if let Ok(p) = std::env::var("LOCALAPPDATA") {
-    candidates.push(PathBuf::from(p).join("opencode"));
-  }
-  candidates
-    .into_iter()
-    .map(|d| d.join("opencode.db"))
-    .find(|p| p.exists())
-}
-
-/// Open the OpenCode DB read-only (WAL lets us read while OpenCode runs).
-fn opencode_conn() -> Result<Connection, String> {
-  let path = opencode_db().ok_or("opencode database not found")?;
-  Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e| e.to_string())
-}
-
-fn opencode_model_id(raw: Option<String>) -> String {
-  raw
-    .and_then(|m| serde_json::from_str::<Value>(&m).ok())
-    .and_then(|v| v.get("id").and_then(Value::as_str).map(String::from))
-    .unwrap_or_default()
-}
-
-/// The session columns both the list scan and the single-session detail select,
-/// in the fixed order `opencode_row_to_summary` reads them by index. The
-/// `msg_count` correlated subquery references `s.id`, valid in either query.
-const OPENCODE_COLS: &str = "s.id, s.title, s.slug, s.directory, s.model, s.cost, \
-   s.tokens_input, s.tokens_output, s.tokens_reasoning, s.tokens_cache_read, \
-   s.tokens_cache_write, s.time_created, s.time_updated, \
-   (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) AS msg_count";
-
-/// Map one `SELECT OPENCODE_COLS …` row into a `SessionSummary`. Shared by the
-/// full scan and by `opencode_detail` (which selects a single row by id).
-fn opencode_row_to_summary(r: &rusqlite::Row) -> rusqlite::Result<SessionSummary> {
-  let input: i64 = r.get::<_, Option<i64>>(6)?.unwrap_or(0);
-  let output: i64 = r.get::<_, Option<i64>>(7)?.unwrap_or(0);
-  let reasoning: i64 = r.get::<_, Option<i64>>(8)?.unwrap_or(0);
-  let cache_read: i64 = r.get::<_, Option<i64>>(9)?.unwrap_or(0);
-  let cache_write: i64 = r.get::<_, Option<i64>>(10)?.unwrap_or(0);
-  let title: Option<String> = r.get(1)?;
-  let slug: Option<String> = r.get(2)?;
-  let directory: String = r.get::<_, Option<String>>(3)?.unwrap_or_default();
-  let model = opencode_model_id(r.get::<_, Option<String>>(4)?);
-  let usage = TokenUsage {
-    input: input as u64,
-    output: output as u64,
-    cache_read: cache_read as u64,
-    cache_write: cache_write as u64,
-    reasoning: reasoning as u64,
-    total: (input + output + cache_read + cache_write) as u64,
-  };
-  Ok(SessionSummary {
-    id: r.get(0)?,
-    source: "opencode".into(),
-    title: title
-      .filter(|t| !t.trim().is_empty())
-      .or(slug)
-      .unwrap_or_else(|| "Untitled session".into()),
-    project_name: if directory.is_empty() { "—".into() } else { basename(&directory) },
-    cwd: directory,
-    models: if model.is_empty() { Vec::new() } else { vec![model.clone()] },
-    model,
-    message_count: r.get::<_, Option<i64>>(13)?.unwrap_or(0) as u64,
-    usage,
-    cost: r.get::<_, Option<f64>>(5)?,
-    started_at: r.get::<_, Option<i64>>(11)?.unwrap_or(0),
-    updated_at: r.get::<_, Option<i64>>(12)?.unwrap_or(0),
-    path: r.get(0)?,
-    git_branch: None,
-    parent_id: None,
-    agent_name: None,
-    duration_ms: None,
-  })
-}
-
-fn scan_opencode(out: &mut Vec<SessionSummary>) -> Result<(), String> {
-  if opencode_db().is_none() {
-    return Ok(()); // Not installed → absent, not an error.
-  }
-  let conn = opencode_conn()?;
-  let mut stmt = conn
-    .prepare(&format!("SELECT {OPENCODE_COLS} FROM session s ORDER BY s.time_updated DESC"))
-    .map_err(|e| e.to_string())?;
-  let rows = stmt.query_map([], opencode_row_to_summary).map_err(|e| e.to_string())?;
-  for sum in rows.flatten() {
-    out.push(sum);
-  }
-  Ok(())
-}
-
-fn opencode_detail(id: &str) -> Result<SessionDetail, String> {
-  let conn = opencode_conn()?;
-  // The session's summary in one indexed lookup (no full-table rescan).
-  let summary = conn
-    .query_row(
-      &format!("SELECT {OPENCODE_COLS} FROM session s WHERE s.id = ?1"),
-      [id],
-      opencode_row_to_summary,
-    )
-    .map_err(|e| match e {
-      rusqlite::Error::QueryReturnedNoRows => "session not found".to_string(),
-      other => other.to_string(),
-    })?;
-
-  let mut stmt = conn
-    .prepare("SELECT id, data FROM message WHERE session_id = ?1 ORDER BY time_created")
-    .map_err(|e| e.to_string())?;
-  let msg_rows: Vec<(String, String)> = stmt
-    .query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-    .map_err(|e| e.to_string())?
-    .filter_map(Result::ok)
-    .collect();
-
-  // All parts for the session in a single query, grouped by message id — turns
-  // the former N+1 (one query per message) into two queries total. The ORDER BY
-  // keeps each message's parts in their original time order.
-  let mut part_stmt = conn
-    .prepare(
-      "SELECT p.message_id, p.data FROM part p \
-       JOIN message m ON p.message_id = m.id \
-       WHERE m.session_id = ?1 ORDER BY m.time_created, p.time_created",
-    )
-    .map_err(|e| e.to_string())?;
-  let mut parts_by_msg: HashMap<String, Vec<Value>> = HashMap::new();
-  for row in part_stmt
-    .query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-    .map_err(|e| e.to_string())?
-    .filter_map(Result::ok)
-  {
-    if let Ok(v) = serde_json::from_str::<Value>(&row.1) {
-      parts_by_msg.entry(row.0).or_default().push(v);
-    }
-  }
-
-  let mut messages = Vec::new();
-  for (mid, mdata) in msg_rows {
-    let data: Value = serde_json::from_str(&mdata).unwrap_or(Value::Null);
-    let role = s(&data, "role").unwrap_or("user");
-    let mut msg = Message::new(mid.clone(), role);
-    msg.ts = data
-      .get("time")
-      .and_then(|t| t.get("created"))
-      .and_then(Value::as_i64);
-    msg.model = s(&data, "modelID").map(String::from);
-    if let Some(tk) = data.get("tokens").filter(|t| !t.is_null()) {
-      let input = u(tk, "input");
-      let output = u(tk, "output");
-      let cache = tk.get("cache");
-      let cache_read = cache.map(|c| u(c, "read")).unwrap_or(0);
-      let cache_write = cache.map(|c| u(c, "write")).unwrap_or(0);
-      msg.usage = Some(TokenUsage {
-        input,
-        output,
-        cache_read,
-        cache_write,
-        reasoning: u(tk, "reasoning"),
-        total: input + output + cache_read + cache_write,
-      });
-    }
-
-    for p in parts_by_msg.get(&mid).map(Vec::as_slice).unwrap_or(&[]) {
-      match s(p, "type") {
-        Some("text") => {
-          if let Some(t) = s(p, "text").filter(|t| !t.trim().is_empty()) {
-            msg.parts.push(Part::text("text", t.to_string()));
-          }
-        }
-        Some("reasoning") => {
-          if let Some(t) = s(p, "text").filter(|t| !t.trim().is_empty()) {
-            msg.parts.push(Part::text("thinking", t.to_string()));
-          }
-        }
-        Some("tool") => {
-          let name = s(p, "tool").map(String::from);
-          let state = p.get("state").unwrap_or(&Value::Null);
-          let input = state
-            .get("input")
-            .map(|i| serde_json::to_string_pretty(i).unwrap_or_default())
-            .unwrap_or_default();
-          msg.parts.push(Part {
-            kind: "toolCall".into(),
-            text: input,
-            name: name.clone(),
-            call_id: s(p, "callID").map(String::from),
-            ..Part::default()
-          });
-          let output = state.get("output");
-          let out_text = match output {
-            Some(Value::String(t)) => t.clone(),
-            Some(other) => serde_json::to_string(other).unwrap_or_default(),
-            None => String::new(),
-          };
-          if !out_text.trim().is_empty() {
-            msg.parts.push(Part {
-              kind: "toolResult".into(),
-              text: out_text,
-              name,
-              call_id: s(p, "callID").map(String::from),
-              is_error: s(state, "status").map(|st| st == "error"),
-              ..Part::default()
-            });
-          }
-        }
-        Some("patch") => {
-          let files = p
-            .get("files")
-            .and_then(Value::as_object)
-            .map(|o| o.keys().cloned().collect::<Vec<_>>().join("\n"))
-            .unwrap_or_default();
-          msg.parts.push(Part::text("patch", if files.is_empty() { "[patch]".into() } else { files }));
-        }
-        _ => {}
-      }
-    }
-    if !msg.parts.is_empty() {
-      messages.push(msg);
-    }
-  }
-  Ok(SessionDetail { summary, messages })
-}
+use codex::{codex_detail, codex_parse_from_file, codex_sigs, codex_titles};
 
 // ── Tauri commands ───────────────────────────────────────────────────────────
+
+/// One pass over every installed source, filling both caches.
+///
+/// Both history commands go through here. After a scan the caches are warm, so
+/// the second command is a few thousand `stat` calls rather than a second read
+/// of the same gigabytes — which is the whole reason the series is collected
+/// during the summary scan instead of on demand.
+fn scan_all(
+  progress: Channel<ScanProgressEvent>,
+) -> (Vec<SessionSummary>, Vec<SourceError>, ScanCache) {
+  // Load the persisted caches; unchanged Claude/Codex files are reused from
+  // them and only new/grown ones are re-parsed (in parallel). `new_cache`
+  // collects exactly the files seen this scan, so vanished files are pruned.
+  let cache = crate::history_cache::load_scan();
+  let mut new_cache = ScanCache::default();
+  let mut sessions = Vec::new();
+  let mut errors = Vec::new();
+
+  let claude = claude_sigs().map_err(|e| SourceError {
+    source: "claude".into(),
+    message: e,
+  });
+  let codex = codex_sigs().map_err(|e| SourceError {
+    source: "codex".into(),
+    message: e,
+  });
+  let total =
+    claude.as_ref().map(Vec::len).unwrap_or(0) + codex.as_ref().map(|(s, _)| s.len()).unwrap_or(0);
+  let reporter = Progress::new(Some(progress), total);
+
+  match claude {
+    Ok(sigs) => scan_files(
+      &cache,
+      &mut new_cache,
+      &mut sessions,
+      sigs,
+      &reporter,
+      claude_parse_from_file,
+    ),
+    Err(e) => errors.push(e),
+  }
+  match codex {
+    Ok((sigs, titles)) => scan_files(
+      &cache,
+      &mut new_cache,
+      &mut sessions,
+      sigs,
+      &reporter,
+      |p| codex_parse_from_file(p, &titles),
+    ),
+    Err(e) => errors.push(e),
+  }
+  if let Err(e) = scan_opencode(&mut sessions) {
+    errors.push(SourceError {
+      source: "opencode".into(),
+      message: e,
+    });
+  }
+
+  // Persist only when the file-based cache actually changed — a pure all-hit
+  // rescan (same set, same signatures) writes nothing.
+  if cache_changed(&cache, &new_cache) {
+    crate::history_cache::save(&new_cache.summaries);
+    crate::history_cache::save_series(&new_cache.series);
+  }
+  sessions.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
+  (sessions, errors, new_cache)
+}
 
 /// Scan every installed source and return normalized session summaries plus any
 /// per-source read errors (a *missing* source is silently absent, not an error).
 #[tauri::command(async)]
-pub fn history_list_sessions() -> ListResult {
-  // Load the persisted summary cache; unchanged Claude/Codex files are reused
-  // from it and only new/grown ones are re-parsed (in parallel). `new_cache`
-  // collects exactly the files seen this scan, so vanished files are pruned.
-  let cache = crate::history_cache::load();
-  let mut new_cache = SummaryCache::default();
-  let mut sessions = Vec::new();
-  let mut errors = Vec::new();
-  if let Err(e) = scan_claude(&cache, &mut new_cache, &mut sessions) {
-    errors.push(SourceError { source: "claude".into(), message: e });
-  }
-  if let Err(e) = scan_codex(&cache, &mut new_cache, &mut sessions) {
-    errors.push(SourceError { source: "codex".into(), message: e });
-  }
-  if let Err(e) = scan_opencode(&mut sessions) {
-    errors.push(SourceError { source: "opencode".into(), message: e });
-  }
-  // Persist only when the file-based cache actually changed — a pure all-hit
-  // rescan (same set, same signatures) writes nothing.
-  if cache_changed(&cache, &new_cache) {
-    crate::history_cache::save(&new_cache);
-  }
-  sessions.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
+pub fn history_list_sessions(progress: Channel<ScanProgressEvent>) -> ListResult {
+  let (sessions, errors, _) = scan_all(progress);
   ListResult { sessions, errors }
 }
 
+/// The per-message usage series behind those sessions — the raw material for
+/// 5-hour billing windows, burn rate, per-model attribution and tool profiles.
+///
+/// Split from `history_list_sessions` because it is one to two orders of
+/// magnitude larger: the session list must not carry it, and it is fetched only
+/// when the usage dashboard is opened.
+#[tauri::command(async)]
+pub fn history_usage_series(progress: Channel<ScanProgressEvent>) -> UsageSeriesResult {
+  let (_, mut errors, cache) = scan_all(progress);
+  let mut sessions: Vec<SessionSeries> = cache
+    .series
+    .entries
+    .into_values()
+    .map(|e| e.series)
+    .filter(|s| !s.events.is_empty() || !s.tools.is_empty())
+    .collect();
+  if let Err(e) = opencode_series(&mut sessions) {
+    errors.push(SourceError {
+      source: "opencode".into(),
+      message: e,
+    });
+  }
+  UsageSeriesResult { sessions, errors }
+}
+
 /// Whether `new_cache` differs from `old` in its set of files or any file's
-/// signature (an addition, a prune, or a re-parsed change).
-fn cache_changed(old: &SummaryCache, new_cache: &SummaryCache) -> bool {
-  new_cache.entries.len() != old.entries.len()
-    || new_cache.entries.iter().any(|(k, e)| {
-      old
-        .entries
-        .get(k)
-        .map_or(true, |prev| prev.mtime_ms != e.mtime_ms || prev.size != e.size)
+/// signature (an addition, a prune, or a re-parsed change). Checked on the
+/// summary half; the series half is written from the very same pass.
+fn cache_changed(old: &ScanCache, new_cache: &ScanCache) -> bool {
+  new_cache.summaries.entries.len() != old.summaries.entries.len()
+    || old.series.entries.len() != new_cache.series.entries.len()
+    || new_cache.summaries.entries.iter().any(|(k, e)| {
+      old.summaries.entries.get(k).map_or(true, |prev| {
+        prev.mtime_ms != e.mtime_ms || prev.size != e.size
+      })
     })
 }
 
@@ -1598,7 +633,11 @@ pub fn history_get_session(source: String, path: String) -> Result<SessionDetail
 /// `file:<abs path>` for an externalized tool result, or `part:<msg id>:<index>`
 /// to re-read it from the transcript.
 #[tauri::command(async)]
-pub fn history_get_part_text(source: String, path: String, r#ref: String) -> Result<String, String> {
+pub fn history_get_part_text(
+  source: String,
+  path: String,
+  r#ref: String,
+) -> Result<String, String> {
   if let Some(file) = r#ref.strip_prefix("file:") {
     let p = PathBuf::from(file);
     // The ref crosses the IPC boundary, so treat it as untrusted: only files
@@ -1608,9 +647,15 @@ pub fn history_get_part_text(source: String, path: String, r#ref: String) -> Res
     }
     return fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()));
   }
-  let rest = r#ref.strip_prefix("part:").ok_or_else(|| format!("bad part ref: {ref_}", ref_ = r#ref))?;
-  let (msg_id, index) = rest.rsplit_once(':').ok_or_else(|| format!("bad part ref: {rest}"))?;
-  let index: usize = index.parse().map_err(|_| format!("bad part index: {index}"))?;
+  let rest = r#ref
+    .strip_prefix("part:")
+    .ok_or_else(|| format!("bad part ref: {ref_}", ref_ = r#ref))?;
+  let (msg_id, index) = rest
+    .rsplit_once(':')
+    .ok_or_else(|| format!("bad part ref: {rest}"))?;
+  let index: usize = index
+    .parse()
+    .map_err(|_| format!("bad part index: {index}"))?;
   let detail = session_detail(&source, &path)?;
   detail
     .messages
@@ -1624,7 +669,9 @@ pub fn history_get_part_text(source: String, path: String, r#ref: String) -> Res
 /// Whether `p` resolves inside `~/.claude/projects`. Both sides are canonicalized
 /// so `..` segments and symlinks can't escape the root.
 fn is_under_claude_root(p: &Path) -> bool {
-  let (Some(root), Ok(target)) = (claude_root(), p.canonicalize()) else { return false };
+  let (Some(root), Ok(target)) = (claude_root(), p.canonicalize()) else {
+    return false;
+  };
   match root.canonicalize() {
     Ok(root) => target.starts_with(root),
     Err(_) => false,
@@ -1634,14 +681,47 @@ fn is_under_claude_root(p: &Path) -> bool {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use serde_json::Value;
+  use crate::history_cache::{CachedEntry, CachedSeries};
+  use super::scan::{file_sig, parallel_map};
+  use super::util::{basename, iso_to_epoch_ms, truncate_title};
 
+  // Parser internals the tests reach into directly.
+  use super::claude::{claude_attachment_part, claude_parent_id, claude_parse, claude_usage, persisted_output_path, strip_persisted_stub};
+  use super::codex::{codex_parse, codex_token_usage, redact_encrypted_args, split_agent_message};
+
+  // The parsers return a summary *and* a usage series; most assertions here
+  // only care about the summary, so unwrap that half once instead of at every
+  // call site.
+  fn claude_summary(path: &Path, lines: &[Value]) -> Option<SessionSummary> {
+    claude_parse(path, lines).map(|p| p.summary)
+  }
+  fn claude_summary_from_file(path: &Path) -> Option<SessionSummary> {
+    claude_parse_from_file(path).map(|p| p.summary)
+  }
+  fn codex_summary(
+    path: &Path,
+    lines: &[Value],
+    titles: &HashMap<String, String>,
+  ) -> Option<SessionSummary> {
+    codex_parse(path, lines, titles).map(|p| p.summary)
+  }
+  fn codex_summary_from_file(
+    path: &Path,
+    titles: &HashMap<String, String>,
+  ) -> Option<SessionSummary> {
+    codex_parse_from_file(path, titles).map(|p| p.summary)
+  }
 
   #[test]
   fn iso_to_epoch_ms_matches_known_instants() {
     assert_eq!(iso_to_epoch_ms("1970-01-01T00:00:00.000Z"), Some(0));
     assert_eq!(iso_to_epoch_ms("1970-01-01T00:00:01Z"), Some(1000));
     // 2026-06-15T05:45:41.325Z — verified against a reference epoch.
-    assert_eq!(iso_to_epoch_ms("2026-06-15T05:45:41.325Z"), Some(1781502341325));
+    assert_eq!(
+      iso_to_epoch_ms("2026-06-15T05:45:41.325Z"),
+      Some(1781502341325)
+    );
   }
 
   #[test]
@@ -1669,6 +749,78 @@ mod tests {
     assert_eq!(u.total, 38);
     assert_eq!(u.cache_read, 5);
     assert_eq!(u.cache_write, 3);
+  }
+
+  /// One streamed assistant turn arrives as several lines — one per content
+  /// block — all repeating the same ids and the same whole-turn `usage`.
+  fn claude_assistant_line(
+    uuid: &str,
+    msg_id: &str,
+    req: &str,
+    block: &str,
+    sidechain: bool,
+  ) -> Value {
+    serde_json::from_str(&format!(
+      r#"{{"type":"assistant","uuid":"{uuid}","requestId":"{req}","isSidechain":{sidechain},
+          "timestamp":"2026-01-01T00:00:01Z",
+          "message":{{"id":"{msg_id}","role":"assistant","model":"claude-opus-4-8",
+            "content":[{block}],
+            "usage":{{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}}}}"#
+    ))
+    .unwrap()
+  }
+
+  #[test]
+  fn claude_counts_a_streamed_turn_once_not_once_per_block() {
+    let lines = vec![
+      serde_json::from_str::<Value>(
+        r#"{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"go"}}"#,
+      )
+      .unwrap(),
+      claude_assistant_line("a1", "msg_1", "req_1", r#"{"type":"thinking","thinking":"hmm"}"#, false),
+      claude_assistant_line("a2", "msg_1", "req_1", r#"{"type":"text","text":"hi"}"#, false),
+      claude_assistant_line("a3", "msg_1", "req_1", r#"{"type":"tool_use","id":"t1","name":"Read","input":{}}"#, false),
+    ];
+    let sum = claude_summary(Path::new("s.jsonl"), &lines).unwrap();
+    assert_eq!(
+      sum.usage.total, 120,
+      "three blocks of one turn must count once"
+    );
+    assert_eq!(sum.usage.input, 100);
+    assert_eq!(sum.message_count, 2, "one user turn + one assistant turn");
+  }
+
+  #[test]
+  fn claude_counts_a_retry_but_drops_a_sidechain_replay() {
+    let lines = vec![
+      claude_assistant_line(
+        "a1",
+        "msg_1",
+        "req_1",
+        r#"{"type":"text","text":"hi"}"#,
+        false,
+      ),
+      // Same message id under a NEW requestId and not a sidechain: a real retry,
+      // really billed, so it counts.
+      claude_assistant_line(
+        "a2",
+        "msg_1",
+        "req_2",
+        r#"{"type":"text","text":"hi"}"#,
+        false,
+      ),
+      // Same message id replayed into a sidechain: already paid for, dropped.
+      claude_assistant_line(
+        "a3",
+        "msg_1",
+        "req_3",
+        r#"{"type":"text","text":"hi"}"#,
+        true,
+      ),
+    ];
+    let sum = claude_summary(Path::new("s.jsonl"), &lines).unwrap();
+    assert_eq!(sum.usage.total, 240);
+    assert_eq!(sum.message_count, 2);
   }
 
   #[test]
@@ -1738,14 +890,19 @@ mod tests {
     );
     // Workflow runs nest one more level under `subagents/`.
     assert_eq!(
-      claude_parent_id(Path::new("/p/-proj/parent-1/subagents/workflows/wf_ab/agent-x.jsonl"))
-        .as_deref(),
+      claude_parent_id(Path::new(
+        "/p/-proj/parent-1/subagents/workflows/wf_ab/agent-x.jsonl"
+      ))
+      .as_deref(),
       Some("parent-1")
     );
     // …while a file directly under the project dir is a top-level session.
     assert_eq!(claude_parent_id(Path::new("/p/-proj/sess.jsonl")), None);
     // A sibling directory that isn't `subagents` must not be mistaken for one.
-    assert_eq!(claude_parent_id(Path::new("/p/-proj/parent-1/tool-results/x.jsonl")), None);
+    assert_eq!(
+      claude_parent_id(Path::new("/p/-proj/parent-1/tool-results/x.jsonl")),
+      None
+    );
   }
 
   #[test]
@@ -1784,10 +941,17 @@ mod tests {
   #[test]
   fn persisted_output_path_reads_stub_and_sidecar() {
     let stub = "<persisted-output>\nOutput too large (80.4KB). Full output saved to: /tmp/tr/a.txt\n\nPreview (first 2KB):\nhello\n";
-    assert_eq!(persisted_output_path(stub, None).as_deref(), Some("/tmp/tr/a.txt"));
+    assert_eq!(
+      persisted_output_path(stub, None).as_deref(),
+      Some("/tmp/tr/a.txt")
+    );
     // The `toolUseResult` sidecar wins when present.
-    let sidecar: Value = serde_json::from_str(r#"{"persistedOutputPath":"/tmp/tr/b.txt"}"#).unwrap();
-    assert_eq!(persisted_output_path(stub, Some(&sidecar)).as_deref(), Some("/tmp/tr/b.txt"));
+    let sidecar: Value =
+      serde_json::from_str(r#"{"persistedOutputPath":"/tmp/tr/b.txt"}"#).unwrap();
+    assert_eq!(
+      persisted_output_path(stub, Some(&sidecar)).as_deref(),
+      Some("/tmp/tr/b.txt")
+    );
     // Ordinary inline output is not externalized.
     assert_eq!(persisted_output_path("just output", None), None);
   }
@@ -1827,7 +991,10 @@ mod tests {
 
     let file: Value =
       serde_json::from_str(r#"{"type":"opened_file_in_ide","filename":"/a/b.yaml"}"#).unwrap();
-    assert_eq!(claude_attachment_part(Some(&file)).unwrap().text, "/a/b.yaml");
+    assert_eq!(
+      claude_attachment_part(Some(&file)).unwrap().text,
+      "/a/b.yaml"
+    );
 
     // Injected machinery is noise — dropped, not rendered and not an error.
     let noise: Value =
@@ -1851,7 +1018,10 @@ mod tests {
     // No `aiTitle`, so the sub-agent's name names the session.
     assert_eq!(sum.title, "audit-panel");
     // The `system` records still widen the session's time range.
-    assert_eq!(sum.updated_at, iso_to_epoch_ms("2026-01-01T00:00:10Z").unwrap());
+    assert_eq!(
+      sum.updated_at,
+      iso_to_epoch_ms("2026-01-01T00:00:10Z").unwrap()
+    );
   }
 
   #[test]
@@ -1862,7 +1032,11 @@ mod tests {
       serde_json::from_str(r#"{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"planning"}]}}"#).unwrap(),
       serde_json::from_str(r#"{"type":"event_msg","timestamp":"2026-01-01T00:00:03Z","payload":{"type":"agent_message","message":"done"}}"#).unwrap(),
     ];
-    let d = codex_detail(Path::new("r.jsonl"), &lines, &std::collections::HashMap::new());
+    let d = codex_detail(
+      Path::new("r.jsonl"),
+      &lines,
+      &std::collections::HashMap::new(),
+    );
     assert_eq!(d.messages.len(), 2);
     assert_eq!(d.messages[0].role, "user");
     assert_eq!(d.messages[1].role, "assistant");
@@ -1903,13 +1077,23 @@ mod tests {
     let role_only = vec![codex_subagent_meta(
       r#"{"parent_thread_id":"root-1","depth":1,"agent_role":"explorer","agent_nickname":"Gauss"}"#,
     )];
-    let sum = codex_summary(Path::new("rollout-agent-1.jsonl"), &role_only, &HashMap::new()).unwrap();
+    let sum = codex_summary(
+      Path::new("rollout-agent-1.jsonl"),
+      &role_only,
+      &HashMap::new(),
+    )
+    .unwrap();
     assert_eq!(sum.agent_name.as_deref(), Some("explorer"));
 
-    let nickname_only =
-      vec![codex_subagent_meta(r#"{"parent_thread_id":"root-1","depth":1,"agent_nickname":"Gauss"}"#)];
-    let sum =
-      codex_summary(Path::new("rollout-agent-1.jsonl"), &nickname_only, &HashMap::new()).unwrap();
+    let nickname_only = vec![codex_subagent_meta(
+      r#"{"parent_thread_id":"root-1","depth":1,"agent_nickname":"Gauss"}"#,
+    )];
+    let sum = codex_summary(
+      Path::new("rollout-agent-1.jsonl"),
+      &nickname_only,
+      &HashMap::new(),
+    )
+    .unwrap();
     assert_eq!(sum.agent_name.as_deref(), Some("Gauss"));
   }
 
@@ -1983,7 +1167,10 @@ mod tests {
   /// Write `contents` to a uniquely-named temp `.jsonl` and return its path.
   fn write_temp(tag: &str, contents: &str) -> PathBuf {
     let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let p = std::env::temp_dir().join(format!("agentpack-hist-{tag}-{}-{n}.jsonl", std::process::id()));
+    let p = std::env::temp_dir().join(format!(
+      "agentpack-hist-{tag}-{}-{n}.jsonl",
+      std::process::id()
+    ));
     fs::write(&p, contents).unwrap();
     p
   }
@@ -1998,6 +1185,19 @@ mod tests {
       "cost": null, "startedAt": 0, "updatedAt": 0, "path": path, "gitBranch": null,
     }))
     .unwrap()
+  }
+
+  fn sample_series(id: &str) -> SessionSeries {
+    SessionSeries {
+      id: id.into(),
+      source: "claude".into(),
+      project_name: "p".into(),
+      git_branch: None,
+      parent_id: None,
+      models: vec!["m".into()],
+      events: vec![[1, 0, 1, 1, 0, 0, 0]],
+      tools: Vec::new(),
+    }
   }
 
   #[test]
@@ -2019,7 +1219,11 @@ mod tests {
       serde_json::from_str(r#"{"type":"user","timestamp":"2026-01-01T00:00:00Z","cwd":"/proj","gitBranch":"main","message":{"role":"user","content":"hello there"}}"#).unwrap(),
       serde_json::from_str(r#"{"type":"assistant","timestamp":"2026-01-01T00:00:01Z","message":{"role":"assistant","model":"claude-opus-4-8","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":3,"output_tokens":4}}}"#).unwrap(),
     ];
-    let text = lines.iter().map(|v| v.to_string()).collect::<Vec<_>>().join("\n");
+    let text = lines
+      .iter()
+      .map(|v| v.to_string())
+      .collect::<Vec<_>>()
+      .join("\n");
     let path = write_temp("claude-parity", &text);
     let streamed = claude_summary_from_file(&path).unwrap();
     let in_mem = claude_summary(&path, &lines).unwrap();
@@ -2039,7 +1243,11 @@ mod tests {
       serde_json::from_str(r#"{"type":"event_msg","timestamp":"2026-01-01T00:00:02Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}}"#).unwrap(),
     ];
     let titles = std::collections::HashMap::new();
-    let text = lines.iter().map(|v| v.to_string()).collect::<Vec<_>>().join("\n");
+    let text = lines
+      .iter()
+      .map(|v| v.to_string())
+      .collect::<Vec<_>>()
+      .join("\n");
     let path = write_temp("codex-parity", &text);
     let streamed = codex_summary_from_file(&path, &titles).unwrap();
     let in_mem = codex_summary(&path, &lines, &titles).unwrap();
@@ -2056,24 +1264,81 @@ mod tests {
     let key = path.to_string_lossy().into_owned();
     let sig = file_sig(path.clone()).unwrap();
 
-    // Pre-seed the cache with this file's current signature and a marker summary
-    // that a re-parse of `{}` could never produce.
-    let mut cache = SummaryCache::default();
-    cache.entries.insert(
+    // Pre-seed both caches with this file's current signature and a marker
+    // summary that a re-parse of `{}` could never produce.
+    let mut cache = ScanCache::default();
+    cache.summaries.entries.insert(
       key.clone(),
-      CachedEntry { mtime_ms: sig.mtime_ms, size: sig.size, summary: sample_summary(&key) },
+      CachedEntry {
+        mtime_ms: sig.mtime_ms,
+        size: sig.size,
+        summary: sample_summary(&key),
+      },
+    );
+    cache.series.entries.insert(
+      key.clone(),
+      CachedSeries {
+        mtime_ms: sig.mtime_ms,
+        size: sig.size,
+        series: sample_series(&key),
+      },
     );
 
-    let mut new_cache = SummaryCache::default();
+    let mut new_cache = ScanCache::default();
     let mut out = Vec::new();
-    scan_files(&cache, &mut new_cache, &mut out, vec![sig], |_p: &Path| -> Option<SessionSummary> {
-      panic!("parse must not run on a cache hit")
-    });
+    scan_files(
+      &cache,
+      &mut new_cache,
+      &mut out,
+      vec![sig],
+      &Progress::default(),
+      |_p: &Path| -> Option<ParsedSession> { panic!("parse must not run on a cache hit") },
+    );
 
     assert_eq!(out.len(), 1);
     // The cached (marker) summary was reused, not a fresh parse.
     assert_eq!(serde_json::to_value(&out[0]).unwrap()["title"], "t");
-    assert!(new_cache.entries.contains_key(&key));
+    assert!(new_cache.summaries.entries.contains_key(&key));
+    assert!(new_cache.series.entries.contains_key(&key));
+    let _ = fs::remove_file(&path);
+  }
+
+  #[test]
+  fn scan_files_reparses_when_only_the_summary_half_is_warm() {
+    let text = concat!(
+      r#"{"type":"user","timestamp":"2026-01-01T00:00:00Z","cwd":"/proj","message":{"role":"user","content":"hi"}}"#,
+      "\n",
+      r#"{"type":"assistant","uuid":"a1","requestId":"r1","timestamp":"2026-01-01T00:00:01Z","message":{"id":"m1","role":"assistant","model":"claude-opus-4-8","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}}"#,
+    );
+    let path = write_temp("halfwarm", text);
+    let key = path.to_string_lossy().into_owned();
+    let sig = file_sig(path.clone()).unwrap();
+
+    // Summary cached, series missing — the state after upgrading into a build
+    // that collects series. Reusing the summary alone would leave the dashboard
+    // with no events until something else touched the file.
+    let mut cache = ScanCache::default();
+    cache.summaries.entries.insert(
+      key.clone(),
+      CachedEntry {
+        mtime_ms: sig.mtime_ms,
+        size: sig.size,
+        summary: sample_summary(&key),
+      },
+    );
+
+    let mut new_cache = ScanCache::default();
+    let mut out = Vec::new();
+    scan_files(
+      &cache,
+      &mut new_cache,
+      &mut out,
+      vec![sig],
+      &Progress::default(),
+      claude_parse_from_file,
+    );
+
+    assert_eq!(new_cache.series.entries[&key].series.events.len(), 1);
     let _ = fs::remove_file(&path);
   }
 
@@ -2088,33 +1353,114 @@ mod tests {
     let key = path.to_string_lossy().into_owned();
     let sig = file_sig(path.clone()).unwrap();
 
-    let cache = SummaryCache::default(); // empty → guaranteed miss
-    let mut new_cache = SummaryCache::default();
+    let cache = ScanCache::default(); // empty → guaranteed miss
+    let mut new_cache = ScanCache::default();
     let mut out = Vec::new();
-    scan_files(&cache, &mut new_cache, &mut out, vec![sig], claude_summary_from_file);
+    scan_files(
+      &cache,
+      &mut new_cache,
+      &mut out,
+      vec![sig],
+      &Progress::default(),
+      claude_parse_from_file,
+    );
 
     assert_eq!(out.len(), 1);
-    assert!(new_cache.entries.contains_key(&key));
+    assert!(new_cache.summaries.entries.contains_key(&key));
+    assert!(new_cache.series.entries.contains_key(&key));
     let _ = fs::remove_file(&path);
   }
 
   #[test]
   fn cache_changed_detects_add_edit_and_prune() {
-    let entry = |m: i64, s: u64| CachedEntry { mtime_ms: m, size: s, summary: sample_summary("k") };
-    let mut a = SummaryCache::default();
-    let mut b = SummaryCache::default();
+    let entry = |m: i64, s: u64| CachedEntry {
+      mtime_ms: m,
+      size: s,
+      summary: sample_summary("k"),
+    };
+    let mut a = ScanCache::default();
+    let mut b = ScanCache::default();
     assert!(!cache_changed(&a, &b)); // both empty
 
-    b.entries.insert("k".into(), entry(1, 2));
+    b.summaries.entries.insert("k".into(), entry(1, 2));
     assert!(cache_changed(&a, &b)); // addition
 
-    a.entries.insert("k".into(), entry(1, 2));
+    a.summaries.entries.insert("k".into(), entry(1, 2));
     assert!(!cache_changed(&a, &b)); // identical set + signatures
 
-    b.entries.get_mut("k").unwrap().mtime_ms = 9;
+    b.summaries.entries.get_mut("k").unwrap().mtime_ms = 9;
     assert!(cache_changed(&a, &b)); // same key, changed signature
 
-    b.entries.clear();
+    b.summaries.entries.clear();
     assert!(cache_changed(&a, &b)); // prune
+  }
+
+  #[test]
+  fn cache_changed_notices_a_cold_series_half() {
+    // Same summaries on both sides, but the old cache has no series: the scan
+    // just rebuilt them and must persist, or the next launch rebuilds again.
+    let entry = |m: i64, s: u64| CachedEntry {
+      mtime_ms: m,
+      size: s,
+      summary: sample_summary("k"),
+    };
+    let mut old = ScanCache::default();
+    let mut fresh = ScanCache::default();
+    old.summaries.entries.insert("k".into(), entry(1, 2));
+    fresh.summaries.entries.insert("k".into(), entry(1, 2));
+    fresh.series.entries.insert(
+      "k".into(),
+      CachedSeries {
+        mtime_ms: 1,
+        size: 2,
+        series: sample_series("k"),
+      },
+    );
+    assert!(cache_changed(&old, &fresh));
+  }
+
+  #[test]
+  fn claude_collects_events_and_tool_calls() {
+    let lines = vec![
+      claude_assistant_line("a1", "msg_1", "req_1", r#"{"type":"thinking","thinking":"hmm"}"#, false),
+      // Same turn, second line: its `usage` is a repeat, but the tool_use block
+      // is its own and must still be counted.
+      claude_assistant_line("a2", "msg_1", "req_1", r#"{"type":"tool_use","id":"t1","name":"Read","input":{}}"#, false),
+      serde_json::from_str::<Value>(
+        r#"{"type":"user","uuid":"u2","timestamp":"2026-01-01T00:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"boom"}]}}"#,
+      )
+      .unwrap(),
+    ];
+    let parsed = claude_parse(Path::new("s.jsonl"), &lines).unwrap();
+    assert_eq!(parsed.series.events.len(), 1, "one turn → one event");
+    let ev = parsed.series.events[0];
+    assert_eq!(ev[1], 0, "model index into series.models");
+    assert_eq!(ev[2], 100); // input
+    assert_eq!(ev[3], 20); // output
+    assert_eq!(parsed.series.models, vec!["claude-opus-4-8"]);
+    assert_eq!(parsed.series.tools.len(), 1);
+    assert_eq!(parsed.series.tools[0].name, "Read");
+    assert_eq!(parsed.series.tools[0].calls, 1);
+    assert_eq!(parsed.series.tools[0].errors, 1);
+  }
+
+  #[test]
+  fn codex_series_uses_the_per_turn_delta_not_the_running_total() {
+    let lines: Vec<Value> = vec![
+      serde_json::from_str(r#"{"type":"session_meta","timestamp":"2026-01-01T00:00:00Z","payload":{"id":"t1","cwd":"/proj"}}"#).unwrap(),
+      serde_json::from_str(r#"{"type":"turn_context","timestamp":"2026-01-01T00:00:01Z","payload":{"model":"gpt-5.3-codex"}}"#).unwrap(),
+      serde_json::from_str(r#"{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{"type":"function_call","name":"shell","call_id":"c1","arguments":"{}"}}"#).unwrap(),
+      serde_json::from_str(r#"{"type":"event_msg","timestamp":"2026-01-01T00:00:03Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110},"last_token_usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110}}}}"#).unwrap(),
+      serde_json::from_str(r#"{"type":"event_msg","timestamp":"2026-01-01T00:00:04Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":300,"output_tokens":25,"total_tokens":325},"last_token_usage":{"input_tokens":200,"output_tokens":15,"total_tokens":215}}}}"#).unwrap(),
+    ];
+    let parsed = codex_parse(Path::new("rollout-t1.jsonl"), &lines, &HashMap::new()).unwrap();
+    // Summary keeps the cumulative figure…
+    assert_eq!(parsed.summary.usage.total, 325);
+    // …while the series carries the two deltas, which sum back to it.
+    let totals: i64 = parsed.series.events.iter().map(|e| e[2] + e[3]).sum();
+    assert_eq!(parsed.series.events.len(), 2);
+    assert_eq!(totals, 325);
+    assert_eq!(parsed.series.tools[0].name, "shell");
+    assert_eq!(parsed.series.tools[0].errors, 0, "Codex marks no failures");
   }
 }

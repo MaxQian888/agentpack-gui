@@ -1,4 +1,5 @@
 import type { Plan } from "./types"
+import { readStoreRecords } from "./store-json"
 
 /**
  * Named, switchable setups. A profile is just a snapshot of a Plan plus an id /
@@ -30,28 +31,33 @@ export function emptyProfileStore(): ProfileStore {
   return { version: PROFILE_VERSION, profiles: [] }
 }
 
+/**
+ * Strip `apiBaseUrl` / `apiToken` from a profile saved before relay config moved
+ * into the provider list. Applying such a profile must not re-introduce a second
+ * writer for the agent CLIs' endpoint; the endpoint itself is unaffected, it is
+ * just managed from the provider list now.
+ */
+function dropLegacyRelay(plan: Plan): Plan {
+  const net = plan.network
+  if (!net) return plan
+  // Rebuilt from known fields rather than spread, so nothing a future (or older)
+  // shape smuggles in survives.
+  return { ...plan, network: { npmRegistry: net.npmRegistry, proxy: net.proxy } }
+}
+
 export function serializeProfiles(store: ProfileStore): string {
   return JSON.stringify(store, null, 2) + "\n"
 }
 
 /**
- * Parse a profiles.json text. Defensive: invalid / empty / wrong-shape input
- * degrades to an empty store rather than throwing, so a corrupt file never
- * blocks the UI. Only entries with an id, name and plan object are kept.
+ * Parse a profiles.json text. Defensive via {@link readStoreRecords}: invalid /
+ * empty / wrong-shape input degrades to an empty store rather than throwing, so
+ * a corrupt file never blocks the UI. Only entries with an id, name and plan
+ * object are kept.
  */
 export function parseProfiles(json: string): ProfileStore {
-  if (!json.trim()) return emptyProfileStore()
-  let data: Record<string, unknown>
-  try {
-    data = JSON.parse(json) as Record<string, unknown>
-  } catch {
-    return emptyProfileStore()
-  }
-  const raw = Array.isArray(data["profiles"]) ? (data["profiles"] as unknown[]) : []
   const profiles: Profile[] = []
-  for (const p of raw) {
-    if (!p || typeof p !== "object") continue
-    const rec = p as Record<string, unknown>
+  for (const rec of readStoreRecords(json)) {
     if (
       typeof rec["id"] === "string" &&
       typeof rec["name"] === "string" &&
@@ -62,7 +68,7 @@ export function parseProfiles(json: string): ProfileStore {
         id: rec["id"],
         name: rec["name"],
         createdAt: typeof rec["createdAt"] === "number" ? rec["createdAt"] : 0,
-        plan: rec["plan"] as Plan,
+        plan: dropLegacyRelay(rec["plan"] as Plan),
       })
     }
   }

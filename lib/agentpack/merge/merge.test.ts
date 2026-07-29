@@ -23,14 +23,11 @@ import {
   SHELL_BLOCK_END,
   SHELL_BLOCK_START,
   deleteClaudeProxy,
-  deleteClaudeRelay,
-  deleteCodexProvider,
   deleteShellProxyBlock,
   gitProxyClearCommands,
   gitProxyCommands,
+  mergeClaudeEnv,
   mergeClaudeProxy,
-  mergeClaudeSettings,
-  mergeCodexProvider,
   mergeShellProxyBlock,
   npmProxyClearCommands,
   npmProxyCommands,
@@ -38,6 +35,7 @@ import {
   winProxyClearCommands,
   winProxyCommands,
 } from "./network"
+import { claudeSettingsFromProvider } from "../ccswitch/sync"
 import { findMcp } from "../registry"
 import type { McpServer, ProxyConfig } from "../types"
 
@@ -59,17 +57,9 @@ it("mergeCodexMcp is idempotent per id", () => {
   expect((toml.match(/context7/g) ?? []).length).toBe(1)
 })
 
-it("mergeClaudeSettings sets env block", () => {
-  const out = mergeClaudeSettings("", { apiBaseUrl: "https://r", apiToken: "t" })
-  expect(JSON.parse(out).env.ANTHROPIC_BASE_URL).toBe("https://r")
-  expect(JSON.parse(out).env.ANTHROPIC_AUTH_TOKEN).toBe("t")
-})
-
-it("mergeCodexProvider sets agentpack relay and references env key", () => {
-  const out = mergeCodexProvider("", { apiBaseUrl: "https://r" })
-  expect(out).toContain("agentpack")
-  expect(out).toContain("AGENTPACK_API_KEY")
-  expect(out).not.toContain("token")
+it("mergeClaudeEnv sets env block", () => {
+  const out = mergeClaudeEnv("", { HTTP_PROXY: "http://p" })
+  expect(JSON.parse(out).env.HTTP_PROXY).toBe("http://p")
 })
 
 it("npmRegistryCommand builds an npm config set call", () => {
@@ -111,17 +101,19 @@ it("codex stdio entry omits env when no key is supplied", () => {
   expect(e.env).toBeUndefined()
 })
 
-it("mergeClaudeSettings preserves an existing env block and partial inputs", () => {
+it("mergeClaudeEnv preserves an existing env block and other fields", () => {
   const existing = JSON.stringify({ env: { KEEP: "1" }, other: true })
-  const out = JSON.parse(mergeClaudeSettings(existing, { apiBaseUrl: "https://r" }))
+  const out = JSON.parse(mergeClaudeEnv(existing, { HTTP_PROXY: "http://p" }))
   expect(out.env.KEEP).toBe("1")
-  expect(out.env.ANTHROPIC_BASE_URL).toBe("https://r")
-  expect(out.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+  expect(out.env.HTTP_PROXY).toBe("http://p")
   expect(out.other).toBe(true)
 })
 
-it("mergeCodexProvider returns the input unchanged with no apiBaseUrl", () => {
-  expect(mergeCodexProvider("existing = true", { apiToken: "t" })).toBe("existing = true")
+it("mergeClaudeEnv deletes a key when the value is null", () => {
+  const existing = JSON.stringify({ env: { KEEP: "1", DROP: "2" } })
+  const out = JSON.parse(mergeClaudeEnv(existing, { DROP: null }))
+  expect(out.env.KEEP).toBe("1")
+  expect(out.env.DROP).toBeUndefined()
 })
 
 it("buildClaudeMcpRemoveCommand targets the id with user scope", () => {
@@ -143,35 +135,6 @@ it("deleteCodexMcpEntry is a no-op for an unknown id or empty input", () => {
   const toml = mergeCodexMcp("", "memory", { command: "npx", args: [] })
   expect(deleteCodexMcpEntry(toml, "nope")).toContain("memory")
   expect(deleteCodexMcpEntry("", "memory")).toBe("")
-})
-
-it("deleteClaudeRelay removes only the relay env vars", () => {
-  const existing = mergeClaudeSettings(JSON.stringify({ env: { KEEP: "1" } }), {
-    apiBaseUrl: "https://r",
-    apiToken: "t",
-  })
-  const out = JSON.parse(deleteClaudeRelay(existing))
-  expect(out.env.KEEP).toBe("1")
-  expect(out.env.ANTHROPIC_BASE_URL).toBeUndefined()
-  expect(out.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
-})
-
-it("deleteClaudeRelay returns empty input unchanged", () => {
-  expect(deleteClaudeRelay("")).toBe("")
-})
-
-it("deleteCodexProvider removes the agentpack provider and clears the selector", () => {
-  const existing = mergeCodexProvider("", { apiBaseUrl: "https://r" })
-  const out = deleteCodexProvider(existing)
-  expect(out).not.toContain("agentpack")
-  expect(out).not.toMatch(/model_provider\s*=/)
-})
-
-it("deleteCodexProvider keeps other providers and a non-agentpack selector", () => {
-  const toml = 'model_provider = "other"\n\n[model_providers.other]\nname = "Other"\n'
-  const out = deleteCodexProvider(toml)
-  expect(out).toContain("other")
-  expect(out).toContain('model_provider = "other"')
 })
 
 // --- OpenCode target + custom-spec + reverse parsers ---------------------
@@ -534,13 +497,15 @@ it("mergeClaudeProxy writes the proxy env vars and leaves the rest of the file a
   })
 })
 
-it("deleteClaudeProxy is the exact inverse and spares the relay vars", () => {
-  const withRelay = mergeClaudeSettings(JSON.stringify({ env: { KEEP: "1" } }), {
-    apiBaseUrl: "https://r",
-    apiToken: "t",
-  })
+it("deleteClaudeProxy is the exact inverse and spares the provider's env vars", () => {
+  // The proxy writer and the provider writer share settings.json `env`, so
+  // clearing the proxy must leave the selected provider's endpoint intact.
+  const withProvider = claudeSettingsFromProvider(
+    JSON.stringify({ env: { KEEP: "1" } }),
+    JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://r", ANTHROPIC_AUTH_TOKEN: "t" } })
+  )
   const applied = mergeClaudeProxy(
-    withRelay,
+    withProvider,
     proxy({ noProxy: "localhost", caCertPath: "/ca.pem", insecureTls: true })
   )
   const out = JSON.parse(deleteClaudeProxy(applied))

@@ -6,7 +6,13 @@ import type {
   ToolProxySnapshot,
 } from "@/lib/agentpack/network/discovery"
 import type { Provider, ProviderApp } from "@/lib/agentpack/ccswitch/types"
-import type { HistorySource, ListResult, SessionDetail } from "@/lib/history/types"
+import type {
+  HistorySource,
+  ListResult,
+  ScanProgress,
+  SessionDetail,
+  UsageSeriesResult,
+} from "@/lib/history/types"
 import type {
   RepoScan,
   SkillBackup,
@@ -310,6 +316,68 @@ export interface CcWriteReq {
 
 export const ccWriteProvider = (req: CcWriteReq) => invoke<string[]>("cc_write_provider", { req })
 
+/** State of the cc-switch database (mirrors Rust `SchemaStatus`). */
+export interface CcSchemaStatus {
+  exists: boolean
+  /** `PRAGMA user_version`; 0 for a database agentpack created itself. */
+  userVersion: number
+  /** Columns the `providers` table lacks. Empty => usable. */
+  missingColumns: string[]
+}
+
+/**
+ * Inspect the cc-switch database without touching it, so the UI can tell "never
+ * created" (offer to create it) apart from "too old" (tell the user to launch
+ * cc-switch, which migrates on startup).
+ */
+export const ccSchemaStatus = () => invoke<CcSchemaStatus>("cc_schema_status")
+
+/**
+ * Create the cc-switch database when it doesn't exist, so managing providers
+ * doesn't require installing and launching cc-switch first. No-op if it's
+ * already there — agentpack never migrates someone else's database.
+ */
+export const ccInitDb = () => invoke<void>("cc_init_db")
+
+/** An agent CLI's own login, for display only (mirrors Rust `LoginStatus`). */
+export interface LoginStatus {
+  signedIn: boolean
+  /** Codex's explicit `auth_mode`; null when the CLI records none. */
+  mode: string | null
+  plan: string | null
+  expiresAt: number | null
+  /** Where the answer came from, so the UI can explain a missing plan/expiry. */
+  source: string
+}
+
+export interface LoginReport {
+  claude: LoginStatus
+  codex: LoginStatus
+}
+
+/**
+ * Read each CLI's official login state. Never returns a credential: on macOS,
+ * Claude's tokens live in the Keychain and are only probed for existence, so
+ * this neither prompts the user nor unlocks a secret.
+ */
+export const loginStatus = () => invoke<LoginReport>("login_status")
+
+/** Raw result of an authenticated GET (mirrors Rust `HttpGetResult`). */
+export interface HttpGetResult {
+  status: number | null
+  latencyMs: number | null
+  body: string
+  error: string | null
+}
+
+/**
+ * Authenticated GET used by the provider "test connection" check. Generic on
+ * purpose — the URL and headers come from `ccswitch/probe.ts`, which is where
+ * each CLI's auth scheme is already modelled.
+ */
+export const httpGet = (url: string, headers: Record<string, string>, timeoutMs?: number) =>
+  invoke<HttpGetResult>("http_get", { url, headers, timeoutMs })
+
 /** One backed-up file within a snapshot (mirrors Rust `BackupFile`). */
 export interface BackupFile {
   originalPath: string
@@ -335,7 +403,27 @@ export const backupRestore = (id: string) => invoke<string[]>("backup_restore", 
  * summaries plus any per-source read errors. A source that isn't installed is
  * simply absent (no error). Runs off the main thread in Rust.
  */
-export const historyListSessions = () => invoke<ListResult>("history_list_sessions")
+export const historyListSessions = (onProgress?: (p: ScanProgress) => void) =>
+  invoke<ListResult>("history_list_sessions", { progress: scanChannel(onProgress) })
+
+/**
+ * The per-message usage series behind those sessions: packed usage events with
+ * real timestamps plus per-session tool tallies. Much larger than the summary
+ * list — fetch it only when the usage dashboard needs it.
+ */
+export const historyUsageSeries = (onProgress?: (p: ScanProgress) => void) =>
+  invoke<UsageSeriesResult>("history_usage_series", { progress: scanChannel(onProgress) })
+
+/**
+ * A `Channel` for scan progress. Rust takes it unconditionally (Tauri can't
+ * deserialize an optional channel argument), so callers that don't care still
+ * get one — it simply drops what it receives.
+ */
+function scanChannel(onProgress?: (p: ScanProgress) => void): Channel<ScanProgress> {
+  const channel = new Channel<ScanProgress>()
+  if (onProgress) channel.onmessage = onProgress
+  return channel
+}
 
 /**
  * Load one session's transcript. `path` is the summary's `path` handle.

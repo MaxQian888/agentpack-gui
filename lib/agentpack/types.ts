@@ -219,12 +219,14 @@ export interface ProxyConfig {
   targets: ProxyTarget[]
 }
 
-/** Network configuration the user opted into. */
+/**
+ * Network configuration the user opted into.
+ *
+ * Relay endpoints/tokens deliberately do NOT live here: they are provider rows
+ * (see `ccswitch/types.ts`), so there is exactly one writer for the agent CLIs'
+ * endpoint config. This block only covers what a plan run owns outright.
+ */
 export interface NetworkConfig {
-  /** Custom API base URL / relay endpoint for the agent CLIs. */
-  apiBaseUrl?: string
-  /** Auth token for the relay endpoint. */
-  apiToken?: string
   /** npm registry mirror URL. */
   npmRegistry?: string
   /** Proxy settings; absent => never configured (same effect as `mode: "off"`). */

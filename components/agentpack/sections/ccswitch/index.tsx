@@ -1,14 +1,21 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Plus, Star, RefreshCw, Database, History, Loader2, AlertTriangle } from "lucide-react"
+import {
+  Plus,
+  Star,
+  RefreshCw,
+  Database,
+  Download,
+  KeyRound,
+  Loader2,
+  AlertTriangle,
+} from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import { Card } from "@/components/ui/card"
-import { Switch } from "@/components/ui/switch"
-import { Label } from "@/components/ui/label"
 import {
   Table,
   TableBody,
@@ -31,17 +38,32 @@ import {
 import { CLI_TOOLS } from "@/lib/agentpack/registry"
 import {
   cliInstallStep,
+  providerImportStep,
   providerStep,
+  providerStepId,
   snapshotStep,
   syncLiveConfigSteps,
   visibleAppsStep,
 } from "@/lib/agentpack/plan"
-import {
-  DEFAULT_VISIBLE_APPS,
-  VISIBLE_APP_KEYS,
-  readVisibleApps,
-} from "@/lib/agentpack/ccswitch/settings"
+import { DEFAULT_VISIBLE_APPS, readVisibleApps } from "@/lib/agentpack/ccswitch/settings"
 import { RECOMMENDED_PROVIDERS } from "@/lib/agentpack/ccswitch/preset"
+import { detectUnmanagedProviders, type UnmanagedProvider } from "@/lib/agentpack/ccswitch/import"
+import { appsMissingOfficial, isOfficial, officialForm } from "@/lib/agentpack/ccswitch/official"
+import {
+  ACCOUNTS_VERSION,
+  accountsPath,
+  captureAccount,
+  parseAccounts,
+  resolveAccount,
+  serializeAccounts,
+  type AccountProfile,
+} from "@/lib/agentpack/ccswitch/accounts"
+import {
+  exportProviders,
+  parseProviderBundle,
+  planImport,
+  type ImportPlan,
+} from "@/lib/agentpack/ccswitch/transfer"
 import { buildSettingsConfig, parseSettingsConfig } from "@/lib/agentpack/ccswitch/provider"
 import type {
   Provider,
@@ -51,23 +73,35 @@ import type {
 import {
   backupList,
   backupRestore,
+  ccInitDb,
   ccLoadProviders,
+  ccSchemaStatus,
   detectCli,
   isProcessRunning,
   launchCcSwitch,
-  pathExists,
+  loginStatus,
   readTextFile,
+  writeTextFile,
   type BackupEntry,
+  type LoginReport,
 } from "@/lib/tauri/commands"
+
 import { isTauri } from "@/lib/tauri"
+import { pickFile, pickSavePath } from "@/lib/tauri/dialog"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-import { SectionShell } from "./section-shell"
-import { HelpTip } from "../help-tip"
-import { ProviderForm } from "../provider-form"
-import { useRunnerCtx } from "../run/runner-context"
+import { SectionShell } from "../section-shell"
+import { HelpTip } from "../../help-tip"
+import { ProviderForm } from "../../provider-form"
+import { useRunnerCtx } from "../../run/runner-context"
+import { AccountsCard } from "./accounts-card"
+import { BackupsCard } from "./backups-card"
+import { LoadingLine } from "./loading-line"
+import { LoginsCard } from "./logins-card"
+import { VisibleAppsCard } from "./visible-apps-card"
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+/** Apps agentpack manages providers for; cc-switch itself supports more. */
+const PROVIDER_APPS = ["claude", "codex", "opencode"] as const
 
 export function CcSwitchSection() {
   const t = useT()
@@ -81,13 +115,25 @@ export function CcSwitchSection() {
     storeDetected ? storeDetected.installed : null
   )
   const [dbReady, setDbReady] = useState<boolean | null>(null)
+  // Columns the existing DB lacks; non-empty => it predates agentpack's needs and
+  // only cc-switch's own migrator should touch it.
+  const [staleColumns, setStaleColumns] = useState<string[]>([])
   const [ccRunning, setCcRunning] = useState<boolean | null>(null)
   // Starts true only in the desktop app (where the first scan runs); in web mode
   // there's nothing to scan, so we skip straight to the not-in-Tauri message.
   const [loading, setLoading] = useState(() => isTauri())
   const [initializing, setInitializing] = useState(false)
-  const [initTimedOut, setInitTimedOut] = useState(false)
   const [providers, setProviders] = useState<Provider[] | null>(null)
+  // Relay config already on disk that no provider row covers — offered for import
+  // so a switch can't silently overwrite what the user configured by hand.
+  const [unmanaged, setUnmanaged] = useState<UnmanagedProvider[]>([])
+  // Each CLI's own login, read-only — see `login_status` for why macOS reports
+  // no plan/expiry.
+  const [login, setLogin] = useState<LoginReport | null>(null)
+  const [accounts, setAccounts] = useState<AccountProfile[]>([])
+  const [newAccount, setNewAccount] = useState("")
+  // Set only when an import has name collisions worth asking about.
+  const [importPlan, setImportPlan] = useState<ImportPlan | null>(null)
   const [visible, setVisible] = useState<VisibleApps>(DEFAULT_VISIBLE_APPS)
   const [backups, setBackups] = useState<BackupEntry[]>([])
   const [formOpen, setFormOpen] = useState(false)
@@ -117,17 +163,43 @@ export function CcSwitchSection() {
       useAppStore.getState().setDetection("cc-switch", d)
       setProviders(list)
       if (paths) {
-        const [dbExists, settingsJson, bks, running] = await Promise.all([
-          pathExists(paths.ccSwitchDb),
+        const [
+          schema,
+          settingsJson,
+          bks,
+          running,
+          claudeJson,
+          codexToml,
+          who,
+          opencodeJson,
+          accountsJson,
+        ] = await Promise.all([
+          ccSchemaStatus(),
           readTextFile(paths.ccSwitchSettings),
           backupList(),
           isProcessRunning("cc-switch"),
+          readTextFile(paths.claudeSettings),
+          readTextFile(paths.codexConfig),
+          loginStatus(),
+          readTextFile(paths.opencodeConfig),
+          readTextFile(accountsPath(paths.home)),
         ])
         if (!mounted.current) return
-        setDbReady(dbExists)
+        setLogin(who)
+        setAccounts(parseAccounts(accountsJson).profiles)
+        setDbReady(schema.exists && schema.missingColumns.length === 0)
+        setStaleColumns(schema.exists ? schema.missingColumns : [])
         setVisible(readVisibleApps(settingsJson))
         setBackups(bks)
         setCcRunning(running)
+        setUnmanaged(
+          detectUnmanagedProviders({
+            claudeSettings: claudeJson,
+            codexConfig: codexToml,
+            opencodeConfig: opencodeJson,
+            providers: list,
+          })
+        )
       }
     } finally {
       // A failed scan must never wedge the UI in a permanent loading state; the
@@ -164,65 +236,60 @@ export function CcSwitchSection() {
     void runThen([cliInstallStep("cc-switch", cmd, false, t)])
   }
 
-  // Launch cc-switch once so it self-creates its SQLite DB, then poll until the
-  // file appears (cc-switch keeps running; the user closes it before editing).
-  // A ref (not the `initializing` state) guards re-entry so the auto-trigger
-  // effect and the manual button can't launch twice — the memoized callback would
-  // otherwise read a stale `initializing`.
+  // Create the SQLite DB ourselves rather than launching cc-switch and polling
+  // for the file it writes on first run: that made cc-switch a hard prerequisite
+  // and cost up to a minute of waiting. A ref (not the `initializing` state)
+  // guards re-entry so the auto-trigger effect and the manual button can't both
+  // fire — the memoized callback would otherwise read a stale `initializing`.
   const initInFlight = useRef(false)
   const initDb = useCallback(async () => {
-    if (!paths || initInFlight.current) return
+    if (initInFlight.current) return
     initInFlight.current = true
     setInitializing(true)
-    setInitTimedOut(false)
     try {
-      try {
-        await launchCcSwitch()
-      } catch {
-        if (mounted.current) toast.error(c.initLaunchFailed)
-        return
-      }
-      for (let i = 0; i < 60 && mounted.current; i++) {
-        await sleep(1000)
-        if (await pathExists(paths.ccSwitchDb)) {
-          if (mounted.current) setDbReady(true)
-          return
-        }
-      }
-      if (mounted.current) setInitTimedOut(true)
+      await ccInitDb()
+    } catch {
+      if (mounted.current) toast.error(c.initFailed)
     } finally {
       initInFlight.current = false
       if (mounted.current) setInitializing(false)
       await reload()
     }
-  }, [paths, reload, c.initLaunchFailed])
+  }, [reload, c.initFailed])
 
-  // Detected as installed but no DB yet → automatically launch cc-switch once so
-  // it self-creates the database, without waiting for a manual click. Single-shot
-  // per mount so a launch that times out doesn't relaunch in a loop; the button
-  // below stays available for an explicit retry.
+  // No database yet → create it, without waiting for a manual click and without
+  // needing cc-switch installed. Single-shot per mount so a failure doesn't retry
+  // in a loop; the button below stays available for an explicit retry.
   const autoInitAttempted = useRef(false)
   useEffect(() => {
-    if (detected === true && dbReady === false && !autoInitAttempted.current) {
+    if (dbReady === false && staleColumns.length === 0 && !autoInitAttempted.current) {
       autoInitAttempted.current = true
       void initDb()
     }
-  }, [detected, dbReady, initDb])
+  }, [dbReady, staleColumns, initDb])
 
   const applyVisible = () => {
     if (!paths) return
     void runThen([visibleAppsStep(paths.ccSwitchSettings, visible, t)])
   }
 
+  /**
+   * Make one provider current, then push its config live.
+   *
+   * `cc_write_provider` snapshots the DB + live configs before the flag change,
+   * so no extra snapshotStep is needed; the sync steps declare a dependency on
+   * the DB write so a failed switch never touches live configs. Shared with
+   * `applyAccount`, which is the same switch repeated per app — and the two
+   * drifting apart would mean a profile switch that skips the sync.
+   */
+  const setCurrentSteps = (p: Provider, ps: NonNullable<typeof paths>) => [
+    providerStep("setCurrent", p.app_type, p.name, undefined, p.id, t),
+    ...syncLiveConfigSteps(p, ps, t, [providerStepId("setCurrent", p.app_type)]),
+  ]
+
   const setCurrent = (p: Provider) => {
     if (!paths) return
-    // cc_write_provider snapshots the DB + live configs before the flag change,
-    // so no extra snapshotStep is needed here; the sync steps then write live.
-    // They depend on the DB write: a failed switch must not touch live configs.
-    void runThen([
-      providerStep("setCurrent", p.app_type, p.name, undefined, p.id, t),
-      ...syncLiveConfigSteps(p, paths, t, ["cc-provider-setCurrent"]),
-    ])
+    void runThen(setCurrentSteps(p, paths))
   }
 
   // Manually push each app's current provider into the live config.
@@ -275,7 +342,7 @@ export function CcSwitchSection() {
         is_current: true,
       }
       // dependsOn the DB write: a failed save must not rewrite live configs.
-      steps.push(...syncLiveConfigSteps(saved, paths, t, [`cc-provider-${op}`]))
+      steps.push(...syncLiveConfigSteps(saved, paths, t, [providerStepId(op, form.app)]))
     }
     const reports = await runThen(steps)
     if (reports.some((r) => r.status === "error")) {
@@ -287,6 +354,66 @@ export function CcSwitchSection() {
       setFormKey((k) => k + 1)
       setFormOpen(true)
     }
+  }
+
+  const writeAccounts = async (profiles: AccountProfile[]) => {
+    if (!paths) return
+    setAccounts(profiles)
+    await writeTextFile(
+      accountsPath(paths.home),
+      serializeAccounts({ version: ACCOUNTS_VERSION, profiles })
+    )
+  }
+
+  const saveAccount = () => {
+    const name = newAccount.trim()
+    if (!name || !providers) return
+    // Stamped here rather than in the pure module so it stays free of clock reads.
+    const id = `acct-${Date.now().toString(36)}`
+    setNewAccount("")
+    void writeAccounts([...accounts, captureAccount(id, name, providers)])
+  }
+
+  // Applying a profile is a batch of the same setCurrent the list does, so the
+  // `is_current` flag stays the only switch and the badges follow along.
+  const applyAccount = (profile: AccountProfile) => {
+    if (!paths || !providers) return
+    const targets = resolveAccount(profile, providers)
+    if (!targets.length) return
+    void runThen(targets.flatMap((p) => setCurrentSteps(p, paths)))
+  }
+
+  const exportProviderBundle = async (includeTokens: boolean) => {
+    if (!providers?.length) return
+    const path = await pickSavePath({ defaultPath: "agentpack.providers.json" })
+    if (!path) return
+    await writeTextFile(path, exportProviders(providers, { includeTokens }))
+    toast.success(t.shell.configSaved(path))
+  }
+
+  const runImport = (plan: ImportPlan, overwrite: boolean) => {
+    setImportPlan(null)
+    // An imported entry's stored `settings_config` travels verbatim — see
+    // `providerImportStep`, which takes it directly rather than making the
+    // caller smuggle it through a form shape it doesn't fit.
+    const steps = [
+      ...plan.fresh.map((e) => providerImportStep(e, undefined, t)),
+      ...(overwrite
+        ? plan.conflicts.map((c) => providerImportStep(c.entry, c.existing.id, t))
+        : []),
+    ]
+    if (steps.length) void runThen(steps)
+  }
+
+  const pickImportFile = async () => {
+    const path = await pickFile([{ name: "json", extensions: ["json"] }])
+    if (!path) return
+    const entries = parseProviderBundle(await readTextFile(path))
+    if (!entries.length) return toast.error(c.importNothing)
+    const plan = planImport(entries, providers ?? [])
+    // Nothing to decide when no name collides — just run it.
+    if (!plan.conflicts.length) return runImport(plan, false)
+    setImportPlan(plan)
   }
 
   const doRestore = async (id: string) => {
@@ -303,8 +430,14 @@ export function CcSwitchSection() {
   const tool = CLI_TOOLS.find((x) => x.id === "cc-switch")!
   const canInstall = !!tool.install[effectiveOS()]
   const hasCurrent = !!providers?.some((p) => p.is_current)
-  // Providers can only be managed once the DB exists.
-  const needsDb = detected === true && dbReady === false
+  // Providers can only be managed once the DB exists. An out-of-date DB is a
+  // different problem: agentpack must not migrate someone else's schema, so it
+  // points at cc-switch instead of offering to create anything.
+  const needsDb = dbReady === false && staleColumns.length === 0
+  const needsMigration = staleColumns.length > 0
+  // Apps with no "official login" row yet: without one there's no way back from a
+  // relay to the CLI's own account.
+  const missingOfficial = appsMissingOfficial(providers ?? [], PROVIDER_APPS)
   // cc-switch locks its SQLite DB while open, so every write would fail; block the
   // editing controls and guide the user to close it first.
   const editingBlocked = ccRunning === true
@@ -346,7 +479,23 @@ export function CcSwitchSection() {
           ) : null}
         </div>
 
-        {needsDb ? (
+        {needsMigration ? (
+          <Alert className="mt-3">
+            <AlertTriangle />
+            <AlertTitle>{c.initDb}</AlertTitle>
+            <AlertDescription>
+              <span>{c.schemaStale(staleColumns.join(", "))}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-1"
+                onClick={() => void launchCcSwitch().catch(() => toast.error(c.initFailed))}
+              >
+                {c.launchCcSwitch}
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : needsDb ? (
           <div className="flex flex-row items-center gap-3 border-t pt-3">
             <div className="flex-1">
               <div className="flex items-center gap-1.5 font-medium">
@@ -354,41 +503,26 @@ export function CcSwitchSection() {
                 {c.initDb}
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
-                {initializing ? c.initializing : initTimedOut ? c.initTimeout : c.initDbHint}
+                {initializing ? c.initializing : c.initDbHint}
               </p>
             </div>
             <Button variant="outline" onClick={() => void initDb()} disabled={initializing}>
               {c.initDb}
             </Button>
           </div>
-        ) : detected === true && dbReady === true ? (
+        ) : dbReady === true ? (
           <p className="border-t pt-3 text-xs text-muted-foreground">{c.dbReady}</p>
         ) : null}
       </Card>
 
-      {/* Visible apps */}
-      <Card className="gap-3 p-4">
-        <div className="font-medium">{c.visibleTitle}</div>
-        <div className="grid grid-cols-2 gap-3">
-          {VISIBLE_APP_KEYS.map((key) => (
-            <div key={key} className="flex items-center justify-between gap-2">
-              <Label htmlFor={`va-${key}`} className="cursor-pointer text-sm font-normal">
-                {c.appLabels[key]}
-              </Label>
-              <Switch
-                id={`va-${key}`}
-                checked={visible[key]}
-                onCheckedChange={(v) => setVisible((prev) => ({ ...prev, [key]: v }))}
-              />
-            </div>
-          ))}
-        </div>
-        <div>
-          <Button variant="outline" size="sm" onClick={applyVisible} disabled={editingBlocked}>
-            {t.shell.apply}
-          </Button>
-        </div>
-      </Card>
+      <VisibleAppsCard
+        visible={visible}
+        disabled={editingBlocked}
+        onChange={setVisible}
+        onApply={applyVisible}
+      />
+
+      <LoginsCard login={login} loading={loading} />
 
       {/* Providers */}
       <Card className="gap-3 p-4">
@@ -414,6 +548,19 @@ export function CcSwitchSection() {
         <div className="flex items-center justify-between">
           <div className="font-medium">{c.providersTitle}</div>
           <div className="flex flex-wrap gap-2">
+            {missingOfficial.map((app) => (
+              <Button
+                key={`official-${app}`}
+                variant="ghost"
+                size="sm"
+                className="gap-1"
+                disabled={editingBlocked}
+                onClick={() => openAdd(officialForm(app, c.officialName))}
+              >
+                <KeyRound className="size-3.5" />
+                {c.addOfficial(app)}
+              </Button>
+            ))}
             {RECOMMENDED_PROVIDERS.map((preset) => (
               <Button
                 key={preset.key}
@@ -434,19 +581,91 @@ export function CcSwitchSection() {
           </div>
         </div>
 
+        {unmanaged.length > 0 && !editingBlocked ? (
+          <Alert>
+            <Download />
+            <AlertTitle>{c.unmanagedTitle(unmanaged.length)}</AlertTitle>
+            <AlertDescription>
+              <span>{c.unmanagedHint}</span>
+              <div className="mt-1 flex flex-wrap gap-2">
+                {unmanaged.map((u) => (
+                  <Button key={u.key} variant="outline" size="sm" onClick={() => openAdd(u.form)}>
+                    {c.importOne(u.app, u.form.baseUrl ?? "")}
+                  </Button>
+                ))}
+              </div>
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs text-muted-foreground">
             {hasCurrent ? c.setCurrentNote : c.syncNoCurrent}
           </p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={syncCurrent}
-            disabled={!hasCurrent || editingBlocked}
-          >
-            {c.syncCurrent}
-          </Button>
+          <div className="flex gap-1">
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="ghost" size="sm" disabled={!providers?.length}>
+                  {c.exportProviders}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{c.exportProviders}</AlertDialogTitle>
+                  <AlertDialogDescription>{c.exportTokensAsk}</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => void exportProviderBundle(false)}>
+                    {c.exportWithoutTokens}
+                  </AlertDialogAction>
+                  <AlertDialogAction onClick={() => void exportProviderBundle(true)}>
+                    {c.exportWithTokens}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={editingBlocked}
+              onClick={() => void pickImportFile()}
+            >
+              {c.importProviders}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={syncCurrent}
+              disabled={!hasCurrent || editingBlocked}
+            >
+              {c.syncCurrent}
+            </Button>
+          </div>
         </div>
+
+        <AlertDialog open={!!importPlan} onOpenChange={(o) => !o && setImportPlan(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{c.importProviders}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {c.importConflicts(
+                  importPlan?.fresh.length ?? 0,
+                  importPlan?.conflicts.map((x) => x.entry.name).join(", ") ?? ""
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
+              <AlertDialogAction onClick={() => importPlan && runImport(importPlan, false)}>
+                {c.importFreshOnly}
+              </AlertDialogAction>
+              <AlertDialogAction onClick={() => importPlan && runImport(importPlan, true)}>
+                {c.importOverwrite}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {providers && providers.length > 0 ? (
           <Table>
@@ -462,6 +681,11 @@ export function CcSwitchSection() {
                 <TableRow key={p.id}>
                   <TableCell className="font-medium">
                     {p.name}
+                    {isOfficial(p) ? (
+                      <Badge variant="outline" className="ml-2 font-normal">
+                        {c.officialBadge}
+                      </Badge>
+                    ) : null}
                     {p.is_current ? (
                       <Badge variant="secondary" className="ml-2 font-normal">
                         {c.current}
@@ -535,10 +759,7 @@ export function CcSwitchSection() {
             </TableBody>
           </Table>
         ) : loading && providers === null ? (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" />
-            {c.loading}
-          </p>
+          <LoadingLine />
         ) : (
           <p className="text-sm text-muted-foreground">
             {providers ? c.empty : isTauri() ? c.noDb : t.shell.notInTauri}
@@ -546,59 +767,19 @@ export function CcSwitchSection() {
         )}
       </Card>
 
-      {/* Backups & restore */}
-      <Card className="gap-3 p-4">
-        <div className="flex items-center gap-1.5 font-medium">
-          <History className="size-4" />
-          {c.backupsTitle}
-        </div>
-        <p className="text-xs text-muted-foreground">{c.backupsHint}</p>
-        {backups.length > 0 ? (
-          <Table>
-            <TableBody>
-              {backups.map((b) => (
-                <TableRow key={b.id}>
-                  <TableCell className="text-sm">
-                    {new Date(b.ts).toLocaleString()}
-                    <span className="ml-2 text-muted-foreground">{b.reason}</span>
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {c.backupFiles(b.files.length)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button variant="ghost" size="sm">
-                          {c.restore}
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>{c.restore}</AlertDialogTitle>
-                          <AlertDialogDescription>{c.restoreConfirm}</AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
-                          <AlertDialogAction onClick={() => void doRestore(b.id)}>
-                            {c.restore}
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        ) : loading ? (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" />
-            {c.loading}
-          </p>
-        ) : (
-          <p className="text-sm text-muted-foreground">{c.noBackups}</p>
-        )}
-      </Card>
+      <AccountsCard
+        accounts={accounts}
+        providers={providers}
+        newAccount={newAccount}
+        hasCurrent={hasCurrent}
+        editingBlocked={editingBlocked}
+        onNewAccountChange={setNewAccount}
+        onSave={saveAccount}
+        onApply={applyAccount}
+        onDelete={(a) => void writeAccounts(accounts.filter((x) => x.id !== a.id))}
+      />
+
+      <BackupsCard backups={backups} loading={loading} onRestore={(id) => void doRestore(id)} />
 
       <ProviderForm
         key={formKey}

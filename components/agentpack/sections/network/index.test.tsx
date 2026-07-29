@@ -209,8 +209,9 @@ it("mirror presets fill the registry and persist the GitHub prefix immediately",
   expect(saveSettings).toHaveBeenCalledWith({ ghMirrorPrefix: "https://gh-proxy.com/" })
 })
 
-it("still writes the relay fields into the plan", async () => {
+it("offers no API endpoint field — endpoints are provider rows", async () => {
   renderSection()
-  await userEvent.type(screen.getByLabelText(en.network.baseUrlLabel), "https://r")
-  expect(useAppStore.getState().plan.network.apiBaseUrl).toBe("https://r")
+  // The removed relay card owned the only base-URL/token pair here; a second
+  // writer for the agent CLIs' endpoint must not come back.
+  expect(screen.queryByPlaceholderText("https://api.example.com")).not.toBeInTheDocument()
 })

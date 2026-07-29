@@ -53,6 +53,13 @@ export interface AppSettings {
    * system-wide, so agentpack shouldn't claim a key combination uninvited.
    */
   summonShortcut: string | null
+  /**
+   * What the user pays per month for their coding-assistant subscriptions, in
+   * USD. Purely for the "API-equivalent vs what you actually pay" comparison on
+   * the usage dashboard — null hides that card rather than guessing a plan,
+   * since local transcripts carry no evidence of which one is in force.
+   */
+  monthlySubscriptionUsd: number | null
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -65,6 +72,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   skillRepoSources: [],
   proxy: null,
   summonShortcut: null,
+  monthlySubscriptionUsd: null,
 }
 
 const STORE_FILE = "settings.json"

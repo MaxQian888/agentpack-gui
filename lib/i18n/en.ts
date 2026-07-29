@@ -81,7 +81,7 @@ export const en = {
       },
       network: {
         title: "Network",
-        body: "Detect and apply a proxy, pick mirrors, or point the CLIs at a custom API relay.",
+        body: "Detect and apply a proxy, or pick faster mirrors for npm, pip and friends.",
       },
       ccswitch: {
         title: "cc-switch",
@@ -146,7 +146,7 @@ export const en = {
       "Skills are reusable instruction packs that teach the AI how to do specific engineering tasks well.",
     mcp: "MCP servers are plugins that extend the AI with new abilities — web access, memory, GitHub, and more.",
     network:
-      "Set up a proxy (detected automatically), mirrors, and a custom API relay/endpoint — everything the CLIs need on a restricted or slow network.",
+      "Set up a proxy (detected automatically) and mirrors — everything the CLIs need on a restricted or slow network. API relay endpoints live in cc-switch, which owns them.",
     ccswitch:
       "cc-switch stores multiple API providers/keys and lets you switch the active one with a click.",
     ccconnect:
@@ -385,10 +385,8 @@ export const en = {
   network: {
     titleOptional: "Network configuration (optional)",
     title: "Network configuration",
-    ask: "Configure a custom API relay endpoint and an npm mirror? (You can also manage providers later with cc-switch.)",
+    ask: "Configure a proxy and an npm mirror? (API endpoints are managed in the providers section.)",
     configureNow: "Configure now? ",
-    baseUrlLabel: "API base URL / relay endpoint:",
-    tokenLabel: "API token (for the relay):",
     registryLabel: "npm registry mirror URL:",
     desktopOnly: "Proxy detection needs the desktop app.",
 
@@ -493,11 +491,6 @@ export const en = {
       ghLabel: "GitHub download mirror",
       ghHint:
         "Prefix put in front of GitHub downloads when installing skills from a repository. Applies immediately.",
-    },
-
-    relay: {
-      title: "API endpoint",
-      subtitle: "Point the agent CLIs at a relay or gateway instead of the official API.",
     },
   },
 
@@ -731,8 +724,6 @@ export const en = {
     addMcpOpencode: (title: string) => `Add MCP "${title}" → OpenCode`,
     codexMcpWritten: (id: string) => `mcp_servers.${id} written to config.toml`,
     opencodeMcpWritten: (id: string) => `mcp.${id} written to opencode.json`,
-    configureClaudeRelay: "Configure Claude Code API endpoint",
-    configureCodexRelay: "Configure Codex API endpoint",
     proxyClaude: (url: string) => `Point Claude Code at the proxy → ${url}`,
     proxyNpmSet: (key: string, value: string) => `Set npm ${key} → ${value}`,
     proxyGitSet: (key: string, value: string) => `Set git ${key} → ${value}`,
@@ -758,15 +749,14 @@ export const en = {
     enableMcp: (title: string) => `Enable MCP "${title}"`,
     mcpStashed: (id: string) => `${id} remembered in mcp-disabled.json`,
     mcpUnstashed: (id: string) => `${id} cleared from mcp-disabled.json`,
-    removeRelayClaude: "Remove Claude Code API endpoint",
-    removeRelayCodex: "Remove Codex API endpoint",
     uninstallCli: (title: string) => `Uninstall ${title}`,
     noUninstaller: (title: string) => `No automated uninstaller for ${title} on this OS.`,
     restoreFile: (path: string) => `Restore ${path} from backup`,
     snapshot: "Back up cc-switch DB and live configs",
     syncClaude: "Sync provider → Claude Code settings.json",
     syncCodex: "Sync provider → Codex config.toml",
-    syncCodexAuth: "Sync provider → Codex auth.json",
+    syncOpencode: "Sync provider → OpenCode opencode.json",
+    opencodeProviderUpdated: "OpenCode provider updated",
   },
 
   /** Low-level execution / file output lines from exec/skills/configfiles. */
@@ -1073,10 +1063,60 @@ export const en = {
     noDb: "cc-switch database not found. Initialize it below, then return here.",
     initDb: "Initialize database",
     initDbHint:
-      "cc-switch stores providers in a SQLite database it creates on first launch. Launching cc-switch automatically to set that up; click to retry if needed.",
-    initializing: "Launching cc-switch and waiting for its database…",
-    initTimeout:
-      "Timed out waiting for the database. Make sure cc-switch finished launching, then refresh.",
+      "Providers live in a SQLite database under ~/.cc-switch. agentpack creates it for you — cc-switch itself is optional.",
+    initializing: "Creating the database…",
+    initFailed: "Couldn't create the database. Check that ~/.cc-switch is writable, then retry.",
+    launchCcSwitch: "Launch cc-switch",
+    unmanagedTitle: (n: number) =>
+      n === 1 ? "1 endpoint isn't managed here yet" : `${n} endpoints aren't managed here yet`,
+    unmanagedHint:
+      "Found API endpoints in your live config that no provider covers. Import them, or switching providers will overwrite them.",
+    importOne: (app: string, baseUrl: string) => `Import ${app}: ${baseUrl}`,
+    tabForm: "Form",
+    tabRaw: "Raw",
+    rawLabel: "settings_config",
+    rawHint:
+      "The settings_config stored for this provider. Edit it directly for anything the form doesn't cover — custom headers, query params, per-model overrides. Raw edits win over the form fields.",
+    rawInvalid: "Not valid JSON — fix it before saving.",
+    showToken: "Show token",
+    hideToken: "Hide token",
+    testConnection: "Test connection",
+    probeOk: (ms: number, models: number) =>
+      models > 0 ? `OK · ${ms}ms · ${models} models` : `OK · ${ms}ms`,
+    probeUnauthorized: "Rejected — check the token and the auth method.",
+    probeNotFound: "404 — the base URL's path looks wrong (Codex usually needs /v1).",
+    probeUnreachable: "Couldn't reach it — check the network or your proxy.",
+    probeHttpError: (status: number) => `Endpoint returned ${status}.`,
+    exportProviders: "Export",
+    exportTokensAsk:
+      "Export every provider to a JSON file. Without tokens the file is safe to share; with tokens it is a credential file — treat it like one.",
+    exportWithoutTokens: "Without tokens",
+    exportWithTokens: "With tokens",
+    importProviders: "Import",
+    importNothing: "No providers found in that file.",
+    importConflicts: (fresh: number, names: string) =>
+      `${fresh} new provider(s). These already exist and would be replaced: ${names}.`,
+    importFreshOnly: "New only",
+    importOverwrite: "Replace existing",
+    accountsTitle: "Account profiles",
+    accountsHint:
+      "Named combinations of provider selections — switch every CLI at once. A profile records which provider row each app points at, never a copy of its config and never a credential.",
+    accountNewLabel: "Profile name",
+    accountSave: "Save current",
+    accountApply: "Switch to",
+    accountStale: (apps: string) => `(${apps}: provider deleted)`,
+    loginTitle: "Official logins",
+    loginHint:
+      "Read-only. On macOS Claude's tokens stay in the Keychain, so plan and expiry aren't shown — reading them would prompt you and hand agentpack a credential it has no use for.",
+    loginSignedIn: "Signed in",
+    loginUnavailable: "Couldn't read the login state. Refresh to retry.",
+    loginSignedOut: "Not signed in",
+    loginExpires: (date: string) => `expires ${date}`,
+    officialBadge: "Official",
+    officialName: "Official login",
+    addOfficial: (app: string) => `Add official login (${app})`,
+    schemaStale: (cols: string) =>
+      `This cc-switch database predates the columns agentpack needs (${cols}). Launch cc-switch once — it migrates on startup — then refresh.`,
     dbReady: "Database ready. Close cc-switch before editing providers here.",
     refresh: "Refresh",
     checking: "Checking cc-switch…",
@@ -1089,7 +1129,6 @@ export const en = {
     setCurrentConfirm:
       "Set as current and overwrite the live config (Claude settings.json / Codex config.toml)? A snapshot is taken first.",
     restoreFailed: "Restore failed. See the logs for details.",
-    initLaunchFailed: "Couldn't launch cc-switch. Make sure it's installed, then try again.",
     loadFailed: "Couldn't read the cc-switch state. Click Refresh to retry.",
     empty: "No providers yet.",
     addProvider: "+ Add provider",
@@ -1445,6 +1484,121 @@ export const en = {
     colTokens: "Tokens",
     colCost: "Cost",
     inputOutput: (input: string, output: string) => `${input} in · ${output} out`,
+
+    // --- Scan progress (a cache rebuild re-parses every transcript on disk) ---
+    scanProgress: (done: number, total: number) => `Reading transcripts… ${done} / ${total}`,
+    seriesLoading: "Loading per-message usage…",
+
+    // --- Range + granularity ---
+    ranges: {
+      today: "Today",
+      "7d": "7 days",
+      "30d": "30 days",
+      month: "This month",
+      all: "All time",
+      custom: "Custom",
+    } as Record<string, string>,
+    customRangeLabel: (from: string, to: string) => `${from} – ${to}`,
+    applyRange: "Apply",
+    granularityLabel: "Group by",
+    granularity: { day: "Daily", week: "Weekly", month: "Monthly" } as Record<string, string>,
+    rangeEmpty: "No sessions in this period.",
+    dayFilter: (day: string) => `Day: ${day}`,
+    clickToDrill: "Click a row to see the sessions behind it.",
+
+    // --- Usage sub-tabs ---
+    tabOverview: "Overview",
+    tabCost: "Cost & windows",
+    tabBehaviour: "How you work",
+
+    // --- Cost provenance ---
+    rootSessionsHint: "top-level only",
+    costBreakdownTitle: "Where the cost figure comes from",
+    costBreakdownHint:
+      "Three different kinds of number, kept apart rather than summed into one that looks more precise than it is.",
+    costActual: "Recorded",
+    costActualNote: "Billed figures OpenCode stores per session.",
+    costEstimated: "Estimated",
+    costEstimatedNote: "Priced from token counts for Claude Code and Codex (rates as of 2026-07).",
+    costUnpriced: "Unpriced",
+    costUnpricedNone: "None",
+    costUnpricedNote: "Models with no known rate — excluded from both figures above.",
+    unpricedValue: (transcripts: number, tokens: string) =>
+      `${transcripts} transcript${transcripts === 1 ? "" : "s"} · ${tokens}`,
+    unpricedExcluded: (sessions: number) =>
+      `${sessions} session${sessions === 1 ? "" : "s"} left out — no known rate for the model.`,
+    unpricedBadge: "no rate",
+    costLowerBound: (entries: number) =>
+      `Lower bound — ${entries} request${entries === 1 ? "" : "s"} on an unpriced model.`,
+    statSubagents: "Sub-agent tokens",
+    subagentShare: (percent: number, transcripts: number) =>
+      `${percent}% of tokens, across ${transcripts} run${transcripts === 1 ? "" : "s"}`,
+
+    // --- Five-hour windows ---
+    activeBlockTitle: "Current 5-hour window",
+    activeBlockHint: "Claude Code meters usage in rolling five-hour windows.",
+    blockRemaining: "Time left",
+    blockTokens: "Used so far",
+    blockBurn: "Burn rate",
+    blockProjected: "Projected at close",
+    tokensPerMin: (v: string) => `${v}/min`,
+    costPerHour: (v: string) => `${v}/h`,
+    p90Label: (v: string) => `vs your P90 window (${v})`,
+    p90NotEnough: "Not enough completed windows yet to draw a reference line.",
+    blocksTitle: "Completed windows",
+    blocksHint: "Each window opens on your first message and lasts five hours.",
+    blocksEmpty: "No completed windows in this period.",
+    blocksTruncated: (shown: number, total: number) =>
+      `Showing the ${shown} most recent of ${total} windows — export for the rest.`,
+    blocksNoQuotaNote:
+      "No percent-of-plan figure here on purpose: published limits are counted in prompts and compute hours, not tokens, and the quota is shared with claude.ai — which local transcripts can't see. The reference line is your own P90 instead.",
+    colWindow: "Window",
+    colModels: "Models",
+    colDuration: "Active for",
+    modelCostHint: "Tokens and estimated cost per model, with its current rate.",
+
+    // --- Subscription comparison ---
+    subscriptionSetting: "Subscription",
+    subscriptionLabel: "Monthly subscription spend (USD)",
+    subscriptionSettingHint:
+      "Optional. Only used to compare metered API pricing against what you actually pay — leave empty to hide that card.",
+    subscriptionTitle: "API-equivalent vs what you pay",
+    subscriptionHint: "What this period's work would have cost at metered API rates.",
+    subscriptionApi: "API equivalent",
+    subscriptionPaid: "You pay",
+    subscriptionRatio: "Ratio",
+
+    // --- How you work ---
+    statToolCalls: "Tool calls",
+    statMcpShare: "MCP share",
+    mcpVsBuiltin: (mcp: string, builtin: string) => `${mcp} MCP · ${builtin} built-in`,
+    statCacheHit: "Cache hit rate",
+    cacheBreakdown: (read: string, fresh: string) => `${read} cached · ${fresh} fresh`,
+    statCacheSaved: "Saved by caching",
+    cacheSavedNote: "vs paying full input rate for the same tokens",
+    toolsTitle: "Tools",
+    toolsHint: "Calls and failures per tool, busiest first.",
+    toolsEmpty: "No tool calls in this period.",
+    toolErrors: (count: string, rate: string) => `${count} failed (${rate}%)`,
+    toolErrorsCaveat:
+      "Failure counts cover Claude Code and OpenCode. Codex writes tool output as free text with no failure flag, so its tools always read as zero errors.",
+    modelMixTitle: "Model mix over time",
+    modelMixHint: "Which models the tokens went to, period by period.",
+    modelMixEmpty: "No per-message data in this period.",
+    modelOther: "Other models",
+    costHistogramTitle: "Cost per session",
+    costHistogramHint: "How many sessions land in each cost bracket.",
+    branchesTitle: "By git branch",
+    branchesHint: "Only Claude Code records a branch, and only the first one it saw.",
+    branchesEmpty: "No branch information in this period.",
+    colBranch: "Branch",
+    topSessionsTitle: "Most expensive sessions",
+    colSession: "Session",
+    outlierBadge: "outlier",
+
+    // --- Export ---
+    exportCsv: "Export CSV",
+    exportJson: "Export JSON",
   },
 
   /** About & self-update section (app version, check/download/install). */

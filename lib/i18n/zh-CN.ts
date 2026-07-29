@@ -79,7 +79,7 @@ export const zhCN = {
       },
       network: {
         title: "网络",
-        body: "自动发现并应用代理、选择镜像源，或把 CLI 指向自定义 API 中转。",
+        body: "自动发现并应用代理，或为 npm、pip 等选择更快的镜像源。",
       },
       ccswitch: {
         title: "cc-switch",
@@ -135,7 +135,7 @@ export const zhCN = {
     skills: "技能是可复用的指令包，教 AI 把某类工程任务做好。",
     mcp: "MCP 服务是给 AI 扩能力的插件 —— 联网、记忆、GitHub 等等。",
     network:
-      "配置代理（可自动发现）、镜像源和自定义 API 中转端点 —— 受限或缓慢网络下 CLI 需要的都在这里。",
+      "配置代理（可自动发现）和镜像源 —— 受限或缓慢网络下 CLI 需要的都在这里。API 中转端点由 cc-switch 统一管理。",
     ccswitch: "cc-switch 保存多套 API 供应商/密钥，点一下就切换当前使用的那套。",
     ccconnect:
       "cc-connect 把本地编码代理桥接到聊天软件（飞书、Slack、Telegram 等），随时随地远程驱动它们。",
@@ -371,10 +371,8 @@ export const zhCN = {
   network: {
     titleOptional: "网络配置（可选）",
     title: "网络配置",
-    ask: "配置自定义 API 中转端点和 npm 镜像源吗？（之后也可用 cc-switch 管理供应商。）",
+    ask: "配置代理和 npm 镜像源吗？（API 端点在供应商一节管理。）",
     configureNow: "现在配置？ ",
-    baseUrlLabel: "API base URL / 中转端点：",
-    tokenLabel: "API token（用于中转）：",
     registryLabel: "npm 镜像源 URL：",
     desktopOnly: "代理检测需要在桌面端运行。",
 
@@ -476,11 +474,6 @@ export const zhCN = {
       npmLabel: "npm 镜像源",
       ghLabel: "GitHub 下载镜像",
       ghHint: "从仓库安装技能时，加在 GitHub 下载地址前面的前缀。修改后立即生效。",
-    },
-
-    relay: {
-      title: "API 端点",
-      subtitle: "让 agent CLI 走中转 / 网关，而不是官方 API。",
     },
   },
 
@@ -702,8 +695,6 @@ export const zhCN = {
     addMcpOpencode: (title: string) => `添加 MCP “${title}” → OpenCode`,
     codexMcpWritten: (id: string) => `已写入 mcp_servers.${id} 到 config.toml`,
     opencodeMcpWritten: (id: string) => `已写入 mcp.${id} 到 opencode.json`,
-    configureClaudeRelay: "配置 Claude Code API 端点",
-    configureCodexRelay: "配置 Codex API 端点",
     proxyClaude: (url: string) => `让 Claude Code 走代理 → ${url}`,
     proxyNpmSet: (key: string, value: string) => `设置 npm ${key} → ${value}`,
     proxyGitSet: (key: string, value: string) => `设置 git ${key} → ${value}`,
@@ -728,15 +719,14 @@ export const zhCN = {
     enableMcp: (title: string) => `启用 MCP “${title}”`,
     mcpStashed: (id: string) => `${id} 已记入 mcp-disabled.json`,
     mcpUnstashed: (id: string) => `${id} 已从 mcp-disabled.json 清除`,
-    removeRelayClaude: "移除 Claude Code API 端点",
-    removeRelayCodex: "移除 Codex API 端点",
     uninstallCli: (title: string) => `卸载 ${title}`,
     noUninstaller: (title: string) => `本系统没有 ${title} 的自动卸载方式。`,
     restoreFile: (path: string) => `从备份恢复 ${path}`,
     snapshot: "备份 cc-switch 数据库与实际配置",
     syncClaude: "同步供应商 → Claude Code settings.json",
     syncCodex: "同步供应商 → Codex config.toml",
-    syncCodexAuth: "同步供应商 → Codex auth.json",
+    syncOpencode: "同步供应商 → OpenCode opencode.json",
+    opencodeProviderUpdated: "已更新 OpenCode 供应商",
   },
 
   coreOutput: {
@@ -1036,9 +1026,59 @@ export const zhCN = {
     noDb: "未找到 cc-switch 数据库。请在下方初始化，再回到这里。",
     initDb: "初始化数据库",
     initDbHint:
-      "cc-switch 首次启动时会创建用于存放供应商的 SQLite 数据库。正在自动启动 cc-switch 完成初始化；如未成功可点此重试。",
-    initializing: "正在启动 cc-switch 并等待其生成数据库…",
-    initTimeout: "等待数据库超时。请确认 cc-switch 已完成启动，然后点击刷新。",
+      "供应商存放在 ~/.cc-switch 下的 SQLite 数据库里。agentpack 会替你创建，不必先装 cc-switch。",
+    initializing: "正在创建数据库…",
+    initFailed: "创建数据库失败。请确认 ~/.cc-switch 可写后重试。",
+    launchCcSwitch: "启动 cc-switch",
+    unmanagedTitle: (n: number) => `有 ${n} 个端点还没纳入管理`,
+    unmanagedHint:
+      "在你的实际配置里发现了没有对应供应商的 API 端点。请导入，否则切换供应商时会把它们覆盖掉。",
+    importOne: (app: string, baseUrl: string) => `导入 ${app}：${baseUrl}`,
+    tabForm: "表单",
+    tabRaw: "原始",
+    rawLabel: "settings_config",
+    rawHint:
+      "该供应商实际存储的 settings_config。表单没覆盖的字段（自定义 header、query params、按模型覆盖等）可以直接在这里改。原始配置优先于表单字段。",
+    rawInvalid: "不是合法 JSON——请先修正再保存。",
+    showToken: "显示令牌",
+    hideToken: "隐藏令牌",
+    testConnection: "测连通",
+    probeOk: (ms: number, models: number) =>
+      models > 0 ? `正常 · ${ms}ms · ${models} 个模型` : `正常 · ${ms}ms`,
+    probeUnauthorized: "鉴权被拒——请检查令牌和鉴权方式。",
+    probeNotFound: "404——Base URL 的路径可能不对（Codex 通常需要 /v1）。",
+    probeUnreachable: "连不上——请检查网络或代理。",
+    probeHttpError: (status: number) => `端点返回 ${status}。`,
+    exportProviders: "导出",
+    exportTokensAsk:
+      "把全部供应商导出为一个 JSON 文件。不含令牌时可以放心分享；含令牌时它就是一份凭据文件，请按凭据对待。",
+    exportWithoutTokens: "不含令牌",
+    exportWithTokens: "包含令牌",
+    importProviders: "导入",
+    importNothing: "该文件里没有可导入的供应商。",
+    importConflicts: (fresh: number, names: string) =>
+      `${fresh} 个新供应商。以下同名供应商已存在，导入会覆盖它们：${names}。`,
+    importFreshOnly: "只导入新的",
+    importOverwrite: "覆盖同名",
+    accountsTitle: "账号档案",
+    accountsHint:
+      "供应商选择的命名组合，一键切换所有 CLI。档案只记录每个 app 指向哪一行供应商，不复制配置，也不保存任何凭据。",
+    accountNewLabel: "档案名称",
+    accountSave: "保存当前",
+    accountApply: "切到此档案",
+    accountStale: (apps: string) => `（${apps}：供应商已删除）`,
+    loginTitle: "官方登录",
+    loginHint:
+      "只读。macOS 上 Claude 的令牌存在钥匙串里，因此不显示订阅等级与过期时间——读取它们会弹权限提示，还会把凭据交给根本用不到它的 agentpack。",
+    loginSignedIn: "已登录",
+    loginUnavailable: "无法读取登录状态。点击刷新重试。",
+    loginSignedOut: "未登录",
+    loginExpires: (date: string) => `${date} 过期`,
+    officialBadge: "官方",
+    officialName: "官方登录",
+    addOfficial: (app: string) => `添加官方登录（${app}）`,
+    schemaStale: (cols: string) =>
+      `这个 cc-switch 数据库缺少 agentpack 需要的列（${cols}）。请启动一次 cc-switch —— 它会在启动时自动迁移 —— 然后点击刷新。`,
     dbReady: "数据库已就绪。请关闭 cc-switch 后再在此编辑供应商。",
     refresh: "刷新",
     checking: "正在检测 cc-switch…",
@@ -1049,7 +1089,6 @@ export const zhCN = {
     setCurrentConfirm:
       "设为当前并覆盖实际生效配置（Claude settings.json / Codex config.toml）？会先快照。",
     restoreFailed: "恢复失败。详情请查看日志。",
-    initLaunchFailed: "无法启动 cc-switch。请确认已安装后重试。",
     loadFailed: "读取 cc-switch 状态失败。请点击“刷新”重试。",
     empty: "暂无供应商。",
     addProvider: "+ 添加供应商",
@@ -1388,6 +1427,117 @@ export const zhCN = {
     colTokens: "Token",
     colCost: "费用",
     inputOutput: (input: string, output: string) => `输入 ${input} · 输出 ${output}`,
+
+    // --- 扫描进度（重建缓存要重新解析磁盘上全部转录）---
+    scanProgress: (done: number, total: number) => `正在读取转录… ${done} / ${total}`,
+    seriesLoading: "正在加载逐条消息的用量…",
+
+    // --- 时间范围与粒度 ---
+    ranges: {
+      today: "今天",
+      "7d": "7 天",
+      "30d": "30 天",
+      month: "本月",
+      all: "全部",
+      custom: "自定义",
+    } as Record<string, string>,
+    customRangeLabel: (from: string, to: string) => `${from} – ${to}`,
+    applyRange: "应用",
+    granularityLabel: "聚合粒度",
+    granularity: { day: "按天", week: "按周", month: "按月" } as Record<string, string>,
+    rangeEmpty: "这段时间内没有会话。",
+    dayFilter: (day: string) => `日期：${day}`,
+    clickToDrill: "点击任意一行，查看其背后的会话。",
+
+    // --- 用量子页签 ---
+    tabOverview: "概览",
+    tabCost: "成本与窗口",
+    tabBehaviour: "使用行为",
+
+    // --- 成本口径 ---
+    rootSessionsHint: "仅顶层会话",
+    costBreakdownTitle: "这个费用数字从哪来",
+    costBreakdownHint: "三类性质不同的数字，分开列出，而不是合并成一个看起来更精确的总和。",
+    costActual: "真实记录",
+    costActualNote: "OpenCode 按会话记录的实际计费金额。",
+    costEstimated: "估算",
+    costEstimatedNote: "Claude Code 与 Codex 按 token 数和单价推算（价格截至 2026-07）。",
+    costUnpriced: "无定价",
+    costUnpricedNone: "无",
+    costUnpricedNote: "价格表里没有的模型 —— 未计入上面任何一项。",
+    unpricedValue: (transcripts: number, tokens: string) => `${transcripts} 条转录 · ${tokens}`,
+    unpricedExcluded: (sessions: number) => `另有 ${sessions} 个会话未纳入 —— 模型没有已知单价。`,
+    unpricedBadge: "无定价",
+    costLowerBound: (entries: number) => `下限值 —— 其中 ${entries} 次请求使用了无定价模型。`,
+    statSubagents: "子代理 Token",
+    subagentShare: (percent: number, transcripts: number) =>
+      `占总量 ${percent}%，来自 ${transcripts} 次运行`,
+
+    // --- 5 小时窗口 ---
+    activeBlockTitle: "当前 5 小时窗口",
+    activeBlockHint: "Claude Code 以滚动的 5 小时窗口计量用量。",
+    blockRemaining: "剩余时间",
+    blockTokens: "已用",
+    blockBurn: "燃烧率",
+    blockProjected: "按当前速度的终值",
+    tokensPerMin: (v: string) => `${v}/分钟`,
+    costPerHour: (v: string) => `${v}/小时`,
+    p90Label: (v: string) => `对比你的 P90 窗口（${v}）`,
+    p90NotEnough: "已完成的窗口还太少，画参考线没有意义。",
+    blocksTitle: "已结束的窗口",
+    blocksHint: "每个窗口从你的第一条消息开始，持续 5 小时。",
+    blocksEmpty: "这段时间内没有已结束的窗口。",
+    blocksTruncated: (shown: number, total: number) =>
+      `共 ${total} 个窗口，这里只列出最近 ${shown} 个 —— 其余请用导出查看。`,
+    blocksNoQuotaNote:
+      "这里刻意不给「已用额度百分比」：官方限额以 prompt 数和计算时长计，不是 token；而且额度与 claude.ai 共享，本地转录看不到那一部分。参考线用的是你自己的 P90。",
+    colWindow: "窗口",
+    colModels: "模型",
+    colDuration: "活跃时长",
+    modelCostHint: "各模型的 token 与估算成本，附当前单价。",
+
+    // --- 订阅对比 ---
+    subscriptionSetting: "订阅",
+    subscriptionLabel: "每月订阅支出（美元）",
+    subscriptionSettingHint:
+      "选填。仅用于把按量 API 价格和你的实付金额作对比 —— 留空则隐藏该卡片。",
+    subscriptionTitle: "API 等价成本 vs 实付",
+    subscriptionHint: "这段时间的工作量，按 API 计费价折算是多少。",
+    subscriptionApi: "API 等价",
+    subscriptionPaid: "实付",
+    subscriptionRatio: "倍数",
+
+    // --- 使用行为 ---
+    statToolCalls: "工具调用",
+    statMcpShare: "MCP 占比",
+    mcpVsBuiltin: (mcp: string, builtin: string) => `MCP ${mcp} · 内置 ${builtin}`,
+    statCacheHit: "缓存命中率",
+    cacheBreakdown: (read: string, fresh: string) => `缓存 ${read} · 全新 ${fresh}`,
+    statCacheSaved: "缓存节省",
+    cacheSavedNote: "相对同样的 token 按完整输入价计费",
+    toolsTitle: "工具",
+    toolsHint: "各工具的调用与失败次数，调用最多的在前。",
+    toolsEmpty: "这段时间内没有工具调用。",
+    toolErrors: (count: string, rate: string) => `失败 ${count} 次（${rate}%）`,
+    toolErrorsCaveat:
+      "失败次数只覆盖 Claude Code 和 OpenCode。Codex 把工具输出写成纯文本、不带失败标记，所以它的工具恒为 0 次失败。",
+    modelMixTitle: "模型随时间的迁移",
+    modelMixHint: "每个时间段的 token 分别花在哪些模型上。",
+    modelMixEmpty: "这段时间内没有逐条消息的数据。",
+    modelOther: "其他模型",
+    costHistogramTitle: "单会话成本分布",
+    costHistogramHint: "各成本区间各有多少个会话。",
+    branchesTitle: "按 Git 分支",
+    branchesHint: "只有 Claude Code 记录分支，且只记录它最先看到的那个。",
+    branchesEmpty: "这段时间内没有分支信息。",
+    colBranch: "分支",
+    topSessionsTitle: "最贵的会话",
+    colSession: "会话",
+    outlierBadge: "异常",
+
+    // --- 导出 ---
+    exportCsv: "导出 CSV",
+    exportJson: "导出 JSON",
   },
 
   about: {

@@ -96,19 +96,43 @@ split:
 
 - `src-tauri/src/history.rs` — reads the three on-disk formats **read-only** and
   normalizes each into one model (`SessionSummary` for the list, `SessionDetail`
-  for a transcript). Commands: `history_list_sessions`, `history_get_session`.
+  for a transcript, `SessionSeries` for the dashboard). Commands:
+  `history_list_sessions`, `history_usage_series`, `history_get_session`.
 - `lib/history/` — browser-safe pure logic: `types` (mirrors the serde output),
   `stats` (usage aggregation + per-session cost), `pricing` (the **per-model $/1M
   pricing table** — cost is exact for OpenCode, estimated from tokens for
-  Claude/Codex), `markdown` (safe tokenizer for the transcript renderer),
+  Claude/Codex), `blocks` (5-hour billing windows, burn rate, projection),
+  `range` (presets / granularity / period-over-period), `series` (analysis over
+  the packed event stream), `insights` (cost distribution, outliers, branches),
+  `export` (CSV/JSON), `markdown` (safe tokenizer for the transcript renderer),
   `format`/`display` (formatting + source colors). All fully unit-tested.
 - `components/agentpack/sections/history/` — the UI: `index` (Sessions/Usage
-  tabs, prop-driven like `dashboard`; the scan is owned + lazily cached in
-  `app-shell`), `session-browser`, `transcript`, `markdown-view`,
-  `usage-dashboard` (recharts + CSS bars).
+  tabs, prop-driven like `dashboard`; both scans are owned + lazily cached in
+  `app-shell`), `session-browser`, `transcript`, `markdown-view`, and `usage/`
+  (Overview / Cost & windows / How you work sub-tabs over one shared `view`).
+
+**Two caches, one pass.** `history_cache.rs` holds both: `history-cache.json`
+(summaries, parsed at startup) and `history-cache.series.json` (the per-message
+series — ~200k packed events, ~9 MB, read only when the dashboard opens). A file
+is a cache hit only when **both** halves match its `(mtime, size)`, which is what
+keeps a single read of the ~3 GB on disk serving both. Cold scan ≈ 17 s, warm
+rescan ≈ 200 ms; progress streams over a `Channel`. Bump `CACHE_VERSION` when a
+summary's parsed _values_ change, `SERIES_VERSION` for the series.
+
+⚠️ **Claude writes one JSONL line per content block** of a streamed assistant
+turn — each repeating the same `message.id`, `requestId` and whole-turn `usage`.
+`ClaudeAcc` dedupes on `(message.id, requestId)` (plus a sidechain guard);
+without it tokens read ~2.4× high. Content blocks are _not_ duplicated across
+those lines, so tool counting deliberately sits outside the usage gate.
+
+Two accounting rules run through `computeUsageStats` and must not drift: **every
+transcript contributes tokens and cost, only top-level ones count as sessions**
+(sub-agents are 57% of Claude's files), and an **unpriced model is reported as
+unpriced**, never as a real `$0`.
 
 Update `lib/history/pricing.ts` when model prices change — the date is in its
-header comment.
+header comment. `longContext` belongs only on models that really surcharge
+oversized prompts (Sonnet 4.5/4.0); Sonnet 4.6 and Opus 4.6+ are flat-rate.
 
 ### Docs Structure (`docs/`)
 

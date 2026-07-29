@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import type { ListResult } from "@/lib/history/types"
+import type { ListResult, ScanProgress, UsageSeriesResult } from "@/lib/history/types"
 import type { SkillsScanResult } from "@/lib/skills/types"
 import { isTauri } from "@/lib/tauri"
 import {
@@ -9,6 +9,7 @@ import {
   detectRuntime,
   getPaths,
   historyListSessions,
+  historyUsageSeries,
   latestVersion,
   npmOwns,
   pkgManagerOwns,
@@ -76,6 +77,14 @@ function ShellBody() {
   // to run on startup) and cached here so returning to History reuses it.
   const [historyResult, setHistoryResult] = useState<ListResult | null>(null)
   const [historyLoading, setHistoryLoading] = useState(false)
+  // Rebuilding the caches means re-parsing gigabytes of JSONL, so the scan
+  // streams how far it has got rather than leaving a bare spinner up.
+  const [historyProgress, setHistoryProgress] = useState<ScanProgress | null>(null)
+
+  // The per-message usage series is one to two orders of magnitude larger than
+  // the summaries, so it loads only when the usage dashboard actually asks.
+  const [seriesResult, setSeriesResult] = useState<UsageSeriesResult | null>(null)
+  const [seriesLoading, setSeriesLoading] = useState(false)
 
   // Installed-skills scan (reads every SKILL.md across the four global roots):
   // lazy on first Skills visit, cached here, invalidated after every real run.
@@ -100,12 +109,29 @@ function ShellBody() {
     // session's `updatedAt`, so a session that grew on disk misses its stale
     // entry and refetches, while unchanged sessions stay warm.
     setHistoryLoading(true)
+    // Drop the series too: it was built from the same files, so keeping it
+    // would leave the dashboard showing pre-rescan numbers.
+    setSeriesResult(null)
     try {
-      setHistoryResult(await historyListSessions())
+      setHistoryResult(await historyListSessions(setHistoryProgress))
     } catch {
       setHistoryResult({ sessions: [], errors: [] })
     } finally {
       setHistoryLoading(false)
+      setHistoryProgress(null)
+    }
+  }, [])
+
+  const loadSeries = useCallback(async () => {
+    if (!isTauri()) return
+    setSeriesLoading(true)
+    try {
+      setSeriesResult(await historyUsageSeries(setHistoryProgress))
+    } catch {
+      setSeriesResult({ sessions: [], errors: [] })
+    } finally {
+      setSeriesLoading(false)
+      setHistoryProgress(null)
     }
   }, [])
 
@@ -258,12 +284,15 @@ function ShellBody() {
   useEffect(() => {
     if (!isTauri() || section !== "history" || historyResult !== null) return
     let cancelled = false
-    historyListSessions()
+    historyListSessions(setHistoryProgress)
       .then((r) => {
         if (!cancelled) setHistoryResult(r)
       })
       .catch(() => {
         if (!cancelled) setHistoryResult({ sessions: [], errors: [] })
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryProgress(null)
       })
     return () => {
       cancelled = true
@@ -412,6 +441,12 @@ function ShellBody() {
           <HistorySection
             result={historyResult}
             loading={historyLoading}
+            progress={historyProgress}
+            series={{
+              data: seriesResult,
+              loading: seriesLoading,
+              request: () => void loadSeries(),
+            }}
             refresh={() => void loadHistory()}
           />
         )

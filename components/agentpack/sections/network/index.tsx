@@ -22,13 +22,14 @@ import { HelpTip } from "../../help-tip"
 import { DiscoveryCard } from "./discovery-card"
 import { ProxyCard } from "./proxy-card"
 import { MirrorsCard } from "./mirrors-card"
-import { RelayCard } from "./relay-card"
 
 /**
  * Network section: find a proxy, configure it in as much detail as the network
- * demands, apply it everywhere it's needed, then mirrors and the API endpoint.
- * Ordered by how often each is the thing standing between the user and a working
- * install.
+ * demands, apply it everywhere it's needed, then mirrors. Ordered by how often
+ * each is the thing standing between the user and a working install.
+ *
+ * The API endpoint is deliberately absent: relay endpoints are provider rows
+ * managed from the cc-switch section, so there is exactly one writer for them.
  *
  * The scan lives here rather than in the discovery card because the proxy card
  * needs it too: switching to "Follow system" adopts what discovery found, which
@@ -94,7 +95,6 @@ export function NetworkSection() {
       <DiscoveryCard result={result} scanning={scanning} onScan={() => void scan()} onUse={adopt} />
       <ProxyCard discovered={result?.candidates[0] ?? null} onAdopt={adopt} />
       <MirrorsCard />
-      <RelayCard />
     </SectionShell>
   )
 }

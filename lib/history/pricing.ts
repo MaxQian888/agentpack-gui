@@ -22,13 +22,47 @@ export interface ModelPrice {
   output: number
   cacheRead: number
   cacheWrite: number
+  /** Set only on models that surcharge oversized prompts — see below. */
+  longContext?: LongContextTier
 }
 
-const p = (input: number, output: number, cacheRead: number, cacheWrite: number): ModelPrice => ({
+/**
+ * Long-context surcharge. Anthropic bills a request whose prompt crosses
+ * `threshold` at a raised rate **for the whole request**, not just the excess.
+ *
+ * It applies to Sonnet 4.5 / Sonnet 4 on the 1M-token beta (2× input, 1.5×
+ * output above 200K). Sonnet 4.6 and Opus 4.6+ dropped it: their full 1M window
+ * is flat-rate, which is why those ids can't share a table entry with 4.5.
+ *
+ * Only `estimateRequestCost` can honour it — a session total says nothing about
+ * how large any single prompt was.
+ * Source: docs.claude.com/en/docs/about-claude/pricing (long-context pricing)
+ */
+export interface LongContextTier {
+  threshold: number
+  inputMultiplier: number
+  outputMultiplier: number
+}
+
+/** Anthropic's 1M-beta surcharge, as it stands for Sonnet 4.5 / Sonnet 4. */
+const SONNET_1M_TIER: LongContextTier = {
+  threshold: 200_000,
+  inputMultiplier: 2,
+  outputMultiplier: 1.5,
+}
+
+const p = (
+  input: number,
+  output: number,
+  cacheRead: number,
+  cacheWrite: number,
+  longContext?: LongContextTier
+): ModelPrice => ({
   input,
   output,
   cacheRead,
   cacheWrite,
+  ...(longContext ? { longContext } : {}),
 })
 
 /** Ordered most-specific-first; a model id matches the first entry it contains. */
@@ -40,9 +74,12 @@ const TABLE: { keys: string[]; price: ModelPrice }[] = [
     price: p(5, 25, 0.5, 6.25),
   },
   { keys: ["claude-opus-4-1", "claude-opus-4-0"], price: p(15, 75, 1.5, 18.75) },
+  // Flat-rate across the full 1M window.
+  { keys: ["claude-sonnet-5", "claude-sonnet-4-6"], price: p(3, 15, 0.3, 3.75) },
+  // Same base rate, but surcharged past 200K on the 1M beta.
   {
-    keys: ["claude-sonnet-5", "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-sonnet-4-0"],
-    price: p(3, 15, 0.3, 3.75),
+    keys: ["claude-sonnet-4-5", "claude-sonnet-4-0"],
+    price: p(3, 15, 0.3, 3.75, SONNET_1M_TIER),
   },
   { keys: ["claude-haiku-4-5"], price: p(1, 5, 0.1, 1.25) },
   { keys: ["claude-3-5-haiku", "claude-haiku-3-5"], price: p(0.8, 4, 0.08, 1.0) },
@@ -77,6 +114,10 @@ export function priceForModel(model: string): ModelPrice | null {
  * null when the model has no known rate. Codex reports cached tokens as a subset
  * of `input` (so non-cached input is `input − cacheRead`); Claude reports the
  * four token buckets as disjoint, so they're priced independently.
+ *
+ * Always uses base rates: a session total is the sum of many prompts, so it
+ * carries no evidence about whether any single one crossed a long-context
+ * threshold. Use {@link estimateRequestCost} where per-request usage is known.
  */
 export function estimateCost(
   source: HistorySource,
@@ -85,6 +126,47 @@ export function estimateCost(
 ): number | null {
   const price = priceForModel(model)
   if (!price) return null
+  return priceUsage(source, price, usage)
+}
+
+/**
+ * Cost of a *single* request. Same rates, except that a prompt over the model's
+ * long-context threshold is billed at the raised rate in full — which only a
+ * per-request view can tell.
+ */
+export function estimateRequestCost(
+  source: HistorySource,
+  model: string,
+  usage: TokenUsage
+): number | null {
+  const base = priceForModel(model)
+  if (!base) return null
+  return priceUsage(source, applyLongContext(base, usage), usage)
+}
+
+/**
+ * `price` with the long-context surcharge folded in when this request's prompt
+ * crosses the threshold, else `price` unchanged. Cache rates scale with input:
+ * a cache read is a fixed fraction of the input rate, so doubling one doubles
+ * the other.
+ */
+function applyLongContext(price: ModelPrice, usage: TokenUsage): ModelPrice {
+  const tier = price.longContext
+  if (!tier) return price
+  // Claude's buckets are disjoint, so the prompt is all three input-side ones;
+  // for Codex `input` already subsumes the cached part, and no Codex model in
+  // the table carries a tier anyway.
+  const prompt = usage.input + usage.cacheRead + usage.cacheWrite
+  if (prompt <= tier.threshold) return price
+  return {
+    input: price.input * tier.inputMultiplier,
+    output: price.output * tier.outputMultiplier,
+    cacheRead: price.cacheRead * tier.inputMultiplier,
+    cacheWrite: price.cacheWrite * tier.inputMultiplier,
+  }
+}
+
+function priceUsage(source: HistorySource, price: ModelPrice, usage: TokenUsage): number {
   const M = 1_000_000
   if (source === "codex") {
     const nonCachedInput = Math.max(0, usage.input - usage.cacheRead)
