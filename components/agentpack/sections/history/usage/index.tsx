@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Settings2 } from "lucide-react"
+import { Settings2, Share2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -20,6 +20,7 @@ import { ExportButtons, RangePicker } from "./range-picker"
 import { OverviewPanel } from "./overview"
 import { CostWindowsPanel } from "./cost-windows"
 import { BehaviourPanel } from "./behaviour"
+import { ShareDialog } from "./share-dialog"
 import { buildView } from "./view"
 
 export interface UsageDrilldown {
@@ -52,6 +53,7 @@ export function UsageDashboard({
   const [range, setRange] = useState<TimeRange>(() => resolveRange("30d"))
   const [granularity, setGranularity] = useState<Granularity>("day")
   const [subscription, setSubscription] = useState<number | null>(null)
+  const [shareOpen, setShareOpen] = useState(false)
 
   // One `now` for the whole render pass, so burn rate and "is this window still
   // active" can't disagree between panels. It ticks every minute because those
@@ -83,6 +85,16 @@ export function UsageDashboard({
     () => buildView({ sessions, series, range, granularity, now }),
     [sessions, series, range, granularity, now]
   )
+
+  // Same wording the range pills show, so the card's period line matches what
+  // the user selected rather than restating the preset in its own words.
+  const rangeLabel =
+    range.preset === "custom" && range.from != null && range.to != null
+      ? t.customRangeLabel(
+          new Date(range.from).toLocaleDateString(),
+          new Date(range.to - 1).toLocaleDateString()
+        )
+      : t.ranges[range.preset]
 
   const exportUsage = async (kind: "csv" | "json") => {
     if (!isTauri()) return
@@ -129,6 +141,10 @@ export function UsageDashboard({
           onGranularityChange={setGranularity}
         />
         <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="gap-2" onClick={() => setShareOpen(true)}>
+            <Share2 className="size-4" />
+            {t.report.share}
+          </Button>
           <ExportButtons
             onCsv={() => void exportUsage("csv")}
             onJson={() => void exportUsage("json")}
@@ -137,6 +153,15 @@ export function UsageDashboard({
           <SubscriptionSetting value={subscription} onChange={setSubscription} />
         </div>
       </div>
+
+      <ShareDialog
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        sessions={sessions}
+        range={range}
+        rangeLabel={rangeLabel}
+        now={now}
+      />
 
       {view.sessions.length === 0 ? (
         <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">

@@ -38,6 +38,7 @@ import type { Provider } from "@/lib/agentpack/ccswitch/types"
 import { isTauri } from "@/lib/tauri"
 import { saveSettings } from "@/lib/tauri/settings"
 import { useMounted } from "@/hooks/use-mounted"
+import { SpendCard, type HistoryFeed } from "./dashboard-spend"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
@@ -187,9 +188,17 @@ export interface DashboardSectionProps {
   rescan: () => Promise<void>
   /** Jump to the section that owns a truncated list ("View all"). */
   onNavigate: (key: SectionKey) => void
+  /** The startup chat-history scan, feeding the spend card. */
+  history: HistoryFeed
 }
 
-export function DashboardSection({ scan, scanning, rescan, onNavigate }: DashboardSectionProps) {
+export function DashboardSection({
+  scan,
+  scanning,
+  rescan,
+  onNavigate,
+  history,
+}: DashboardSectionProps) {
   const t = useT()
   const d = t.dashboard
   const detections = useAppStore((s) => s.detections)
@@ -284,6 +293,7 @@ export function DashboardSection({ scan, scanning, rescan, onNavigate }: Dashboa
   // explicitly hide it via "don't show again". It reopens the same wizard.
   const noAgentCli = !detections["claude-code"]?.installed && !detections["codex"]?.installed
   const showQuickStart = !settings.quickStartDismissed && noAgentCli
+  const probe = useAppStore((s) => s.networkProbe)
   const dismissQuickStart = () => {
     setSettings({ quickStartDismissed: true })
     void saveSettings({ quickStartDismissed: true })
@@ -310,7 +320,9 @@ export function DashboardSection({ scan, scanning, rescan, onNavigate }: Dashboa
       {showQuickStart ? (
         <QuickStartCard
           q={t.quickStart}
+          networkBlocked={!!probe && !probe.directOk && !probe.bestProxy}
           onOpen={() => setOnboardingOpen(true)}
+          onNetwork={() => onNavigate("network")}
           onDismiss={dismissQuickStart}
         />
       ) : null}
@@ -355,6 +367,12 @@ export function DashboardSection({ scan, scanning, rescan, onNavigate }: Dashboa
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {/* Spend leads the grid: it is the only figure here the user cares
+            about independently of setup, and it sits above the configuration
+            cards so one screen answers both "what did this cost" and "what is
+            installed". */}
+        <SpendCard history={history} onNavigate={onNavigate} />
+
         {/* CLIs & runtimes — read-only status; installs and removals live in
             the CLIs / Environment sections. */}
         <Card className="flex flex-col gap-3 p-4 sm:col-span-2 xl:col-span-3">
@@ -487,11 +505,16 @@ export function DashboardSection({ scan, scanning, rescan, onNavigate }: Dashboa
 /** A newcomer's lingering guide, shown until an assistant is set up. */
 function QuickStartCard({
   q,
+  networkBlocked,
   onOpen,
+  onNetwork,
   onDismiss,
 }: {
   q: ReturnType<typeof useT>["quickStart"]
+  /** The startup probe couldn't reach the internet directly and found no proxy. */
+  networkBlocked: boolean
   onOpen: () => void
+  onNetwork: () => void
   onDismiss: () => void
 }) {
   const steps = [q.stepPick, q.stepPreview, q.stepInstall]
@@ -524,6 +547,16 @@ function QuickStartCard({
           </span>
         ))}
       </div>
+      {/* Point a blocked machine at the fix before it watches an install fail. */}
+      {networkBlocked ? (
+        <button
+          type="button"
+          onClick={onNetwork}
+          className="self-start text-left text-sm text-amber-600 underline-offset-4 hover:underline dark:text-amber-400"
+        >
+          {q.networkBlocked}
+        </button>
+      ) : null}
       <div>
         <Button size="sm" className="gap-2" onClick={onOpen}>
           <Sparkles className="size-4" aria-hidden="true" />

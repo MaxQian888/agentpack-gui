@@ -33,7 +33,13 @@ test("a CLI can be toggled manually", async ({ page }) => {
 })
 
 test("the OS override can be changed from the header", async ({ page }) => {
-  await page.getByRole("combobox", { name: "OS" }).click()
-  await page.getByRole("option", { name: "win" }).click()
-  await expect(page.getByRole("combobox", { name: "OS" })).toContainText("win")
+  // Behind the settings gear, in an "OS" submenu.
+  await page.getByRole("button", { name: "Settings" }).click()
+  await page.getByRole("menuitem", { name: "OS" }).click()
+  await page.getByRole("menuitemradio", { name: "win" }).click()
+
+  // Reopen and confirm the choice stuck.
+  await page.getByRole("button", { name: "Settings" }).click()
+  await page.getByRole("menuitem", { name: "OS" }).click()
+  await expect(page.getByRole("menuitemradio", { name: "win" })).toBeChecked()
 })

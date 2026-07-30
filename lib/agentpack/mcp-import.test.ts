@@ -182,3 +182,103 @@ describe("exportMcpServers", () => {
     expect(parsed.mcpServers.h.headers.Authorization).toBe("Bearer <redacted>")
   })
 })
+
+/**
+ * The shapes people actually paste that aren't the happy path: alternative
+ * wrappers, malformed flags, and single-server objects with no id of their own.
+ */
+describe("parseMcpImport — tolerated shapes", () => {
+  it("accepts an `mcp` wrapper as well as `mcpServers`", () => {
+    const text = JSON.stringify({ mcp: { memory: { command: "npx", args: ["-y", "pkg"] } } })
+    expect(byId(text, "memory").spec).toMatchObject({ transport: "stdio", command: "npx" })
+  })
+
+  it("accepts a bare id -> entry map with no wrapper key", () => {
+    const text = JSON.stringify({ memory: { command: "npx", args: ["-y", "pkg"] } })
+    expect(byId(text, "memory").spec).toMatchObject({ command: "npx" })
+  })
+
+  it("skips entries that are not objects instead of failing the whole paste", () => {
+    const text = JSON.stringify({
+      mcpServers: { good: { command: "npx", args: [] }, bad: "not-an-object" },
+    })
+    const list = servers(text)
+    expect(list.map((s) => s.id)).toEqual(["good"])
+  })
+
+  it("reports unsupported when a map yields no usable server", () => {
+    expect(parseMcpImport(JSON.stringify({ mcpServers: { a: "x" } }))).toEqual({
+      error: "unsupported",
+    })
+  })
+
+  describe("a single server object with no id", () => {
+    it("derives the id from the package name for stdio", () => {
+      const text = JSON.stringify({
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-memory"],
+      })
+      expect(servers(text)[0].id).toBe("memory")
+    })
+
+    it("falls back to the command when every arg is a flag", () => {
+      expect(servers(JSON.stringify({ command: "/usr/bin/my-server", args: ["-y"] }))[0].id).toBe(
+        "my-server"
+      )
+    })
+
+    it("derives the id from the hostname for a remote server", () => {
+      expect(servers(JSON.stringify({ url: "https://mcp.example.com/sse" }))[0].id).toBe("mcp")
+    })
+
+    it("falls back to a generic id when the url is unparseable", () => {
+      expect(servers(JSON.stringify({ url: "not a url" }))[0].id).toBe("mcp-server")
+    })
+  })
+})
+
+describe("parseMcpImport — claude mcp add command line", () => {
+  it("ignores --scope and drops a malformed --env pair", () => {
+    const r = servers("claude mcp add memory --scope user --env NOEQUALS -- npx -y pkg")
+    expect(r[0].spec).toMatchObject({ transport: "stdio", command: "npx", args: ["-y", "pkg"] })
+    expect((r[0].spec as { env: Record<string, string> }).env).toEqual({})
+  })
+
+  it("drops a malformed --header but keeps a well-formed one", () => {
+    const r = servers(
+      "claude mcp add remote --transport http --header NOCOLON --header 'X-Key: v' https://x/mcp"
+    )
+    expect(r[0].spec).toMatchObject({ transport: "http", headers: { "X-Key": "v" } })
+  })
+
+  it("needs an id", () => {
+    expect(parseMcpImport("claude mcp add --scope user")).toEqual({ error: "parse" })
+  })
+
+  it("needs a url once a remote transport is named", () => {
+    expect(parseMcpImport("claude mcp add remote --transport sse")).toEqual({ error: "parse" })
+  })
+
+  it("needs a command for stdio", () => {
+    expect(parseMcpImport("claude mcp add memory")).toEqual({ error: "parse" })
+  })
+})
+
+describe("exportMcpServers — remote servers", () => {
+  it("expands a bearer token env var into a header reference", () => {
+    const spec: McpSpec = {
+      transport: "http",
+      url: "https://x/mcp",
+      headers: {},
+      bearerTokenEnvVar: "EXA_API_KEY",
+    }
+    const parsed = JSON.parse(exportMcpServers([{ id: "exa", spec }]))
+    expect(parsed.mcpServers.exa.headers.Authorization).toBe("Bearer ${EXA_API_KEY}")
+  })
+
+  it("omits the headers key entirely when there are none", () => {
+    const spec: McpSpec = { transport: "http", url: "https://x/mcp", headers: {} }
+    const parsed = JSON.parse(exportMcpServers([{ id: "plain", spec }]))
+    expect(parsed.mcpServers.plain).not.toHaveProperty("headers")
+  })
+})

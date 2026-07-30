@@ -80,9 +80,46 @@ export interface CliTool {
   upgrade?: Partial<Record<OS, Command>>
   /** Optional per-OS uninstall command (absent OS => surface a manual note). */
   uninstall?: Partial<Record<OS, Command>>
+  /**
+   * GitHub Releases as a last-resort install route — used when the platform has
+   * no package manager path at all (cc-switch on Linux), and as the final rung
+   * of the recovery ladder when winget/brew fail on the network. agentpack
+   * downloads the asset itself through a proxy-aware, mirror-capable client, so
+   * this works on networks where the package managers simply can't reach out.
+   */
+  release?: ReleaseSource
   /** Fallback note shown when install is null for the current OS. */
   manualNote?: string
 }
+
+/**
+ * Where to find a tool's installable release assets.
+ *
+ * The release is resolved live from the GitHub API and the asset picked by
+ * matching `pattern` against the real asset names — never a hard-coded download
+ * URL, so an upstream rename of the installer file doesn't silently break the
+ * fallback for everyone.
+ */
+export interface ReleaseSource {
+  /** `owner/name`. */
+  repo: string
+  /** Per-OS asset name matcher (a regex source string, matched case-insensitively). */
+  asset: Partial<Record<OS, ReleaseAssetMatch>>
+}
+
+export interface ReleaseAssetMatch {
+  /** Regex source matched against the asset file name. */
+  pattern: string
+  /**
+   * Optional per-architecture refinement, tried before `pattern`. macOS ships
+   * separate Intel and Apple-Silicon builds, and installing the wrong one either
+   * fails outright or runs under Rosetta.
+   */
+  arch?: Partial<Record<Arch, string>>
+}
+
+/** CPU architectures we distinguish when picking a release asset. */
+export type Arch = "x64" | "arm64"
 
 /**
  * A language runtime / toolchain prerequisite (Node.js, Bun). Detected the same
@@ -288,6 +325,7 @@ export interface Paths {
 
 export type StepKind =
   | "command"
+  | "releaseInstall"
   | "info"
   | "mergeFile"
   | "skillInstall"
@@ -320,6 +358,36 @@ export interface CommandStep extends StepBase {
    * elevated terminal) instead of a bare failure.
    */
   requiresElevation?: boolean
+  /**
+   * Wholly different routes to the same outcome, tried in order if this command
+   * fails **on the network** and no mirror/proxy rewrite of it worked either
+   * (see `lib/agentpack/network/recovery.ts`).
+   *
+   * These are full steps rather than command rewrites because that's what they
+   * genuinely are — scoop instead of winget, a GitHub Release instead of a
+   * package manager — and modelling them as steps means they inherit dry-run
+   * preview and step reporting for free. Fallbacks are never nested: a fallback
+   * that fails is the end of the line.
+   */
+  fallbacks?: StepDescriptor[]
+}
+
+/**
+ * Download a tool's installer straight from its GitHub Releases and run it.
+ *
+ * Three side effects in one step (resolve the release, fetch the asset, run the
+ * installer), because to the user it is one thing: "install cc-switch". The
+ * runner logs each phase, and dry-run renders it without touching the network.
+ */
+export interface ReleaseInstallStep extends StepBase {
+  kind: "releaseInstall"
+  /** Display name of the tool being installed, for log lines. */
+  title: string
+  source: ReleaseSource
+  os: OS
+  arch: Arch
+  /** GitHub download mirror prefix, or null for direct. */
+  mirrorPrefix: string | null
 }
 
 /** Surface informational lines (e.g. a manual-install note) without side effects. */
@@ -451,6 +519,7 @@ export interface SnapshotStep extends StepBase {
 
 export type StepDescriptor =
   | CommandStep
+  | ReleaseInstallStep
   | InfoStep
   | MergeFileStep
   | SkillInstallStep
@@ -465,6 +534,20 @@ export type StepDescriptor =
   | FileRestoreStep
   | SnapshotStep
 
+/**
+ * How a step that first failed on the network was rescued. Present only when a
+ * retry actually succeeded, so the UI can both explain what changed and offer to
+ * make it permanent — nothing was written to the machine to get here.
+ */
+export interface StepRecovery {
+  /** Remedy id from the ladder (`npm-registry`, `proxy`, …) or `fallback:<id>`. */
+  remedyId: string
+  /** Human label for the route that worked, e.g. `registry.npmmirror.com`. */
+  label: string
+  /** How to make it stick, when agentpack knows how to write it. */
+  persist?: { kind: "npmRegistry"; url: string } | { kind: "proxy"; url: string }
+}
+
 export interface StepReport {
   id: string
   label: string
@@ -473,4 +556,6 @@ export interface StepReport {
   error?: string
   /** Wall-clock execution time, set once the step finishes (done or error). */
   durationMs?: number
+  /** Set when the step only succeeded after a network retry (see `StepRecovery`). */
+  recovery?: StepRecovery
 }

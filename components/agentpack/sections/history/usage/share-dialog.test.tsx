@@ -1,0 +1,103 @@
+import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { I18nProvider } from "@/lib/i18n/provider"
+import { en } from "@/lib/i18n/en"
+import { resolveRange } from "@/lib/history/range"
+import type { SessionSummary } from "@/lib/history/types"
+import { ShareDialog } from "./share-dialog"
+import { session } from "./fixtures"
+
+jest.mock("@/lib/tauri", () => ({ isTauri: () => true }))
+jest.mock("@/lib/tauri/commands", () => ({
+  writeTextFile: jest.fn().mockResolvedValue(undefined),
+  writeBinaryFile: jest.fn().mockResolvedValue(undefined),
+}))
+jest.mock("@/lib/tauri/dialog", () => ({ pickSavePath: jest.fn() }))
+jest.mock("@/lib/tauri/clipboard", () => ({ copyText: jest.fn().mockResolvedValue(true) }))
+jest.mock("./rasterize", () => ({
+  ...jest.requireActual("./rasterize"),
+  svgToPng: jest.fn(),
+}))
+
+import { writeBinaryFile, writeTextFile } from "@/lib/tauri/commands"
+import { pickSavePath } from "@/lib/tauri/dialog"
+import { copyText } from "@/lib/tauri/clipboard"
+import { svgToPng } from "./rasterize"
+
+const r = en.history.report
+const NOW = new Date(2026, 6, 20, 12).getTime()
+const day = (d: number) => new Date(2026, 6, d, 9).getTime()
+
+function renderDialog(sessions: SessionSummary[] = [session({ updatedAt: day(18) })]) {
+  render(
+    <I18nProvider>
+      <ShareDialog
+        open
+        onOpenChange={jest.fn()}
+        sessions={sessions}
+        range={resolveRange("30d", NOW)}
+        rangeLabel="30 days"
+        now={NOW}
+      />
+    </I18nProvider>
+  )
+}
+
+describe("ShareDialog", () => {
+  it("previews the card as an inline data URL, fetching nothing", () => {
+    renderDialog()
+    const img = screen.getByAltText(r.cardTitle)
+    expect(img.getAttribute("src")).toMatch(/^data:image\/svg\+xml/)
+  })
+
+  it("copies a Markdown summary rather than the raw SVG", async () => {
+    renderDialog()
+    await userEvent.click(screen.getByRole("button", { name: r.copyMarkdown }))
+    const copied = (copyText as jest.Mock).mock.calls[0][0] as string
+    expect(copied).toContain(`# ${r.cardTitle}`)
+    expect(copied).not.toContain("<svg")
+    expect(await screen.findByText(r.copied)).toBeInTheDocument()
+  })
+
+  it("writes the PNG through the binary command, not the text one", async () => {
+    ;(svgToPng as jest.Mock).mockResolvedValue(new Uint8Array([137, 80, 78, 71]))
+    ;(pickSavePath as jest.Mock).mockResolvedValue("/tmp/card.png")
+    renderDialog()
+    await userEvent.click(screen.getByRole("button", { name: r.savePng }))
+    expect(writeBinaryFile).toHaveBeenCalledWith("/tmp/card.png", new Uint8Array([137, 80, 78, 71]))
+    expect(writeTextFile).not.toHaveBeenCalled()
+  })
+
+  it("says the render failed instead of writing an empty file", async () => {
+    ;(svgToPng as jest.Mock).mockResolvedValue(null)
+    renderDialog()
+    await userEvent.click(screen.getByRole("button", { name: r.savePng }))
+    expect(await screen.findByText(r.renderFailed)).toBeInTheDocument()
+    expect(pickSavePath).not.toHaveBeenCalled()
+    expect(writeBinaryFile).not.toHaveBeenCalled()
+  })
+
+  it("writes nothing when the save dialog is cancelled", async () => {
+    ;(svgToPng as jest.Mock).mockResolvedValue(new Uint8Array([1]))
+    ;(pickSavePath as jest.Mock).mockResolvedValue(null)
+    renderDialog()
+    await userEvent.click(screen.getByRole("button", { name: r.savePng }))
+    expect(writeBinaryFile).not.toHaveBeenCalled()
+  })
+
+  it("saves the SVG as text", async () => {
+    ;(pickSavePath as jest.Mock).mockResolvedValue("/tmp/card.svg")
+    renderDialog()
+    await userEvent.click(screen.getByRole("button", { name: r.saveSvg }))
+    const [path, content] = (writeTextFile as jest.Mock).mock.calls[0]
+    expect(path).toBe("/tmp/card.svg")
+    expect(content.startsWith("<svg")).toBe(true)
+  })
+
+  it("renders the empty-state card when the range holds no sessions", () => {
+    renderDialog([])
+    expect(screen.getByAltText(r.cardTitle).getAttribute("src")).toContain(
+      encodeURIComponent(r.noActivity)
+    )
+  })
+})

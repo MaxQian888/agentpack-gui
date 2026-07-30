@@ -36,6 +36,23 @@ pub fn write_text_file(path: String, content: String) -> Result<(), String> {
   fs::rename(&tmp, p).map_err(|e| e.to_string())
 }
 
+/// Write raw bytes, same temp-file-then-rename discipline as `write_text_file`.
+///
+/// Exists for the shareable usage card: the frontend rasterises an SVG to PNG on
+/// a canvas, and a PNG cannot survive the round trip through `write_text_file`'s
+/// `String` (invalid UTF-8 would be replaced). Not a config path — this only ever
+/// writes to a location the user picked in a save dialog.
+#[tauri::command(async)]
+pub fn write_binary_file(path: String, bytes: Vec<u8>) -> Result<(), String> {
+  let p = Path::new(&path);
+  if let Some(parent) = p.parent() {
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+  }
+  let tmp = PathBuf::from(format!("{path}.agentpack.tmp"));
+  fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+  fs::rename(&tmp, p).map_err(|e| e.to_string())
+}
+
 /// Whether a path exists (used to show skill install status).
 #[tauri::command(async)]
 pub fn path_exists(path: String) -> bool {
@@ -253,6 +270,37 @@ mod tests {
 
     assert!(dest.join("keep.txt").exists(), "new file should be copied");
     assert!(!dest.join("stale.txt").exists(), "stale file should be removed");
+
+    let _ = fs::remove_dir_all(&base);
+  }
+
+  #[test]
+  fn write_binary_file_creates_parents_and_round_trips_non_utf8() {
+    let base = temp_dir("binwrite");
+    let target = base.join("nested").join("card.png");
+    // A real PNG header plus a byte that is not valid UTF-8 — the whole reason
+    // this command exists rather than reusing write_text_file.
+    let bytes = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0xFF];
+
+    write_binary_file(target.to_string_lossy().into_owned(), bytes.clone()).unwrap();
+
+    assert_eq!(fs::read(&target).unwrap(), bytes);
+    // The temp file must not survive the rename.
+    assert!(!base.join("nested").join("card.png.agentpack.tmp").exists());
+
+    let _ = fs::remove_dir_all(&base);
+  }
+
+  #[test]
+  fn write_binary_file_replaces_an_existing_file() {
+    let base = temp_dir("binreplace");
+    let target = base.join("card.png");
+    fs::create_dir_all(&base).unwrap();
+    fs::write(&target, b"stale and longer").unwrap();
+
+    write_binary_file(target.to_string_lossy().into_owned(), vec![1, 2, 3]).unwrap();
+
+    assert_eq!(fs::read(&target).unwrap(), vec![1, 2, 3]);
 
     let _ = fs::remove_dir_all(&base);
   }

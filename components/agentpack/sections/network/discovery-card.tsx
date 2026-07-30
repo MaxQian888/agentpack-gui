@@ -8,27 +8,28 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Spinner } from "@/components/ui/spinner"
-import {
-  PROXY_TEST_URLS,
-  type DiscoveryResult,
-  type ProxyCandidate,
-} from "@/lib/agentpack/network/discovery"
+import { PROXY_TEST_URLS, type ProxyCandidate } from "@/lib/agentpack/network/discovery"
+import type { NetworkProbeResult } from "@/lib/agentpack/network/probe"
 import { proxyCheck, type ProxyCheckResult } from "@/lib/tauri/commands"
 import { useT } from "@/lib/i18n/provider"
 
 /**
- * The auto-discovery panel. Presentational: the section owns the scan, because
- * the proxy card needs its result too (picking "Follow system" adopts whatever
- * was found). Each row can be verified before it's adopted, so a stale entry in
- * npm config is visibly distinguishable from a proxy that actually works.
+ * The auto-discovery panel. Presentational: the store owns the scan, because
+ * three surfaces share its result (this card, the proxy card's "Follow system",
+ * and the install-failure recovery ladder).
+ *
+ * Rows arrive already measured and sorted best-first, so the fastest working
+ * proxy is simply the top one — a stale entry in npm config no longer looks
+ * identical to a proxy that actually works. The Test button re-measures, for
+ * when the network changed since the scan.
  */
 export function DiscoveryCard({
-  result,
+  probe,
   scanning,
   onScan,
   onUse,
 }: {
-  result: DiscoveryResult | null
+  probe: NetworkProbeResult | null
   scanning: boolean
   onScan: () => void
   onUse: (candidate: ProxyCandidate) => void
@@ -36,18 +37,21 @@ export function DiscoveryCard({
   const t = useT()
   const d = t.network.discovery
   const tauri = isTauri()
-  const [checks, setChecks] = useState<Record<string, ProxyCheckResult | "pending">>({})
+  const [rechecks, setRechecks] = useState<Record<string, ProxyCheckResult | "pending">>({})
 
   const test = async (c: ProxyCandidate) => {
-    setChecks((prev) => ({ ...prev, [c.id]: "pending" }))
+    setRechecks((prev) => ({ ...prev, [c.id]: "pending" }))
     const outcome = await proxyCheck(c.url, PROXY_TEST_URLS[0].url).catch(() => ({
       ok: false,
       reason: "failed",
     }))
-    setChecks((prev) => ({ ...prev, [c.id]: outcome }))
+    setRechecks((prev) => ({ ...prev, [c.id]: outcome }))
   }
 
-  const candidates = result?.candidates ?? []
+  const candidates = probe?.proxies ?? []
+  // A manual re-test wins over the scan's measurement; otherwise show the scan's.
+  const resultFor = (c: ProxyCandidate): ProxyCheckResult | "pending" | undefined =>
+    rechecks[c.id] ?? probe?.proxies.find((p) => p.id === c.id)?.result ?? undefined
   return (
     <Card className="gap-3 p-5">
       <div className="flex items-start justify-between gap-3">
@@ -69,7 +73,7 @@ export function DiscoveryCard({
 
       {!tauri ? (
         <p className="text-sm text-muted-foreground">{t.network.desktopOnly}</p>
-      ) : scanning && !result ? (
+      ) : scanning && !probe ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Spinner className="size-4" />
           {d.scanning}
@@ -79,7 +83,7 @@ export function DiscoveryCard({
       ) : (
         <ul className="flex flex-col gap-2">
           {candidates.map((c) => {
-            const check = checks[c.id]
+            const check = resultFor(c)
             return (
               <li
                 key={c.id}
@@ -123,8 +127,8 @@ export function DiscoveryCard({
         </ul>
       )}
 
-      {result?.pacUrl ? (
-        <p className="text-xs text-muted-foreground">{d.pacNote(result.pacUrl)}</p>
+      {probe?.pacUrl ? (
+        <p className="text-xs text-muted-foreground">{d.pacNote(probe.pacUrl)}</p>
       ) : null}
     </Card>
   )

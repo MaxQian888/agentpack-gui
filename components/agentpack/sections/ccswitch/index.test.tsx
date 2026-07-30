@@ -21,6 +21,8 @@ jest.mock("@/lib/tauri/commands", () => ({
   ccSchemaStatus: jest.fn(async () => ({ exists: true, userVersion: 0, missingColumns: [] })),
   ccInitDb: jest.fn(async () => undefined),
   launchCcSwitch: jest.fn(async () => undefined),
+  quitCcSwitch: jest.fn(async () => true),
+  ccSwitchRunning: jest.fn(async () => false),
   loginStatus: jest.fn(async () => ({
     claude: { signedIn: false, mode: null, plan: null, expiresAt: null, source: "not signed in" },
     codex: { signedIn: false, mode: null, plan: null, expiresAt: null, source: "not signed in" },
@@ -44,7 +46,9 @@ import {
   writeTextFile,
   ccLoadProviders,
   readTextFile,
-  isProcessRunning,
+  ccSwitchRunning,
+  quitCcSwitch,
+  launchCcSwitch,
   detectCli,
   pathExists,
   ccSchemaStatus,
@@ -74,7 +78,7 @@ beforeEach(() => {
   // clearAllMocks keeps implementations, so restore the defaults that individual
   // tests override with a persistent mockResolvedValue (running=false, and
   // cc-switch detected=false + DB present so the auto-init flow stays dormant).
-  ;(isProcessRunning as jest.Mock).mockResolvedValue(false)
+  ;(ccSwitchRunning as jest.Mock).mockResolvedValue(false)
   ;(detectCli as jest.Mock).mockResolvedValue({ installed: false })
   ;(pathExists as jest.Mock).mockResolvedValue(true)
   ;(ccSchemaStatus as jest.Mock).mockResolvedValue({
@@ -539,7 +543,7 @@ it("toasts an error when a restore fails", async () => {
 })
 
 it("blocks editing and warns while cc-switch is running", async () => {
-  ;(isProcessRunning as jest.Mock).mockResolvedValue(true)
+  ;(ccSwitchRunning as jest.Mock).mockResolvedValue(true)
   renderCc()
   await screen.findByText("Mine")
   expect(await screen.findByText(en.ccswitch.runningTitle)).toBeInTheDocument()
@@ -548,6 +552,101 @@ it("blocks editing and warns while cc-switch is running", async () => {
   )
   expect(screen.getByRole("button", { name: en.ccswitch.addProvider })).toBeDisabled()
   expect(ccWriteProvider).not.toHaveBeenCalled()
+})
+
+describe("app control (open / quit / status)", () => {
+  const cc = en.ccswitch
+
+  /** cc-switch installed, so the control row renders at all. */
+  const installed = () => (detectCli as jest.Mock).mockResolvedValue({ installed: true })
+
+  it("reports the live running state", async () => {
+    installed()
+    ;(ccSwitchRunning as jest.Mock).mockResolvedValue(true)
+    renderCc()
+    expect(await screen.findByText(cc.appRunning)).toBeInTheDocument()
+  })
+
+  it("reports a stopped app and disables Quit — there is nothing to quit", async () => {
+    installed()
+    renderCc()
+    expect(await screen.findByText(cc.appStopped)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole("button", { name: cc.appQuit })).toBeDisabled())
+  })
+
+  it("opens the app and refreshes into the running state", async () => {
+    installed()
+    renderCc()
+    await screen.findByText(cc.appStopped)
+    // The app appears in the process table only after the launch returns.
+    ;(ccSwitchRunning as jest.Mock).mockResolvedValue(true)
+
+    await userEvent.click(screen.getByRole("button", { name: cc.appOpen }))
+
+    expect(launchCcSwitch).toHaveBeenCalled()
+    expect(await screen.findByText(cc.appRunning)).toBeInTheDocument()
+  })
+
+  it("quits the app and refreshes into the stopped state", async () => {
+    installed()
+    ;(ccSwitchRunning as jest.Mock).mockResolvedValue(true)
+    renderCc()
+    await screen.findByText(cc.appRunning)
+    ;(ccSwitchRunning as jest.Mock).mockResolvedValue(false)
+
+    // Two Quit buttons exist while it's running (the control row and the
+    // "editing blocked" alert); the control row's comes first in DOM order.
+    await userEvent.click(screen.getAllByRole("button", { name: cc.appQuit })[0])
+
+    expect(quitCcSwitch).toHaveBeenCalled()
+    expect(await screen.findByText(cc.appStopped)).toBeInTheDocument()
+  })
+
+  it("unblocks provider editing once the app is quit", async () => {
+    installed()
+    ;(ccSwitchRunning as jest.Mock).mockResolvedValue(true)
+    renderCc()
+    await screen.findByText("Mine")
+    // The whole point: the fix is offered where the problem is stated.
+    const alert = (await screen.findByText(cc.runningTitle)).closest("[role='alert']")!
+    ;(ccSwitchRunning as jest.Mock).mockResolvedValue(false)
+
+    await userEvent.click(within(alert as HTMLElement).getByRole("button", { name: cc.appQuit }))
+
+    await waitFor(() => expect(screen.getByRole("button", { name: cc.addProvider })).toBeEnabled())
+    expect(screen.queryByText(cc.runningTitle)).not.toBeInTheDocument()
+  })
+
+  it("says so when the app survives the quit, instead of silently doing nothing", async () => {
+    installed()
+    ;(ccSwitchRunning as jest.Mock).mockResolvedValue(true)
+    ;(quitCcSwitch as jest.Mock).mockResolvedValue(false)
+    renderCc()
+    await screen.findByText(cc.appRunning)
+
+    const alert = (await screen.findByText(cc.runningTitle)).closest("[role='alert']")!
+    await userEvent.click(within(alert as HTMLElement).getByRole("button", { name: cc.appQuit }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(cc.quitFailed))
+  })
+
+  it("toasts when the app can't be launched at all", async () => {
+    installed()
+    ;(launchCcSwitch as jest.Mock).mockRejectedValueOnce(new Error("not installed"))
+    renderCc()
+    await screen.findByText(cc.appStopped)
+
+    await userEvent.click(screen.getByRole("button", { name: cc.appOpen }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(cc.launchFailed))
+  })
+
+  it("hides the controls until cc-switch is actually installed", async () => {
+    // detectCli defaults to not-installed here — nothing to open or quit.
+    renderCc()
+    await screen.findByText(en.ccswitch.notDetected)
+    expect(screen.queryByText(cc.appTitle)).not.toBeInTheDocument()
+  })
 })
 
 it("toasts and stops loading when the initial scan fails", async () => {

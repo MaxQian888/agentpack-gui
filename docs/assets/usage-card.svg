@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="AI coding spend">
+  <rect width="1200" height="630" fill="#0f172a"/>
+  <rect x="0" y="0" width="1200" height="6" fill="#38bdf8"/>
+  <text x="64" y="104" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="34" font-weight="600" fill="#e2e8f0">AI coding spend</text>
+  <text x="64" y="146" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="22" fill="#64748b">1 – 20 July 2026 · sample data</text>
+  <text x="1136" y="104" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="26" font-weight="600" fill="#38bdf8">agentpack</text>
+  
+    <text x="64" y="300" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="96" font-weight="700" fill="#f8fafc">$96.90</text>
+    
+    
+    <text x="64" y="392" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="22" fill="#94a3b8">Tokens</text>
+    <text x="64" y="440" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="40" font-weight="600" fill="#e2e8f0">80.9M</text>
+    
+    <text x="424" y="392" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="22" fill="#94a3b8">Sessions</text>
+    <text x="424" y="440" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="40" font-weight="600" fill="#e2e8f0">29</text>
+    
+    <text x="784" y="392" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="22" fill="#94a3b8">Per session</text>
+    <text x="784" y="440" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="40" font-weight="600" fill="#e2e8f0">$3.34</text>
+    <rect x="81.8" y="506.8" width="18.0" height="53.2" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="135.4" y="518.2" width="18.0" height="41.8" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="189.0" y="522.9" width="18.0" height="37.1" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="242.6" y="514.4" width="18.0" height="45.6" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="296.2" y="516.4" width="18.0" height="43.6" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="349.8" y="557.0" width="18.0" height="3.0" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="403.4" y="557.0" width="18.0" height="3.0" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="457.0" y="503.0" width="18.0" height="57.0" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="510.6" y="506.5" width="18.0" height="53.5" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="564.2" y="525.1" width="18.0" height="34.9" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="617.8" y="499.2" width="18.0" height="60.8" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="671.4" y="514.7" width="18.0" height="45.3" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="725.0" y="548.6" width="18.0" height="11.4" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="778.6" y="557.0" width="18.0" height="3.0" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="832.2" y="503.9" width="18.0" height="56.1" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="885.8" y="506.8" width="18.0" height="53.2" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="939.4" y="525.8" width="18.0" height="34.2" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="993.0" y="490.0" width="18.0" height="70.0" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="1046.6" y="522.0" width="18.0" height="38.0" rx="2" fill="#38bdf8" opacity="0.85"/><rect x="1100.2" y="529.5" width="18.0" height="30.5" rx="2" fill="#38bdf8" opacity="0.85"/>
+    
+    <circle cx="71" cy="596" r="7" fill="#d97757"/>
+    <text x="88" y="601" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="20" fill="#94a3b8">Claude Code $91.86</text>
+    <circle cx="311" cy="596" r="7" fill="#8b5cf6"/>
+    <text x="328" y="601" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="20" fill="#94a3b8">OpenCode $2.59</text>
+    <circle cx="551" cy="596" r="7" fill="#10a37f"/>
+    <text x="568" y="601" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="20" fill="#94a3b8">Codex $2.46</text>
+  <!-- Above the sparkline, not beside the source chips: right-anchored at the
+       card edge it would run back into the third chip. -->
+  <text x="1136" y="474" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="18" fill="#475569">Claude Code and Codex costs are estimated from token counts</text>
+  <text x="1136" y="601" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif" font-size="18" fill="#475569">Measured with agentpack</text>
+</svg>

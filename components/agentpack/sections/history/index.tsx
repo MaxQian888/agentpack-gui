@@ -64,7 +64,9 @@ export function HistorySection({
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-5">
-      <div className="flex items-start justify-between gap-3">
+      {/* This section builds its own header rather than using SectionShell, so
+          the tour's spotlight anchor has to be added here explicitly. */}
+      <div data-tour="section-heading" className="flex items-start justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold tracking-tight">{h.title}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{h.subtitle}</p>

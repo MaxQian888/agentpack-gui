@@ -7,10 +7,13 @@ import {
   RefreshCw,
   Database,
   Download,
+  ExternalLink,
   KeyRound,
   Loader2,
+  Power,
   AlertTriangle,
 } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -77,8 +80,9 @@ import {
   ccLoadProviders,
   ccSchemaStatus,
   detectCli,
-  isProcessRunning,
+  ccSwitchRunning,
   launchCcSwitch,
+  quitCcSwitch,
   loginStatus,
   readTextFile,
   writeTextFile,
@@ -177,7 +181,9 @@ export function CcSwitchSection() {
           ccSchemaStatus(),
           readTextFile(paths.ccSwitchSettings),
           backupList(),
-          isProcessRunning("cc-switch"),
+          // Not `isProcessRunning("cc-switch")`: on macOS the process name is the
+          // binary inside the .app bundle, which the backend resolves for us.
+          ccSwitchRunning(),
           readTextFile(paths.claudeSettings),
           readTextFile(paths.codexConfig),
           loginStatus(),
@@ -228,6 +234,60 @@ export function CcSwitchSection() {
     await reload()
     return reports
   }
+
+  // ── Launch / quit the cc-switch app ──────────────────────────────────────
+  //
+  // Both matter because cc-switch locks the SQLite DB agentpack writes: opening
+  // it is how you use its own UI, and quitting it is what unblocks editing here.
+  // Until now the only way to close it was to go find the app yourself.
+  const [appBusy, setAppBusy] = useState<"open" | "quit" | null>(null)
+
+  /**
+   * Poll until the running state settles, then refresh.
+   *
+   * A launched app isn't in the process table the instant `open` returns, so
+   * refreshing straight away would show "not running" and make the button look
+   * broken. Short by design: `quit_cc_switch` already waits for the process to
+   * exit before it resolves, so this only has to cover launch propagation.
+   */
+  const settleThenReload = useCallback(
+    async (expected: boolean) => {
+      for (let i = 0; i < 8; i++) {
+        const running = await ccSwitchRunning().catch(() => null)
+        if (running === expected) break
+        await new Promise((resolve) => setTimeout(resolve, 200))
+      }
+      await reload()
+    },
+    [reload]
+  )
+
+  const openApp = useCallback(async () => {
+    setAppBusy("open")
+    try {
+      await launchCcSwitch()
+      await settleThenReload(true)
+    } catch {
+      if (mounted.current) toast.error(c.launchFailed)
+    } finally {
+      if (mounted.current) setAppBusy(null)
+    }
+  }, [settleThenReload, c.launchFailed])
+
+  const quitApp = useCallback(async () => {
+    setAppBusy("quit")
+    try {
+      // `false` means it survived both a graceful and a forced quit — say so
+      // rather than silently refreshing back into the blocked state.
+      const gone = await quitCcSwitch()
+      await settleThenReload(false)
+      if (!gone && mounted.current) toast.error(c.quitFailed)
+    } catch {
+      if (mounted.current) toast.error(c.quitFailed)
+    } finally {
+      if (mounted.current) setAppBusy(null)
+    }
+  }, [settleThenReload, c.quitFailed])
 
   const installCcSwitch = () => {
     const tool = CLI_TOOLS.find((x) => x.id === "cc-switch")!
@@ -479,6 +539,60 @@ export function CcSwitchSection() {
           ) : null}
         </div>
 
+        {/* App control. Only once it's installed — there's nothing to open or
+            quit otherwise, and the buttons would just be dead weight. */}
+        {isTauri() && detected ? (
+          <div className="flex flex-row flex-wrap items-center gap-3 border-t pt-3">
+            <div className="flex-1">
+              <div className="font-medium">{c.appTitle}</div>
+              <div className="mt-1 flex items-center gap-2">
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "size-2 rounded-full",
+                    ccRunning === null
+                      ? "bg-muted-foreground/40"
+                      : ccRunning
+                        ? "bg-emerald-500"
+                        : "bg-muted-foreground/40"
+                  )}
+                />
+                <span className="text-xs text-muted-foreground">
+                  {ccRunning === null ? c.checking : ccRunning ? c.appRunning : c.appStopped}
+                </span>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1"
+              onClick={() => void openApp()}
+              disabled={appBusy !== null}
+            >
+              {appBusy === "open" ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <ExternalLink className="size-3.5" />
+              )}
+              {c.appOpen}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1"
+              onClick={() => void quitApp()}
+              disabled={appBusy !== null || ccRunning === false}
+            >
+              {appBusy === "quit" ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Power className="size-3.5" />
+              )}
+              {c.appQuit}
+            </Button>
+          </div>
+        ) : null}
+
         {needsMigration ? (
           <Alert className="mt-3">
             <AlertTriangle />
@@ -532,15 +646,28 @@ export function CcSwitchSection() {
             <AlertTitle>{c.runningTitle}</AlertTitle>
             <AlertDescription>
               <span>{c.runningHint}</span>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-1 gap-1"
-                onClick={() => void reload()}
-              >
-                <RefreshCw className="size-3.5" />
-                {c.refresh}
-              </Button>
+              {/* The fix, right where the problem is stated — no hunting for the
+                  app in the dock just to unblock editing here. */}
+              <div className="mt-1 flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1"
+                  onClick={() => void quitApp()}
+                  disabled={appBusy !== null}
+                >
+                  {appBusy === "quit" ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Power className="size-3.5" />
+                  )}
+                  {c.appQuit}
+                </Button>
+                <Button variant="ghost" size="sm" className="gap-1" onClick={() => void reload()}>
+                  <RefreshCw className="size-3.5" />
+                  {c.refresh}
+                </Button>
+              </div>
             </AlertDescription>
           </Alert>
         ) : null}

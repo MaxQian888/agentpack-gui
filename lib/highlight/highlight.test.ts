@@ -161,3 +161,99 @@ describe("HL_TOKEN_CLASS", () => {
     }
   })
 })
+
+/**
+ * Malformed and truncated input. A syntax highlighter runs over whatever a
+ * transcript happens to contain, including code that was cut off mid-token, so
+ * every scanner has to terminate at end-of-input rather than run away — and it
+ * still must not drop a character.
+ */
+describe("highlight — unterminated and malformed input", () => {
+  const lossless = (src: string, lang: string) => expect(text(highlight(src, lang))).toBe(src)
+
+  it("stops an unterminated block comment at end of input", () => {
+    const src = "const a = 1\n/* never closed"
+    expect(of(highlight(src, "ts"), "comment")).toEqual(["/* never closed"])
+    lossless(src, "ts")
+  })
+
+  it("ends a line comment that runs to end of input", () => {
+    lossless("x = 1 // trailing", "ts")
+    expect(of(highlight("x // trailing", "ts"), "comment")).toEqual(["// trailing"])
+  })
+
+  it("ends an unterminated single-quoted string at the newline, not the file end", () => {
+    const toks = highlight("a = 'oops\nb = 2", "ts")
+    expect(of(toks, "string")).toEqual(["'oops"])
+    lossless("a = 'oops\nb = 2", "ts")
+  })
+
+  it("lets a template literal span lines but still terminates", () => {
+    lossless("const t = `line one\nline two", "ts")
+  })
+
+  it("stops an unterminated triple-quoted docstring at end of input", () => {
+    lossless('def f():\n    """never closed', "python")
+  })
+
+  it("stops an unterminated ${} shell expansion at end of input", () => {
+    lossless('echo "${UNCLOSED', "bash")
+  })
+
+  it("stops an unterminated TOML table header at end of input", () => {
+    lossless("[server", "toml")
+  })
+})
+
+describe("highlight — numeric literals", () => {
+  const nums = (src: string) => of(highlight(src, "ts"), "number")
+
+  it("reads hex, octal and binary radix prefixes", () => {
+    expect(nums("0xFF_ff + 0o755 + 0b1010")).toEqual(["0xFF_ff", "0o755", "0b1010"])
+  })
+
+  it("reads fractions, separators and signed exponents", () => {
+    expect(nums("1_000.500 + 1e10 + 2.5e-3 + 3E+8")).toEqual([
+      "1_000.500",
+      "1e10",
+      "2.5e-3",
+      "3E+8",
+    ])
+  })
+
+  it("reads a leading-dot fraction", () => {
+    expect(nums("x = .5")).toEqual([".5"])
+  })
+
+  it("does not swallow a trailing e that is not an exponent", () => {
+    // `1e` has no digits after the `e`, so the identifier must stay separate.
+    expect(text(highlight("1e", "ts"))).toBe("1e")
+  })
+})
+
+describe("highlight — shell variables", () => {
+  it("tags braced, named, positional and special forms", () => {
+    // Unquoted: inside double quotes the string scanner owns the whole span.
+    const vars = of(highlight("echo ${HOME} $USER $1 $? $@", "bash"), "variable")
+    expect(vars).toEqual(["${HOME}", "$USER", "$1", "$?", "$@"])
+  })
+
+  it("leaves an expansion inside a double-quoted string to the string token", () => {
+    const toks = highlight('echo "${HOME}"', "bash")
+    expect(of(toks, "string")).toEqual(['"${HOME}"'])
+    expect(of(toks, "variable")).toEqual([])
+  })
+
+  it("leaves a bare dollar that names nothing", () => {
+    expect(text(highlight("echo $ end", "bash"))).toBe("echo $ end")
+  })
+})
+
+describe("highlight — TOML tables", () => {
+  it("tags both a table and an array-of-tables header", () => {
+    expect(of(highlight("[server]\n[[items]]\nx = 1", "toml"), "keyword")).toEqual([
+      "[server]",
+      "[[items]]",
+    ])
+  })
+})

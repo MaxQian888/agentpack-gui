@@ -43,6 +43,10 @@ export const en = {
     install: "Install now",
     installPreview: "Preview plan",
     reopen: "Show welcome guide",
+    // Step 2/3 subtitles. The network step comes before installing on purpose:
+    // finding out the network is blocked beats watching six steps go red.
+    networkIntro: "A quick look at your network, so the install doesn't fail halfway.",
+    installIntro: "That's everything — ready when you are.",
   },
 
   /** Guided product tour — a spotlight walkthrough that visits each part of the app. */
@@ -63,9 +67,17 @@ export const en = {
         title: "Dashboard",
         body: "See what's installed and configured at a glance, and remove anything you don't want.",
       },
+      history: {
+        title: "Chat history",
+        body: "Read back every past session across all three CLIs, and see exactly what your tokens cost.",
+      },
       presets: {
         title: "Presets",
         body: "New here? Pick a bundle and it pre-fills a sensible set of tools in one tap.",
+      },
+      environment: {
+        title: "Runtimes",
+        body: "Node, Python, Bun and uv — the toolchains the assistants need. agentpack installs any that are missing.",
       },
       clis: {
         title: "CLIs",
@@ -87,6 +99,18 @@ export const en = {
         title: "cc-switch",
         body: "Keep several API providers/keys and switch the active one with a click.",
       },
+      ccconnect: {
+        title: "cc-connect",
+        body: "Drive your local coding agents from a chat app — Feishu, Slack, Telegram — so you can work away from your desk.",
+      },
+      config: {
+        title: "Save & share",
+        body: "Export your setup to a file, or save it as a profile so you can reproduce it on another machine.",
+      },
+      about: {
+        title: "Updates & settings",
+        body: "Check for a new agentpack version, set a global summon hotkey, and reopen this guide any time.",
+      },
       preview: {
         title: "Preview first",
         body: "Turn this on to see exactly what a run would do — without changing anything.",
@@ -107,6 +131,7 @@ export const en = {
     stepInstall: "Install in one click",
     openGuide: "Open the guide",
     dismiss: "Don't show again",
+    networkBlocked: "Your network can't reach the internet directly — set that up first →",
   },
 
   /**
@@ -491,6 +516,28 @@ export const en = {
       ghLabel: "GitHub download mirror",
       ghHint:
         "Prefix put in front of GitHub downloads when installing skills from a repository. Applies immediately.",
+      pypiLabel: "PyPI index (uv / pip)",
+      brewLabel: "Homebrew",
+      autoHint:
+        "Used automatically to retry an install that failed on the network — applied for that command only, never saved to your machine.",
+    },
+
+    /** Measured results from the background network probe. */
+    probe: {
+      title: "Network check",
+      running: "Checking your network…",
+      recheck: "Check again",
+      unreachable: "unreachable",
+      directOk: "Direct connection works — no proxy needed.",
+      directBlocked:
+        "Direct connection failed. agentpack will route installs through what it found.",
+      proxyFound: (host: string, ms: number) => `Found a working proxy: ${host} (${ms}ms)`,
+      noProxyFound: "No working proxy found on this machine.",
+      fastestMirror: (kind: string, label: string) => `Fastest ${kind}: ${label}`,
+      adopt: "Use these settings",
+      adopted: "Applied.",
+      skip: "Skip for now",
+      nothingToDo: "Your network looks fine — nothing to change.",
     },
   },
 
@@ -539,6 +586,9 @@ export const en = {
     unknownMethod: (id: string) => `Unknown install method in config: ${id}`,
     configReadFailed: (path: string) => `Could not read config file: ${path}`,
     needYes: "Pass --yes to execute, or --dry-run to preview.",
+    notABundle: "That file isn't an agentpack backup or config.",
+    bundleTooNew: (v: string) =>
+      `This backup was written by a newer agentpack (format ${v}). Update the app to import it.`,
   },
 
   headless: {
@@ -690,6 +740,10 @@ export const en = {
     updateRuntime: (title: string) => `Update ${title}`,
     installCli: (title: string) => `Install ${title}`,
     upgradeCli: (title: string) => `Upgrade ${title}`,
+    // Alternative routes, only run when the primary one failed on the network.
+    installCliVia: (title: string, method: string) => `Install ${title} via ${method}`,
+    installRuntimeVia: (title: string, method: string) => `Install ${title} via ${method}`,
+    installFromRelease: (title: string) => `Install ${title} from its GitHub release`,
     noInstaller: (title: string) => `No automated installer for ${title} on this OS.`,
     manualInstall: "manual install required",
     nodeTooOld: (title: string, need: number, found: string) =>
@@ -753,6 +807,8 @@ export const en = {
     noUninstaller: (title: string) => `No automated uninstaller for ${title} on this OS.`,
     restoreFile: (path: string) => `Restore ${path} from backup`,
     snapshot: "Back up cc-switch DB and live configs",
+    bundleFile: (path: string) => `Restore ${path} from the backup`,
+    bundleFileWritten: (path: string) => `restored ${path}`,
     syncClaude: "Sync provider → Claude Code settings.json",
     syncCodex: "Sync provider → Codex config.toml",
     syncOpencode: "Sync provider → OpenCode opencode.json",
@@ -794,6 +850,25 @@ export const en = {
       `The install didn't complete. If it's a permissions issue, open a terminal as administrator and run it yourself:  ${cmd}`,
     timedOut: (mins: number) =>
       `timed out after ${mins} min and was stopped — check your network or run the command manually, then retry.`,
+
+    // ── Network auto-recovery (lib/agentpack/network/recovery.ts) ──
+    networkFailure: "This looks like a network problem — trying another route.",
+    retryingVia: (label: string) => `↻ retrying via ${label}…`,
+    retryingFallback: (label: string) => `↻ trying a different way to install: ${label}`,
+    recoveredVia: (label: string) => `Succeeded via ${label}. Nothing on your machine was changed.`,
+    recoveryExhausted: "Every alternative route failed too — the original error follows.",
+
+    // ── GitHub Release direct install (releaseInstall steps) ──
+    releaseFound: (title: string, tag: string, asset: string) =>
+      `${title} ${tag} — downloading ${asset}`,
+    releaseDownloading: (pct: number) => `downloading… ${pct}%`,
+    releaseDownloaded: (path: string) => `downloaded → ${path}`,
+    releaseNoAsset: (title: string, tag: string, arch: string) =>
+      `${title} ${tag} publishes no installer for this platform (${arch}) — install it manually.`,
+    wouldReleaseInstall: (title: string, repo: string) =>
+      `would download the latest ${title} release from ${repo} and install it`,
+    wouldReleaseInstallVia: (title: string, repo: string, mirror: string) =>
+      `would download the latest ${title} release from ${repo} via ${mirror} and install it`,
   },
 
   /** Main menu + shared menu navigation. */
@@ -1123,7 +1198,16 @@ export const en = {
     loading: "Loading…",
     runningTitle: "cc-switch is running",
     runningHint:
-      "Close cc-switch before editing providers here — changes are blocked while it's open. Then click Refresh.",
+      "Providers can't be edited while cc-switch has the database open. Quit it here and the controls unlock.",
+
+    // App control: open / quit the desktop app and see its live state.
+    appTitle: "cc-switch app",
+    appRunning: "Running",
+    appStopped: "Not running",
+    appOpen: "Open",
+    appQuit: "Quit",
+    launchFailed: "Could not launch cc-switch.",
+    quitFailed: "cc-switch didn't quit — close it from the app itself, then Refresh.",
     deleteConfirm:
       "Delete this provider from cc-switch? A snapshot is taken first, but this removes it.",
     setCurrentConfirm:
@@ -1326,6 +1410,12 @@ export const en = {
     emptyPlan: "Your plan is empty. Select CLIs, skills, MCP servers or network options first.",
     nothingToDo: "Everything in your plan is already installed and up to date — nothing to do.",
     notInTauri: "Run the desktop app (pnpm tauri dev) to execute installs.",
+    // Shown after a network retry rescued a step. Nothing was written to get
+    // there, so making it permanent is the user's call.
+    recoveredTitle: (label: string) => `Installed via ${label}`,
+    recoveredBody:
+      "That was a one-off retry — nothing on your machine changed. Save it so future installs use it too?",
+    recoveredPersist: "Save it",
     configSaved: (path: string) => `Saved config to ${path}`,
     configLoaded: "Config loaded into your plan.",
   },
@@ -1370,6 +1460,23 @@ export const en = {
     healthConfig: (file: string, state: string) => `${file} is ${state}`,
     // Truncated overview lists link out to the section that owns them.
     viewAll: (n: number) => `${n} total · View all →`,
+    // Spend card: the one number on this page that isn't about configuration.
+    spend: {
+      title: "Spend this month",
+      scanning: "Reading your session history…",
+      cost: "Cost",
+      tokens: "Tokens",
+      sessions: "Sessions",
+      vsPrevious: "vs previous period",
+      estimated: "estimated from token counts",
+      unpriced: (n: number) =>
+        n === 1 ? "1 transcript has no known rate" : `${n} transcripts have no known rate`,
+      empty: "No sessions yet",
+      emptyHint: "Install a CLI and start a chat — your spend shows up here.",
+      emptyAction: "Install a CLI",
+      details: "Open usage dashboard →",
+      notTauri: "Run the desktop app to read your session history.",
+    },
   },
 
   /** Chat-history reader + usage statistics across Claude Code, Codex, OpenCode. */
@@ -1599,6 +1706,35 @@ export const en = {
     // --- Export ---
     exportCsv: "Export CSV",
     exportJson: "Export JSON",
+
+    // --- Shareable report ---
+    // CSV and JSON are for spreadsheets and scripts; this is the one a person
+    // actually posts, so every string here is user-facing prose.
+    report: {
+      share: "Share",
+      dialogTitle: "Shareable report",
+      dialogSubtitle: "A card and a Markdown summary of the range you're viewing.",
+      cardTitle: "AI coding spend",
+      copyMarkdown: "Copy Markdown",
+      copied: "Copied to clipboard",
+      savePng: "Save PNG",
+      saveSvg: "Save SVG",
+      saved: (path: string) => `Saved to ${path}`,
+      renderFailed: "Couldn't render the image — save the SVG instead.",
+      cost: "Cost",
+      tokens: "Tokens",
+      sessions: "Sessions",
+      perSession: "Per session",
+      topModels: "Top models",
+      vsPrevious: "vs previous period",
+      estimatedNote: "Costs for Claude Code and Codex are estimated from token counts.",
+      unpricedNote: (n: number) =>
+        n === 1
+          ? "1 transcript used a model with no known rate and is excluded."
+          : `${n} transcripts used models with no known rate and are excluded.`,
+      noActivity: "No sessions in this range",
+      footer: "Measured with agentpack",
+    },
   },
 
   /** About & self-update section (app version, check/download/install). */
@@ -1646,5 +1782,201 @@ export const en = {
     saved: (name: string) => `Saved profile "${name}"`,
     deleted: (name: string) => `Deleted profile "${name}"`,
     nameRequired: "Enter a profile name.",
+  },
+
+  bundle: {
+    title: "Backup",
+    subtitle: "Move a whole setup to another machine, or share parts of it.",
+    exportOpen: "Export backup…",
+    importOpen: "Import backup…",
+    exportTitle: "Export a backup",
+    exportHint: "Pick what to include. Everything is optional.",
+    importTitle: "Import a backup",
+    importHint: "Choose a file or paste one, then pick what to restore.",
+    partPlan: "Plan",
+    partProfiles: "Profiles",
+    partProviders: "Providers",
+    partFiles: "Config files",
+    partSettings: "App settings",
+    planSummary: (clis: number, skills: number, mcps: number) =>
+      `${clis} CLIs · ${skills} skills · ${mcps} MCP servers`,
+    countProfiles: (n: number) => `${n} saved`,
+    countProviders: (n: number) => `${n} configured`,
+    fileMissing: "not on this machine",
+    fileUnredactable: "can't be redacted — excluded",
+    fileNew: "new",
+    fileSame: "identical",
+    fileDiffers: "differs",
+    fileLocalUnreadable: "Your copy doesn't parse, so its credentials can't be kept.",
+    includeSecrets: "Include credentials",
+    secretsHint:
+      "Off by default: API keys, tokens and proxy passwords are blanked. Importing puts your own back where a blank arrives.",
+    secretsWarning:
+      "This file will contain working credentials in plain text. Don't share it or commit it.",
+    clipboardAlwaysRedacts: "Copying always leaves credentials out.",
+    copyToClipboard: "Copy",
+    saveFile: "Save file…",
+    chooseFile: "Choose file…",
+    pasteClipboard: "Paste",
+    copied: "Backup copied to the clipboard.",
+    exported: (path: string) => `Backup saved to ${path}`,
+    nothingToExport: "Select at least one part to export.",
+    planMerge: "Merge",
+    planReplace: "Replace",
+    profilesMerge: "Merge",
+    profilesReplace: "Replace",
+    profilesSkip: "Skip",
+    overwriteConflicts: "Replace providers with the same name",
+    ccSwitchRunning: "Quit cc-switch before importing providers — it holds the database open.",
+    diffAdded: (n: number) => `+${n}`,
+    diffRemoved: (n: number) => `−${n}`,
+    diffNetwork: "network settings change",
+    diffProfiles: (fresh: number, updated: number) => `${fresh} new · ${updated} updated`,
+    diffProviders: (fresh: number, conflicts: number) => `${fresh} new · ${conflicts} conflicting`,
+    legacyDetected: "Older config format — contains a plan only.",
+    secretsPresent: "This backup carries working credentials.",
+    skippedParts: (list: string) => `Could not read: ${list}`,
+    importDone: "Backup imported.",
+    dryRunSkipped: "Preview mode — nothing was written.",
+    importPlaceholder: "Paste the contents of a backup file here",
+    tomlReformatHint: "TOML comments are not preserved in a redacted export.",
+  },
+
+  configFiles: {
+    title: "Config files",
+    subtitle: "Edit the agent CLIs' own config files — as a form, or as text.",
+    edit: "Edit",
+    create: "Create",
+    present: "present",
+    missing: "missing",
+    tabForm: "Form",
+    tabRaw: "Text",
+    save: "Save",
+    cancel: "Cancel",
+    reset: "Reset to file",
+    saved: (name: string) => `Saved ${name}`,
+    saveFailed: "Could not write the file.",
+    loadFailed: "Could not read the file.",
+    invalidJson: "That isn't valid JSON — fix it before saving.",
+    invalidToml: "That isn't valid TOML — fix it before saving.",
+    formUnavailable: "The file doesn't parse, so the form is unavailable. Fix it in the Text tab.",
+    editorHint:
+      "The text is what gets saved. Editing a field rewrites the file from its parsed form, which drops TOML comments; a file you only read is left byte-for-byte alone.",
+    unset: "(unset)",
+    lockedHint: "This key holds a shape the form can't edit — use the Text tab.",
+    providerFirst: "Pick a provider first",
+    mapAdd: "Add",
+    mapRemove: "Remove",
+    mapKey: "Name",
+    mapValue: "Value",
+    conflictTitle: "The file changed on disk",
+    conflictBody:
+      "Something else wrote this file after you opened it. Saving now would discard those changes.",
+    conflictReload: "Reload from disk",
+    conflictOverwrite: "Overwrite anyway",
+    discardTitle: "Discard your edits?",
+    discardBody: "This editor has unsaved changes.",
+    discardConfirm: "Discard",
+    discardCancel: "Keep editing",
+    tooLarge: (mb: string) =>
+      `This file is ${mb} MB — too large to edit as text here. Use an external editor.`,
+    volatileWarning:
+      "The Claude CLI rewrites this file while it runs. agentpack normally only reads it; edit with care.",
+    backupNote: (path: string) => `The original was backed up to ${path}`,
+    mcpInventoryTitle: "MCP servers",
+    mcpInventoryEmpty: "No user-scope MCP servers configured.",
+    openMcp: "Open the MCP section",
+    files: {
+      claudeSettings: {
+        title: "Claude Code settings",
+        desc: "Model, permissions, environment and status line. Switching a cc-switch provider overwrites the ANTHROPIC_* entries under env.",
+      },
+      codexConfig: {
+        title: "Codex config",
+        desc: "Model, sandbox, shell environment and history. Switching a cc-switch provider overwrites model, model_provider, reasoning effort, context window and [model_providers.custom].",
+      },
+      opencodeConfig: {
+        title: "OpenCode config",
+        desc: "Model, agent defaults and per-tool permissions.",
+      },
+      claudeConfig: {
+        title: "Claude Code user config",
+        desc: "Holds user-scope MCP servers alongside the CLI's own session state. Read-only here — add servers from the MCP section.",
+      },
+    },
+    sections: {
+      claudeGeneral: "General",
+      claudePermissions: "Permissions",
+      claudeEnv: "Environment",
+      claudeStatusLine: "Status line",
+      claudeMcp: "MCP",
+      codexModel: "Model",
+      codexSandbox: "Approval & sandbox",
+      codexUi: "Interface",
+      codexShellEnv: "Shell environment",
+      codexHistory: "History",
+      ocGeneral: "General",
+      ocPermission: "Permissions",
+    },
+    fields: {
+      // Claude Code — settings.json
+      claudeModel: "Model",
+      claudeTheme: "Theme",
+      claudeVerbose: "Verbose output",
+      claudeCoAuthored: "Add Co-authored-by",
+      claudeCleanupDays: "Keep transcripts (days)",
+      claudeSpinnerTips: "Spinner tips",
+      claudeAlwaysThinking: "Always think",
+      claudeApiKeyHelper: "API key helper script",
+      claudeSandboxEnabled: "Sandbox",
+      claudeDefaultMode: "Default mode",
+      claudeAllow: "Allow",
+      claudeAsk: "Ask",
+      claudeDeny: "Deny",
+      claudeAddDirs: "Extra directories",
+      claudeDisableBypass: "Disable bypass mode",
+      claudeEnvVars: "Environment variables",
+      claudeStatusType: "Type",
+      claudeStatusCommand: "Command",
+      claudeStatusPadding: "Padding",
+      claudeEnableProjectMcp: "Enable all project MCP servers",
+      claudeEnabledMcpJson: "Enabled .mcp.json servers",
+      claudeDisabledMcpJson: "Disabled .mcp.json servers",
+      // Codex — config.toml
+      codexModel: "Model",
+      codexProvider: "Provider",
+      codexEffort: "Reasoning effort",
+      codexSummary: "Reasoning summary",
+      codexVerbosity: "Verbosity",
+      codexContextWindow: "Context window",
+      codexApproval: "Approval policy",
+      codexSandboxMode: "Sandbox mode",
+      codexNetworkAccess: "Network access",
+      codexWritableRoots: "Writable roots",
+      codexFileOpener: "File opener",
+      codexHideReasoning: "Hide reasoning",
+      codexRawReasoning: "Show raw reasoning",
+      codexWebSearch: "Web search",
+      codexViewImage: "Image viewing tool",
+      codexShellInherit: "Inherit",
+      codexShellSet: "Set variables",
+      codexHistoryPersistence: "Persistence",
+      codexHistoryMaxBytes: "Max size (bytes)",
+      // OpenCode — opencode.json
+      ocSchema: "Schema URL",
+      ocModel: "Model",
+      ocSmallModel: "Small model",
+      ocUsername: "Username",
+      ocShare: "Sharing",
+      ocSnapshot: "Snapshots",
+      ocSubagentDepth: "Sub-agent depth",
+      ocDefaultAgent: "Default agent",
+      ocLogLevel: "Log level",
+      ocDisabledProviders: "Disabled providers",
+      ocInstructions: "Instruction files",
+      ocPermEdit: "Edit",
+      ocPermBash: "Bash",
+      ocPermWebfetch: "Web fetch",
+    },
   },
 }

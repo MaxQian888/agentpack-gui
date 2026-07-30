@@ -6,6 +6,7 @@ import type {
   ToolProxySnapshot,
 } from "@/lib/agentpack/network/discovery"
 import type { Provider, ProviderApp } from "@/lib/agentpack/ccswitch/types"
+import type { ReleaseInfo } from "@/lib/agentpack/release"
 import type {
   HistorySource,
   ListResult,
@@ -39,6 +40,13 @@ export interface RunCommandOpts {
    * (winget) succeed instead of failing on permissions. No-op on macOS/Linux.
    */
   elevated?: boolean
+  /**
+   * Extra environment variables for THIS spawn only — never persisted anywhere.
+   * How the recovery ladder retries an install through a mirror or a proxy
+   * (`HTTPS_PROXY`, `HOMEBREW_BOTTLE_DOMAIN`, `UV_DEFAULT_INDEX`, …) without
+   * touching the user's shell rc, npm config or agent settings.
+   */
+  env?: Record<string, string>
 }
 
 /**
@@ -56,7 +64,7 @@ export async function runCommand(
 ): Promise<number> {
   const onEvent = new Channel<string>()
   onEvent.onmessage = onLine
-  const { opId, timeoutSecs, signal, elevated } = opts
+  const { opId, timeoutSecs, signal, elevated, env } = opts
   if (opId && signal) {
     if (signal.aborted) void cancelCommand(opId)
     else signal.addEventListener("abort", () => void cancelCommand(opId), { once: true })
@@ -68,6 +76,7 @@ export async function runCommand(
     opId: opId ?? null,
     timeoutSecs: timeoutSecs ?? null,
     elevated: elevated ?? null,
+    env: env ?? null,
   })
 }
 
@@ -83,6 +92,24 @@ export const TIMEOUT_ERR = "agentpack:timeout"
  * install path (winget/brew install it off PATH), so no path is passed here.
  */
 export const launchCcSwitch = () => invoke<void>("launch_cc_switch")
+
+/**
+ * Ask cc-switch to quit (gracefully first, forced only if it won't), and wait
+ * for it to actually exit. Resolves `false` when it outlived both attempts —
+ * a result the UI explains rather than an error.
+ *
+ * This is what unblocks provider editing: agentpack refuses to write the DB
+ * while cc-switch holds it, and until now the only way out was to go quit the
+ * app yourself and come back.
+ */
+export const quitCcSwitch = () => invoke<boolean>("quit_cc_switch")
+
+/**
+ * Whether the cc-switch desktop app is running. Prefer this over
+ * `isProcessRunning("cc-switch")`: on macOS the process name is the binary
+ * inside the .app bundle, not the CLI id, and the backend resolves it.
+ */
+export const ccSwitchRunning = () => invoke<boolean>("cc_switch_running")
 
 export const detectCli = (bin: string, gui: boolean) =>
   invoke<{ installed: boolean; version?: string }>("detect_cli", { bin, gui })
@@ -193,6 +220,54 @@ export const setProcessProxy = (config: {
   noProxy?: string
 }) => invoke<void>("set_process_proxy", { config })
 
+// ── GitHub Release direct install (src-tauri/src/download.rs) ───────────────
+
+/** Latest published release of `repo`, resolved live so a renamed asset still resolves. */
+export const githubLatestRelease = (repo: string, mirrorPrefix: string | null) =>
+  invoke<ReleaseInfo>("github_latest_release", { repo, mirrorPrefix })
+
+/** Progress of an in-flight asset download (mirrors Rust `DownloadProgress`). */
+export interface DownloadProgress {
+  received: number
+  /** 0 when the server sent no `Content-Length`. */
+  total: number
+}
+
+/**
+ * Download a release asset to a temp file and resolve with its local path. Goes
+ * through agentpack's own proxy-aware HTTP client (and optionally a GitHub
+ * mirror), which is the whole reason this beats letting winget do the download.
+ */
+export async function downloadReleaseAsset(
+  url: string,
+  fileName: string,
+  mirrorPrefix: string | null,
+  onProgress: (p: DownloadProgress) => void
+): Promise<string> {
+  const channel = new Channel<DownloadProgress>()
+  channel.onmessage = onProgress
+  return invoke<string>("download_release_asset", {
+    url,
+    fileName,
+    mirrorPrefix,
+    onProgress: channel,
+  })
+}
+
+/**
+ * Install a downloaded package (.exe/.msi/.dmg/.zip/.deb/.AppImage), streaming
+ * each command it runs to `onLine` so a silent install is still auditable.
+ * Resolves with the installer's exit code.
+ */
+export async function installPackage(
+  path: string,
+  onLine: (line: string) => void
+): Promise<number> {
+  const channel = new Channel<string>()
+  channel.onmessage = onLine
+  return invoke<number>("install_package", { path, onEvent: channel })
+}
+
 /** Raw `GET /v0/servers` body from the official MCP registry (TS maps the schema). */
 export const registryFetch = (query?: string, cursor?: string, limit?: number) =>
   invoke<string>("registry_fetch", {
@@ -230,6 +305,10 @@ export const readTextFile = (path: string) => invoke<string>("read_text_file", {
 
 export const writeTextFile = (path: string, content: string) =>
   invoke<void>("write_text_file", { path, content })
+
+/** Raw bytes (the PNG usage card) — `writeTextFile` would mangle non-UTF-8. */
+export const writeBinaryFile = (path: string, bytes: Uint8Array) =>
+  invoke<void>("write_binary_file", { path, bytes: Array.from(bytes) })
 
 export const removeDir = (path: string) => invoke<void>("remove_dir", { path })
 

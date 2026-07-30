@@ -2,10 +2,13 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
+import { zhCN } from "@/lib/i18n/zh-CN"
 import { GuidedTour } from "./guided-tour"
+import { SECTIONS } from "./sidebar-nav"
 
 const s = en.tour.steps
-const TOTAL = 10
+/** Sidebar + every section + the two header controls. */
+const TOTAL = SECTIONS.length + 3
 
 afterEach(() => jest.restoreAllMocks())
 
@@ -35,10 +38,34 @@ it("steps forward through the sections, auto-navigating each", async () => {
   const { onNavigate } = renderTour()
   await clickNext() // → dashboard
   expect(screen.getByText(s.dashboard.title)).toBeInTheDocument()
-  await clickNext() // → presets
-  expect(screen.getByText(s.presets.title)).toBeInTheDocument()
-  expect(onNavigate).toHaveBeenCalledWith("presets")
+  await clickNext() // → history
+  expect(screen.getByText(s.history.title)).toBeInTheDocument()
+  expect(onNavigate).toHaveBeenCalledWith("history")
   expect(screen.getByText(en.tour.progress(3, TOTAL))).toBeInTheDocument()
+})
+
+describe("coverage", () => {
+  // A tour that skips a section leaves the user believing that feature doesn't
+  // exist. These assertions are what keep "the guide covers everything" true
+  // after the next section is added, rather than something we remember to check.
+  it("visits every section in the sidebar", async () => {
+    const { onNavigate } = renderTour()
+    for (let i = 0; i < TOTAL - 1; i++) await clickNext()
+    const visited = new Set(onNavigate.mock.calls.map(([key]) => key))
+    for (const section of SECTIONS) {
+      expect(visited).toContain(section.key)
+    }
+  })
+
+  it("has copy for every stop in both languages", () => {
+    const ids = ["nav", ...SECTIONS.map((x) => x.key), "preview", "run"]
+    for (const id of ids) {
+      expect(en.tour.steps[id]?.title).toBeTruthy()
+      expect(en.tour.steps[id]?.body).toBeTruthy()
+      expect(zhCN.tour.steps[id]?.title).toBeTruthy()
+      expect(zhCN.tour.steps[id]?.body).toBeTruthy()
+    }
+  })
 })
 
 it("goes back to the previous step", async () => {

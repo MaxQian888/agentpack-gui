@@ -2,7 +2,9 @@ import { en } from "@/lib/i18n/en"
 import type { Messages } from "@/lib/i18n/types"
 import { previewLines, commandToString } from "./preview"
 import { BACKUP_SUFFIX } from "./plan"
-import type { Command, Paths, StepDescriptor, StepReport } from "./types"
+import { classifyFailure, remediesFor, type RecoveryContext } from "./network/recovery"
+import { pickReleaseAsset } from "./release"
+import type { Command, CommandStep, Paths, StepDescriptor, StepRecovery, StepReport } from "./types"
 import * as api from "@/lib/tauri/commands"
 
 export interface RunOptions {
@@ -11,7 +13,26 @@ export interface RunOptions {
   messages?: Messages
   signal?: AbortSignal
   onUpdate?: (report: StepReport, index: number) => void
+  /**
+   * Enables automatic recovery from network failures: when a command exits
+   * non-zero with output that reads like a transport problem, the runner retries
+   * it through the mirrors and proxy this context names, then through the step's
+   * own `fallbacks`.
+   *
+   * Omit it and the runner behaves exactly as it always has — no reclassifying,
+   * no retries. Every retry is a command-line flag or a per-spawn environment
+   * variable, so even a successful one leaves the machine untouched; making it
+   * permanent is a separate, user-initiated action.
+   */
+  recovery?: RecoveryContext
 }
+
+/**
+ * How many rewritten retries a single command gets before we move on to its
+ * fallbacks. Small on purpose: each rung costs a real network round trip, and a
+ * ladder that grinds for minutes is worse than a clear failure.
+ */
+const MAX_RECOVERY_ATTEMPTS = 3
 
 /**
  * Hard cap for a single install command. Installs are network-bound but should
@@ -117,7 +138,14 @@ export async function runSteps(steps: StepDescriptor[], opts: RunOptions): Promi
       if (opts.dryRun) {
         for (const line of previewLines(step, opts.paths, m)) log(line)
       } else {
-        await execute(step, m, log, opts.signal)
+        const recovered = await execute(step, {
+          m,
+          log,
+          signal: opts.signal,
+          recovery: opts.recovery,
+          allowFallbacks: true,
+        })
+        if (recovered) report.recovery = recovered
       }
       // A manual-action note isn't a real success — nothing was installed — so
       // it reports as a warning, not a green "done".
@@ -179,47 +207,162 @@ export async function runSteps(steps: StepDescriptor[], opts: RunOptions): Promi
   return reports
 }
 
-async function execute(
-  step: StepDescriptor,
-  m: Messages,
-  log: (line: string) => void,
+/** Everything a step needs to run, threaded through so fallbacks can recurse. */
+interface ExecContext {
+  m: Messages
+  log: (line: string) => void
   signal?: AbortSignal
-): Promise<void> {
+  recovery?: RecoveryContext
+  /** False inside a fallback, so a fallback can never spawn fallbacks of its own. */
+  allowFallbacks: boolean
+}
+
+/**
+ * Run one command step, recovering from a network failure when the run was given
+ * a `RecoveryContext`. Resolves with the route that worked (when it wasn't the
+ * original command), or undefined for a plain first-try success.
+ *
+ * Only a non-zero exit with network-looking output is retried. A rejection —
+ * a missing binary, or our own 10-minute timeout kill — propagates untouched:
+ * those aren't transport hiccups a different mirror fixes, and re-running a
+ * command that already hung for ten minutes three more times would be worse
+ * than the failure.
+ */
+async function runCommandStep(
+  step: CommandStep,
+  ctx: ExecContext
+): Promise<StepRecovery | undefined> {
+  const { m, log } = ctx
+  const elevated = stepNeedsElevation(step)
+  // Kept alongside the report's own output so the classifier reads exactly what
+  // this command printed, not whatever earlier steps left behind.
+  const lines: string[] = []
+  const collect = (line: string) => {
+    lines.push(line)
+    log(line)
+  }
+
+  const attempt = (command: Command, env?: Record<string, string>) => {
+    log(`$ ${commandToString(command)}`)
+    // Warn before the UAC dialog steals focus, so the prompt isn't a surprise.
+    if (elevated) log(m.coreOutput.requestingElevation)
+    return api.runCommand(command, collect, {
+      opId: `op-${++opSeq}`,
+      timeoutSecs: COMMAND_TIMEOUT_SECS,
+      signal: ctx.signal,
+      elevated,
+      env,
+    })
+  }
+
+  const code = await attempt(step.command)
+  if (code === 0) return undefined
+
+  // "Already installed / up to date" from winget isn't a failure.
+  if (step.command.file === "winget" && WINGET_NO_OP_CODES.has(code)) {
+    log(m.coreOutput.alreadyCurrent)
+    return undefined
+  }
+  // A winget UPGRADE that finds no winget-managed package: the runtime is
+  // installed but came from another source, so winget can't update it in
+  // place. Warn with guidance instead of failing red (common on Windows 10
+  // where Node/Python came from an installer or a version manager).
+  if (
+    step.command.file === "winget" &&
+    step.command.args[0] === "upgrade" &&
+    code === WINGET_NOT_INSTALLED_CODE
+  ) {
+    throw new StepWarning(m.coreOutput.wingetUpdateNotManaged)
+  }
+  // The user dismissed the UAC prompt — a clean cancellation, not a crash.
+  if (elevated && code === ELEVATION_DECLINED_CODE) {
+    throw new Error(m.coreOutput.elevationDeclined)
+  }
+  const failure = new Error(
+    `${commandToString(step.command)} — ${m.coreOutput.exitedWithCode(code)}`
+  )
+
+  // A verify step is a `--version` probe; there is nothing to route around.
+  if (!ctx.recovery || step.verifyOnly) throw failure
+  if (classifyFailure(lines, code) !== "network") throw failure
+
+  log(m.coreOutput.networkFailure)
+  const recovered = await recoverCommand(step, ctx, attempt)
+  if (recovered) return recovered
+
+  log(m.coreOutput.recoveryExhausted)
+  throw failure
+}
+
+/**
+ * Walk the recovery ladder: first rewrites of the same command (a mirror, a
+ * proxy, both), then the step's wholly different routes. Returns the one that
+ * worked, or undefined when every option is spent.
+ */
+async function recoverCommand(
+  step: CommandStep,
+  ctx: ExecContext,
+  attempt: (command: Command, env?: Record<string, string>) => Promise<number>
+): Promise<StepRecovery | undefined> {
+  const { m, log } = ctx
+  const ladder = remediesFor(step.command, ctx.recovery!).slice(0, MAX_RECOVERY_ATTEMPTS)
+  for (const remedy of ladder) {
+    if (ctx.signal?.aborted) return undefined
+    log(m.coreOutput.retryingVia(remedy.label))
+    // A remedy that can't even spawn is just a dead rung, not a run-ending error.
+    const code = await attempt(remedy.command, remedy.env).catch(() => -1)
+    if (code === 0) {
+      log(m.coreOutput.recoveredVia(remedy.label))
+      return { remedyId: remedy.id, label: remedy.label, persist: remedy.persist }
+    }
+  }
+
+  if (!ctx.allowFallbacks) return undefined
+  for (const fallback of step.fallbacks ?? []) {
+    if (ctx.signal?.aborted) return undefined
+    log(m.coreOutput.retryingFallback(fallback.label))
+    try {
+      await execute(fallback, { ...ctx, allowFallbacks: false })
+      log(m.coreOutput.recoveredVia(fallback.label))
+      return { remedyId: `fallback:${fallback.id}`, label: fallback.label }
+    } catch {
+      // Try the next route; the original error is what gets reported if none work.
+    }
+  }
+  return undefined
+}
+
+async function execute(step: StepDescriptor, ctx: ExecContext): Promise<StepRecovery | undefined> {
+  const { m, log } = ctx
   switch (step.kind) {
-    case "command": {
-      const printable = commandToString(step.command)
-      log(`$ ${printable}`)
-      const elevated = stepNeedsElevation(step)
-      // Warn before the UAC dialog steals focus, so the prompt isn't a surprise.
-      if (elevated) log(m.coreOutput.requestingElevation)
-      const code = await api.runCommand(step.command, log, {
-        opId: `op-${++opSeq}`,
-        timeoutSecs: COMMAND_TIMEOUT_SECS,
-        signal,
-        elevated,
-      })
-      if (code === 0) return
-      // "Already installed / up to date" from winget isn't a failure.
-      if (step.command.file === "winget" && WINGET_NO_OP_CODES.has(code)) {
-        log(m.coreOutput.alreadyCurrent)
-        return
-      }
-      // A winget UPGRADE that finds no winget-managed package: the runtime is
-      // installed but came from another source, so winget can't update it in
-      // place. Warn with guidance instead of failing red (common on Windows 10
-      // where Node/Python came from an installer or a version manager).
-      if (
-        step.command.file === "winget" &&
-        step.command.args[0] === "upgrade" &&
-        code === WINGET_NOT_INSTALLED_CODE
-      ) {
-        throw new StepWarning(m.coreOutput.wingetUpdateNotManaged)
-      }
-      // The user dismissed the UAC prompt — a clean cancellation, not a crash.
-      if (elevated && code === ELEVATION_DECLINED_CODE) {
-        throw new Error(m.coreOutput.elevationDeclined)
-      }
-      throw new Error(`${printable} — ${m.coreOutput.exitedWithCode(code)}`)
+    case "command":
+      return runCommandStep(step, ctx)
+    case "releaseInstall": {
+      const r = m.coreOutput
+      const release = await api.githubLatestRelease(step.source.repo, step.mirrorPrefix)
+      const asset = pickReleaseAsset(step.source, release.assets, step.os, step.arch)
+      if (!asset) throw new Error(r.releaseNoAsset(step.title, release.tag, step.arch))
+      log(r.releaseFound(step.title, release.tag, asset.name))
+
+      // Progress is throttled by the backend; render it as a single line the
+      // step log overwrites rather than a scrolling wall of percentages.
+      let lastPct = -1
+      const path = await api.downloadReleaseAsset(
+        asset.url,
+        asset.name,
+        step.mirrorPrefix,
+        ({ received, total }) => {
+          const pct = total > 0 ? Math.floor((received / total) * 100) : -1
+          if (pct >= 0 && pct >= lastPct + 10) {
+            lastPct = pct
+            log(r.releaseDownloading(pct))
+          }
+        }
+      )
+      log(r.releaseDownloaded(path))
+      const code = await api.installPackage(path, log)
+      if (code !== 0) throw new Error(`${step.title} — ${r.exitedWithCode(code)}`)
+      return undefined
     }
     case "info": {
       for (const line of step.lines) log(line)

@@ -14,94 +14,16 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Input } from "@/components/ui/input"
-import { Switch } from "@/components/ui/switch"
-import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import {
   CONFIG_SECTIONS,
-  type ConfigField,
   defaultConfigToml,
-  getConfigValue,
-  isProviderScoped,
   parseConfigDoc,
-  resolveFieldPath,
   serializeConfigDoc,
-  setConfigValue,
 } from "@/lib/agentpack/ccconnect"
 import { readTextFile, writeTextFile } from "@/lib/tauri/commands"
 import { useT } from "@/lib/i18n/provider"
-import { TomlEditor } from "./toml-editor"
-
-/** Parse a comma/newline-separated input into a TOML string array (or undefined). */
-function parseStringList(input: string): string[] | undefined {
-  const items = input
-    .split(/[\n,]/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-  return items.length ? items : undefined
-}
-
-/** Render a TOML string array back into a comma-separated input value. */
-function stringListValue(value: unknown): string {
-  return Array.isArray(value) ? value.filter((v) => typeof v === "string").join(", ") : ""
-}
-
-/** Sentinel for "key absent" in Radix Select (it rejects empty item values). */
-const UNSET = "unset"
-
-/**
- * Text input backing a TOML string array. It keeps the *typed* text locally so
- * separators aren't normalized away mid-typing, and only re-adopts the external
- * value when the doc changes to a genuinely different list (e.g. on reload).
- */
-function StringListField({
-  id,
-  label,
-  placeholder,
-  disabled,
-  value,
-  onChange,
-}: {
-  id: string
-  label: string
-  placeholder?: string
-  disabled?: boolean
-  value: unknown
-  onChange: (list: string[] | undefined) => void
-}) {
-  const external = stringListValue(value)
-  const [text, setText] = useState(external)
-  const [prevExternal, setPrevExternal] = useState(external)
-  if (external !== prevExternal) {
-    setPrevExternal(external)
-    if (stringListValue(parseStringList(text)) !== external) setText(external)
-  }
-  return (
-    <div className="flex items-center justify-between gap-2">
-      <Label htmlFor={id} className="text-xs font-normal">
-        {label}
-      </Label>
-      <Input
-        id={id}
-        className="h-8 w-56 text-xs"
-        placeholder={placeholder}
-        disabled={disabled}
-        value={text}
-        onChange={(e) => {
-          setText(e.target.value)
-          onChange(parseStringList(e.target.value))
-        }}
-      />
-    </div>
-  )
-}
+import { CodeEditor } from "./code-editor"
+import { ConfigFormFields } from "./config-form"
 
 interface Props {
   /** Absolute path of ~/.cc-connect/config.toml. */
@@ -118,6 +40,10 @@ interface Props {
  * unknown keys ([[projects]], hooks, comments aside) survive a form edit via
  * smol-toml round-tripping. Form editing is disabled while the text doesn't
  * parse.
+ *
+ * The controls themselves live in `./config-form`, shared with the agent CLIs'
+ * editor — only the schema (`CONFIG_SECTIONS`) and this file's load/save are
+ * cc-connect-specific. `idPrefix="ccconf"` keeps the input ids stable.
  */
 export function CcConnectConfigEditor({ path, exists, onSaved }: Props) {
   const t = useT()
@@ -160,119 +86,6 @@ export function CcConnectConfigEditor({ path, exists, onSaved }: Props) {
     }
   }
 
-  const setField = (field: ConfigField, value: unknown) => {
-    if (!doc) return
-    const path = resolveFieldPath(doc, field.path)
-    if (!path) return // provider-scoped field with no provider chosen yet
-    setRaw(serializeConfigDoc(setConfigValue(doc, path, value)))
-  }
-
-  const renderField = (sectionKey: string, field: ConfigField) => {
-    const id = `ccconf-${sectionKey}-${field.key}`
-    const label = c.fields[field.key as keyof typeof c.fields]
-    // A `[section.<provider>]` credential field has nowhere to write until its
-    // provider is picked — disable it and nudge the user to choose one first.
-    const path = doc ? resolveFieldPath(doc, field.path) : null
-    const locked = isProviderScoped(field) && !path
-    const value = doc && path ? getConfigValue(doc, path) : undefined
-    switch (field.type) {
-      case "boolean":
-        return (
-          <div key={id} className="flex items-center justify-between gap-2">
-            <Label htmlFor={id} className="text-xs font-normal">
-              {label}
-            </Label>
-            <Switch
-              id={id}
-              checked={value === true}
-              disabled={locked}
-              onCheckedChange={(on) => setField(field, on)}
-            />
-          </div>
-        )
-      case "number":
-        return (
-          <div key={id} className="flex items-center justify-between gap-2">
-            <Label htmlFor={id} className="text-xs font-normal">
-              {label}
-            </Label>
-            <Input
-              id={id}
-              type="number"
-              className="h-8 w-32 text-xs"
-              disabled={locked}
-              value={typeof value === "number" ? value : ""}
-              onChange={(e) => {
-                const n = Number.parseInt(e.target.value, 10)
-                setField(field, Number.isNaN(n) ? undefined : n)
-              }}
-            />
-          </div>
-        )
-      case "select":
-        return (
-          <div key={id} className="flex items-center justify-between gap-2">
-            <Label htmlFor={id} className="text-xs font-normal">
-              {label}
-            </Label>
-            <Select
-              value={typeof value === "string" && value !== "" ? value : UNSET}
-              disabled={locked}
-              onValueChange={(v) => setField(field, v === UNSET ? undefined : v)}
-            >
-              <SelectTrigger id={id} size="sm" className="w-40 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(field.options ?? []).map((opt) =>
-                  opt === "" ? (
-                    <SelectItem key={UNSET} value={UNSET}>
-                      {c.unset}
-                    </SelectItem>
-                  ) : (
-                    <SelectItem key={opt} value={opt}>
-                      {opt}
-                    </SelectItem>
-                  )
-                )}
-                {(field.options ?? []).includes("") ? null : (
-                  <SelectItem value={UNSET}>{c.unset}</SelectItem>
-                )}
-              </SelectContent>
-            </Select>
-          </div>
-        )
-      case "string-list":
-        return (
-          <StringListField
-            key={id}
-            id={id}
-            label={label}
-            placeholder={locked ? c.providerFirst : field.placeholder}
-            disabled={locked}
-            value={value}
-            onChange={(list) => setField(field, list)}
-          />
-        )
-      default:
-        return (
-          <div key={id} className="flex items-center justify-between gap-2">
-            <Label htmlFor={id} className="text-xs font-normal">
-              {label}
-            </Label>
-            <Input
-              id={id}
-              className="h-8 w-56 text-xs"
-              placeholder={locked ? c.providerFirst : field.placeholder}
-              disabled={locked}
-              value={typeof value === "string" ? value : ""}
-              onChange={(e) => setField(field, e.target.value)}
-            />
-          </div>
-        )
-    }
-  }
-
   return (
     <Dialog
       open={open}
@@ -300,22 +113,29 @@ export function CcConnectConfigEditor({ path, exists, onSaved }: Props) {
             </TabsList>
             <TabsContent value="form">
               {doc ? (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  {CONFIG_SECTIONS.map((section) => (
-                    <div key={section.key} className="space-y-2 rounded-md border p-3">
-                      <div className="text-xs font-medium">
-                        {c.sections[section.key as keyof typeof c.sections]}
-                      </div>
-                      {section.fields.map((f) => renderField(section.key, f))}
-                    </div>
-                  ))}
-                </div>
+                <ConfigFormFields
+                  idPrefix="ccconf"
+                  sections={CONFIG_SECTIONS}
+                  doc={doc}
+                  onChange={(next) => setRaw(serializeConfigDoc(next))}
+                  labels={c.fields}
+                  sectionLabels={c.sections}
+                  unsetLabel={c.unset}
+                  lockedHint={t.configFiles.lockedHint}
+                  providerFirstHint={c.providerFirst}
+                  mapLabels={{
+                    add: t.configFiles.mapAdd,
+                    remove: t.configFiles.mapRemove,
+                    key: t.configFiles.mapKey,
+                    value: t.configFiles.mapValue,
+                  }}
+                />
               ) : (
                 <p className="text-sm text-muted-foreground">{c.formUnavailable}</p>
               )}
             </TabsContent>
             <TabsContent value="toml">
-              <TomlEditor ariaLabel={c.tabToml} value={raw} onChange={setRaw} />
+              <CodeEditor lang="toml" ariaLabel={c.tabToml} value={raw} onChange={setRaw} />
             </TabsContent>
           </Tabs>
         )}

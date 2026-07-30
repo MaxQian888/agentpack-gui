@@ -274,11 +274,21 @@ pub const ELEVATION_DECLINED: i32 = 1223;
 /// Returns `None` if the temp scaffolding can't be written; the caller then runs
 /// the command unelevated (graceful degradation to the prior behaviour).
 ///
+/// `env` is written into the INNER script as `$env:K='V'` rather than set on the
+/// outer process: `Start-Process -Verb RunAs` goes through the elevation broker,
+/// which builds the new process a fresh environment instead of inheriting ours.
+/// Without this, a recovery retry's proxy/mirror variables would silently vanish
+/// for exactly the elevated winget installs that most often need them.
+///
 /// Note: the elevated child runs in a separate high-integrity context, so it is
 /// NOT part of our process tree — `cancel_command`/timeout can stop the waiting
 /// outer shell but won't kill an in-flight elevated install.
 #[cfg(windows)]
-fn elevated_wrapper(file: &str, args: &[String]) -> Option<(String, Vec<String>)> {
+pub(crate) fn elevated_wrapper(
+  file: &str,
+  args: &[String],
+  env: &HashMap<String, String>,
+) -> Option<(String, Vec<String>)> {
   use std::sync::atomic::AtomicU64;
   static SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -303,8 +313,22 @@ fn elevated_wrapper(file: &str, args: &[String]) -> Option<(String, Vec<String>)
     call.push_str(&a.replace('\'', "''"));
     call.push('\'');
   }
+  // Sorted so the generated script is deterministic (a HashMap's order isn't).
+  let mut env_keys: Vec<&String> = env.keys().collect();
+  env_keys.sort();
+  let mut env_prelude = String::new();
+  for key in env_keys {
+    // Only plain env-var names reach the script — a crafted key would otherwise
+    // be spliced into PowerShell source as code rather than as a variable name.
+    if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+      continue;
+    }
+    let value = env[key].replace('\'', "''");
+    env_prelude.push_str(&format!("$env:{key}='{value}'\r\n"));
+  }
   let inner = format!(
     "$ErrorActionPreference='Continue'\r\n\
+     {env_prelude}\
      {call} > {out} 2>&1\r\n\
      Set-Content -LiteralPath {code} -Value \"$LASTEXITCODE\" -Encoding ascii\r\n",
     out = psq(&outp),
@@ -360,6 +384,12 @@ fn elevated_wrapper(file: &str, args: &[String]) -> Option<(String, Vec<String>)
 /// `elevated` (Windows only) runs the command through a UAC-elevating wrapper so
 /// machine-scope installs succeed instead of failing on permissions.
 ///
+/// `env` (optional) overlays extra variables on THIS spawn only. It is how the
+/// install-failure recovery ladder retries through a mirror or a proxy without
+/// writing anything to the user's machine: `HTTPS_PROXY`, `HOMEBREW_API_DOMAIN`,
+/// `UV_DEFAULT_INDEX` and friends live for one command and then are gone. Applied
+/// after `apply_env`, so a retry's values win over the process-wide proxy.
+///
 /// `(async)` on a sync fn makes Tauri run it on a worker thread instead of the
 /// main thread, so waiting on a slow subprocess never freezes the UI.
 #[tauri::command(async)]
@@ -370,7 +400,9 @@ pub fn run_command(
   op_id: Option<String>,
   timeout_secs: Option<u64>,
   elevated: Option<bool>,
+  env: Option<HashMap<String, String>>,
 ) -> Result<i32, String> {
+  let env = env.unwrap_or_default();
   // Resolve the target up front. On Windows every command is wrapped in `cmd /c`,
   // so a missing binary would otherwise spawn `cmd` fine and merely exit non-zero
   // — hiding the real "not found" cause the frontend keys its hints off. Probing
@@ -385,7 +417,7 @@ pub fn run_command(
   // unelevated if the temp scaffolding can't be written.
   #[cfg(windows)]
   let (file, args) = if elevated.unwrap_or(false) {
-    elevated_wrapper(&file, &args).unwrap_or((file, args))
+    elevated_wrapper(&file, &args, &env).unwrap_or((file, args))
   } else {
     (file, args)
   };
@@ -402,6 +434,11 @@ pub fn run_command(
     .env("npm_config_yes", "true")
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
+  // Last, so a per-run override (a recovery retry's mirror/proxy) beats both the
+  // process-wide proxy from `apply_env` and the defaults just set above.
+  for (key, value) in &env {
+    cmd.env(key, value);
+  }
   apply_process_group(&mut cmd);
 
   let mut child = cmd
@@ -594,20 +631,168 @@ fn cc_switch_installed() -> bool {
   on_path("cc-switch") || cc_switch_exe().is_some()
 }
 
+/// The name cc-switch's process actually reports to the OS.
+///
+/// On macOS this is NOT the bundle name: `pgrep -x` matches the executable
+/// inside `Contents/MacOS/`, which for `CC Switch.app` is whatever the app was
+/// built as. Guessing "cc-switch" there silently under-reported a running app —
+/// which made both the DB-write guardrail and the status badge lie. Read the
+/// real name off the bundle, and fall back to the CLI id everywhere else.
+pub(crate) fn cc_switch_process_name() -> String {
+  #[cfg(target_os = "macos")]
+  if let Some(bundle) = cc_switch_exe() {
+    if let Ok(rd) = std::fs::read_dir(bundle.join("Contents/MacOS")) {
+      if let Some(name) = rd
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .find_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+      {
+        return name;
+      }
+    }
+  }
+  "cc-switch".to_string()
+}
+
+/// Whether the cc-switch desktop app is running right now.
+///
+/// Wraps `is_process_running` with the resolved process name so callers don't
+/// have to know about the macOS bundle quirk. This backs both the "editing is
+/// blocked" guardrail and the status badge, so the two can never disagree.
+#[tauri::command(async)]
+pub fn cc_switch_running() -> bool {
+  is_process_running(cc_switch_process_name())
+}
+
+/// Poll until `name` is gone, or the deadline passes. Returns whether it exited.
+///
+/// A quit request returns immediately while the app is still tearing down, so
+/// without this the UI would refresh into a stale "still running" state and the
+/// user would think the button did nothing.
+fn wait_until_exited(name: &str, timeout: Duration) -> bool {
+  let deadline = Instant::now() + timeout;
+  while Instant::now() < deadline {
+    if !is_process_running(name.to_string()) {
+      return true;
+    }
+    std::thread::sleep(Duration::from_millis(150));
+  }
+  !is_process_running(name.to_string())
+}
+
+/// How long to let cc-switch shut down cleanly before escalating.
+const QUIT_GRACE: Duration = Duration::from_millis(3500);
+/// How long to wait after a forced kill before reporting failure.
+const QUIT_FORCE_GRACE: Duration = Duration::from_millis(1500);
+
+/// Ask the cc-switch desktop app to quit, and report whether it actually did.
+///
+/// Graceful first, forced only if that doesn't take: cc-switch owns the SQLite
+/// database agentpack also writes, and a clean shutdown lets it close its own
+/// connection and flush window state rather than leaving a WAL behind.
+///
+/// Returns `false` (not an error) when the app outlives both attempts — that's a
+/// result the UI can explain, not a crash.
+#[tauri::command(async)]
+pub fn quit_cc_switch() -> Result<bool, String> {
+  let name = cc_switch_process_name();
+  if !is_process_running(name.clone()) {
+    return Ok(true); // already gone — nothing to do
+  }
+
+  // ── Graceful ──
+  #[cfg(target_os = "macos")]
+  {
+    // AppleScript's `quit` is the real "Cmd+Q": the app runs its own shutdown
+    // path. Addressed by bundle name, which is what AppleScript understands.
+    if let Some(app_name) = cc_switch_exe()
+      .as_deref()
+      .and_then(std::path::Path::file_stem)
+      .and_then(|s| s.to_str())
+    {
+      let script = format!("tell application \"{}\" to quit", app_name.replace('"', ""));
+      let mut c = Command::new("osascript");
+      c.args(["-e", &script]);
+      apply_env(&mut c);
+      let _ = c.output();
+    }
+  }
+  #[cfg(windows)]
+  {
+    // Without /F, taskkill posts WM_CLOSE and the app shuts down normally.
+    let mut c = Command::new("taskkill");
+    c.args(["/IM", &format!("{name}.exe")]);
+    apply_no_window(&mut c);
+    apply_env(&mut c);
+    let _ = c.output();
+  }
+  #[cfg(all(not(windows), not(target_os = "macos")))]
+  {
+    let mut c = Command::new("pkill");
+    c.args(["-x", &name]);
+    apply_env(&mut c);
+    let _ = c.output();
+  }
+  // macOS fallback: an app that ignores AppleScript (or isn't scriptable) still
+  // answers SIGTERM, which Cocoa turns into a normal terminate.
+  #[cfg(target_os = "macos")]
+  if is_process_running(name.clone()) {
+    let mut c = Command::new("pkill");
+    c.args(["-x", &name]);
+    apply_env(&mut c);
+    let _ = c.output();
+  }
+
+  if wait_until_exited(&name, QUIT_GRACE) {
+    return Ok(true);
+  }
+
+  // ── Forced ──
+  #[cfg(windows)]
+  {
+    let mut c = Command::new("taskkill");
+    c.args(["/IM", &format!("{name}.exe"), "/T", "/F"]);
+    apply_no_window(&mut c);
+    apply_env(&mut c);
+    let _ = c.output();
+  }
+  #[cfg(not(windows))]
+  {
+    let mut c = Command::new("pkill");
+    c.args(["-9", "-x", &name]);
+    apply_env(&mut c);
+    let _ = c.output();
+  }
+  Ok(wait_until_exited(&name, QUIT_FORCE_GRACE))
+}
+
 /// Launch the cc-switch desktop app so it self-creates its SQLite database on
 /// first run (`run_command` can't be reused: it blocks until exit, which a GUI
 /// app never does). Resolves the real install path — winget/brew put it off
 /// PATH — and spawns it directly; falls back to a PATH launch when unresolved.
 /// stdio is detached so no pipes are held open.
+///
+/// Already running? On macOS it is brought to the front instead of started
+/// again: `open -n` forces a SECOND instance, and two cc-switch processes
+/// writing one SQLite file is exactly what the running-guardrail exists to
+/// prevent. Elsewhere the app's own single-instance handling takes over.
 #[tauri::command(async)]
 pub fn launch_cc_switch() -> Result<(), String> {
   let target = cc_switch_exe();
+  #[cfg(target_os = "macos")]
+  let already_running = is_process_running(cc_switch_process_name());
   let mut cmd = match &target {
-    // macOS ships a .app bundle → launch via `open -n`.
+    // macOS ships a .app bundle → hand it to `open`.
     #[cfg(target_os = "macos")]
     Some(app) => {
       let mut c = Command::new("open");
-      c.arg("-n").arg(app);
+      // `-n` only when nothing is running; otherwise plain `open` focuses the
+      // existing window, which is what "open cc-switch" should mean.
+      if !already_running {
+        c.arg("-n");
+      }
+      c.arg(app);
       c
     }
     // Windows: spawn the resolved .exe directly (no `cmd /c` → no PATHEXT or
@@ -809,7 +994,7 @@ pub struct DetectionResult {
 /// Look a binary up on PATH without executing it (`where` on Windows, else `which`).
 /// `where`/`which` are real executables, so they're spawned directly (not via the
 /// `cmd /c` wrapper), just with the window suppressed.
-fn on_path(bin: &str) -> bool {
+pub(crate) fn on_path(bin: &str) -> bool {
   let finder = if cfg!(windows) { "where" } else { "which" };
   let mut c = Command::new(finder);
   c.arg(bin);
@@ -1068,6 +1253,7 @@ mod tests {
       None,
       None,
       None,
+      None,
     );
     let err = res.expect_err("missing binary must be an error");
     assert!(err.contains("command not found"), "got: {err}");
@@ -1119,6 +1305,7 @@ mod tests {
       channel,
       Some("test-timeout".into()),
       Some(1),
+      None,
       None,
     );
     assert_eq!(res, Err(TIMEOUT_ERR.to_string()));

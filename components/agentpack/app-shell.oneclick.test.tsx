@@ -62,7 +62,10 @@ jest.mock("@/lib/tauri/settings", () => ({
     quickStartDismissed: false,
   },
 }))
-jest.mock("@/lib/tauri/system", () => ({ notify: jest.fn(async () => undefined) }))
+jest.mock("@/lib/tauri/system", () => ({
+  notify: jest.fn(async () => undefined),
+  hostArch: jest.fn(async () => "x64"),
+}))
 
 import { render, screen, waitFor } from "@testing-library/react"
 import { act } from "react"

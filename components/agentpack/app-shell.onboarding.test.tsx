@@ -61,7 +61,10 @@ jest.mock("@/lib/tauri/settings", () => ({
     quickStartDismissed: false,
   },
 }))
-jest.mock("@/lib/tauri/system", () => ({ notify: jest.fn(async () => undefined) }))
+jest.mock("@/lib/tauri/system", () => ({
+  notify: jest.fn(async () => undefined),
+  hostArch: jest.fn(async () => "x64"),
+}))
 
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -121,6 +124,9 @@ it("installing the recommended bundle marks onboarded and runs a deduped plan", 
   renderShell()
   await waitFor(() => expect(wizardHeading()).toBeInTheDocument())
 
+  // The wizard is three steps now — intro, network self-check, install.
+  await userEvent.click(screen.getByRole("button", { name: en.nav.continue }))
+  await userEvent.click(screen.getByRole("button", { name: en.nav.continue }))
   await userEvent.click(screen.getByRole("button", { name: en.welcome.install }))
 
   // Onboarded flag is persisted so the wizard won't nag next launch…

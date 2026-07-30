@@ -92,7 +92,15 @@ function DashboardHarness({ onNavigate }: { onNavigate: (key: SectionKey) => voi
     }
   }, [paths])
   return (
-    <DashboardSection scan={scan} scanning={scanning} rescan={rescan} onNavigate={onNavigate} />
+    <DashboardSection
+      scan={scan}
+      scanning={scanning}
+      rescan={rescan}
+      onNavigate={onNavigate}
+      // The spend card has its own suite; here it only needs to be a scanned,
+      // empty history so it renders its terminal state and not a skeleton.
+      history={{ data: { sessions: [], errors: [] }, progress: null }}
+    />
   )
 }
 

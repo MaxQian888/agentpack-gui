@@ -90,14 +90,28 @@ export const WELL_KNOWN_PROXY_PORTS: readonly {
 ]
 
 /**
- * Endpoints a connectivity test aims at: the API the agents talk to, the
- * registry their installs come from, and the host skills are downloaded from —
- * i.e. the three things that actually break on a restricted network.
+ * Endpoints a connectivity test aims at — every host an install actually
+ * depends on, so "the proxy works" means the whole flow works and not just the
+ * first hop. The first entry is the default target and the one the discovery
+ * card races candidates against, so it must stay the cheapest useful check.
+ *
+ * Grouped by what breaks without it: the API the agents talk to, the registries
+ * their packages come from, the hosts skills and release assets download from,
+ * and the four official install scripts.
  */
 export const PROXY_TEST_URLS: readonly { id: string; url: string }[] = [
   { id: "anthropic", url: "https://api.anthropic.com/v1/models" },
   { id: "npm", url: "https://registry.npmjs.org/" },
   { id: "github", url: "https://codeload.github.com/" },
+  { id: "github-api", url: "https://api.github.com/" },
+  // Where GitHub serves release binaries — the direct-install fallback's path.
+  { id: "github-assets", url: "https://objects.githubusercontent.com/" },
+  { id: "pypi", url: "https://pypi.org/simple/pip/" },
+  { id: "homebrew", url: "https://formulae.brew.sh/api/formula/wget.json" },
+  { id: "claude-install", url: "https://claude.ai/install.sh" },
+  { id: "codex-install", url: "https://chatgpt.com/codex/install.sh" },
+  { id: "bun-install", url: "https://bun.com/install" },
+  { id: "uv-install", url: "https://astral.sh/uv/install.sh" },
 ]
 
 /** Side effects discovery needs, injected so the merge logic stays pure. */

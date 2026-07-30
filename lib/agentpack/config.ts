@@ -16,27 +16,39 @@ export interface SerializeOptions {
  * credentials) are redacted by default so the file is safe to commit; on load
  * they are refilled from a provided secrets map via `fillSecrets`.
  */
+/**
+ * A copy of `plan` with every secret it carries stripped: MCP API keys, the
+ * proxy password and the client-key passphrase. Split out of `serializePlan` so
+ * the backup bundle — which also embeds plans inside saved profiles — redacts by
+ * calling this rather than by keeping a second list of secret fields in sync.
+ */
+export function redactPlan(plan: Plan): Plan {
+  return {
+    ...plan,
+    mcpKeys: {},
+    network: {
+      ...plan.network,
+      // The proxy password ends up inside the proxy URL wherever it is applied,
+      // but a shared config file must not carry it.
+      proxy: plan.network.proxy
+        ? { ...plan.network.proxy, password: undefined, clientKeyPassphrase: undefined }
+        : undefined,
+    },
+  }
+}
+
 export function serializePlan(plan: Plan, opts: SerializeOptions = {}): string {
-  const network = opts.includeSecrets
-    ? plan.network
-    : {
-        ...plan.network,
-        // The proxy password ends up inside the proxy URL wherever it is applied,
-        // but a shared config file must not carry it.
-        proxy: plan.network.proxy
-          ? { ...plan.network.proxy, password: undefined, clientKeyPassphrase: undefined }
-          : undefined,
-      }
+  const src = opts.includeSecrets ? plan : redactPlan(plan)
   const out = {
     version: CONFIG_VERSION,
-    os: plan.os,
-    clis: plan.clis,
+    os: src.os,
+    clis: src.clis,
     // Chosen install channel per CLI (undefined omitted by JSON.stringify).
-    cliMethods: plan.cliMethods,
-    skills: plan.skills,
-    mcps: plan.mcps,
-    mcpKeys: opts.includeSecrets ? plan.mcpKeys : {},
-    network,
+    cliMethods: src.cliMethods,
+    skills: src.skills,
+    mcps: src.mcps,
+    mcpKeys: src.mcpKeys,
+    network: src.network,
   }
   return JSON.stringify(out, null, 2) + "\n"
 }
@@ -47,20 +59,29 @@ export function serializePlan(plan: Plan, opts: SerializeOptions = {}): string {
  * and config files — so an unknown mode or target is dropped rather than carried
  * into the plan.
  */
+/**
+ * Narrow a loaded proxy block to a mode and targets we recognize. Exported so
+ * the backup bundle can apply the same rule to an imported `settings.proxy`,
+ * which reaches the app by exactly the same untrusted route.
+ */
+export function sanitizeProxy(raw: Plan["network"]["proxy"]): Plan["network"]["proxy"] {
+  if (!raw || typeof raw !== "object") return undefined
+  const mode: ProxyMode =
+    raw.mode === "manual" || raw.mode === "system" || raw.mode === "off" ? raw.mode : "off"
+  const targets = Array.isArray(raw.targets)
+    ? raw.targets.filter((t): t is ProxyTarget => PROXY_TARGETS.includes(t))
+    : []
+  return { ...raw, mode, targets }
+}
+
 function sanitizeNetwork(network: Plan["network"]): Plan["network"] {
   // Rebuilt from known fields rather than spread: a config written by an older
   // agentpack still carries `apiBaseUrl` / `apiToken` from the removed relay
   // card, and carrying those forward would resurrect a second writer for the
   // agent CLIs' endpoint. Relay config lives in the provider list now.
   const kept: Plan["network"] = { npmRegistry: network.npmRegistry }
-  const raw = network.proxy
-  if (!raw || typeof raw !== "object") return kept
-  const mode: ProxyMode =
-    raw.mode === "manual" || raw.mode === "system" || raw.mode === "off" ? raw.mode : "off"
-  const targets = Array.isArray(raw.targets)
-    ? raw.targets.filter((t): t is ProxyTarget => PROXY_TARGETS.includes(t))
-    : []
-  return { ...kept, proxy: { ...raw, mode, targets } }
+  const proxy = sanitizeProxy(network.proxy)
+  return proxy ? { ...kept, proxy } : kept
 }
 
 /**

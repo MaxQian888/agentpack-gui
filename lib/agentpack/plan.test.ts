@@ -322,7 +322,7 @@ it("drops a skill step entirely when installed on every target", () => {
   expect(ids).not.toContain("skill-rust")
 })
 
-it("emits an info step (manual note) when an OS has no installer", () => {
+describe("no package-manager path on this OS", () => {
   const linuxPlan = {
     ...plan,
     os: "linux" as const,
@@ -330,11 +330,102 @@ it("emits an info step (manual note) when an OS has no installer", () => {
     skills: [],
     mcps: [],
   }
-  const step = buildSteps(linuxPlan, { ...paths, os: "linux" }).find(
-    (s) => s.id === "cli-cc-switch"
-  )!
-  expect(step.kind).toBe("info")
-  expect(step.kind === "info" && step.lines.join(" ")).toMatch(/github\.com\/farion1231/)
+  const linuxPaths = { ...paths, os: "linux" as const }
+
+  it("installs cc-switch from its GitHub release instead of giving up", () => {
+    // Linux has no winget/brew for cc-switch, so a published release is the only
+    // automated path there is — and until now there was none at all.
+    const step = buildSteps(linuxPlan, linuxPaths).find((s) => s.id === "cli-cc-switch-release")!
+    expect(step.kind).toBe("releaseInstall")
+    expect(step.kind === "releaseInstall" && step.source.repo).toBe("farion1231/cc-switch")
+    expect(step.kind === "releaseInstall" && step.os).toBe("linux")
+  })
+
+  it("routes the release download through the configured GitHub mirror", () => {
+    const step = buildSteps(linuxPlan, linuxPaths, undefined, undefined, undefined, {
+      arch: "arm64",
+      ghMirrorPrefix: "https://ghfast.top/",
+    }).find((s) => s.id === "cli-cc-switch-release")!
+    expect(step.kind === "releaseInstall" && step.mirrorPrefix).toBe("https://ghfast.top/")
+    expect(step.kind === "releaseInstall" && step.arch).toBe("arm64")
+  })
+
+  it("still falls back to the manual note for a tool with no release either", () => {
+    const noRelease = { ...plan, os: "linux" as const, clis: [], skills: [], mcps: [] }
+    // node has no linux installer and no release source of its own.
+    const steps = buildSteps(
+      { ...noRelease, mcps: [] },
+      linuxPaths,
+      undefined,
+      new Set(["node"]) // pretend node exists so the prerequisite doesn't fire
+    )
+    expect(steps.find((s) => s.id === "cli-cc-switch")).toBeUndefined()
+  })
+})
+
+describe("network fallbacks on install steps", () => {
+  it("gives a winget cc-switch install the release download as a last resort", () => {
+    const winPlan = {
+      ...plan,
+      os: "win" as const,
+      clis: ["cc-switch" as const],
+      skills: [],
+      mcps: [],
+    }
+    const step = buildSteps(winPlan, { ...paths, os: "win" }).find((s) => s.id === "cli-cc-switch")!
+    expect(step.kind).toBe("command")
+    const fallbacks = step.kind === "command" ? (step.fallbacks ?? []) : []
+    // winget's downloader ignores HTTPS_PROXY, so fetching the installer
+    // ourselves is the only recovery that can work on a proxied network.
+    expect(fallbacks.map((f) => f.kind)).toContain("releaseInstall")
+  })
+
+  it("offers the vendor script as a different route from npm, but not pnpm/bun", () => {
+    const macPlan = {
+      ...plan,
+      os: "mac" as const,
+      clis: ["claude-code" as const],
+      skills: [],
+      mcps: [],
+    }
+    const step = buildSteps(macPlan, { ...paths, os: "mac" }, undefined, new Set(["node"])).find(
+      (s) => s.id === "cli-claude-code"
+    )!
+    const ids = step.kind === "command" ? (step.fallbacks ?? []).map((f) => f.id) : []
+    // pnpm/bun pull the same package from the same registry that just failed.
+    expect(ids).toEqual(["cli-claude-code-native"])
+  })
+
+  it("does not reroute an UPGRADE, which must match how the tool was installed", () => {
+    const macPlan = {
+      ...plan,
+      os: "mac" as const,
+      clis: ["claude-code" as const],
+      skills: [],
+      mcps: [],
+    }
+    const step = buildSteps(
+      macPlan,
+      { ...paths, os: "mac" },
+      undefined,
+      new Set(["node", "claude-code"]),
+      { versions: { "claude-code": "1.0.0" }, latest: { "claude-code": "2.0.0" } }
+    ).find((s) => s.id === "cli-claude-code")!
+    expect(step.kind === "command" && step.fallbacks).toBeUndefined()
+  })
+
+  it("gives a winget Node install the user-scope scoop route", () => {
+    const winPlan = {
+      ...plan,
+      os: "win" as const,
+      clis: ["claude-code" as const],
+      skills: [],
+      mcps: [],
+    }
+    const step = buildSteps(winPlan, { ...paths, os: "win" }).find((s) => s.id === "runtime-node")!
+    const ids = step.kind === "command" ? (step.fallbacks ?? []).map((f) => f.id) : []
+    expect(ids).toEqual(["runtime-node-scoop"])
+  })
 })
 
 it("skips unknown clis / skills / mcps and empty-target entries", () => {

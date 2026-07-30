@@ -42,6 +42,10 @@ pub struct LoginReport {
 }
 
 /// Keychain service name Claude Code writes its OAuth bundle under.
+///
+/// Gated like its only caller below: the Keychain exists only on macOS, and an
+/// ungated constant is dead code everywhere else — which `-D warnings` rejects.
+#[cfg(target_os = "macos")]
 const CLAUDE_KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 
 /// Is the Keychain item there? `find-generic-password` without `-w`/`-g` prints

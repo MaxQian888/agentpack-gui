@@ -1,20 +1,11 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback } from "react"
 import { isTauri } from "@/lib/tauri"
 import { normalizeProxyUrl } from "@/lib/agentpack/network/proxy"
-import {
-  discoverProxies,
-  type DiscoveryResult,
-  type ProxyCandidate,
-} from "@/lib/agentpack/network/discovery"
+import type { ProxyCandidate } from "@/lib/agentpack/network/discovery"
+import { scanNetwork } from "@/lib/agentpack/network/scan"
 import type { ProxyMode } from "@/lib/agentpack/types"
-import {
-  probePort,
-  proxyEnvSnapshot,
-  systemProxySnapshot,
-  toolProxySnapshot,
-} from "@/lib/tauri/commands"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "../section-shell"
@@ -31,39 +22,30 @@ import { MirrorsCard } from "./mirrors-card"
  * The API endpoint is deliberately absent: relay endpoints are provider rows
  * managed from the cc-switch section, so there is exactly one writer for them.
  *
- * The scan lives here rather than in the discovery card because the proxy card
- * needs it too: switching to "Follow system" adopts what discovery found, which
- * is the only way that mode can mean anything (the CLIs never read the OS proxy
- * panel themselves).
+ * The scan itself lives in the store, not here: it runs once at startup so that
+ * a user who never opens this section still gets working mirrors when an install
+ * fails, and so this section, the first-run wizard and the recovery ladder all
+ * read the same measured answer instead of each scanning separately.
  */
 export function NetworkSection() {
   const t = useT()
   const setProxy = useAppStore((s) => s.setProxy)
-  const [result, setResult] = useState<DiscoveryResult | null>(null)
-  const [scanning, setScanning] = useState(false)
-  const scannedRef = useRef(false)
+  const probe = useAppStore((s) => s.networkProbe)
+  const scanning = useAppStore((s) => s.networkProbing)
+  const setNetworkProbe = useAppStore((s) => s.setNetworkProbe)
+  const setNetworkProbing = useAppStore((s) => s.setNetworkProbing)
 
-  const scan = useCallback(async () => {
-    setScanning(true)
+  const rescan = useCallback(async () => {
+    if (!isTauri()) return
+    setNetworkProbing(true)
     try {
-      setResult(
-        await discoverProxies({
-          envSnapshot: proxyEnvSnapshot,
-          systemSnapshot: systemProxySnapshot,
-          toolSnapshot: toolProxySnapshot,
-          probePort,
-        })
-      )
+      setNetworkProbe(await scanNetwork())
+    } catch {
+      setNetworkProbe(null)
     } finally {
-      setScanning(false)
+      setNetworkProbing(false)
     }
-  }, [])
-
-  useEffect(() => {
-    if (!isTauri() || scannedRef.current) return
-    scannedRef.current = true
-    void scan()
-  }, [scan])
+  }, [setNetworkProbe, setNetworkProbing])
 
   // Adopt a discovered proxy. A SOCKS candidate goes to ALL_PROXY; anything else
   // fills both HTTP and HTTPS, which is what a single-endpoint proxy wants.
@@ -72,7 +54,6 @@ export function NetworkSection() {
       const parsed = normalizeProxyUrl(candidate.url)
       if (!parsed) return
       const socks = parsed.scheme.startsWith("socks")
-      const noProxy = result?.noProxy
       setProxy({
         mode:
           mode ??
@@ -80,10 +61,9 @@ export function NetworkSection() {
         httpUrl: socks ? undefined : parsed.url,
         httpsUrl: socks ? undefined : parsed.url,
         allUrl: socks ? parsed.url : undefined,
-        ...(noProxy ? { noProxy } : {}),
       })
     },
-    [result, setProxy]
+    [setProxy]
   )
 
   return (
@@ -92,8 +72,8 @@ export function NetworkSection() {
       subtitle={t.network.ask}
       help={<HelpTip text={t.help.network} />}
     >
-      <DiscoveryCard result={result} scanning={scanning} onScan={() => void scan()} onUse={adopt} />
-      <ProxyCard discovered={result?.candidates[0] ?? null} onAdopt={adopt} />
+      <DiscoveryCard probe={probe} scanning={scanning} onScan={() => void rescan()} onUse={adopt} />
+      <ProxyCard discovered={probe?.bestProxy ?? probe?.proxies[0] ?? null} onAdopt={adopt} />
       <MirrorsCard />
     </SectionShell>
   )

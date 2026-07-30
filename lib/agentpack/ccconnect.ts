@@ -1,4 +1,26 @@
-import { parse, stringify } from "smol-toml"
+import {
+  getConfigValue,
+  PROVIDER_TOKEN,
+  setConfigValue,
+  tomlFormat,
+  type ConfigDoc,
+  type ConfigSection,
+} from "./config-editor/schema"
+
+/**
+ * The generic editor engine lives in `./config-editor/schema` and serves every
+ * config file; this module keeps only what is cc-connect *knowledge* — its
+ * ports, its section schema, and the web-admin bootstrap. The re-exports below
+ * are the editor vocabulary this file's own schema is written in.
+ */
+export {
+  PROVIDER_TOKEN,
+  isProviderScoped,
+  resolveFieldPath,
+  getConfigValue,
+  setConfigValue,
+} from "./config-editor/schema"
+export type { ConfigField, ConfigSection } from "./config-editor/schema"
 
 /**
  * cc-connect (github.com/chenhg5/cc-connect) bridges local coding agents to
@@ -20,7 +42,7 @@ export const CC_CONNECT_BRIDGE_PORT = 9810
 export const CC_CONNECT_WEBHOOK_PORT = 9111
 
 /** Parsed config.toml document — a plain TOML object tree, unknown keys preserved. */
-export type CcConnectDoc = Record<string, unknown>
+export type CcConnectDoc = ConfigDoc
 
 function validPort(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 65535
@@ -31,17 +53,12 @@ function validPort(v: unknown): v is number {
  * auto-created by cc-connect itself, so garbage in must never break the section.
  */
 export function parseConfigDoc(toml: string): CcConnectDoc | null {
-  try {
-    const doc = parse(toml)
-    return doc && typeof doc === "object" ? (doc as CcConnectDoc) : null
-  } catch {
-    return null
-  }
+  return tomlFormat.parse(toml)
 }
 
 /** Serialize a config document back to TOML (unknown keys round-trip). */
 export function serializeConfigDoc(doc: CcConnectDoc): string {
-  return stringify(doc)
+  return tomlFormat.serialize(doc)
 }
 
 function sectionTable(doc: CcConnectDoc | null, section: string): Record<string, unknown> | null {
@@ -88,61 +105,6 @@ export function parseManagementToken(toml: string): string | undefined {
 export function dashboardUrl(port: number, token?: string): string {
   const base = `http://localhost:${port}`
   return token ? `${base}/?token=${encodeURIComponent(token)}` : base
-}
-
-/** Placeholder path segment resolved to the section's current `provider` value. */
-export const PROVIDER_TOKEN = "$provider"
-
-/** One editable scalar field in the visual config editor. */
-export interface ConfigField {
-  /**
-   * Dotted path into the doc, e.g. ["management", "port"]. A `PROVIDER_TOKEN`
-   * segment is resolved at edit time to the sibling `provider` value, so
-   * `["speech", PROVIDER_TOKEN, "api_key"]` targets cc-connect's nested
-   * `[speech.<provider>]` credential table.
-   */
-  path: string[]
-  /** i18n label key under t.ccconnect.fields. */
-  key: string
-  /**
-   * `string-list` edits a TOML array of strings (e.g. `cors_origins`) via a
-   * single comma/newline-separated text input.
-   */
-  type: "string" | "number" | "boolean" | "select" | "string-list"
-  options?: string[]
-  /** Placeholder / example text shown in the empty input. */
-  placeholder?: string
-}
-
-/** One form section of the visual editor (mirrors cc-connect's TOML sections). */
-export interface ConfigSection {
-  /** i18n title key under t.ccconnect.sections. */
-  key: string
-  fields: ConfigField[]
-}
-
-/** Whether a field targets a `[section.<provider>]` credential table. */
-export function isProviderScoped(field: ConfigField): boolean {
-  return field.path.includes(PROVIDER_TOKEN)
-}
-
-/**
- * Resolve a field path, substituting each `PROVIDER_TOKEN` with the current
- * `provider` value of its enclosing section. Returns null when the provider
- * isn't chosen yet (so a credential field has nowhere to write).
- */
-export function resolveFieldPath(doc: CcConnectDoc, path: string[]): string[] | null {
-  const out: string[] = []
-  for (let i = 0; i < path.length; i++) {
-    if (path[i] === PROVIDER_TOKEN) {
-      const provider = getConfigValue(doc, [...path.slice(0, i), "provider"])
-      if (typeof provider !== "string" || provider === "") return null
-      out.push(provider)
-    } else {
-      out.push(path[i])
-    }
-  }
-  return out
 }
 
 /**
@@ -316,47 +278,6 @@ export const CONFIG_SECTIONS: ConfigSection[] = [
     ],
   },
 ]
-
-/** Read a dotted-path value out of a doc (undefined when any segment is absent). */
-export function getConfigValue(doc: CcConnectDoc, path: string[]): unknown {
-  let cur: unknown = doc
-  for (const seg of path) {
-    if (!cur || typeof cur !== "object") return undefined
-    cur = (cur as Record<string, unknown>)[seg]
-  }
-  return cur
-}
-
-/**
- * Return a new doc with `path` set to `value` (undefined deletes the key, and
- * intermediate tables are created / pruned as needed). Non-destructive so React
- * state updates stay referentially honest.
- */
-export function setConfigValue(doc: CcConnectDoc, path: string[], value: unknown): CcConnectDoc {
-  const next: CcConnectDoc = { ...doc }
-  let cur = next
-  for (let i = 0; i < path.length - 1; i++) {
-    const seg = path[i]
-    const child = cur[seg]
-    cur[seg] = child && typeof child === "object" ? { ...(child as CcConnectDoc) } : {}
-    cur = cur[seg] as CcConnectDoc
-  }
-  const last = path[path.length - 1]
-  const empty = value === undefined || value === "" || (Array.isArray(value) && value.length === 0)
-  if (empty) delete cur[last]
-  else cur[last] = value
-  // Prune tables the delete emptied so the file doesn't accumulate `[x]` husks.
-  for (let i = path.length - 2; i >= 0; i--) {
-    const parent = path
-      .slice(0, i)
-      .reduce<CcConnectDoc>((acc, seg) => acc[seg] as CcConnectDoc, next)
-    const table = parent[path[i]] as CcConnectDoc
-    if (table && typeof table === "object" && Object.keys(table).length === 0) {
-      delete parent[path[i]]
-    }
-  }
-  return next
-}
 
 /**
  * Ensure the management dashboard is turned on with a non-empty login token,

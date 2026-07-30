@@ -9,6 +9,14 @@ import type {
   ProxyConfig,
 } from "@/lib/agentpack/types"
 import { DEFAULT_PROXY } from "@/lib/agentpack/network/proxy"
+import {
+  isDefaultBrew,
+  isDefaultMirror,
+  pickMirror,
+  type NetworkProbeResult,
+} from "@/lib/agentpack/network/probe"
+import { brewMirrorEnv } from "@/lib/agentpack/network/mirrors"
+import type { RecoveryContext } from "@/lib/agentpack/network/recovery"
 import type { Profile } from "@/lib/agentpack/profile"
 import { findPreset, mcpTargetsFor, skillTargetsFor } from "@/lib/agentpack/presets"
 import type { UpdateInfo } from "@/lib/tauri/updater"
@@ -75,6 +83,18 @@ interface State {
    * confirmed `false`, then swaps them for a download link.
    */
   runtimeOwned: Record<string, boolean>
+  /**
+   * What one measured pass learned about this machine's network: which proxies
+   * work, whether the direct route works at all, and which mirrors are fastest.
+   *
+   * Held centrally because three surfaces need the same answer — the Network
+   * section, the first-run wizard's self-check, and the install-failure recovery
+   * ladder — and each running its own scan would let them disagree about what
+   * works. null until the startup probe lands (or when not running under Tauri).
+   */
+  networkProbe: NetworkProbeResult | null
+  /** True while the probe is in flight, so the UI can show it working. */
+  networkProbing: boolean
   profiles: Profile[]
   currentProfileId: string | null
 
@@ -99,6 +119,14 @@ interface State {
   setLatestVersion: (id: string, version: string) => void
   setCliManager: (id: string, manager: CliInstallManager) => void
   setRuntimeOwned: (id: string, owned: boolean) => void
+  setNetworkProbe: (result: NetworkProbeResult | null) => void
+  setNetworkProbing: (probing: boolean) => void
+  /**
+   * The mirrors + proxy an install failure should retry through, derived from
+   * the last probe. Undefined when nothing has been measured yet, which is what
+   * keeps the runner's recovery inert instead of guessing at URLs.
+   */
+  recoveryContext: () => RecoveryContext | undefined
   setPaths: (p: Paths) => void
   toggleDryRun: () => void
   setOsOverride: (os: OS | null) => void
@@ -150,6 +178,8 @@ export const useAppStore = create<State>((set, get) => ({
   latestVersions: {},
   cliManagers: {},
   runtimeOwned: {},
+  networkProbe: null,
+  networkProbing: false,
   profiles: [],
   currentProfileId: null,
 
@@ -184,6 +214,31 @@ export const useAppStore = create<State>((set, get) => ({
     set((s) => ({ cliManagers: { ...s.cliManagers, [id]: manager } })),
   setRuntimeOwned: (id, owned) =>
     set((s) => ({ runtimeOwned: { ...s.runtimeOwned, [id]: owned } })),
+  setNetworkProbe: (networkProbe) => set({ networkProbe }),
+  setNetworkProbing: (networkProbing) => set({ networkProbing }),
+  recoveryContext: () => {
+    const probe = get().networkProbe
+    if (!probe) return undefined
+    // "repair" mode: this is only ever consulted after something already failed,
+    // so the fastest working mirror wins even when it isn't the official one.
+    const npm = pickMirror(probe.npm, "repair", isDefaultMirror)
+    const pypi = pickMirror(probe.pypi, "repair", isDefaultMirror)
+    const brew = pickMirror(probe.brew, "repair", isDefaultBrew)
+    const ctx: RecoveryContext = {
+      proxyUrl: probe.bestProxy?.url ?? null,
+      npmRegistry: npm?.preset.url ?? null,
+      pypiIndex: pypi?.preset.url ?? null,
+      brewEnv: brewMirrorEnv(brew?.preset),
+    }
+    const noProxy = get().plan.network.proxy?.noProxy
+    if (noProxy) ctx.noProxy = noProxy
+    // Nothing measured as usable — return undefined rather than a context full of
+    // nulls, so the runner stays inert instead of "retrying" with no change.
+    if (!ctx.proxyUrl && !ctx.npmRegistry && !ctx.pypiIndex && !Object.keys(ctx.brewEnv!).length) {
+      return undefined
+    }
+    return ctx
+  },
   setPaths: (p) => set((s) => ({ paths: p, plan: { ...s.plan, os: s.osOverride ?? p.os } })),
   toggleDryRun: () => set((s) => ({ dryRun: !s.dryRun })),
   setOsOverride: (os) =>

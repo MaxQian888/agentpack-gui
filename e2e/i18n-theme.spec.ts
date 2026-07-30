@@ -4,16 +4,17 @@ import { openApp } from "./helpers"
 test.beforeEach(async ({ page }) => openApp(page))
 
 test("switches interface language between English and Chinese", async ({ page }) => {
-  // Sidebar starts in English. The language select's own aria-label is localized,
-  // so locate it by its displayed value (EN / 中文) instead.
+  // Sidebar starts in English. Language lives behind the header's settings gear
+  // as a radio group — the trigger's aria-label is localized, so it is matched
+  // per language rather than once.
   await expect(page.getByRole("button", { name: "Quick setup (preset)" })).toBeVisible()
 
-  await page.getByRole("combobox").filter({ hasText: "EN" }).click()
-  await page.getByRole("option", { name: "中文" }).click()
+  await page.getByRole("button", { name: "Settings" }).click()
+  await page.getByRole("menuitemradio", { name: "中文" }).click()
   await expect(page.getByRole("button", { name: "一键预设安装" })).toBeVisible()
 
-  await page.getByRole("combobox").filter({ hasText: "中文" }).click()
-  await page.getByRole("option", { name: "EN" }).click()
+  await page.getByRole("button", { name: "设置" }).click()
+  await page.getByRole("menuitemradio", { name: "EN" }).click()
   await expect(page.getByRole("button", { name: "Quick setup (preset)" })).toBeVisible()
 })
 

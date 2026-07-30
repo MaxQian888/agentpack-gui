@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { useT } from "@/lib/i18n/provider"
-import type { SectionKey } from "./sidebar-nav"
+import { SECTIONS, type SectionKey } from "./sidebar-nav"
 
 /**
  * One stop on the tour: which section to switch to first (auto-navigation) and
@@ -17,22 +17,24 @@ interface TourStep {
 }
 
 /**
- * The ordered walkthrough. Each section step lands on that section and
- * highlights its heading; the last two highlight the header controls that tie
- * the whole flow together (preview + run). Keep the ids in sync with
- * `messages.tour.steps`.
+ * The ordered walkthrough: the sidebar, then **every** section in the order it
+ * appears there, then the two header controls that tie the flow together
+ * (preview + run).
+ *
+ * Every section gets a stop on purpose — a tour that skips five of them leaves
+ * the user believing those features don't exist. The section list is derived
+ * from `SECTIONS` rather than retyped, so adding a section to the sidebar
+ * without giving it a stop here is impossible; `guided-tour.test.tsx` also
+ * asserts each stop has copy in both languages.
+ *
+ * Step ids match the section keys, which is what `messages.tour.steps` is keyed
+ * by.
  */
 const STEPS: readonly TourStep[] = [
   { id: "nav", section: "dashboard", target: "nav" },
-  { id: "dashboard", section: "dashboard", target: "section-heading" },
-  { id: "presets", section: "presets", target: "section-heading" },
-  { id: "clis", section: "clis", target: "section-heading" },
-  { id: "skills", section: "skills", target: "section-heading" },
-  { id: "mcp", section: "mcp", target: "section-heading" },
-  { id: "network", section: "network", target: "section-heading" },
-  { id: "ccswitch", section: "ccswitch", target: "section-heading" },
-  { id: "preview", section: "dashboard", target: "preview" },
-  { id: "run", section: "dashboard", target: "run" },
+  ...SECTIONS.map((s) => ({ id: s.key, section: s.key, target: "section-heading" })),
+  { id: "preview", section: "dashboard" as SectionKey, target: "preview" },
+  { id: "run", section: "dashboard" as SectionKey, target: "run" },
 ]
 
 interface Rect {

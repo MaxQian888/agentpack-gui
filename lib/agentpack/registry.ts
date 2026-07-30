@@ -330,6 +330,29 @@ export const CLI_TOOLS: readonly CliTool[] = [
       },
       mac: { file: "brew", args: ["uninstall", "--cask", "cc-switch"] },
     },
+    // cc-switch is a Tauri app, so its releases carry the standard bundle set.
+    // This is the ONLY automated path on Linux, and the last rung of the recovery
+    // ladder on Windows/macOS — winget's downloader ignores `HTTPS_PROXY`
+    // entirely, so on a proxied network fetching the installer ourselves is the
+    // only thing that can work.
+    release: {
+      repo: "farion1231/cc-switch",
+      asset: {
+        // NSIS `-setup.exe` first; `.msi` is matched too since Tauri can bundle
+        // either and which one a release ships has changed before.
+        win: { pattern: "\\.(?:exe|msi)$", arch: { x64: "x64.*\\.(?:exe|msi)$" } },
+        mac: {
+          pattern: "\\.dmg$",
+          arch: { arm64: "(?:aarch64|arm64).*\\.dmg$", x64: "(?:x64|x86_64|intel).*\\.dmg$" },
+        },
+        // AppImage before .deb: it needs no root and works on every distro,
+        // whereas a .deb install requires pkexec and an apt-based system.
+        linux: {
+          pattern: "\\.AppImage$",
+          arch: { x64: "(?:amd64|x86_64).*\\.AppImage$", arm64: "(?:aarch64|arm64).*\\.AppImage$" },
+        },
+      },
+    },
     manualNote:
       "On Linux, download the .deb / .AppImage from https://github.com/farion1231/cc-switch/releases",
   },
@@ -537,6 +560,34 @@ export function installMethodsFor(
   if (explicit && explicit.length > 0) return explicit
   const cmd = tool.install[os]
   return cmd ? [{ id: "default", command: cmd }] : []
+}
+
+/**
+ * The network route an install method takes. Two methods sharing a route fail
+ * together, so only a route change is worth retrying after a network failure.
+ */
+function routeOf(methodId: string): string {
+  // npm, pnpm and bun all pull the same package from the same registry.
+  if (["npm", "pnpm", "bun", "default"].includes(methodId)) return "npm-registry"
+  return methodId // native (vendor script), winget, scoop — each its own host
+}
+
+/**
+ * Install methods that reach the package by a genuinely DIFFERENT route than
+ * `chosenId` — the only ones worth trying after a network failure.
+ *
+ * Falling back from npm to pnpm would hit the same registry that just timed out,
+ * and on most machines pnpm isn't even installed, so it would fail twice as
+ * slowly for nothing. Falling back from npm to the vendor's own install script
+ * (a different host entirely), or from winget to scoop, actually can work.
+ */
+export function fallbackMethodsFor(
+  tool: Pick<CliTool, "install" | "methods">,
+  os: OS,
+  chosenId: string | undefined
+): InstallMethod[] {
+  const chosenRoute = routeOf(chosenId ?? "default")
+  return installMethodsFor(tool, os).filter((m) => routeOf(m.id) !== chosenRoute)
 }
 
 /**

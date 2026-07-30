@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { isTauri } from "@/lib/tauri"
 import { readTextFile, writeTextFile } from "@/lib/tauri/commands"
+import { pickFile, pickSavePath } from "@/lib/tauri/dialog"
 import { parseConfig, serializePlan } from "@/lib/agentpack/config"
 import {
   parseProfiles,
@@ -18,9 +19,12 @@ import {
 } from "@/lib/agentpack/profile"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
+import { ExportBundleDialog } from "./bundle/export-dialog"
+import { ImportBundleDialog } from "./bundle/import-dialog"
+import { ConfigFilesCard } from "./sections/config-files-card"
 import { SectionShell } from "./sections/section-shell"
 
-export function ConfigIO() {
+export function ConfigIO({ onOpenMcp }: { onOpenMcp?: () => void }) {
   const t = useT()
   const plan = useAppStore((s) => s.plan)
   const loadPlan = useAppStore((s) => s.loadPlan)
@@ -87,8 +91,7 @@ export function ConfigIO() {
 
   const save = async () => {
     if (!isTauri()) return toast.error(t.shell.notInTauri)
-    const { save: saveDialog } = await import("@tauri-apps/plugin-dialog")
-    const path = await saveDialog({ defaultPath: "agentpack.config.json" })
+    const path = await pickSavePath({ defaultPath: "agentpack.config.json" })
     if (!path) return
     await writeTextFile(path, serializePlan(plan))
     toast.success(t.shell.configSaved(path))
@@ -96,9 +99,8 @@ export function ConfigIO() {
 
   const load = async () => {
     if (!isTauri()) return toast.error(t.shell.notInTauri)
-    const { open } = await import("@tauri-apps/plugin-dialog")
-    const path = await open({ filters: [{ name: "json", extensions: ["json"] }] })
-    if (!path || typeof path !== "string") return
+    const path = await pickFile([{ name: "json", extensions: ["json"] }])
+    if (!path) return
     try {
       loadPlan(parseConfig(await readTextFile(path), t))
       toast.success(t.shell.configLoaded)
@@ -198,6 +200,21 @@ export function ConfigIO() {
           {t.shell.loadConfig}
         </Button>
       </Card>
+
+      {/* The plan-only buttons above stay as they are — the headless CLI path
+          consumes that format. This is the whole-machine backup alongside it. */}
+      <Card className="gap-3 p-5">
+        <div>
+          <div className="text-sm font-medium">{t.bundle.title}</div>
+          <p className="text-xs text-muted-foreground">{t.bundle.subtitle}</p>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <ExportBundleDialog />
+          <ImportBundleDialog />
+        </div>
+      </Card>
+
+      <ConfigFilesCard onOpenMcp={onOpenMcp} />
     </SectionShell>
   )
 }

@@ -1,10 +1,13 @@
 const mockIsTauri = jest.fn(() => true)
 jest.mock("@/lib/tauri", () => ({ isTauri: () => mockIsTauri() }))
 
+// Mock the picker module itself rather than the underlying plugin: `pickSavePath`
+// reaches the plugin through `await import(...)`, and resolving that virtual
+// module inside the assertion window made these tests the slowest in the suite —
+// slow enough that they intermittently blew `waitFor`'s budget under load. There
+// is a dedicated suite for lib/tauri/dialog.ts; this one is about the dashboard.
 const mockSave = jest.fn<Promise<string | null>, unknown[]>()
-jest.mock("@tauri-apps/plugin-dialog", () => ({ save: (...a: unknown[]) => mockSave(...a) }), {
-  virtual: true,
-})
+jest.mock("@/lib/tauri/dialog", () => ({ pickSavePath: (...a: unknown[]) => mockSave(...a) }))
 
 const mockWrite = jest.fn<Promise<void>, [string, string]>(async () => {})
 jest.mock("@/lib/tauri/commands", () => ({

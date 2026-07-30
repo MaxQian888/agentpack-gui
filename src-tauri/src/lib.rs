@@ -1,6 +1,7 @@
 mod backup;
 mod ccswitch;
 mod commands;
+mod download;
 mod exec;
 mod fsops;
 mod history;
@@ -109,6 +110,8 @@ pub fn run() {
       exec::run_command,
       exec::cancel_command,
       exec::launch_cc_switch,
+      exec::quit_cc_switch,
+      exec::cc_switch_running,
       exec::detect_cli,
       exec::latest_version,
       exec::npm_owns,
@@ -121,6 +124,7 @@ pub fn run() {
       exec::command_on_path,
       fsops::read_text_file,
       fsops::write_text_file,
+      fsops::write_binary_file,
       fsops::path_exists,
       fsops::remove_dir,
       fsops::list_skills,
@@ -147,6 +151,9 @@ pub fn run() {
       net::proxy_check,
       net::http_get,
       net::set_process_proxy,
+      download::github_latest_release,
+      download::download_release_asset,
+      download::install_package,
       ccswitch::cc_load_providers,
       ccswitch::cc_write_provider,
       ccswitch::cc_schema_status,

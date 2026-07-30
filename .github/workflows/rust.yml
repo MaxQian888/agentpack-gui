@@ -1,0 +1,161 @@
+name: Rust
+
+# ============================================================================
+# Rust Test Suite (cross-platform)
+# ============================================================================
+# `src-tauri/` carries the whole side-effect layer — process exec, filesystem,
+# path resolution, the cc-switch SQLite DB and the three on-disk history
+# formats. Almost all of it branches on the OS, so running its tests on Linux
+# alone proves very little: `codex_home`'s env handling, path separators,
+# windowless child processes and the winget/PowerShell command shapes only
+# fail on the platform they target.
+#
+# This workflow is the counterpart to build-tauri.yml: that one proves the app
+# *compiles* everywhere, this one proves it *behaves* everywhere.
+#
+# Works OUT-OF-THE-BOX without any secrets.
+# ============================================================================
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.platform }})
+    runs-on: ${{ matrix.platform }}
+    # Must exceed the build step's own budget, or the job kills the build before
+    # the cache can be saved and every run starts cold again — which is how this
+    # job spent five attempts never once getting past compilation on Linux. The
+    # per-step budgets below are the real bounds; this is only a backstop.
+    timeout-minutes: 60
+
+    strategy:
+      # One platform failing must not hide the others — the whole point is to
+      # see which platforms disagree.
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install system dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          cache-on-failure: true
+
+      # src-tauri/rust-toolchain.toml pins the toolchain (1.95). rustup honours
+      # that override per directory, so the components must be added from
+      # src-tauri — adding them to the default `stable` would install them on
+      # the wrong toolchain and `cargo fmt`/`clippy` would then fail to launch.
+      - name: Add clippy to the pinned toolchain
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          rustup show
+          rustup component add clippy
+
+      # `generate_context!` reads tauri.conf.json at compile time and refuses to
+      # build when `frontendDist` (../out) is missing. The Rust tests never serve
+      # a single asset, so a stub keeps this workflow from paying for a full
+      # Next.js build on three platforms. build-tauri.yml still compiles against
+      # the real export.
+      - name: Stub the frontend dist
+        shell: bash
+        run: |
+          mkdir -p out
+          echo '<!doctype html><title>stub</title>' > out/index.html
+
+      # No `cargo fmt --check` here on purpose — see src-tauri/rustfmt.toml.
+      #
+      # Runs everywhere: clippy sees a different tree per platform because of
+      # #[cfg(...)], so a lint clean on Linux says nothing about Windows.
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      # Building the tests is a separate step from running them, because the two
+      # failure modes look identical from the outside and are not remotely the
+      # same problem. `cargo clippy` only type-checks, so a warm clippy cache
+      # says nothing about codegen: the first `cargo test` here has to compile
+      # the whole tree — tauri, a bundled SQLite — for real. Splitting them means
+      # a slow cold build can never again be mistaken for a hanging test.
+      - name: cargo test (build)
+        working-directory: src-tauri
+        timeout-minutes: 40
+        run: cargo test --all-features --no-run
+
+      # Serial on purpose, for two reasons. Several tests mutate process-global
+      # state — env vars behind TEST_ENV_LOCK, AGENTPACK_SKILL_BACKUP_ROOT — and
+      # a lock is a weaker guarantee than simply not racing. It also makes a hang
+      # diagnosable: libtest prints each test's name *before* running it when
+      # single-threaded, so a killed run still names the test it died in. With
+      # the default thread pool a blocked test prints nothing at all.
+      #
+      # Now that the build is its own step, everything here is execution, and
+      # five minutes is enormously generous for a suite that takes eight seconds.
+      - name: cargo test (run)
+        working-directory: src-tauri
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          # The bound is `timeout(1)`, not the step's own `timeout-minutes`:
+          # GitHub records anything *it* kills as cancelled, and archives no log
+          # for a cancelled job. A command that exits on its own is an ordinary
+          # failure, and a failed job keeps its log. SIGINT first so libtest can
+          # flush the progress lines, SIGKILL after — `timeout` otherwise waits
+          # forever for a child that ignores the signal. macOS has no `timeout`
+          # (GNU coreutils), so it is applied only where it exists.
+          if command -v timeout >/dev/null 2>&1; then
+            bound=(timeout --signal=INT --kill-after=30 300)
+          else
+            bound=()
+          fi
+          # Redirected to a file, never piped: `timeout` kills cargo, but any
+          # process the run leaves behind inherits the write end of a pipe and
+          # `tee` then blocks on an EOF that never comes — which made the bound
+          # itself unbounded. Waiting on one process fixes that.
+          rc=0
+          "${bound[@]}" cargo test --all-features -- --test-threads=1 --nocapture \
+            > "$RUNNER_TEMP/cargo-test.txt" 2>&1 || rc=$?
+          tail -n 60 "$RUNNER_TEMP/cargo-test.txt"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::cargo test exited $rc (124/137 means the bound fired — the last 'test …' line above names the test that hung)"
+          fi
+          exit "$rc"
+
+      # Belt and braces: if log archiving misbehaves again, the transcript is
+      # still retrievable as an artifact.
+      - name: Upload test transcript
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cargo-test-${{ matrix.platform }}
+          path: ${{ runner.temp }}/cargo-test.txt
+          retention-days: 7
+          if-no-files-found: ignore

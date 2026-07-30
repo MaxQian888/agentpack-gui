@@ -1,9 +1,10 @@
 "use client"
 
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { runSteps } from "@/lib/agentpack/runner"
-import { buildVerifySteps, planHasSelections } from "@/lib/agentpack/plan"
+import { buildVerifySteps, planHasSelections, proxyApplySteps } from "@/lib/agentpack/plan"
+import { npmRegistryCommand } from "@/lib/agentpack/merge/network"
 import type { Plan, StepDescriptor, StepReport } from "@/lib/agentpack/types"
 import { useAppStore } from "@/store/app-store"
 import { useT } from "@/lib/i18n/provider"
@@ -48,6 +49,60 @@ export function useRunner(): RunnerState {
   const ctrl = useRef<AbortController | null>(null)
   const pending = useRef<StepDescriptor[]>([])
   const afterRun = useRef<Set<() => void>>(new Set())
+  // `execute` calls the persist prompt, and the persist prompt runs steps —
+  // a cycle React's hook ordering can't express directly, so it goes through a
+  // ref kept in sync below.
+  const executeRef = useRef<((steps: StepDescriptor[]) => Promise<StepReport[]>) | null>(null)
+
+  /**
+   * A retry through a mirror or proxy changed nothing on the machine — that's
+   * the design. So when one rescues an install, ask whether to make it stick,
+   * rather than either silently rewriting the user's config or leaving them to
+   * hit the same failure on every future run.
+   *
+   * Persisting reuses the writers that already exist (`npmRegistryCommand`,
+   * `proxyApplySteps`), so there is exactly one place that knows how to write
+   * each of these.
+   */
+  const offerToPersistRecovery = useCallback(
+    (reports: StepReport[]) => {
+      const hint = reports.find((r) => r.recovery?.persist)?.recovery
+      if (!hint?.persist) return
+      const persist = hint.persist
+      toast.success(t.shell.recoveredTitle(hint.label), {
+        description: t.shell.recoveredBody,
+        duration: 12_000,
+        action: {
+          label: t.shell.recoveredPersist,
+          onClick: () => {
+            const store = useAppStore.getState()
+            store.setPanelOpen(true)
+            if (persist.kind === "npmRegistry") {
+              store.setNetwork({ npmRegistry: persist.url })
+              void executeRef.current?.([
+                {
+                  kind: "command",
+                  id: "persist-npm-registry",
+                  label: t.steps.npmRegistry(persist.url),
+                  command: npmRegistryCommand(persist.url),
+                },
+              ])
+              return
+            }
+            // Adopt the proxy into the plan, then write it to every surface the
+            // user already has selected as a target.
+            store.setProxy({ mode: "manual", httpUrl: persist.url, httpsUrl: persist.url })
+            const next = useAppStore.getState()
+            if (!next.paths) return
+            void executeRef.current?.(
+              proxyApplySteps(next.plan.network.proxy, next.paths, next.plan.os, t)
+            )
+          },
+        },
+      })
+    },
+    [t]
+  )
 
   const execute = useCallback(
     async (steps: StepDescriptor[]): Promise<StepReport[]> => {
@@ -61,6 +116,10 @@ export function useRunner(): RunnerState {
         paths,
         messages: t,
         signal: ctrl.current.signal,
+        // Read at call time, not captured: the startup probe may have landed
+        // after this hook rendered. Undefined until something measured works,
+        // which is what keeps recovery from "retrying" with nothing to change.
+        recovery: useAppStore.getState().recoveryContext(),
         onUpdate: (r, i) =>
           setReports((prev) => {
             const next = [...prev]
@@ -72,11 +131,18 @@ export function useRunner(): RunnerState {
       // A real run may have installed/removed a tool — let subscribers re-detect
       // and re-scan so badges reflect reality without an app restart. Dry runs
       // change nothing, so they don't fire.
-      if (!dryRun) afterRun.current.forEach((fn) => fn())
+      if (!dryRun) {
+        afterRun.current.forEach((fn) => fn())
+        offerToPersistRecovery(reports)
+      }
       return reports
     },
-    [dryRun, paths, t]
+    [dryRun, paths, t, offerToPersistRecovery]
   )
+
+  useEffect(() => {
+    executeRef.current = execute
+  }, [execute])
 
   const run = useCallback(
     async (steps: StepDescriptor[], opts: RunOpts = {}): Promise<StepReport[]> => {

@@ -4,8 +4,19 @@
  */
 
 import "@testing-library/jest-dom"
+import { configure } from "@testing-library/react"
 import React from "react"
 import { webcrypto } from "node:crypto"
+
+// testing-library defaults `waitFor` to a 1s timeout, which is too tight for the
+// slowest chains here: the export flow goes dialog -> dynamic import of a
+// virtual-mocked Tauri plugin -> write, and the suite runs on capped workers
+// (see jest.config.ts). Under load those three usage-dashboard export tests
+// intermittently timed out and, because their code paths then went unexercised,
+// dragged global coverage under the 90% gate — turning a slow machine into a red
+// build. CI runners are slower still, so the budget is raised rather than the
+// assertions being loosened.
+configure({ asyncUtilTimeout: 5000 })
 
 // jsdom lacks matchMedia — needed by next-themes and the shadcn use-mobile hook.
 if (typeof window !== "undefined" && !window.matchMedia) {

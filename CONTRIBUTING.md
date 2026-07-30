@@ -7,6 +7,7 @@ Thank you for your interest in contributing to agentpack! This document provides
 - [Code of Conduct](#code-of-conduct)
 - [Getting Started](#getting-started)
 - [Development Setup](#development-setup)
+- [Architecture](#architecture)
 - [Making Changes](#making-changes)
 - [Commit Guidelines](#commit-guidelines)
 - [Pull Request Process](#pull-request-process)
@@ -36,44 +37,110 @@ See [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
 ### Prerequisites
 
 - **Node.js** 20.x or later
-- **pnpm** 8.x or later
-- **Rust** 1.70+ (for Tauri development)
+- **pnpm** 10.x (the repo pins it via `packageManager`)
+- **Rust** 1.95+ — pinned in `src-tauri/rust-toolchain.toml`
+- Platform toolchain for Tauri builds: MSVC Build Tools (Windows), Xcode Command
+  Line Tools (macOS), or the GTK/WebKit dev packages (Linux — see
+  `.github/workflows/build-tauri.yml` for the exact apt list)
 
 ### Installation
 
+This is a **pnpm workspace**; always install from the repo root.
+
 ```bash
-# Install dependencies
 pnpm install
 
-# Start development server
-pnpm dev
-
-# For Tauri desktop development
-pnpm tauri dev
+pnpm dev        # UI only, in a browser at http://localhost:3000
+pnpm tauri dev  # the real desktop app, with hot reload
 ```
+
+`pnpm dev` is useful for layout work, but every system-touching operation is a
+Tauri command — installs, scans and file writes only work under `pnpm tauri dev`.
+`isTauri()` gates those paths, and the UI says so when it's running in a browser.
 
 ### Verify Setup
 
 ```bash
-# Run linting
-pnpm lint
-
-# Run tests
-pnpm test
-
-# Check Tauri environment
-pnpm tauri info
+pnpm lint          # ESLint
+pnpm typecheck     # tsc --noEmit
+pnpm format:check  # Prettier
+pnpm test          # Jest
+pnpm tauri info    # Tauri environment report
 ```
+
+Rust lives under `src-tauri/`:
+
+```bash
+cd src-tauri
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-features
+```
+
+## Architecture
+
+The split that matters: **pure TypeScript logic** on one side, **Rust
+side-effects** on the other, with one typed bridge between them.
+
+| Layer        | Where                                           | Rule                                                  |
+| ------------ | ----------------------------------------------- | ----------------------------------------------------- |
+| Pure logic   | `lib/agentpack/`, `lib/history/`, `lib/skills/` | No Node builtins, no Tauri, no DOM. Unit-tested.      |
+| The bridge   | `lib/tauri/commands.ts`                         | The **only** place that calls `invoke()`.             |
+| Side-effects | `src-tauri/src/`                                | Process exec, filesystem, SQLite, network.            |
+| UI           | `components/agentpack/`                         | Prop-driven sections; scans are owned by `app-shell`. |
+
+Key consequences:
+
+- **Dry-run is structural.** In preview mode `lib/agentpack/runner.ts` renders
+  the "would …" lines locally and never calls a mutating Rust command. It cannot
+  accidentally write, because the write path isn't taken at all.
+- **A `Plan` becomes a `StepDescriptor[]`** (`lib/agentpack/plan.ts`) before
+  anything runs, so the same description drives both the preview and the run.
+- **History is read-only.** `src-tauri/src/history.rs` parses three on-disk
+  formats (Claude JSONL, Codex rollout JSONL, OpenCode SQLite) and normalizes
+  them into one model; nothing writes back.
+
+`CLAUDE.md` carries the deeper notes — the two-cache history scan, the Claude
+per-content-block dedup rule, the frameless-window config, and the accounting
+rules that must not drift.
+
+### Workspace layout
+
+| Path                    | What                                                                  |
+| ----------------------- | --------------------------------------------------------------------- |
+| `app/`                  | Next.js App Router (static export — do not remove `output: "export"`) |
+| `components/agentpack/` | The application UI                                                    |
+| `components/ui/`        | shadcn/ui primitives — all 57 are pre-installed                       |
+| `lib/`                  | Pure logic, the Tauri bridge, and the i18n catalog                    |
+| `src-tauri/`            | The Rust backend and Tauri config                                     |
+| `docs/`                 | Fumadocs site (a separate workspace package, port 3001)               |
+| `e2e/`                  | Playwright specs (web mode, Tauri mocked)                             |
+
+### Adding a Tauri command
+
+1. Write it in the right `src-tauri/src/*.rs` module.
+2. Register it in the `invoke_handler![…]` list in `src-tauri/src/lib.rs`.
+3. Add a typed wrapper to `lib/tauri/commands.ts` — nothing else may call
+   `invoke()` directly.
+4. Cover the wrapper in `lib/tauri/commands.test.ts`. A mismatch between the TS
+   argument key and the Rust parameter name compiles fine on both sides and only
+   fails at runtime, so that test is the guardrail.
+
+### Internationalization
+
+`lib/i18n/en.ts` is the source of truth and `Messages = typeof en`, so
+`zh-CN.ts` is type-checked against it — a missing or misspelled key is a
+compile error, not a runtime blank. Every user-visible string goes through
+`useT()`; nothing user-facing is hard-coded in a component.
 
 ## Making Changes
 
 ### Branch Naming
 
-Create a feature branch from `main`:
+Create a feature branch from `master`:
 
 ```bash
-git checkout main
-git pull upstream main
+git checkout master
+git pull upstream master
 git checkout -b <type>/<description>
 ```
 
@@ -96,8 +163,8 @@ Examples:
 
 ```bash
 git fetch upstream
-git checkout main
-git merge upstream/main
+git checkout master
+git merge upstream/master
 ```
 
 ## Commit Guidelines

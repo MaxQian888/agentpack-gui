@@ -21,6 +21,14 @@ export function previewLines(
   switch (step.kind) {
     case "command":
       return [`$ ${commandToString(step.command)}`, out.wouldRun(commandToString(step.command))]
+    case "releaseInstall":
+      // Named rather than resolved: looking the release up would be a network
+      // call, and dry-run's promise is that it never leaves the machine.
+      return [
+        step.mirrorPrefix
+          ? out.wouldReleaseInstallVia(step.title, step.source.repo, step.mirrorPrefix)
+          : out.wouldReleaseInstall(step.title, step.source.repo),
+      ]
     case "info":
       return step.lines
     case "mergeFile":

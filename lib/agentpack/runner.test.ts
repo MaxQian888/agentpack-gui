@@ -2,7 +2,7 @@ jest.mock("@/lib/tauri/commands")
 
 import * as api from "@/lib/tauri/commands"
 import { runSteps } from "./runner"
-import type { Paths, StepDescriptor } from "./types"
+import type { Command, Paths, StepDescriptor } from "./types"
 
 const paths = {
   home: "/h",
@@ -600,4 +600,190 @@ it("skillCreate writes the new skill into each target", async () => {
   const reports = await runSteps(steps, { dryRun: false, paths })
   expect(api.createSkill).toHaveBeenCalledWith("web", ["claude"], "---\nname: web\n---\n", false)
   expect(reports[0].status).toBe("done")
+})
+
+describe("network auto-recovery", () => {
+  const recovery = {
+    proxyUrl: "http://127.0.0.1:7890",
+    npmRegistry: "https://registry.npmmirror.com",
+    pypiIndex: null,
+  }
+  const NET_ERROR = "npm ERR! network request to https://registry.npmjs.org/x failed, ETIMEDOUT"
+  const npmStep: StepDescriptor = {
+    kind: "command",
+    id: "cli-claude-code",
+    label: "Install Claude Code",
+    command: { file: "npm", args: ["install", "-g", "@anthropic-ai/claude-code"] },
+  }
+
+  /** Fail every attempt whose env/args don't match `succeedOn`, succeed on that one. */
+  const mockAttempts = (
+    succeedOn: (cmd: Command, opts: { env?: Record<string, string> }) => boolean
+  ) =>
+    (api.runCommand as jest.Mock).mockImplementation(async (cmd, onLine, opts) => {
+      if (succeedOn(cmd, opts ?? {})) return 0
+      onLine(NET_ERROR)
+      return 1
+    })
+
+  it("retries through a mirror and reports how it was rescued", async () => {
+    mockAttempts((cmd) => cmd.args.includes("--registry=https://registry.npmmirror.com"))
+
+    const reports = await runSteps([npmStep], { dryRun: false, paths, recovery })
+
+    expect(reports[0].status).toBe("done")
+    expect(reports[0].recovery).toEqual({
+      remedyId: "npm-registry",
+      label: "registry.npmmirror.com",
+      persist: { kind: "npmRegistry", url: "https://registry.npmmirror.com" },
+    })
+    expect(reports[0].output.join("\n")).toContain("registry.npmmirror.com")
+  })
+
+  it("climbs to mirror+proxy when the mirror alone isn't enough", async () => {
+    mockAttempts((_cmd, opts) => !!opts.env?.HTTPS_PROXY)
+
+    const reports = await runSteps([npmStep], { dryRun: false, paths, recovery })
+
+    expect(reports[0].status).toBe("done")
+    expect(reports[0].recovery?.remedyId).toBe("npm-registry+proxy")
+    // The proxy reached the child as a per-spawn variable, not a config write.
+    const envs = (api.runCommand as jest.Mock).mock.calls.map(([, , o]) => o?.env)
+    expect(envs.at(-1)).toMatchObject({ HTTPS_PROXY: "http://127.0.0.1:7890" })
+  })
+
+  it("never writes anything to the machine while recovering", async () => {
+    mockAttempts((cmd) => cmd.args.includes("--registry=https://registry.npmmirror.com"))
+
+    await runSteps([npmStep], { dryRun: false, paths, recovery })
+
+    // The whole promise of a temporary downgrade: no npm config, no rc file, no
+    // settings.json touched just to make an install work.
+    expect(api.writeTextFile).not.toHaveBeenCalled()
+    const commands = (api.runCommand as jest.Mock).mock.calls.map(([c]) => `${c.file} ${c.args[0]}`)
+    expect(commands).not.toContain("npm config")
+  })
+
+  it("falls back to a different install route when every rewrite fails", async () => {
+    ;(api.runCommand as jest.Mock).mockImplementation(async (cmd, onLine) => {
+      if (cmd.file === "scoop") return 0
+      onLine(NET_ERROR)
+      return 1
+    })
+    const withFallback: StepDescriptor = {
+      ...npmStep,
+      fallbacks: [
+        {
+          kind: "command",
+          id: "cli-claude-code-scoop",
+          label: "Install via scoop",
+          command: { file: "scoop", args: ["install", "claude"] },
+        },
+      ],
+    }
+
+    const reports = await runSteps([withFallback], { dryRun: false, paths, recovery })
+
+    expect(reports[0].status).toBe("done")
+    expect(reports[0].recovery?.remedyId).toBe("fallback:cli-claude-code-scoop")
+    expect(reports[0].recovery?.label).toBe("Install via scoop")
+  })
+
+  it("stops after the attempt cap and reports the ORIGINAL error", async () => {
+    ;(api.runCommand as jest.Mock).mockImplementation(async (_cmd, onLine) => {
+      onLine(NET_ERROR)
+      return 1
+    })
+
+    const reports = await runSteps([npmStep], { dryRun: false, paths, recovery })
+
+    expect(reports[0].status).toBe("error")
+    expect(reports[0].recovery).toBeUndefined()
+    // First try + 3 rungs, and no more.
+    expect((api.runCommand as jest.Mock).mock.calls).toHaveLength(4)
+    // The user sees what actually broke, not the last rung's noise.
+    expect(reports[0].error).toContain("npm install -g @anthropic-ai/claude-code")
+  })
+
+  it("does NOT retry a failure that isn't the network's fault", async () => {
+    ;(api.runCommand as jest.Mock).mockImplementation(async (_cmd, onLine) => {
+      onLine("npm ERR! code EBADENGINE Unsupported engine")
+      return 1
+    })
+
+    const reports = await runSteps([npmStep], { dryRun: false, paths, recovery })
+
+    expect(reports[0].status).toBe("error")
+    expect((api.runCommand as jest.Mock).mock.calls).toHaveLength(1)
+  })
+
+  it("does NOT retry a permission failure, which no mirror can fix", async () => {
+    ;(api.runCommand as jest.Mock).mockImplementation(async (_cmd, onLine) => {
+      // Mentions "connection reset" too, but rights are the real problem.
+      onLine("npm ERR! Error: EACCES: permission denied")
+      onLine("connection reset by peer")
+      return 1
+    })
+
+    const reports = await runSteps([npmStep], { dryRun: false, paths, recovery })
+
+    expect(reports[0].status).toBe("error")
+    expect((api.runCommand as jest.Mock).mock.calls).toHaveLength(1)
+  })
+
+  it("stays completely inert when no recovery context is supplied", async () => {
+    ;(api.runCommand as jest.Mock).mockImplementation(async (_cmd, onLine) => {
+      onLine(NET_ERROR)
+      return 1
+    })
+
+    const reports = await runSteps([npmStep], { dryRun: false, paths })
+
+    expect(reports[0].status).toBe("error")
+    expect((api.runCommand as jest.Mock).mock.calls).toHaveLength(1)
+  })
+
+  it("does not try to route around a failed verify probe", async () => {
+    ;(api.runCommand as jest.Mock).mockImplementation(async (_cmd, onLine) => {
+      onLine(NET_ERROR)
+      return 1
+    })
+    const verify: StepDescriptor = {
+      kind: "command",
+      id: "verify",
+      label: "claude --version",
+      verifyOnly: true,
+      command: { file: "claude", args: ["--version"] },
+    }
+
+    const reports = await runSteps([verify], { dryRun: false, paths, recovery })
+
+    expect(reports[0].status).toBe("warning")
+    expect((api.runCommand as jest.Mock).mock.calls).toHaveLength(1)
+  })
+
+  it("stops climbing the ladder once the run is cancelled", async () => {
+    const ctrl = new AbortController()
+    ;(api.runCommand as jest.Mock).mockImplementation(async (_cmd, onLine) => {
+      onLine(NET_ERROR)
+      ctrl.abort()
+      return 1
+    })
+
+    const reports = await runSteps([npmStep], {
+      dryRun: false,
+      paths,
+      recovery,
+      signal: ctrl.signal,
+    })
+
+    expect((api.runCommand as jest.Mock).mock.calls).toHaveLength(1)
+    expect(reports[0].status).toBe("skipped")
+  })
+
+  it("leaves dry-run untouched — a preview never retries anything", async () => {
+    const reports = await runSteps([npmStep], { dryRun: true, paths, recovery })
+    expect(reports[0].status).toBe("done")
+    expect(api.runCommand).not.toHaveBeenCalled()
+  })
 })

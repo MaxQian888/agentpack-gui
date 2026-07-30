@@ -32,6 +32,7 @@ import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
 import { useAppStore } from "@/store/app-store"
+import type { NetworkProbeResult } from "@/lib/agentpack/network/probe"
 import {
   probePort,
   proxyCheck,
@@ -52,6 +53,34 @@ const paths = {
   os: "mac",
 } as never
 
+/**
+ * Seed the store the way the startup probe would. The section no longer scans
+ * on mount — the scan runs once at app startup and lives in the store, so three
+ * surfaces share one measured answer instead of each scanning separately.
+ */
+function seedProbe(urls: string[], extra: Partial<NetworkProbeResult> = {}) {
+  const proxies = urls.map((url, i) => ({
+    id: `port:${url}`,
+    source: "port" as const,
+    url,
+    // Distinct from the URL: the card renders both, and identical text would
+    // make `findByText(url)` ambiguous.
+    detail: `Proxy app ${i + 1}`,
+    result: { ok: true, status: 200, latencyMs: 12, reason: "ok" },
+  }))
+  useAppStore.getState().setNetworkProbe({
+    proxies,
+    bestProxy: proxies[0] ?? null,
+    directOk: false,
+    npm: [],
+    gh: [],
+    pypi: [],
+    brew: [],
+    pacUrl: null,
+    ...extra,
+  } as NetworkProbeResult)
+}
+
 beforeEach(() => {
   jest.clearAllMocks()
   useAppStore.getState().resetPlan()
@@ -59,6 +88,8 @@ beforeEach(() => {
   // wipe it explicitly here — these tests each start from an unconfigured network.
   useAppStore.setState((s) => ({ plan: { ...s.plan, network: {} } }))
   useAppStore.setState({ paths, dryRun: false, panelOpen: false })
+  useAppStore.getState().setNetworkProbe(null)
+  useAppStore.getState().setNetworkProbing(false)
 })
 
 function renderSection() {
@@ -71,16 +102,32 @@ function renderSection() {
   )
 }
 
-it("scans for proxies on open and reports when nothing is found", async () => {
+it("reports when the startup scan found nothing", async () => {
+  seedProbe([])
   renderSection()
   await screen.findByText(en.network.discovery.empty)
-  expect(proxyEnvSnapshot).toHaveBeenCalled()
-  // Every well-known port is swept, and only against localhost.
+  // The section itself must NOT re-scan on mount: that would duplicate the
+  // startup probe every time the user navigates back to this page.
+  expect(proxyEnvSnapshot).not.toHaveBeenCalled()
+})
+
+it("rescans on demand, sweeping every well-known port against localhost only", async () => {
+  renderSection()
+  await userEvent.click(screen.getByRole("button", { name: en.network.discovery.scan }))
+
+  await waitFor(() => expect(proxyEnvSnapshot).toHaveBeenCalled())
   expect((probePort as jest.Mock).mock.calls.length).toBeGreaterThan(5)
 })
 
+it("shows each candidate's measured latency, so a dead entry is visibly dead", async () => {
+  seedProbe(["http://127.0.0.1:7890"])
+  renderSection()
+  const row = (await screen.findByText("http://127.0.0.1:7890")).closest("li")!
+  expect(within(row).getByText(en.network.proxy.testOk(200, 12))).toBeInTheDocument()
+})
+
 it("adopts a discovered proxy into the form, filling both schemes", async () => {
-  ;(probePort as jest.Mock).mockImplementation(async (port: number) => port === 7890)
+  seedProbe(["http://127.0.0.1:7890"])
   renderSection()
   const row = (await screen.findByText("http://127.0.0.1:7890")).closest("li")!
   await userEvent.click(within(row).getByRole("button", { name: en.network.discovery.use }))
@@ -96,7 +143,7 @@ it("adopts a discovered proxy into the form, filling both schemes", async () => 
 })
 
 it("sends a SOCKS candidate to ALL_PROXY rather than the http fields", async () => {
-  ;(probePort as jest.Mock).mockImplementation(async (port: number) => port === 1080)
+  seedProbe(["socks5://127.0.0.1:1080"])
   renderSection()
   const row = (await screen.findByText("socks5://127.0.0.1:1080")).closest("li")!
   await userEvent.click(within(row).getByRole("button", { name: en.network.discovery.use }))
@@ -109,7 +156,7 @@ it("sends a SOCKS candidate to ALL_PROXY rather than the http fields", async () 
 })
 
 it("'follow system' adopts what the scan found instead of leaving empty fields", async () => {
-  ;(probePort as jest.Mock).mockImplementation(async (port: number) => port === 7897)
+  seedProbe(["http://127.0.0.1:7897"])
   renderSection()
   await screen.findByText("http://127.0.0.1:7897")
   await userEvent.click(screen.getByRole("radio", { name: en.network.proxy.mode.system }))
@@ -121,7 +168,7 @@ it("'follow system' adopts what the scan found instead of leaving empty fields",
 })
 
 it("'follow system' never discards an address the user already typed", async () => {
-  ;(probePort as jest.Mock).mockImplementation(async (port: number) => port === 7897)
+  seedProbe(["http://127.0.0.1:7897"])
   renderSection()
   await screen.findByText("http://127.0.0.1:7897")
   await userEvent.click(screen.getByRole("radio", { name: en.network.proxy.mode.manual }))
@@ -132,6 +179,26 @@ it("'follow system' never discards an address the user already typed", async () 
     mode: "system",
     httpUrl: "http://mine:1",
   })
+})
+
+it("labels each mirror chip with its measured latency", async () => {
+  seedProbe([], {
+    npm: [
+      {
+        preset: {
+          id: "npmmirror",
+          label: "npmmirror",
+          url: "https://registry.npmmirror.com",
+          probeUrl: "x",
+        },
+        result: { ok: true, status: 200, latencyMs: 82, reason: "ok" },
+      },
+    ],
+  })
+  renderSection()
+  // "Which mirror should I pick" is unanswerable from a list of names alone.
+  const chip = await screen.findByRole("button", { name: /npmmirror/ })
+  expect(within(chip).getByText("82ms")).toBeInTheDocument()
 })
 
 it("applies the proxy: writes the selected targets, then makes it real for agentpack", async () => {

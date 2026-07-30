@@ -25,20 +25,19 @@ test("network configuration fields accept and retain input", async ({ page }) =>
   await navTo(page, "network")
   await expect(page.getByRole("heading", { name: "Network configuration" })).toBeVisible()
 
-  const base = page.locator("#net-base-url")
-  const token = page.locator("#net-token")
+  // The API endpoint and its token used to live here; they are now single-sourced
+  // from the providers section, so this section owns the mirrors only.
   const registry = page.locator("#net-registry")
+  const ghMirror = page.locator("#net-gh-mirror")
 
-  await base.fill("https://relay.example.com")
-  await token.fill("relay-token")
   await registry.fill("https://registry.npmmirror.com")
+  await ghMirror.fill("https://ghproxy.example.com")
 
-  await expect(base).toHaveValue("https://relay.example.com")
-  await expect(token).toHaveValue("relay-token")
   await expect(registry).toHaveValue("https://registry.npmmirror.com")
+  await expect(ghMirror).toHaveValue("https://ghproxy.example.com")
 
   // Values survive a section switch (held in the store).
   await navTo(page, "presets")
   await navTo(page, "network")
-  await expect(page.locator("#net-base-url")).toHaveValue("https://relay.example.com")
+  await expect(page.locator("#net-registry")).toHaveValue("https://registry.npmmirror.com")
 })

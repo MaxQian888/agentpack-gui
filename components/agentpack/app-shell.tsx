@@ -22,6 +22,8 @@ import { registerSummonShortcut } from "@/lib/tauri/shortcut"
 import { notify } from "@/lib/tauri/system"
 import { buildSteps, type InstalledState } from "@/lib/agentpack/plan"
 import { effectiveProxy } from "@/lib/agentpack/network/proxy"
+import { scanNetwork } from "@/lib/agentpack/network/scan"
+import { hostArch } from "@/lib/tauri/system"
 import { CLI_TOOLS, RUNTIMES, runtimePkgManager } from "@/lib/agentpack/registry"
 import { useAppStore } from "@/store/app-store"
 import { useT } from "@/lib/i18n/provider"
@@ -58,6 +60,8 @@ function ShellBody() {
   const setUpdateInfo = useAppStore((s) => s.setUpdateInfo)
   const setSettings = useAppStore((s) => s.setSettings)
   const setProxy = useAppStore((s) => s.setProxy)
+  const setNetworkProbe = useAppStore((s) => s.setNetworkProbe)
+  const setNetworkProbing = useAppStore((s) => s.setNetworkProbing)
   const applyPreset = useAppStore((s) => s.applyPreset)
   const onboardingOpen = useAppStore((s) => s.onboardingOpen)
   const setOnboardingOpen = useAppStore((s) => s.setOnboardingOpen)
@@ -90,6 +94,23 @@ function ShellBody() {
   // lazy on first Skills visit, cached here, invalidated after every real run.
   const [skillsResult, setSkillsResult] = useState<SkillsScanResult | null>(null)
   const [skillsLoading, setSkillsLoading] = useState(false)
+
+  // Measure the network once at startup, in the background. Doing it here rather
+  // than in the Network section is the whole point: a user who never opens that
+  // section still gets working mirrors when an install fails, and the first-run
+  // wizard has an answer ready by the time it asks.
+  const probeNetworkNow = useCallback(async () => {
+    if (!isTauri()) return
+    setNetworkProbing(true)
+    try {
+      setNetworkProbe(await scanNetwork())
+    } catch {
+      // A failed probe just means no recovery routes — never a broken app.
+      setNetworkProbe(null)
+    } finally {
+      setNetworkProbing(false)
+    }
+  }, [setNetworkProbe, setNetworkProbing])
 
   const loadSkills = useCallback(async () => {
     if (!isTauri()) return
@@ -257,6 +278,9 @@ function ShellBody() {
           void saveSettings({ summonShortcut: null })
         }
       }
+      // Measure the network right after the proxy is restored, so the probe runs
+      // through whatever route the user already configured.
+      void probeNetworkNow()
       // Greet a first-time user once; About can reopen the wizard later.
       if (!settings.onboarded) setOnboardingOpen(true)
       const version = await getAppVersion()
@@ -275,14 +299,27 @@ function ShellBody() {
     return () => {
       cancelled = true
     }
-  }, [t, setSettings, setProxy, setAppVersion, setUpdateInfo, setUpdateState, setOnboardingOpen])
+  }, [
+    t,
+    setSettings,
+    setProxy,
+    setAppVersion,
+    setUpdateInfo,
+    setUpdateState,
+    setOnboardingOpen,
+    probeNetworkNow,
+  ])
 
-  // Lazily scan chat history the first time the user opens that section. Set
-  // state only in the async continuation (like the dashboard scan above) so no
-  // setState runs synchronously inside the effect. `loadHistory` (with its
-  // loading flag) still backs the manual Rescan button.
+  // Scan chat history once at startup — no longer gated on opening the History
+  // section, because the dashboard's spend card is now the first thing rendered
+  // and it reads these summaries. Cold that costs ~17s (every JSONL plus the
+  // OpenCode DB), so progress streams and the card holds a skeleton until it
+  // lands; warm it returns from cache in ~200ms. `historyResult === null` IS the
+  // loading signal — set state only in the async continuation (like the
+  // dashboard scan above) so no setState runs synchronously inside the effect.
+  // `loadHistory` (with its loading flag) still backs the manual Rescan button.
   useEffect(() => {
-    if (!isTauri() || section !== "history" || historyResult !== null) return
+    if (!isTauri() || historyResult !== null) return
     let cancelled = false
     historyListSessions(setHistoryProgress)
       .then((r) => {
@@ -297,7 +334,7 @@ function ShellBody() {
     return () => {
       cancelled = true
     }
-  }, [section, historyResult])
+  }, [historyResult])
 
   // Lazily scan installed skills the first time the user opens the Skills
   // section (same shape as the history effect above).
@@ -357,7 +394,8 @@ function ShellBody() {
       // Keep the dashboard in sync with the state this run deduped against (but
       // don't clobber a good cached scan if this fresh one failed).
       if (scan) setDashboardScan(scan)
-      const { plan, detections, latestVersions, cliManagers } = useAppStore.getState()
+      const { plan, detections, latestVersions, cliManagers, settings } = useAppStore.getState()
+      const arch = await hostArch()
       const installedTools = new Set(
         Object.entries(detections)
           .filter(([, d]) => d.installed)
@@ -373,7 +411,13 @@ function ShellBody() {
         claudeSkills: scan ? [...scan.claudeSkills.known, ...scan.claudeSkills.custom] : [],
         codexSkills: scan ? [...scan.codexSkills.known, ...scan.codexSkills.custom] : [],
       }
-      void run(buildSteps(plan, paths, t, installedTools, installedState), { plan, review: true })
+      void run(
+        buildSteps(plan, paths, t, installedTools, installedState, {
+          arch,
+          ghMirrorPrefix: settings.ghMirrorPrefix,
+        }),
+        { plan, review: true }
+      )
     })()
   }, [run, refreshDetections, t])
 
@@ -434,6 +478,7 @@ function ShellBody() {
             scanning={dashboardScanning}
             rescan={rescanDashboard}
             onNavigate={setSection}
+            history={{ data: historyResult, progress: historyProgress }}
           />
         )
       case "history":
@@ -475,7 +520,7 @@ function ShellBody() {
       case "ccconnect":
         return <CcConnectSection />
       case "config":
-        return <ConfigIO />
+        return <ConfigIO onOpenMcp={() => setSection("mcp")} />
       case "about":
         return <AboutSection />
     }

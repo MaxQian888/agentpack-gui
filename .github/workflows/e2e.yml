@@ -1,0 +1,86 @@
+name: E2E
+
+# ============================================================================
+# Playwright E2E (web build)
+# ============================================================================
+# These specs drive the real UI against `pnpm dev`. Tauri is absent in a
+# browser, so `isTauri()` is false and side-effectful actions surface a "run the
+# desktop app" toast instead of touching the system — which still leaves
+# navigation, i18n, theme, presets, forms and validation under test.
+#
+# Why this workflow exists: the specs had silently rotted. A header refactor
+# swapped a <Select> for a DropdownMenu and the network section lost its relay
+# fields, and three specs kept asserting the old markup for weeks because
+# nothing ever ran them. A suite outside CI decays into decoration.
+#
+# Deliberately NOT wired into release.yml yet: it is new here and unproven on
+# GitHub runners, and a launch should not be blocked by a gate whose own
+# stability is unknown. Add it to the release job's `needs` once a few runs
+# have come back green.
+#
+# Works OUT-OF-THE-BOX without any secrets.
+# ============================================================================
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: Playwright
+    runs-on: ubuntu-latest
+    # The dev server build dominates; 15 specs on one worker take well under this.
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          # Must match packageManager in package.json.
+          version: 10.30.3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20.x
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Only Chromium is configured as a project, so don't pay for the rest.
+      - name: Install Playwright browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      # playwright.config.ts already adapts to CI: one worker, two retries, and
+      # it starts `pnpm dev` itself rather than reusing a server.
+      - name: Run E2E tests
+        run: pnpm exec playwright test
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+
+      # Traces are captured on first retry, so this only has content when a spec
+      # actually failed and retried — which is exactly when it's needed.
+      - name: Upload failure traces
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 14

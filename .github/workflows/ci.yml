@@ -9,6 +9,8 @@ name: CI/CD Pipeline
 # Workflow Structure:
 # ├── quality.yml     - Code quality & security checks (ESLint, TypeScript, audit)
 # ├── test.yml        - Test suite with coverage & Next.js build
+# ├── rust.yml        - cargo clippy + cargo test on Linux, Windows and macOS
+# ├── e2e.yml         - Playwright specs against the web build
 # ├── build-tauri.yml - Tauri desktop app builds (Windows, macOS, Linux)
 # ├── deploy.yml      - Deployment workflows (optional, disabled by default)
 # └── release.yml     - GitHub release creation (triggered by version tags)
@@ -49,8 +51,19 @@ jobs:
     name: Test
     uses: ./.github/workflows/test.yml
 
+  # Step 2b: Rust tests on all three platforms (runs alongside test.yml)
+  rust:
+    name: Rust
+    uses: ./.github/workflows/rust.yml
+
+  # Step 2c: Playwright against the web build. Runs on every push so the specs
+  # can't rot unnoticed again.
+  e2e:
+    name: E2E
+    uses: ./.github/workflows/e2e.yml
+
   # Step 3: Build Tauri Desktop Apps (after quality & test pass)
   build-tauri:
     name: Build Tauri
-    needs: [quality, test]
+    needs: [quality, test, rust, e2e]
     uses: ./.github/workflows/build-tauri.yml

@@ -1,6 +1,8 @@
 import { en } from "@/lib/i18n/en"
 import type { Messages } from "@/lib/i18n/types"
+import { restoreBlankedSecrets, type BundleFileKey } from "./bundle/secrets"
 import {
+  fallbackMethodsFor,
   findCli,
   findMcp,
   findRuntime,
@@ -8,6 +10,7 @@ import {
   installMethodsFor,
   upgradeCommandFor,
 } from "./registry"
+import { hasReleaseFor } from "./release"
 import { isUpgradeAvailable, majorVersion } from "./version"
 import {
   buildClaudeMcpCommandFromSpec,
@@ -64,6 +67,7 @@ import {
   opencodeConfigFromProvider,
 } from "./ccswitch/sync"
 import type {
+  Arch,
   CliInstallManager,
   CliTool,
   Command,
@@ -75,6 +79,7 @@ import type {
   Plan,
   ProxyConfig,
   ProxyTarget,
+  ReleaseInstallStep,
   Runtime,
   StepDescriptor,
 } from "./types"
@@ -110,6 +115,18 @@ export interface InstalledState {
 }
 
 /**
+ * Machine/app facts a plan needs that aren't part of the plan itself. Both are
+ * optional so existing callers (and every existing test) keep their behaviour:
+ * without them, release-based installs simply aren't offered.
+ */
+export interface BuildOptions {
+  /** CPU architecture, for picking the right release asset. Defaults to x64. */
+  arch?: Arch
+  /** GitHub download mirror prefix from app settings, or null for direct. */
+  ghMirrorPrefix?: string | null
+}
+
+/**
  * Materialize a Plan into ordered, declarative StepDescriptors.
  * Order: npm mirror → runtime prerequisites → CLI installs → skills →
  * MCP servers → relay config. Closures (merge transforms) stay in TS; only
@@ -127,11 +144,52 @@ export function buildSteps(
   paths: Paths,
   messages: Messages = en,
   installed: ReadonlySet<string> = new Set(),
-  state: InstalledState = {}
+  state: InstalledState = {},
+  opts: BuildOptions = {}
 ): StepDescriptor[] {
   const t = messages.steps
   const cat = messages.catalog
   const steps: StepDescriptor[] = []
+  const arch = opts.arch ?? "x64"
+  const ghMirrorPrefix = opts.ghMirrorPrefix ?? null
+
+  /**
+   * The GitHub-Release install step for a tool, when it publishes something
+   * installable on this OS. Used two ways: as the *only* path where a platform
+   * has no package manager (cc-switch on Linux), and as the last fallback when
+   * one does but the network won't cooperate.
+   */
+  const releaseStep = (tool: CliTool, title: string): ReleaseInstallStep | undefined =>
+    hasReleaseFor(tool.release, plan.os)
+      ? {
+          kind: "releaseInstall",
+          id: `cli-${tool.id}-release`,
+          label: t.installFromRelease(title),
+          title,
+          source: tool.release!,
+          os: plan.os,
+          arch,
+          mirrorPrefix: ghMirrorPrefix,
+        }
+      : undefined
+
+  /**
+   * Other routes to the same tool, ordered cheapest-first: another package
+   * manager, then a direct release download. Only consulted when the primary
+   * command fails *on the network* (see `lib/agentpack/network/recovery.ts`).
+   */
+  const fallbacksFor = (tool: CliTool, title: string, chosenId: string | undefined) => {
+    const out: StepDescriptor[] = fallbackMethodsFor(tool, plan.os, chosenId).map((mth) => ({
+      kind: "command" as const,
+      id: `cli-${tool.id}-${mth.id}`,
+      label: t.installCliVia(title, mth.id),
+      command: mth.command,
+      requiresElevation: mth.requiresElevation || undefined,
+    }))
+    const release = releaseStep(tool, title)
+    if (release) out.push(release)
+    return out.length > 0 ? out : undefined
+  }
 
   // Already-configured MCP servers / skills, per agent — an entry here means the
   // corresponding add / copy step is redundant and gets dropped below.
@@ -231,6 +289,17 @@ export function buildSteps(
         label: t.installRuntime(title),
         command: method.command,
         requiresElevation: method.requiresElevation || undefined,
+        // On Windows, scoop is a user-scope route that avoids both UAC and
+        // whatever blocked winget's download.
+        fallbacks: node
+          ? fallbackMethodsFor(node, plan.os, method.id).map((mth) => ({
+              kind: "command" as const,
+              id: `${nodeStepId}-${mth.id}`,
+              label: t.installRuntimeVia(title, mth.id),
+              command: mth.command,
+              requiresElevation: mth.requiresElevation || undefined,
+            }))
+          : undefined,
       })
     } else {
       steps.push({
@@ -314,17 +383,27 @@ export function buildSteps(
         // Skip an npm install cleanly when the Node install itself failed.
         dependsOn: npmBased && nodeStepIsCommand ? [nodeStepId] : undefined,
         requiresElevation: requiresElevation || undefined,
+        // An upgrade re-runs the path the tool was installed by; routing it
+        // somewhere else would leave a second, shadowing copy behind, so only a
+        // fresh install gets alternatives.
+        fallbacks: upgrade ? undefined : fallbacksFor(tool, title, methodId),
       })
-    } else {
-      // No automated installer on this OS — surface the manual note instead of silently skipping.
-      steps.push({
+      continue
+    }
+
+    // No package-manager path on this OS. A published release is still a real,
+    // automated install (this is what finally gives cc-switch one on Linux);
+    // only fall back to the manual note when there isn't even that.
+    const release = releaseStep(tool, title)
+    steps.push(
+      release ?? {
         kind: "info",
         id: `cli-${id}`,
         label: t.installCli(title),
         lines: [tool.manualNote ?? t.noInstaller(title), t.manualInstall],
         manual: true,
-      })
-    }
+      }
+    )
   }
 
   // Later steps that shell out to a CLI installed earlier in this same run
@@ -1319,6 +1398,34 @@ export function snapshotStep(reason: string, messages: Messages = en): StepDescr
     id: "backup-snapshot",
     label: messages.steps.snapshot,
     reason,
+  }
+}
+
+/**
+ * Write one config file carried by an imported backup bundle.
+ *
+ * Riding `mergeFile` rather than writing the file directly is what buys the
+ * `.agentpack.bak` snapshot of the original, the dry-run preview line, and the
+ * dashboard's existing restore path — all of which an import needs more than
+ * most steps, since it overwrites a file the user didn't author.
+ *
+ * The merge closure is where the bundle's blanked credentials are refilled from
+ * whatever is already on this machine, so importing a shared config can't
+ * deauthenticate the importer.
+ */
+export function bundleFileStep(
+  key: BundleFileKey,
+  path: string,
+  incoming: string,
+  messages: Messages = en
+): StepDescriptor {
+  return {
+    kind: "mergeFile",
+    id: `bundle-file-${key}`,
+    label: messages.steps.bundleFile(path),
+    path,
+    merge: (existing) => restoreBlankedSecrets(key, incoming, existing),
+    writtenNote: messages.steps.bundleFileWritten(path),
   }
 }
 

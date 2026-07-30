@@ -1,0 +1,9 @@
+# The Rust side has always been written with 2-space indentation, matching the
+# TypeScript half of the codebase; rustfmt defaults to 4. This file exists so
+# that running `cargo fmt` respects the house style instead of reflowing every
+# file in src/.
+#
+# NOT a CI gate (see .github/workflows/rust.yml): the code was hand-formatted,
+# never rustfmt-normalised, so it still differs from rustfmt's line wrapping.
+# Gating on it would mean landing a several-thousand-line mechanical diff.
+tab_spaces = 2

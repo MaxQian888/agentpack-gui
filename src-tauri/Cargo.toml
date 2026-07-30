@@ -38,7 +38,12 @@ dirs = "6"
 # GitHub direct skill install: fetch a repo tarball (rustls; no default features so
 # responses are never transparently gunzipped — GzDecoder handles the .tar.gz) and
 # unpack it (tar's `unpack` refuses entries escaping the destination).
-ureq = { version = "2", default-features = false, features = ["tls"] }
+#
+# `socks-proxy` matters: without it `ureq::Proxy::new` rejects every socks:// URL,
+# so `net::proxy_from_env` silently returned None and our own downloads (skill
+# tarballs, release assets) went DIRECT on a machine whose only route out is a
+# SOCKS proxy — i.e. they failed for exactly the users who needed the proxy most.
+ureq = { version = "2", default-features = false, features = ["tls", "socks-proxy"] }
 flate2 = "1"
 tar = "0.4"
 # Content hashing for skill update detection (see skills::hash_skill_dir).

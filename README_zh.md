@@ -1,565 +1,132 @@
+<div align="center">
+
 # agentpack
 
-**agentpack** 是一个跨平台桌面安装器（终端 `agentpack` TUI 的 GUI 版本），用于一键配置
-Claude Code、Codex、工程技能（skills）、MCP 服务器、网络/镜像以及 cc-switch。基于
-**Next.js 16**（React 19）和 **Tauri 2.9** 构建，使用 TypeScript、Tailwind CSS v4 和
-shadcn/ui，可运行于 Windows、macOS 和 Linux。
+**看清 AI 编程到底花了多少钱，顺手把各个 CLI 的配置也管了。**
 
-[English Documentation](./README.md)
+一个跨平台桌面应用，管 Claude Code、Codex 和 OpenCode：从你自己的会话历史里读出真实
+花销，然后在同一个窗口里装 CLI、切账号和镜像、管理 skills 和 MCP 服务器。
 
-> 纯逻辑位于 `lib/agentpack/`；系统操作（带实时输出流的进程执行、文件系统、cc-switch
-> SQLite 数据库）是 `src-tauri/src/` 中的 Rust/Tauri 命令。支持中英双语（en/zh-CN）、
-> 试运行预览模式、配置导入/导出、操作系统覆盖以及实时步骤日志流。详见 `CLAUDE.md` →
-> “agentpack desktop app”。使用 `pnpm tauri dev` 运行。
+[English](./README.md) · [下载](https://github.com/Arxtect/agentpack-gui/releases) · [参与贡献](./CONTRIBUTING.md)
 
-## 特性
+<img src="./docs/assets/usage-card.svg" alt="agentpack 花销卡片 — 示例数据" width="720">
 
-- ⚡️ **Next.js 16** 配合 App Router 和 React 19
-- 🖥️ **Tauri 2.9** 用于原生桌面应用（Windows、macOS、Linux）
-- 🎨 **Tailwind CSS v4** 支持 CSS 变量和暗色模式
-- 🧩 **shadcn/ui** 组件库，基于 Radix UI 原语
-- 📦 **Zustand** 轻量级状态管理
-- 🔤 **Geist 字体** 通过 next/font 优化
-- 🎯 **TypeScript** 提供类型安全
-- 🎭 **Lucide Icons** 精美的图标库
-- 📚 **Fumadocs** 文档站点，作为 pnpm workspace 子包
-- 📱 双重部署：从同一代码库部署 Web 应用或桌面应用
+<sub>上面这张图就是 agentpack 自己导出的（示例数据），你可以在用量看板里导出自己的。</sub>
 
-## 前置要求
+</div>
 
-在开始之前，请确保已安装以下内容：
+---
 
-### Web 开发所需
+## 为什么做这个
 
-- **Node.js** 20.x 或更高版本（[下载](https://nodejs.org/)）
-- **pnpm** 8.x 或更高版本（推荐）或 npm/yarn
+`ccusage` 这类工具能告诉你 agent 花了多少钱，CLI 的配置文件能告诉你环境是怎么配的 ——
+但没有东西把两者连起来。所以当那个数字让你意外的那一刻，你还是得回到终端里手改 JSON。
 
-  ```bash
-  npm install -g pnpm
-  ```
+agentpack 把两件事放进同一个窗口：看到花销，然后当场处理 —— 换一个更便宜的服务商、切到
+镜像、关掉那个你从来没用过的 MCP 服务器。
 
-### 桌面开发所需（额外要求）
+所有内容都读写 CLI 本来就在用的那些文件。没有账号、没有埋点、没有服务端 —— agentpack
+只读你的磁盘，没有任何东西离开你的电脑。
 
-- **Rust** 1.70 或更高版本（[安装](https://www.rust-lang.org/tools/install)）
+## 它能做什么
 
-  ```bash
-  # 验证安装
-  rustc --version
-  cargo --version
-  ```
+**花销与历史**
 
-- **系统依赖**（因操作系统而异）：
-  - **Windows**：Microsoft Visual Studio C++ 生成工具
-  - **macOS**：Xcode 命令行工具
-  - **Linux**：参见 [Tauri 前置要求](https://tauri.app/v1/guides/getting-started/prerequisites)
+- 直接从磁盘**只读**解析 Claude Code（JSONL）、Codex（rollout JSONL）和 OpenCode
+  （SQLite）的会话历史。
+- 首页显示本月至今花销；完整看板包含成本趋势、5 小时计费窗口、消耗速率、按模型和按项目
+  的拆分。
+- 来源本身记录了费用的（OpenCode）是**精确值**，其余是**按 token 数估算**。没有已知价格
+  的模型会被明确标为「未定价」，绝不当成真实的 `$0` 混进总额。
+- 浏览和阅读历史对话，包括 sub-agent 的运行记录。
+- 导出 CSV/JSON 给表格用，或导出一张可分享的卡片 / Markdown 摘要。
+
+**安装与配置**
+
+- 安装或升级 Claude Code、Codex、OpenCode、cc-switch、cc-connect，以及它们依赖的
+  Node / Bun / Python / uv —— 命令输出实时流式显示，升级会匹配当初的安装方式，不会留下
+  两份互相遮蔽的副本。
+- **Skills 管理**，覆盖 `~/.claude`、`~/.codex`、`~/.opencode` 和 `~/.agents`：查看已装
+  内容、从 GitHub 仓库安装、检查更新、删除前自动备份、处理重名冲突。
+- **MCP 服务器**：精选目录 + 官方 MCP registry 搜索，健康检查会真的跑一次 `initialize`
+  握手，支持 `mcpServers` 配置块的导入导出。
+- **网络 / 镜像**与代理配置，落地前可以先发一个真实请求验证代理是否可用。
+- **cc-switch** 服务商与账号管理（含其 SQLite 库的备份），以及 **cc-connect** 桥接控制。
+
+**它的行为方式**
+
+- **试运行预览**：动手之前先看到每一条「将写入 / 将执行」。预览模式下**完全不会**调用任何
+  会改动系统的命令。
+- 中英双语。
+- 可以把整套配置存成文件，之后一键还原。
 
 ## 安装
 
-1. **克隆仓库**
+从 **[Releases](https://github.com/Arxtect/agentpack-gui/releases/latest)** 下载对应平台的安装包：
 
-   ```bash
-   git clone https://github.com/Arxtect/agentpack-gui.git
-   cd agentpack-gui
-   ```
+| 平台    | 文件                     |
+| ------- | ------------------------ |
+| macOS   | `.dmg`                   |
+| Windows | `.msi` 或 `.exe`（NSIS） |
+| Linux   | `.AppImage`、`.deb`      |
 
-2. **安装依赖**
+装好之后应用会自己更新 —— 在「关于」页面里检查更新即可。
 
-   ```bash
-   pnpm install
-   # 或
-   npm install
-   # 或
-   yarn install
-   ```
+### ⚠️ macOS 提示「已损坏，无法打开」
 
-3. **验证安装**
-
-   ```bash
-   # 检查 Next.js 是否就绪
-   pnpm dev
-
-   # 检查 Tauri 是否就绪（可选，用于桌面开发）
-   pnpm tauri info
-   ```
-
-## 开发
-
-### Web 应用开发
-
-#### 启动开发服务器
+它没有损坏。这个版本还没有经过 Apple 公证（那要 $99/年），而 macOS 对**所有**未公证的
+下载都会显示这句有误导性的提示。把应用拖进「应用程序」，然后执行一次：
 
 ```bash
-pnpm dev
-# 或
-npm run dev
+xattr -dr com.apple.quarantine /Applications/agentpack.app
 ```
 
-这将在 [http://localhost:3000](http://localhost:3000) 启动 Next.js 开发服务器。当您编辑文件时，页面会自动重新加载。
+### ⚠️ Windows 弹 SmartScreen 警告
 
-#### 关键开发文件
+点「更多信息」→「仍要运行」。原因一样：安装包还没有签名。
 
-- `app/page.tsx` - 主着陆页
-- `app/layout.tsx` - 根布局及全局配置
-- `app/globals.css` - 全局样式和 Tailwind 配置
-- `components/ui/` - 可复用的 UI 组件（shadcn/ui）
-- `lib/utils.ts` - 工具函数
+## 常见问题
 
-### 桌面应用开发
+**它会把我的数据传到哪里吗？**
+不会。没有埋点，也没有后端。会话历史从你的磁盘读取并留在原地。唯一的外部请求都是你主动
+触发的：从 GitHub 拉取 skill、查询 MCP registry、去 npm 查 CLI 的新版本、测试代理或服务
+商连通性，以及检查应用更新。
 
-#### 启动 Tauri 开发模式
+**费用数字准吗？**
+OpenCode 是精确的，因为它自己记录了真实费用。Claude Code 和 Codex 是按 token 数估算的，
+价格表在 [`lib/history/pricing.ts`](./lib/history/pricing.ts)。如果你用的是订阅制套餐，
+这个数字不会等于你的账单 —— 因为订阅本来就不是按 token 计费的。没有已知价格的模型会单独
+标出来，而不是被算进总额。
+
+**我只用一个 CLI，能用吗？**
+能。所有功能都是按工具独立的，没装的工具对应的区块就是空的。
+
+**为什么第一次启动比较慢？**
+首次扫描要解析磁盘上的所有会话记录，历史多的话大约 17 秒。之后会走缓存，再次启动约
+200 毫秒。
+
+**它会不打招呼就改我的配置文件吗？**
+不会。打开试运行可以先看到所有将要发生的写入；真正执行时每条命令和每处改动都会实时显示。
+cc-switch 的数据库在写入前会自动备份。
+
+## 从源码构建
+
+需要 **Node 20+**、**pnpm 10+** 和 **Rust 1.95+**。
 
 ```bash
-pnpm tauri dev
-```
-
-此命令将：
-
-1. 启动 Next.js 开发服务器
-2. 启动 Tauri 桌面应用
-3. 为前端和 Rust 代码启用热重载
-
-#### Tauri 开发文件
-
-- `src-tauri/src/main.rs` - Rust 应用主入口点
-- `src-tauri/src/lib.rs` - Rust 库代码
-- `src-tauri/tauri.conf.json` - Tauri 配置
-- `src-tauri/Cargo.toml` - Rust 依赖
-
-### 从 JavaScript 调用 Rust
-
-该模板内置了一个类型安全的 IPC 桥接示例。使用模式如下：
-
-1. **在 `src-tauri/src/commands.rs` 中添加 Rust 命令**：
-
-   ```rust
-   #[tauri::command]
-   pub fn my_command(arg: &str) -> Result<String, AppError> {
-     Ok(format!("got {arg}"))
-   }
-   ```
-
-2. **在 `src-tauri/src/lib.rs` 中注册命令**：
-
-   ```rust
-   .invoke_handler(tauri::generate_handler![commands::greet, commands::my_command])
-   ```
-
-3. **在 `lib/tauri.ts` 中添加类型化封装函数**：
-
-   ```ts
-   export async function myCommand(arg: string): Promise<string> {
-     return invoke<string>("my_command", { arg })
-   }
-   ```
-
-`lib/tauri.ts` 是唯一调用 `invoke()` 的地方——业务代码从中导入具名函数，而非直接使用 `invoke`。使用 `isTauri()` 来保护依赖桌面运行时的代码路径。
-
-## 可用脚本
-
-### 前端脚本
-
-| 命令                 | 描述                                              |
-| -------------------- | ------------------------------------------------- |
-| `pnpm dev`           | 在端口 3000 启动 Next.js 开发服务器               |
-| `pnpm build`         | 构建 Next.js 应用用于生产（输出到 `out/` 目录）   |
-| `pnpm start`         | 启动 Next.js 生产服务器（执行 `pnpm build` 之后） |
-| `pnpm lint`          | 运行 ESLint 检查代码质量                          |
-| `pnpm lint:fix`      | 自动修复 ESLint 问题                              |
-| `pnpm format`        | 用 Prettier 格式化所有文件                        |
-| `pnpm format:check`  | 检查格式而不写入                                  |
-| `pnpm typecheck`     | 运行 TypeScript 类型检查（不生成产物）            |
-| `pnpm test`          | 运行 Jest 单元测试                                |
-| `pnpm test:watch`    | 监听模式运行 Jest                                 |
-| `pnpm test:coverage` | 运行 Jest 并生成覆盖率报告                        |
-
-### Tauri（桌面）脚本
-
-| 命令                | 描述                            |
-| ------------------- | ------------------------------- |
-| `pnpm tauri dev`    | 启动 Tauri 开发模式，支持热重载 |
-| `pnpm tauri build`  | 构建生产环境的桌面应用          |
-| `pnpm tauri info`   | 显示 Tauri 环境信息             |
-| `pnpm tauri icon`   | 从源图像生成应用图标            |
-| `pnpm tauri --help` | 显示所有可用的 Tauri 命令       |
-
-### 文档站点脚本（Fumadocs — 端口 3001）
-
-| 命令              | 描述                                     |
-| ----------------- | ---------------------------------------- |
-| `pnpm docs:dev`   | 在端口 3001 启动 Fumadocs 开发服务器     |
-| `pnpm docs:build` | 构建文档生产版本（输出到 `docs/.next/`） |
-| `pnpm docs:start` | 在端口 3001 启动文档生产服务器           |
-
-### 添加 UI 组件（shadcn/ui）
-
-```bash
-# 添加新组件（例如 Card）
-pnpm dlx shadcn@latest add card
-
-# 添加多个组件
-pnpm dlx shadcn@latest add button card dialog
-```
-
-## 项目结构
-
-```
-agentpack-gui/
-├── app/                      # Next.js App Router（主应用）
-│   ├── layout.tsx           # 根布局，包含字体和元数据
-│   ├── page.tsx             # 主着陆页
-│   ├── globals.css          # 全局样式和 Tailwind 配置
-│   └── favicon.ico          # 应用图标
-├── components/              # React 组件
-│   └── ui/                  # shadcn/ui 组件（Button 等）
-├── lib/                     # 工具函数
-│   └── utils.ts            # 辅助函数（cn 等）
-├── public/                  # 静态资源（图片、SVG）
-├── src-tauri/              # Tauri 桌面应用
-│   ├── src/
-│   │   ├── main.rs         # Rust 主入口点
-│   │   └── lib.rs          # Rust 库代码
-│   ├── icons/              # 桌面应用图标
-│   ├── tauri.conf.json     # Tauri 配置
-│   └── Cargo.toml          # Rust 依赖
-├── docs/                    # Fumadocs 文档站点（workspace 子包）
-│   ├── app/                # Next.js App Router（文档）
-│   │   ├── layout.tsx      # 根布局，含 RootProvider
-│   │   ├── page.tsx        # 重定向到 /docs
-│   │   ├── global.css      # Tailwind v4 + Fumadocs 主题
-│   │   ├── docs/           # 文档路由
-│   │   │   ├── layout.tsx  # 含侧边栏的 DocsLayout
-│   │   │   └── [[...slug]]/ # 动态 MDX 页面
-│   │   └── api/search/     # Orama 搜索 API 路由
-│   ├── lib/source.ts       # Fumadocs 内容加载器
-│   ├── content/docs/       # MDX 内容文件
-│   ├── source.config.ts    # 内容集合配置
-│   ├── next.config.ts      # Next.js 配置（无静态导出）
-│   └── package.json        # 文档包依赖
-├── pnpm-workspace.yaml      # pnpm monorepo 配置
-├── components.json          # shadcn/ui 配置
-├── next.config.ts          # Next.js 配置（主应用）
-├── tsconfig.json           # TypeScript 配置
-├── eslint.config.mjs       # ESLint 配置
-└── package.json            # 根依赖和脚本
-```
-
-## 配置
-
-### 环境变量
-
-将 `.env.example` 复制为 `.env.local` 开始使用：
-
-```bash
-cp .env.example .env.local
-```
-
-然后编辑 `.env.local` 填入实际值。`lib/env.ts` 模块会在首次访问时校验必需变量。
-
-**重要提示**：
-
-- 只有以 `NEXT_PUBLIC_` 为前缀的变量会暴露给浏览器
-- 切勿将 `.env.local` 提交到版本控制
-- 使用 `.env.example` 记录所需的变量
-
-### Tauri 配置
-
-编辑 `src-tauri/tauri.conf.json` 以自定义您的桌面应用：
-
-```json
-{
-  "productName": "agentpack", // 应用名称
-  "version": "0.2.0", // 应用版本
-  "identifier": "com.agentpack.desktop", // 唯一应用标识符
-  "build": {
-    "frontendDist": "../out", // Next.js 构建输出
-    "devUrl": "http://localhost:3000" // 开发服务器 URL
-  },
-  "app": {
-    "windows": [
-      {
-        "title": "agentpack", // 窗口标题
-        "width": 800, // 默认宽度
-        "height": 600, // 默认高度
-        "resizable": true, // 允许调整大小
-        "fullscreen": false // 全屏启动
-      }
-    ]
-  }
-}
-```
-
-### 路径别名
-
-在 `components.json` 和 `tsconfig.json` 中配置：
-
-```typescript
-import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
-```
-
-可用别名：
-
-- `@/components` → `components/`
-- `@/lib` → `lib/`
-- `@/ui` → `components/ui/`
-- `@/hooks` → `hooks/`
-- `@/utils` → `lib/utils.ts`
-
-### Tailwind CSS 配置
-
-项目使用 Tailwind CSS v4，具有以下特性：
-
-- 使用 CSS 变量进行主题化（在 `app/globals.css` 中定义）
-- 通过 `class` 策略支持暗色模式
-- 使用 CSS 变量的自定义调色板
-- shadcn/ui 样式系统
-
-## 生产构建
-
-### 构建 Web 应用
-
-```bash
-# 构建静态导出
-pnpm build
-
-# 输出目录：out/
-# 将 out/ 目录部署到任何静态托管服务
-```
-
-构建会在 `out/` 目录中创建一个静态导出，已针对生产环境进行优化。
-
-### 构建桌面应用
-
-```bash
-# 为当前平台构建
-pnpm tauri build
-
-# 输出位置：
-# - Windows: src-tauri/target/release/bundle/msi/
-# - macOS: src-tauri/target/release/bundle/dmg/
-# - Linux: src-tauri/target/release/bundle/appimage/
-```
-
-构建选项：
-
-```bash
-# 为特定目标构建
-pnpm tauri build --target x86_64-pc-windows-msvc
-
-# 使用调试符号构建
-pnpm tauri build --debug
-
-# 不打包构建
-pnpm tauri build --bundles none
-```
-
-## 部署
-
-### 文档站点部署
-
-文档站点（`docs/`）是一个完整的 Next.js 服务端应用，与主应用独立部署。
-
-```bash
-# 构建文档
-pnpm docs:build
-
-# 输出：docs/.next/
-# 部署到任意 Node.js 托管平台：Vercel、Netlify、Railway 等
-```
-
-在 **Vercel** 上，导入项目时将根目录设置为 `docs/`。
-
-### Web 部署
-
-#### Vercel（推荐）
-
-1. 将代码推送到 GitHub/GitLab/Bitbucket
-2. 在 [Vercel](https://vercel.com/new) 上导入项目
-3. Vercel 会自动检测 Next.js 并部署
-
-#### Netlify
-
-```bash
-# 构建命令
-pnpm build
-
-# 发布目录
-out
-```
-
-#### 静态托管（Nginx、Apache 等）
-
-1. 构建项目：`pnpm build`
-2. 将 `out/` 目录上传到您的服务器
-3. 配置服务器以提供静态文件
-
-### 桌面部署
-
-#### Windows
-
-- 分发 `src-tauri/target/release/bundle/msi/` 中的 `.msi` 安装程序
-- 用户运行安装程序以安装应用
-
-#### macOS
-
-- 分发 `src-tauri/target/release/bundle/dmg/` 中的 `.dmg` 文件
-- 用户将应用拖到应用程序文件夹
-- **注意**：对于 App Store 之外的分发，您需要使用 Apple 开发者证书对应用进行签名
-
-#### Linux
-
-- 分发 `src-tauri/target/release/bundle/appimage/` 中的 `.AppImage`
-- 用户使其可执行并运行：`chmod +x app.AppImage && ./app.AppImage`
-- 替代格式：`.deb`（Debian/Ubuntu）、`.rpm`（Fedora/RHEL）
-
-#### 代码签名（生产环境推荐）
-
-- **Windows**：使用代码签名证书
-- **macOS**：需要 Apple 开发者账户和证书
-- **Linux**：可选，但建议用于分发
-
-详细说明请参见 [Tauri 分发指南](https://tauri.app/v1/guides/distribution/)。
-
-## 开发工作流
-
-### 典型开发周期
-
-1. **启动开发服务器**
-
-   ```bash
-   pnpm dev  # 用于 Web 开发
-   # 或
-   pnpm tauri dev  # 用于桌面开发
-   ```
-
-2. **进行更改**
-   - 编辑 `app/`、`components/` 或 `lib/` 中的文件
-   - 更改会在浏览器/桌面应用中自动重新加载
-
-3. **添加新组件**
-
-   ```bash
-   pnpm dlx shadcn@latest add [component-name]
-   ```
-
-4. **检查代码**
-
-   ```bash
-   pnpm lint
-   ```
-
-5. **构建和测试**
-
-   ```bash
-   pnpm build  # 测试 Web 构建
-   pnpm tauri build  # 测试桌面构建
-   ```
-
-### 最佳实践
-
-- **代码风格**：遵循 ESLint 规则（`pnpm lint`）
-- **提交规范**：通过 `commit-msg` 钩子（commitlint）强制 Conventional Commits。clone 后运行一次 `pnpm install` —— `prepare` 脚本会自动安装钩子。
-- **组件**：保持组件小而可复用
-- **状态**：使用 Zustand 管理全局状态，使用 React hooks 管理局部状态
-- **样式**：使用 Tailwind 工具类，尽可能避免自定义 CSS
-- **类型**：利用 TypeScript 实现类型安全
-
-## 故障排除
-
-### 常见问题
-
-**端口 3000 已被占用**
-
-```bash
-# 终止使用端口 3000 的进程
-# Windows
-netstat -ano | findstr :3000
-taskkill /PID <PID> /F
-
-# macOS/Linux
-lsof -ti:3000 | xargs kill -9
-```
-
-**Tauri 构建失败**
-
-```bash
-# 检查 Tauri 环境
-pnpm tauri info
-
-# 更新 Rust
-rustup update
-
-# 清理构建缓存
-cd src-tauri
-cargo clean
-```
-
-**模块未找到错误**
-
-```bash
-# 清除 Next.js 缓存
-rm -rf .next
-
-# 重新安装所有 workspace 依赖
-rm -rf node_modules docs/node_modules pnpm-lock.yaml
+git clone https://github.com/Arxtect/agentpack-gui.git
+cd agentpack-gui
 pnpm install
+pnpm tauri dev     # 桌面应用，支持热重载
+pnpm tauri build   # 生产安装包
 ```
 
-**文档中出现 `Cannot find module 'collections/server'`**
+`pnpm dev` 会在 <http://localhost:3000> 用浏览器跑界面，适合调布局；但所有会触碰系统的
+操作都是 Tauri 命令，所以安装、扫描、写文件只有在桌面应用里才能真正工作。
 
-该模块由 fumadocs-mdx 自动生成。运行一次文档开发服务器即可生成：
-
-```bash
-pnpm docs:dev
-```
-
-## 了解更多
-
-### Next.js 资源
-
-- [Next.js 文档](https://nextjs.org/docs) - 了解 Next.js 功能和 API
-- [学习 Next.js](https://nextjs.org/learn) - 交互式 Next.js 教程
-- [Next.js GitHub](https://github.com/vercel/next.js) - Next.js 仓库
-
-### Tauri 资源
-
-- [Tauri 文档](https://tauri.app/) - Tauri 官方文档
-- [Tauri API 参考](https://tauri.app/v1/api/js/) - JavaScript API 参考
-- [Tauri GitHub](https://github.com/tauri-apps/tauri) - Tauri 仓库
-
-### UI 和样式
-
-- [shadcn/ui](https://ui.shadcn.com/) - 组件库文档
-- [Tailwind CSS](https://tailwindcss.com/docs) - Tailwind CSS 文档
-- [Radix UI](https://www.radix-ui.com/) - Radix UI 原语
-
-### 状态管理
-
-- [Zustand](https://zustand-demo.pmnd.rs/) - Zustand 文档
-
-### 文档
-
-- [Fumadocs](https://fumadocs.dev/) - Fumadocs 文档框架
-
-## 贡献
-
-欢迎贡献！请遵循以下步骤：
-
-1. Fork 仓库
-2. 创建功能分支（`git checkout -b feature/amazing-feature`）
-3. 提交更改（`git commit -m 'feat: add amazing feature'`）
-4. 推送到分支（`git push origin feature/amazing-feature`）
-5. 打开 Pull Request
+架构说明、目录结构、测试方式和贡献流程都在
+**[CONTRIBUTING.md](./CONTRIBUTING.md)**。
 
 ## 许可证
 
-本项目是开源的，采用 [MIT 许可证](LICENSE)。
-
-## 支持
-
-如果您遇到任何问题或有疑问：
-
-- 查看[故障排除](#故障排除)部分
-- 查阅 [Next.js 文档](https://nextjs.org/docs)
-- 查阅 [Tauri 文档](https://tauri.app/)
-- 在 GitHub 上提出 issue
+[MIT](./LICENSE)
