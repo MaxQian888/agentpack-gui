@@ -20,8 +20,8 @@ use crate::paths::codex_home;
 use super::scan::{file_sig, FileSig};
 use super::util::{basename, collect_jsonl, iso_to_epoch_ms, s, stream_jsonl, truncate_title, u};
 use super::{
-  model_index, pack_event, Message, PackedEvent, ParsedSession, Part,
-  SessionDetail, SessionIdentity, SummaryFields, TokenUsage, ToolTally,
+  model_index, pack_event, Message, PackedEvent, ParsedSession, Part, SessionDetail,
+  SessionIdentity, SummaryFields, TokenUsage, ToolTally,
 };
 
 fn codex_sessions_root() -> Option<PathBuf> {
@@ -312,7 +312,10 @@ pub(super) fn codex_parse(
 }
 
 /// Streaming parse read straight from disk — the scan path's entry point.
-pub(super) fn codex_parse_from_file(path: &Path, titles: &HashMap<String, String>) -> Option<ParsedSession> {
+pub(super) fn codex_parse_from_file(
+  path: &Path,
+  titles: &HashMap<String, String>,
+) -> Option<ParsedSession> {
   let fallback_id = path.file_stem()?.to_string_lossy().into_owned();
   let mut acc = CodexAcc::default();
   stream_jsonl(path, |line| acc.push(line))?;
@@ -546,4 +549,3 @@ pub(super) fn codex_sigs() -> Result<(Vec<FileSig>, HashMap<String, String>), St
     codex_titles(),
   ))
 }
-

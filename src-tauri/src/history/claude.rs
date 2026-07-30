@@ -20,8 +20,8 @@ use std::path::{Path, PathBuf};
 use super::scan::{file_sig, FileSig};
 use super::util::{basename, collect_jsonl, iso_to_epoch_ms, s, stream_jsonl, truncate_title, u};
 use super::{
-  model_index, pack_event, Message, PackedEvent, ParsedSession, Part,
-  SessionDetail, SessionIdentity, SessionSummary, SummaryFields, TokenUsage, ToolTally,
+  model_index, pack_event, Message, PackedEvent, ParsedSession, Part, SessionDetail,
+  SessionIdentity, SessionSummary, SummaryFields, TokenUsage, ToolTally,
 };
 
 pub(super) fn claude_root() -> Option<PathBuf> {

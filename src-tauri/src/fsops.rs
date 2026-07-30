@@ -213,7 +213,11 @@ pub(crate) fn is_safe_skill_id(id: &str) -> bool {
 }
 
 #[tauri::command(async)]
-pub fn install_skill(app: AppHandle, id: String, targets: Vec<String>) -> Result<Vec<String>, String> {
+pub fn install_skill(
+  app: AppHandle,
+  id: String,
+  targets: Vec<String>,
+) -> Result<Vec<String>, String> {
   if !is_safe_skill_id(&id) {
     return Err(format!("invalid skill id: {id}"));
   }
@@ -224,7 +228,10 @@ pub fn install_skill(app: AppHandle, id: String, targets: Vec<String>) -> Result
     .join("assets/skills")
     .join(&id);
   if !base.exists() {
-    return Err(format!("bundled skill not found: {}", base.to_string_lossy()));
+    return Err(format!(
+      "bundled skill not found: {}",
+      base.to_string_lossy()
+    ));
   }
   let home = dirs::home_dir().ok_or("no home dir")?;
   let mut dests = Vec::new();
@@ -232,8 +239,8 @@ pub fn install_skill(app: AppHandle, id: String, targets: Vec<String>) -> Result
     // All four skill roots (claude/codex/opencode/agents) resolve through the
     // same table the scanner and delete-guardrail use, so a bundled skill can
     // install anywhere an imported or repo skill can.
-    let dir = crate::skills::target_root(&home, &t)
-      .ok_or_else(|| format!("invalid skill target: {t}"))?;
+    let dir =
+      crate::skills::target_root(&home, &t).ok_or_else(|| format!("invalid skill target: {t}"))?;
     let dest = dir.join(&id);
     replace_dir(&base, &dest).map_err(|e| e.to_string())?;
     dests.push(dest.to_string_lossy().into_owned());
@@ -269,7 +276,10 @@ mod tests {
     replace_dir(&src, &dest).unwrap();
 
     assert!(dest.join("keep.txt").exists(), "new file should be copied");
-    assert!(!dest.join("stale.txt").exists(), "stale file should be removed");
+    assert!(
+      !dest.join("stale.txt").exists(),
+      "stale file should be removed"
+    );
 
     let _ = fs::remove_dir_all(&base);
   }
@@ -335,7 +345,10 @@ mod tests {
     fs::create_dir_all(&victim).unwrap();
     // Not under a known skills root → refused, and the directory is untouched.
     assert!(remove_dir(victim.to_string_lossy().into_owned()).is_err());
-    assert!(victim.exists(), "guardrail must not delete an out-of-scope dir");
+    assert!(
+      victim.exists(),
+      "guardrail must not delete an out-of-scope dir"
+    );
     let _ = fs::remove_dir_all(&base);
   }
 
@@ -372,9 +385,11 @@ mod tests {
     assert_eq!(got, vec!["rust".to_string()]);
 
     // A missing path is simply empty, never an error.
-    assert!(list_skills(root.join("nope").to_string_lossy().into_owned())
-      .unwrap()
-      .is_empty());
+    assert!(
+      list_skills(root.join("nope").to_string_lossy().into_owned())
+        .unwrap()
+        .is_empty()
+    );
     let _ = fs::remove_dir_all(&root);
   }
 

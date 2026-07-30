@@ -1,5 +1,11 @@
-//! GitHub Release direct install — the route that works when the platform's own
-//! package manager can't get there.
+//! Direct install from a publisher's own release — the route that works when the
+//! platform's own package manager can't get there, or isn't there at all.
+//!
+//! Two publishers are understood: GitHub Releases (resolved through the API and
+//! matched by asset name) and a vendor's Squirrel-style `RELEASES.json`, which
+//! names one current build. Claude for macOS uses the latter, because Anthropic's
+//! *documented* download links sit behind a bot check that 403s any non-browser
+//! client — this one included — so they can't be fetched here at all.
 //!
 //! This exists because winget is a dead end on a restricted network: its
 //! downloader goes through WinINet, which reads the *system* proxy and ignores
@@ -141,6 +147,77 @@ pub fn github_latest_release(
   parse_release(&body)
 }
 
+/// Pull the current build out of a Squirrel-style `RELEASES.json`.
+///
+/// Kept separate from the request so it can be tested against a recorded body,
+/// exactly like `parse_release`. The entry whose `version` equals
+/// `currentRelease` wins rather than the first one in the list: the array is a
+/// version history, and its order is the publisher's business, not ours.
+fn parse_manifest(body: &str) -> Result<ReleaseInfo, String> {
+  let value: serde_json::Value =
+    serde_json::from_str(body).map_err(|e| format!("bad manifest JSON: {e}"))?;
+  let current = value
+    .get("currentRelease")
+    .and_then(|v| v.as_str())
+    .ok_or("manifest has no currentRelease")?;
+  let url = value
+    .get("releases")
+    .and_then(|v| v.as_array())
+    .and_then(|list| {
+      list
+        .iter()
+        .find(|r| r.get("version").and_then(|v| v.as_str()) == Some(current))
+        .or_else(|| list.first())
+    })
+    .and_then(|r| r.get("updateTo"))
+    .and_then(|u| u.get("url"))
+    .and_then(|v| v.as_str())
+    .ok_or("manifest has no download URL for the current release")?;
+  if !url.starts_with("https://") {
+    return Err("manifest download URL is not https".into());
+  }
+  // The last path segment is the real file name, and its extension is what
+  // decides which installer routine runs — so a manifest that points at
+  // something unnamed is an error here rather than a confusing failure later.
+  let name = url
+    .rsplit('/')
+    .next()
+    .map(|s| s.split(['?', '#']).next().unwrap_or(s))
+    .filter(|s| !s.is_empty())
+    .ok_or("manifest download URL has no file name")?;
+  Ok(ReleaseInfo {
+    tag: current.to_string(),
+    assets: vec![ReleaseAsset {
+      name: name.to_string(),
+      url: url.to_string(),
+      // Not published in the manifest; the download reports real progress from
+      // Content-Length anyway, and 0 already means "indeterminate" here.
+      size: 0,
+    }],
+  })
+}
+
+/// Resolve a vendor's own release manifest — the route for desktop apps that
+/// publish through Squirrel rather than GitHub Releases (Claude for macOS).
+///
+/// Returns the same `ReleaseInfo` shape as `github_latest_release`, with the one
+/// build it names as the single asset, so the download and install half of the
+/// caller doesn't have to care which kind of source it came from.
+#[tauri::command(async)]
+pub fn manifest_latest_release(url: String) -> Result<ReleaseInfo, String> {
+  if !url.starts_with("https://") {
+    return Err("only https:// manifest URLs are allowed".into());
+  }
+  let body = agent()
+    .get(&url)
+    .set("Accept", "application/json")
+    .call()
+    .map_err(|e| format!("manifest lookup failed: {e}"))?
+    .into_string()
+    .map_err(|e| format!("manifest lookup failed: {e}"))?;
+  parse_manifest(&body)
+}
+
 // ── Download ─────────────────────────────────────────────────────────────────
 
 /// Streamed so a 100 MB installer shows a moving bar instead of a frozen step.
@@ -234,7 +311,10 @@ pub fn download_release_asset(
     return Err("download exceeded the size limit".into());
   }
   fs::rename(&partial, &dest).map_err(|e| e.to_string())?;
-  let _ = on_progress.send(DownloadProgress { received, total: received });
+  let _ = on_progress.send(DownloadProgress {
+    received,
+    total: received,
+  });
   Ok(dest.to_string_lossy().into_owned())
 }
 
@@ -378,7 +458,11 @@ fn place_app_bundle(src: &Path, on_event: &Channel<String>) -> Result<i32, Strin
   if code != 0 {
     return Ok(code);
   }
-  let _ = run_streamed("xattr", &["-dr", "com.apple.quarantine", &dest_str], on_event);
+  let _ = run_streamed(
+    "xattr",
+    &["-dr", "com.apple.quarantine", &dest_str],
+    on_event,
+  );
   let _ = on_event.send(format!("installed → {dest_str}"));
   Ok(0)
 }
@@ -425,7 +509,12 @@ fn install_macos_zip(file: &Path, on_event: &Channel<String>) -> Result<i32, Str
   // signature a `.app` needs to launch.
   let code = run_streamed(
     "ditto",
-    &["-x", "-k", &file.to_string_lossy(), &staging.to_string_lossy()],
+    &[
+      "-x",
+      "-k",
+      &file.to_string_lossy(),
+      &staging.to_string_lossy(),
+    ],
     on_event,
   )?;
   if code != 0 {
@@ -478,7 +567,11 @@ fn install_linux_appimage(file: &Path, on_event: &Channel<String>) -> Result<i32
   fs::copy(file, &dest).map_err(|e| format!("copy failed: {e}"))?;
   fs::set_permissions(&dest, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
   let _ = on_event.send(format!("installed → {}", dest.display()));
-  if !std::env::var("PATH").unwrap_or_default().split(':').any(|p| Path::new(p) == bin_dir) {
+  if !std::env::var("PATH")
+    .unwrap_or_default()
+    .split(':')
+    .any(|p| Path::new(p) == bin_dir)
+  {
     let _ = on_event.send(format!(
       "note: {} is not on your PATH — add it to your shell profile to run `{name}` directly.",
       bin_dir.display()
@@ -505,6 +598,53 @@ mod tests {
        "browser_download_url": "https://github.com/o/r/releases/download/v3.4.1/app.AppImage"}
     ]
   }"#;
+
+  // Shaped exactly like the real Claude desktop manifest at
+  // downloads.claude.ai/releases/darwin/universal/RELEASES.json.
+  const MANIFEST_JSON: &str = r#"{
+    "currentRelease": "1.24012.9",
+    "releases": [
+      {"version": "1.24000.0",
+       "updateTo": {"version": "1.24000.0",
+                    "url": "https://downloads.claude.ai/releases/darwin/universal/1.24000.0/Claude-old.zip"}},
+      {"version": "1.24012.9",
+       "updateTo": {"version": "1.24012.9",
+                    "url": "https://downloads.claude.ai/releases/darwin/universal/1.24012.9/Claude-abc.zip"}}
+    ]
+  }"#;
+
+  #[test]
+  fn manifest_resolves_the_current_release_not_the_first_listed() {
+    // The stale entry is listed FIRST; picking by order would install it.
+    let info = parse_manifest(MANIFEST_JSON).unwrap();
+    assert_eq!(info.tag, "1.24012.9");
+    assert_eq!(info.assets.len(), 1);
+    assert_eq!(info.assets[0].name, "Claude-abc.zip");
+    assert!(info.assets[0].url.ends_with("/1.24012.9/Claude-abc.zip"));
+  }
+
+  #[test]
+  fn manifest_file_name_drops_any_query_string() {
+    // The extension decides which installer runs, so `?sig=…` must not become
+    // part of it and turn a .zip into an unknown format.
+    let body = r#"{"currentRelease":"1","releases":[{"version":"1",
+      "updateTo":{"url":"https://x/y/Claude.zip?sig=abc&t=1"}}]}"#;
+    assert_eq!(parse_manifest(body).unwrap().assets[0].name, "Claude.zip");
+  }
+
+  #[test]
+  fn manifest_rejects_a_non_https_download() {
+    let body = r#"{"currentRelease":"1","releases":[{"version":"1",
+      "updateTo":{"url":"http://x/y/Claude.zip"}}]}"#;
+    assert!(parse_manifest(body).is_err());
+  }
+
+  #[test]
+  fn manifest_errors_instead_of_guessing_when_fields_are_missing() {
+    assert!(parse_manifest(r#"{"releases":[]}"#).is_err());
+    assert!(parse_manifest(r#"{"currentRelease":"1","releases":[]}"#).is_err());
+    assert!(parse_manifest("not json").is_err());
+  }
 
   #[test]
   fn parses_tag_and_every_asset() {
@@ -546,7 +686,10 @@ mod tests {
   #[test]
   fn mirror_prefix_is_prepended_verbatim_and_ignored_when_blank() {
     let url = "https://github.com/o/r/releases/download/v1/a.dmg";
-    assert_eq!(mirrored(url, Some("https://gh-proxy.com/")), format!("https://gh-proxy.com/{url}"));
+    assert_eq!(
+      mirrored(url, Some("https://gh-proxy.com/")),
+      format!("https://gh-proxy.com/{url}")
+    );
     assert_eq!(mirrored(url, None), url);
     assert_eq!(mirrored(url, Some("   ")), url);
   }

@@ -465,7 +465,6 @@ mod scan;
 
 use scan::{scan_files, Progress, ScanProgressEvent};
 
-
 mod claude;
 
 use claude::{claude_detail, claude_parse_from_file, claude_root, claude_sigs};
@@ -680,14 +679,17 @@ fn is_under_claude_root(p: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-  use super::*;
-  use serde_json::Value;
-  use crate::history_cache::{CachedEntry, CachedSeries};
   use super::scan::{file_sig, parallel_map};
   use super::util::{basename, iso_to_epoch_ms, truncate_title};
+  use super::*;
+  use crate::history_cache::{CachedEntry, CachedSeries};
+  use serde_json::Value;
 
   // Parser internals the tests reach into directly.
-  use super::claude::{claude_attachment_part, claude_parent_id, claude_parse, claude_usage, persisted_output_path, strip_persisted_stub};
+  use super::claude::{
+    claude_attachment_part, claude_parent_id, claude_parse, claude_usage, persisted_output_path,
+    strip_persisted_stub,
+  };
   use super::codex::{codex_parse, codex_token_usage, redact_encrypted_args, split_agent_message};
 
   // The parsers return a summary *and* a usage series; most assertions here

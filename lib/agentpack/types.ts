@@ -53,11 +53,27 @@ export type CliInstallManager = "npm" | "native"
 
 /** A CLI tool that can be installed by the wizard. Display text lives in the i18n catalog (keyed by id). */
 export interface CliTool {
-  id: "claude-code" | "codex" | "cc-switch" | "cc-connect" | "opencode"
+  id:
+    | "claude-code"
+    | "codex"
+    | "cc-switch"
+    | "cc-connect"
+    | "opencode"
+    // The desktop apps sit alongside their CLIs rather than replacing them:
+    // both can be installed, and they share `~/.claude` / `~/.codex` config.
+    | "claude-desktop"
+    | "codex-app"
   /** Binary name to probe on PATH for detection. */
   bin: string
   /** GUI app: detect by PATH lookup only, never execute it (it may open a window). */
   gui?: boolean
+  /**
+   * For a `gui` tool, the name it is installed under when it puts nothing on
+   * PATH: the macOS `.app` bundle stem, and the Windows MSIX / Store package
+   * name. Both desktop apps need this — a PATH probe alone always reports them
+   * missing, which would make agentpack reinstall them on every scan.
+   */
+  appBundle?: string
   /** npm package name, used to query the latest published version (npm-based CLIs only). */
   npmPackage?: string
   /**
@@ -93,18 +109,37 @@ export interface CliTool {
 }
 
 /**
- * Where to find a tool's installable release assets.
+ * Where to find a tool's installable artifact.
  *
- * The release is resolved live from the GitHub API and the asset picked by
- * matching `pattern` against the real asset names — never a hard-coded download
- * URL, so an upstream rename of the installer file doesn't silently break the
- * fallback for everyone.
+ * Both variants resolve the download live rather than hard-coding a URL, so an
+ * upstream rename doesn't silently break the install — they just ask different
+ * publishers. Anthropic's documented desktop download links can't be a third
+ * variant: they sit behind a bot check that returns 403 to any non-browser
+ * client, this one included.
  */
-export interface ReleaseSource {
+export type ReleaseSource = GithubReleaseSource | ManifestReleaseSource
+
+/**
+ * Resolved from the GitHub API, with the asset picked by matching `pattern`
+ * against the real asset names.
+ */
+export interface GithubReleaseSource {
+  kind: "github"
   /** `owner/name`. */
   repo: string
   /** Per-OS asset name matcher (a regex source string, matched case-insensitively). */
   asset: Partial<Record<OS, ReleaseAssetMatch>>
+}
+
+/**
+ * Resolved from the vendor's own Squirrel-style `RELEASES.json`, which names one
+ * current build. Nothing is matched — the manifest already points at exactly one
+ * file — so there is no `pattern` here, and the file name comes off the URL.
+ */
+export interface ManifestReleaseSource {
+  kind: "manifest"
+  /** Per-OS manifest URL. An absent OS means no automated install there. */
+  manifest: Partial<Record<OS, string>>
 }
 
 export interface ReleaseAssetMatch {

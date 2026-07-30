@@ -136,10 +136,16 @@ pub struct SchemaStatus {
 #[tauri::command(async)]
 pub fn cc_schema_status() -> Result<SchemaStatus, String> {
   if !exists() {
-    return Ok(SchemaStatus { exists: false, user_version: 0, missing_columns: Vec::new() });
+    return Ok(SchemaStatus {
+      exists: false,
+      user_version: 0,
+      missing_columns: Vec::new(),
+    });
   }
   let conn = Connection::open(db_path()).map_err(|e| e.to_string())?;
-  let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap_or(0);
+  let user_version: i64 = conn
+    .query_row("PRAGMA user_version", [], |r| r.get(0))
+    .unwrap_or(0);
   Ok(SchemaStatus {
     exists: true,
     user_version,
@@ -263,7 +269,10 @@ fn run_op(conn: &Connection, req: &WriteReq) -> Result<Vec<String>, String> {
   match req.op.as_str() {
     "add" => {
       let form = req.form.as_ref().ok_or("missing form")?;
-      let settings = req.settings_config.clone().ok_or("missing settings_config")?;
+      let settings = req
+        .settings_config
+        .clone()
+        .ok_or("missing settings_config")?;
       let id = unique_id();
       let sort: i64 = conn
         .query_row(
@@ -304,17 +313,30 @@ fn run_op(conn: &Connection, req: &WriteReq) -> Result<Vec<String>, String> {
           ],
         )
         .map_err(|e| e.to_string())?;
-      Ok(vec![format!("added provider \"{}\" ({})", form.name, req.app)])
+      Ok(vec![format!(
+        "added provider \"{}\" ({})",
+        form.name, req.app
+      )])
     }
     "update" => {
       let form = req.form.as_ref().ok_or("missing form")?;
       let id = req.id.as_ref().ok_or("missing id")?;
-      let settings = req.settings_config.clone().ok_or("missing settings_config")?;
+      let settings = req
+        .settings_config
+        .clone()
+        .ok_or("missing settings_config")?;
       let n = conn
         .execute(
           "UPDATE providers SET name=?1, settings_config=?2, website_url=?3, notes=?4 \
            WHERE id=?5 AND app_type=?6",
-          rusqlite::params![form.name, settings, form.website_url, form.notes, id, req.app],
+          rusqlite::params![
+            form.name,
+            settings,
+            form.website_url,
+            form.notes,
+            id,
+            req.app
+          ],
         )
         .map_err(|e| e.to_string())?;
       if n == 0 {
@@ -323,7 +345,10 @@ fn run_op(conn: &Connection, req: &WriteReq) -> Result<Vec<String>, String> {
             .into(),
         );
       }
-      Ok(vec![format!("updated provider \"{}\" ({})", form.name, req.app)])
+      Ok(vec![format!(
+        "updated provider \"{}\" ({})",
+        form.name, req.app
+      )])
     }
     "delete" => {
       let id = req.id.as_ref().ok_or("missing id")?;
@@ -341,14 +366,20 @@ fn run_op(conn: &Connection, req: &WriteReq) -> Result<Vec<String>, String> {
         );
       }
       conn
-        .execute("DELETE FROM providers WHERE id=?1 AND app_type=?2", [id, &req.app])
+        .execute(
+          "DELETE FROM providers WHERE id=?1 AND app_type=?2",
+          [id, &req.app],
+        )
         .map_err(|e| e.to_string())?;
       Ok(vec![format!("deleted provider ({})", req.app)])
     }
     "setCurrent" => {
       let id = req.id.as_ref().ok_or("missing id")?;
       conn
-        .execute("UPDATE providers SET is_current=0 WHERE app_type=?1", [&req.app])
+        .execute(
+          "UPDATE providers SET is_current=0 WHERE app_type=?1",
+          [&req.app],
+        )
         .map_err(|e| e.to_string())?;
       let n = conn
         .execute(
@@ -494,7 +525,11 @@ mod tests {
 
     let st = cc_schema_status().unwrap();
     assert!(st.exists);
-    assert!(st.missing_columns.is_empty(), "missing: {:?}", st.missing_columns);
+    assert!(
+      st.missing_columns.is_empty(),
+      "missing: {:?}",
+      st.missing_columns
+    );
     // Left at 0 on purpose: claiming a version would brick an older cc-switch,
     // which refuses to start against a database newer than it understands.
     assert_eq!(st.user_version, 0);
@@ -560,7 +595,9 @@ mod tests {
     let st = cc_schema_status().unwrap();
     assert_eq!(st.missing_columns, vec!["website_url".to_string()]);
 
-    let err = cc_load_providers().err().expect("old schema must be rejected");
+    let err = cc_load_providers()
+      .err()
+      .expect("old schema must be rejected");
     assert!(err.contains("Launch cc-switch"), "unexpected error: {err}");
 
     let _ = std::fs::remove_file(&p);

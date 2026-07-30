@@ -111,8 +111,8 @@ export const quitCcSwitch = () => invoke<boolean>("quit_cc_switch")
  */
 export const ccSwitchRunning = () => invoke<boolean>("cc_switch_running")
 
-export const detectCli = (bin: string, gui: boolean) =>
-  invoke<{ installed: boolean; version?: string }>("detect_cli", { bin, gui })
+export const detectCli = (bin: string, gui: boolean, appBundle?: string) =>
+  invoke<{ installed: boolean; version?: string }>("detect_cli", { bin, gui, appBundle })
 
 /** Detect a runtime, falling back to its alternate binary name (python → python3). */
 export async function detectRuntime(rt: {
@@ -220,11 +220,19 @@ export const setProcessProxy = (config: {
   noProxy?: string
 }) => invoke<void>("set_process_proxy", { config })
 
-// ── GitHub Release direct install (src-tauri/src/download.rs) ───────────────
+// ── Release direct install (src-tauri/src/download.rs) ──────────────────────
 
 /** Latest published release of `repo`, resolved live so a renamed asset still resolves. */
 export const githubLatestRelease = (repo: string, mirrorPrefix: string | null) =>
   invoke<ReleaseInfo>("github_latest_release", { repo, mirrorPrefix })
+
+/**
+ * Current build named by a vendor's own Squirrel-style `RELEASES.json` — the
+ * route for desktop apps that don't publish through GitHub Releases. Comes back
+ * in the same shape, carrying the single build it names as one asset.
+ */
+export const manifestLatestRelease = (url: string) =>
+  invoke<ReleaseInfo>("manifest_latest_release", { url })
 
 /** Progress of an in-flight asset download (mirrors Rust `DownloadProgress`). */
 export interface DownloadProgress {

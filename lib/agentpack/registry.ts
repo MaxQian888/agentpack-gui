@@ -237,6 +237,81 @@ export const CLI_TOOLS: readonly CliTool[] = [
       linux: { file: "npm", args: ["uninstall", "-g", "@anthropic-ai/claude-code"] },
     },
   },
+  // ── Desktop apps ───────────────────────────────────────────────────────────
+  //
+  // These sit ALONGSIDE the CLIs above rather than replacing them. The desktop
+  // app bundles its own copy of the agent — no Node, no CLI, no terminal — and
+  // reads the same `~/.claude` / `~/.codex` config, so skills and MCP servers
+  // written for the CLI already apply to it.
+  {
+    id: "claude-desktop",
+    // Nothing lands on PATH; `appBundle` is what detection actually uses.
+    bin: "claude-desktop",
+    gui: true,
+    appBundle: "Claude",
+    install: {
+      // winget ships with Windows 10+, so unlike brew this needs no prerequisite.
+      win: {
+        file: "winget",
+        args: [
+          "install",
+          "-e",
+          "--id",
+          "Anthropic.Claude",
+          "--accept-source-agreements",
+          "--accept-package-agreements",
+          "--disable-interactivity",
+        ],
+      },
+      // Homebrew is the fallback, NOT the default — see `release` below. A user
+      // who needs an app installed for them is unlikely to already have brew,
+      // and bootstrapping brew costs more than the app it would install.
+      mac: { file: "brew", args: ["install", "--cask", "claude"] },
+      linux: null,
+    },
+    uninstall: {
+      win: {
+        file: "winget",
+        args: [
+          "uninstall",
+          "-e",
+          "--id",
+          "Anthropic.Claude",
+          "--accept-source-agreements",
+          "--disable-interactivity",
+        ],
+      },
+      mac: { file: "brew", args: ["uninstall", "--cask", "claude"] },
+    },
+    // Anthropic publish a Squirrel manifest naming the current build, and it is
+    // plainly reachable. Their *documented* download links are not: every one of
+    // them answers 403 to a non-browser client, so they can't be used here.
+    release: {
+      kind: "manifest",
+      manifest: { mac: "https://downloads.claude.ai/releases/darwin/universal/RELEASES.json" },
+    },
+    manualNote:
+      "On Linux, Claude Desktop is in beta — see https://code.claude.com/docs/en/desktop-linux",
+  },
+  {
+    id: "codex-app",
+    bin: "codex-app",
+    gui: true,
+    appBundle: "Codex",
+    install: {
+      // No winget package exists for the Codex APP — `OpenAI.Codex` there is the
+      // CLI. Nothing to automate on Windows, so the plan surfaces a manual note.
+      win: null,
+      mac: { file: "brew", args: ["install", "--cask", "codex-app"] },
+      linux: null,
+    },
+    uninstall: {
+      mac: { file: "brew", args: ["uninstall", "--cask", "codex-app"] },
+    },
+    // No manifest endpoint to resolve (probed: 404), so brew is the only
+    // automated route and there is no proxy-resilient fallback below it.
+    manualNote: "Download the Codex app from https://chatgpt.com/codex",
+  },
   {
     id: "codex",
     bin: "codex",
@@ -336,6 +411,7 @@ export const CLI_TOOLS: readonly CliTool[] = [
     // entirely, so on a proxied network fetching the installer ourselves is the
     // only thing that can work.
     release: {
+      kind: "github",
       repo: "farion1231/cc-switch",
       asset: {
         // NSIS `-setup.exe` first; `.msi` is matched too since Tauri can bundle

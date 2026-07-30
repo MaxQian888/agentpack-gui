@@ -163,7 +163,11 @@ fn augmented_path() -> OsString {
       return;
     }
     // Windows paths are case-insensitive; dedup accordingly (keep first casing).
-    let key = if cfg!(windows) { dir.to_lowercase() } else { dir.clone() };
+    let key = if cfg!(windows) {
+      dir.to_lowercase()
+    } else {
+      dir.clone()
+    };
     if seen.insert(key) {
       parts.push(dir);
     }
@@ -292,7 +296,11 @@ pub(crate) fn elevated_wrapper(
   use std::sync::atomic::AtomicU64;
   static SEQ: AtomicU64 = AtomicU64::new(0);
 
-  let uid = format!("{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed));
+  let uid = format!(
+    "{}-{}",
+    std::process::id(),
+    SEQ.fetch_add(1, Ordering::Relaxed)
+  );
   let dir = std::env::temp_dir();
   let inner_ps = dir.join(format!("agentpack-elev-{uid}.inner.ps1"));
   let outer_ps = dir.join(format!("agentpack-elev-{uid}.outer.ps1"));
@@ -545,8 +553,14 @@ fn cc_switch_exe() -> Option<std::path::PathBuf> {
   // winget registers the app under an Uninstall key carrying InstallLocation and
   // usually DisplayIcon (→ the exe). The exe name is stable: cc-switch.exe.
   let roots = [
-    (HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
-    (HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+    (
+      HKEY_CURRENT_USER,
+      r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+    ),
+    (
+      HKEY_LOCAL_MACHINE,
+      r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+    ),
     (
       HKEY_LOCAL_MACHINE,
       r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
@@ -568,7 +582,11 @@ fn cc_switch_exe() -> Option<std::path::PathBuf> {
       if let Ok(icon) = entry.get_value::<String, _>("DisplayIcon") {
         let raw = icon.trim().trim_matches('"');
         let exe = PathBuf::from(raw.split(',').next().unwrap_or(raw).trim());
-        if exe.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")) && exe.exists() {
+        if exe
+          .extension()
+          .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+          && exe.exists()
+        {
           return Some(exe);
         }
       }
@@ -618,6 +636,57 @@ fn cc_switch_exe() -> Option<std::path::PathBuf> {
 #[cfg(all(not(windows), not(target_os = "macos")))]
 fn cc_switch_exe() -> Option<std::path::PathBuf> {
   None
+}
+
+/// Whether a GUI app is installed, looked up by the name it ships under rather
+/// than by a binary on PATH — desktop apps generally put nothing there.
+///
+/// macOS: an `.app` bundle in either Applications directory. Windows: an MSIX /
+/// Store package, which is how both Claude and Codex ship there and which never
+/// appears on PATH. Linux: no convention worth guessing at, so `false` — the
+/// registry offers no automated Linux install for these anyway.
+#[cfg(target_os = "macos")]
+fn app_bundle_installed(name: &str) -> bool {
+  let mut roots = vec![std::path::PathBuf::from("/Applications")];
+  if let Some(home) = dirs::home_dir() {
+    roots.push(home.join("Applications"));
+  }
+  roots.iter().any(|root| {
+    std::fs::read_dir(root)
+      .into_iter()
+      .flatten()
+      .flatten()
+      .map(|e| e.path())
+      .any(|p| {
+        p.extension().is_some_and(|e| e.eq_ignore_ascii_case("app"))
+          && p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| s.eq_ignore_ascii_case(name))
+      })
+  })
+}
+
+#[cfg(windows)]
+fn app_bundle_installed(name: &str) -> bool {
+  // `Get-AppxPackage` is the only reliable probe for a Store/MSIX install.
+  // -NoProfile so a slow user profile can't stall startup detection.
+  build_command(
+    "powershell",
+    [
+      "-NoProfile",
+      "-Command",
+      &format!("if (Get-AppxPackage -Name '{name}') {{ exit 0 }} else {{ exit 1 }}"),
+    ],
+  )
+  .output()
+  .map(|o| o.status.success())
+  .unwrap_or(false)
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn app_bundle_installed(_name: &str) -> bool {
+  false
 }
 
 /// Whether the cc-switch desktop app is actually installed right now. It's a GUI
@@ -916,7 +985,12 @@ pub fn probe_host(host: String, port: u16, timeout_ms: Option<u64>) -> HostProbe
   let start = Instant::now();
   let addrs = match (host.as_str(), port).to_socket_addrs() {
     Ok(a) => a,
-    Err(_) => return HostProbe { reachable: false, latency_ms: None },
+    Err(_) => {
+      return HostProbe {
+        reachable: false,
+        latency_ms: None,
+      }
+    }
   };
   for addr in addrs {
     if std::net::TcpStream::connect_timeout(&addr, timeout).is_ok() {
@@ -1017,12 +1091,16 @@ pub fn command_on_path(command: String) -> bool {
 /// detected before its first launch, and a removed one stops being detected even
 /// if its ~/.cc-switch config dir lingers.
 #[tauri::command(async)]
-pub fn detect_cli(bin: String, gui: bool) -> DetectionResult {
+pub fn detect_cli(bin: String, gui: bool, app_bundle: Option<String>) -> DetectionResult {
   if gui {
     let installed = if bin == "cc-switch" {
       cc_switch_installed()
     } else {
-      on_path(&bin)
+      // A desktop app is normally off PATH entirely, so the PATH probe is only
+      // the cheap first guess — `app_bundle` is what actually finds Claude.app
+      // or Codex.app. Kept as data on the tool rather than another `bin == …`
+      // branch, so adding an app is a registry edit and not a Rust one.
+      on_path(&bin) || app_bundle.as_deref().is_some_and(app_bundle_installed)
     };
     return DetectionResult {
       installed,
@@ -1031,11 +1109,19 @@ pub fn detect_cli(bin: String, gui: bool) -> DetectionResult {
   }
   match build_command(&bin, ["--version"]).output() {
     Ok(o) if o.status.success() => {
-      let raw = if o.stdout.is_empty() { &o.stderr } else { &o.stdout };
+      let raw = if o.stdout.is_empty() {
+        &o.stderr
+      } else {
+        &o.stdout
+      };
       let v = String::from_utf8_lossy(raw);
       DetectionResult {
         installed: true,
-        version: v.lines().next().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        version: v
+          .lines()
+          .next()
+          .map(|s| s.trim().to_string())
+          .filter(|s| !s.is_empty()),
       }
     }
     _ => DetectionResult {
@@ -1059,7 +1145,10 @@ pub fn latest_version(package: String) -> Option<String> {
   match rx.recv_timeout(std::time::Duration::from_secs(8)) {
     Ok(Ok(o)) if o.status.success() => {
       let v = String::from_utf8_lossy(&o.stdout);
-      v.lines().next().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+      v.lines()
+        .next()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
     }
     _ => None,
   }
@@ -1170,7 +1259,7 @@ mod tests {
 
   #[test]
   fn missing_binary_not_installed() {
-    assert!(!detect_cli("definitely-not-a-real-bin-xyz".into(), false).installed);
+    assert!(!detect_cli("definitely-not-a-real-bin-xyz".into(), false, None).installed);
   }
 
   #[test]
@@ -1211,7 +1300,34 @@ mod tests {
     // The GUI detection path walks PATH and the Windows Uninstall registry —
     // neither guaranteed to hold cc-switch on the test machine. It must return a
     // bool without panicking regardless.
-    let _ = detect_cli("cc-switch".into(), true).installed;
+    let _ = detect_cli("cc-switch".into(), true, None).installed;
+  }
+
+  #[test]
+  fn detect_by_app_bundle_is_infallible_and_needs_no_path_entry() {
+    // A desktop app puts nothing on PATH, so this walks the Applications dirs
+    // (or the Store package list on Windows). Whether it's installed on the test
+    // machine is not the point — it must answer without panicking.
+    let _ = detect_cli("claude-desktop".into(), true, Some("Claude".into())).installed;
+    // A bundle nobody ships must come back false rather than matching loosely.
+    assert!(
+      !detect_cli(
+        "definitely-not-installed-xyz".into(),
+        true,
+        Some("DefinitelyNotInstalledXyz".into())
+      )
+      .installed
+    );
+  }
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn app_bundle_match_is_exact_not_a_prefix() {
+    // `Claude Code URL Handler.app` is a real bundle the Claude Code CLI
+    // installs, and it is NOT the desktop app. A prefix or contains match would
+    // report Claude Desktop as installed on any machine with the CLI.
+    assert!(!app_bundle_installed("Claude Code"));
+    assert!(!app_bundle_installed("Cla"));
   }
 
   #[cfg(any(windows, target_os = "macos"))]
@@ -1220,7 +1336,13 @@ mod tests {
     // The shipped macOS bundle is "CC Switch.app" and the Windows DisplayName is
     // "CC Switch", but the CLI id is "cc-switch". Matching the id literally was
     // the detection bug: an installed app reported as missing.
-    for name in ["CC Switch", "cc-switch", "CC-Switch", "ccswitch", "CC Switch 1.2.3"] {
+    for name in [
+      "CC Switch",
+      "cc-switch",
+      "CC-Switch",
+      "ccswitch",
+      "CC Switch 1.2.3",
+    ] {
       assert!(is_cc_switch_name(name), "should match: {name}");
     }
     for name in ["Switch Control", "CC Cleaner", ""] {
@@ -1235,9 +1357,14 @@ mod tests {
     // existing .app bundle whose name really is cc-switch. Machines without it
     // installed simply skip — the resolver must not panic there either.
     if let Some(app) = cc_switch_exe() {
-      assert!(app.exists(), "resolved a bundle that does not exist: {app:?}");
+      assert!(
+        app.exists(),
+        "resolved a bundle that does not exist: {app:?}"
+      );
       assert_eq!(app.extension().unwrap(), "app");
-      assert!(is_cc_switch_name(app.file_stem().unwrap().to_str().unwrap()));
+      assert!(is_cc_switch_name(
+        app.file_stem().unwrap().to_str().unwrap()
+      ));
     }
   }
 
@@ -1322,9 +1449,11 @@ mod tests {
     // The wrapper must launch a (non-elevated) powershell -File pointing at a
     // generated outer script, and that outer script must elevate an inner script
     // that actually invokes the real target with its args.
-    let (file, args) =
-      elevated_wrapper("winget", &["install".into(), "--id".into(), "OpenJS.NodeJS.LTS".into()])
-        .expect("wrapper should be built");
+    let (file, args) = elevated_wrapper(
+      "winget",
+      &["install".into(), "--id".into(), "OpenJS.NodeJS.LTS".into()],
+    )
+    .expect("wrapper should be built");
     assert_eq!(file, "powershell");
     let outer_path = args.last().expect("outer script path");
     assert_eq!(args.first().map(String::as_str), Some("-NoProfile"));
@@ -1332,9 +1461,18 @@ mod tests {
 
     let inner_path = outer_path.replace(".outer.ps1", ".inner.ps1");
     let inner = std::fs::read_to_string(&inner_path).expect("inner script written");
-    assert!(inner.contains("& 'winget'"), "inner missing target: {inner}");
-    assert!(inner.contains("'OpenJS.NodeJS.LTS'"), "inner missing arg: {inner}");
-    assert!(inner.contains("$LASTEXITCODE"), "inner must record exit code");
+    assert!(
+      inner.contains("& 'winget'"),
+      "inner missing target: {inner}"
+    );
+    assert!(
+      inner.contains("'OpenJS.NodeJS.LTS'"),
+      "inner missing arg: {inner}"
+    );
+    assert!(
+      inner.contains("$LASTEXITCODE"),
+      "inner must record exit code"
+    );
 
     let outer = std::fs::read_to_string(outer_path).expect("outer script written");
     assert!(outer.contains("-Verb RunAs"), "outer must elevate: {outer}");
@@ -1357,7 +1495,10 @@ mod tests {
     let outer_path = args.last().unwrap();
     let inner_path = outer_path.replace(".outer.ps1", ".inner.ps1");
     let inner = std::fs::read_to_string(&inner_path).expect("inner written");
-    assert!(inner.contains("'a''b'"), "single quote not doubled: {inner}");
+    assert!(
+      inner.contains("'a''b'"),
+      "single quote not doubled: {inner}"
+    );
     let _ = std::fs::remove_file(&inner_path);
     let _ = std::fs::remove_file(outer_path);
   }
@@ -1370,7 +1511,10 @@ mod tests {
     if let Some(base) = std::env::var_os("PATH") {
       for d in std::env::split_paths(&base) {
         if !d.as_os_str().is_empty() {
-          assert!(aug_dirs.contains(&d), "augmented PATH dropped base dir {d:?}");
+          assert!(
+            aug_dirs.contains(&d),
+            "augmented PATH dropped base dir {d:?}"
+          );
         }
       }
     }

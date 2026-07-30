@@ -160,7 +160,11 @@ fn collect_hashable_paths(dir: &Path, root: &Path, depth: usize, out: &mut Vec<(
     if child.is_dir() {
       collect_hashable_paths(&child, root, depth + 1, out);
     } else if child.is_file() {
-      let rel = child.strip_prefix(root).unwrap_or(&child).to_string_lossy().replace('\\', "/");
+      let rel = child
+        .strip_prefix(root)
+        .unwrap_or(&child)
+        .to_string_lossy()
+        .replace('\\', "/");
       out.push((rel, child));
     }
   }
@@ -326,10 +330,22 @@ fn walk_skill_files(dir: &Path, root: &Path, depth: usize, out: &mut Vec<SkillFi
       continue;
     }
     let child = entry.path();
-    let rel = child.strip_prefix(root).unwrap_or(&child).to_string_lossy().replace('\\', "/");
+    let rel = child
+      .strip_prefix(root)
+      .unwrap_or(&child)
+      .to_string_lossy()
+      .replace('\\', "/");
     let is_dir = child.is_dir();
-    let bytes = if is_dir { 0 } else { entry.metadata().map(|m| m.len()).unwrap_or(0) };
-    out.push(SkillFile { rel_path: rel, bytes, is_dir });
+    let bytes = if is_dir {
+      0
+    } else {
+      entry.metadata().map(|m| m.len()).unwrap_or(0)
+    };
+    out.push(SkillFile {
+      rel_path: rel,
+      bytes,
+      is_dir,
+    });
     if is_dir {
       walk_skill_files(&child, root, depth + 1, out);
     }
@@ -454,7 +470,11 @@ pub(crate) fn enumerate_repo_skills(top: &Path) -> Vec<RepoSkill> {
         let Ok(skill_md) = read_text_capped(&child.join("SKILL.md"), MAX_SKILL_MD_BYTES) else {
           continue;
         };
-        out.push(RepoSkill { dir_name: name, rel_path: rel, skill_md });
+        out.push(RepoSkill {
+          dir_name: name,
+          rel_path: rel,
+          skill_md,
+        });
         continue;
       }
       walk(&child, top, depth + 1, out);
@@ -494,9 +514,13 @@ fn download_and_extract(url: &str, dest: &Path) -> Result<(), String> {
   }
   let agent = builder.build();
 
-  let response = agent.get(url).call().map_err(|e| format!("download failed: {e}"))?;
+  let response = agent
+    .get(url)
+    .call()
+    .map_err(|e| format!("download failed: {e}"))?;
   let reader = response.into_reader().take(MAX_TARBALL_BYTES);
-  extract_repo(reader, dest).map_err(|e| format!("extract failed (repo too large or corrupt?): {e}"))
+  extract_repo(reader, dest)
+    .map_err(|e| format!("extract failed (repo too large or corrupt?): {e}"))
 }
 
 /// The codeload tarball URL for a repo/ref, with an optional mirror prefix
@@ -530,7 +554,10 @@ pub fn fetch_repo_skills(url: String) -> Result<RepoScan, String> {
       return Err(e);
     }
   };
-  Ok(RepoScan { scan_id, skills: enumerate_repo_skills(&top) })
+  Ok(RepoScan {
+    scan_id,
+    skills: enumerate_repo_skills(&top),
+  })
 }
 
 /// Validate a repo-relative skill path from the frontend: no traversal, no
@@ -539,7 +566,9 @@ fn is_safe_rel_path(rel: &str) -> bool {
   !rel.starts_with('/')
     && !rel.starts_with('\\')
     && !rel.contains(':')
-    && !rel.split(['/', '\\']).any(|seg| seg == ".." || seg.is_empty())
+    && !rel
+      .split(['/', '\\'])
+      .any(|seg| seg == ".." || seg.is_empty())
 }
 
 /// Testable core of `install_repo_skills`: validate each pick and copy it into
@@ -554,7 +583,11 @@ pub(crate) fn install_picks(
     if !rel.is_empty() && !is_safe_rel_path(rel) {
       return Err(format!("invalid skill path: {rel}"));
     }
-    let src = if rel.is_empty() { top.to_path_buf() } else { top.join(rel) };
+    let src = if rel.is_empty() {
+      top.to_path_buf()
+    } else {
+      top.join(rel)
+    };
     if !src.join("SKILL.md").is_file() {
       return Err(format!("not a skill: {rel}"));
     }
@@ -588,7 +621,11 @@ fn write_origins_for_picks(
 ) -> Result<(), String> {
   let installed_at = now_ms();
   for rel in rel_paths {
-    let src = if rel.is_empty() { top.to_path_buf() } else { top.join(rel) };
+    let src = if rel.is_empty() {
+      top.to_path_buf()
+    } else {
+      top.join(rel)
+    };
     let dir_name = if rel.is_empty() {
       repo_dir_name(top)
     } else {
@@ -659,7 +696,10 @@ pub struct UpdateResult {
 /// failures are per-group and surface as `error` on every entry in that group
 /// rather than failing the whole batch.
 #[tauri::command(async)]
-pub fn check_repo_updates(entries: Vec<UpdateQuery>, mirror_prefix: Option<String>) -> Vec<UpdateResult> {
+pub fn check_repo_updates(
+  entries: Vec<UpdateQuery>,
+  mirror_prefix: Option<String>,
+) -> Vec<UpdateResult> {
   let base = scan_base();
   let mut groups: HashMap<(String, String), Vec<&UpdateQuery>> = HashMap::new();
   for e in &entries {
@@ -690,7 +730,11 @@ pub fn check_repo_updates(entries: Vec<UpdateQuery>, mirror_prefix: Option<Strin
       }
     };
     for q in group {
-      let src = if q.origin.rel_path.is_empty() { top.clone() } else { top.join(&q.origin.rel_path) };
+      let src = if q.origin.rel_path.is_empty() {
+        top.clone()
+      } else {
+        top.join(&q.origin.rel_path)
+      };
       if !src.join("SKILL.md").is_file() {
         results.push(UpdateResult {
           path: q.path.clone(),
@@ -716,7 +760,11 @@ pub fn check_repo_updates(entries: Vec<UpdateQuery>, mirror_prefix: Option<Strin
 /// Re-fetch an installed skill's origin repo and replace it in each target
 /// with the fresh copy, updating the origin manifest's hash/timestamp.
 #[tauri::command(async)]
-pub fn update_skill(path: String, targets: Vec<String>, mirror_prefix: Option<String>) -> Result<Vec<String>, String> {
+pub fn update_skill(
+  path: String,
+  targets: Vec<String>,
+  mirror_prefix: Option<String>,
+) -> Result<Vec<String>, String> {
   let origin = read_origin(Path::new(&path)).ok_or("skill has no origin manifest")?;
   let dir_name = Path::new(&path)
     .file_name()
@@ -744,7 +792,11 @@ pub fn update_skill(path: String, targets: Vec<String>, mirror_prefix: Option<St
     Ok(t) => t,
     Err(e) => return cleanup_and_err(e),
   };
-  let src = if origin.rel_path.is_empty() { top.clone() } else { top.join(&origin.rel_path) };
+  let src = if origin.rel_path.is_empty() {
+    top.clone()
+  } else {
+    top.join(&origin.rel_path)
+  };
   if !src.join("SKILL.md").is_file() {
     return cleanup_and_err("skill path not found in latest repo".into());
   }
@@ -822,10 +874,17 @@ fn source_for_path(path: &Path) -> String {
   let Some(parent_canon) = path.parent().and_then(|p| p.canonicalize().ok()) else {
     return "unknown".into();
   };
-  let Some(home) = dirs::home_dir() else { return "unknown".into() };
+  let Some(home) = dirs::home_dir() else {
+    return "unknown".into();
+  };
   source_roots(&home)
     .into_iter()
-    .find(|(_, root)| root.canonicalize().map(|r| r == parent_canon).unwrap_or(false))
+    .find(|(_, root)| {
+      root
+        .canonicalize()
+        .map(|r| r == parent_canon)
+        .unwrap_or(false)
+    })
     .map(|(s, _)| s.to_string())
     .unwrap_or_else(|| "unknown".into())
 }
@@ -890,7 +949,9 @@ pub fn backup_skill(path: String) -> Result<SkillBackup, String> {
 /// are skipped rather than failing the whole listing. Missing root => empty.
 #[tauri::command(async)]
 pub fn list_skill_backups() -> Result<Vec<SkillBackup>, String> {
-  let Some(root) = backups_root() else { return Ok(Vec::new()) };
+  let Some(root) = backups_root() else {
+    return Ok(Vec::new());
+  };
   if !root.is_dir() {
     return Ok(Vec::new());
   }
@@ -908,7 +969,11 @@ pub fn list_skill_backups() -> Result<Vec<SkillBackup>, String> {
 
 /// Testable core of `restore_skill_backup`: copy `src` into `<root>/<dir_name>`
 /// for each already-resolved root.
-fn restore_backup_into_roots(src: &Path, dir_name: &str, roots: &[PathBuf]) -> Result<Vec<String>, String> {
+fn restore_backup_into_roots(
+  src: &Path,
+  dir_name: &str,
+  roots: &[PathBuf],
+) -> Result<Vec<String>, String> {
   let mut dests = Vec::new();
   for root in roots {
     let dest = root.join(dir_name);
@@ -998,7 +1063,12 @@ fn create_skill_in_roots(
     fs::create_dir_all(dest).map_err(|e| e.to_string())?;
     fs::write(dest.join("SKILL.md"), content).map_err(|e| e.to_string())?;
   }
-  Ok(dests.into_iter().map(|d| d.to_string_lossy().into_owned()).collect())
+  Ok(
+    dests
+      .into_iter()
+      .map(|d| d.to_string_lossy().into_owned())
+      .collect(),
+  )
 }
 
 /// Hand-author a new skill's SKILL.md into each target's skills root. By default
@@ -1053,7 +1123,11 @@ mod tests {
   fn scan_root_finds_skills_and_skips_clutter() {
     let root = temp_dir("scan");
     fs::create_dir_all(&root).unwrap();
-    write_skill(&root, "find-docs", "---\nname: find-docs\ndescription: d\n---\n# Docs\n");
+    write_skill(
+      &root,
+      "find-docs",
+      "---\nname: find-docs\ndescription: d\n---\n# Docs\n",
+    );
     write_skill(&root, ".system", "hidden"); // dot-dir: never a skill
     fs::create_dir_all(root.join("no-marker")).unwrap(); // no SKILL.md
     fs::write(root.join("stray.md"), "file, not dir").unwrap();
@@ -1183,13 +1257,22 @@ mod tests {
     // `install_skill` (bundled), `install_skill_from_dir`, `create_skill` and the
     // repo installer all resolve targets through `target_root`; every one of the
     // four sources must map to a root, and anything else must be rejected.
-    assert_eq!(target_root(home, "claude"), Some(home.join(".claude").join("skills")));
-    assert_eq!(target_root(home, "codex"), Some(codex_home(home).join("skills")));
+    assert_eq!(
+      target_root(home, "claude"),
+      Some(home.join(".claude").join("skills"))
+    );
+    assert_eq!(
+      target_root(home, "codex"),
+      Some(codex_home(home).join("skills"))
+    );
     assert_eq!(
       target_root(home, "opencode"),
       Some(home.join(".config").join("opencode").join("skills"))
     );
-    assert_eq!(target_root(home, "agents"), Some(home.join(".agents").join("skills")));
+    assert_eq!(
+      target_root(home, "agents"),
+      Some(home.join(".agents").join("skills"))
+    );
     assert_eq!(target_root(home, "cursor"), None);
   }
 
@@ -1202,7 +1285,9 @@ mod tests {
       header.set_size(content.len() as u64);
       header.set_mode(0o644);
       header.set_cksum();
-      tar.append_data(&mut header, path, content.as_bytes()).unwrap();
+      tar
+        .append_data(&mut header, path, content.as_bytes())
+        .unwrap();
     }
     tar.into_inner().unwrap().finish().unwrap()
   }
@@ -1210,11 +1295,23 @@ mod tests {
   #[test]
   fn extract_and_enumerate_finds_root_and_nested_skills() {
     let tarball = make_tarball(&[
-      ("agent-skills-a1b2c3d4e5/SKILL.md", "---\nname: root-skill\n---\n"),
-      ("agent-skills-a1b2c3d4e5/skills/web/SKILL.md", "---\nname: web\n---\n"),
-      ("agent-skills-a1b2c3d4e5/skills/web/references/notes.md", "not a skill marker"),
+      (
+        "agent-skills-a1b2c3d4e5/SKILL.md",
+        "---\nname: root-skill\n---\n",
+      ),
+      (
+        "agent-skills-a1b2c3d4e5/skills/web/SKILL.md",
+        "---\nname: web\n---\n",
+      ),
+      (
+        "agent-skills-a1b2c3d4e5/skills/web/references/notes.md",
+        "not a skill marker",
+      ),
       ("agent-skills-a1b2c3d4e5/docs/readme.md", "no skill here"),
-      ("agent-skills-a1b2c3d4e5/.github/SKILL.md", "hidden dirs are skipped"),
+      (
+        "agent-skills-a1b2c3d4e5/.github/SKILL.md",
+        "hidden dirs are skipped",
+      ),
     ]);
     let dest = temp_dir("repo-enum");
     extract_repo(&tarball[..], &dest).unwrap();
@@ -1262,8 +1359,12 @@ mod tests {
     // A rel path without a SKILL.md is not installable.
     assert!(install_picks(&top, &["skills".into()], std::slice::from_ref(&root_a)).is_err());
 
-    let dests =
-      install_picks(&top, &["skills/web".into()], &[root_a.clone(), root_b.clone()]).unwrap();
+    let dests = install_picks(
+      &top,
+      &["skills/web".into()],
+      &[root_a.clone(), root_b.clone()],
+    )
+    .unwrap();
     assert_eq!(dests.len(), 2);
     assert!(root_a.join("web/SKILL.md").is_file());
     assert!(root_b.join("web/extra.md").is_file());
@@ -1273,7 +1374,10 @@ mod tests {
 
   #[test]
   fn repo_dir_name_strips_hex_suffix_only() {
-    assert_eq!(repo_dir_name(Path::new("/t/agent-skills-a1b2c3d")), "agent-skills");
+    assert_eq!(
+      repo_dir_name(Path::new("/t/agent-skills-a1b2c3d")),
+      "agent-skills"
+    );
     // A short or non-hex suffix is part of the real name.
     assert_eq!(repo_dir_name(Path::new("/t/tauri-v2")), "tauri-v2");
     assert_eq!(repo_dir_name(Path::new("/t/plain")), "plain");
@@ -1281,7 +1385,9 @@ mod tests {
 
   #[test]
   fn install_repo_skills_rejects_bad_or_unknown_scan_ids() {
-    assert!(install_repo_skills("../etc".into(), vec![], vec![], "o/r".into(), "main".into()).is_err());
+    assert!(
+      install_repo_skills("../etc".into(), vec![], vec![], "o/r".into(), "main".into()).is_err()
+    );
     assert!(install_repo_skills(
       "00nope00".into(),
       vec![],
@@ -1327,7 +1433,11 @@ mod tests {
       installed_at: 0,
     };
     write_origin(&dir, &origin).unwrap();
-    assert_eq!(h1, hash_skill_dir(&dir), "origin manifest must not affect the hash");
+    assert_eq!(
+      h1,
+      hash_skill_dir(&dir),
+      "origin manifest must not affect the hash"
+    );
 
     let _ = fs::remove_dir_all(&root);
   }
@@ -1360,7 +1470,10 @@ mod tests {
 
   #[test]
   fn install_repo_skills_writes_origin_readable_and_surfaced_by_scan() {
-    let tarball = make_tarball(&[("agent-skills-a1b2c3d4e5/skills/web/SKILL.md", "---\nname: web\n---\n")]);
+    let tarball = make_tarball(&[(
+      "agent-skills-a1b2c3d4e5/skills/web/SKILL.md",
+      "---\nname: web\n---\n",
+    )]);
     let base = temp_dir("origin-install");
     extract_repo(&tarball[..], &base).unwrap();
     let top = single_top_dir(&base).unwrap();
@@ -1368,7 +1481,12 @@ mod tests {
     fs::create_dir_all(&root).unwrap();
 
     // Drive the same two steps `install_repo_skills` does, without network.
-    let dests = install_picks(&top, &["skills/web".to_string()], std::slice::from_ref(&root)).unwrap();
+    let dests = install_picks(
+      &top,
+      &["skills/web".to_string()],
+      std::slice::from_ref(&root),
+    )
+    .unwrap();
     write_origins_for_picks(
       &top,
       &["skills/web".to_string()],
@@ -1387,7 +1505,10 @@ mod tests {
 
     let scanned = scan_root(&root, "claude").unwrap();
     assert_eq!(scanned.len(), 1);
-    let scanned_origin = scanned[0].origin.as_ref().expect("scan should surface the origin");
+    let scanned_origin = scanned[0]
+      .origin
+      .as_ref()
+      .expect("scan should surface the origin");
     assert_eq!(scanned_origin.repo, "owner/repo");
 
     let _ = fs::remove_dir_all(&base);
@@ -1402,30 +1523,58 @@ mod tests {
     fs::create_dir_all(&root_b).unwrap();
 
     // A bad name is rejected before any fs work.
-    assert!(create_skill_in_roots("../evil", std::slice::from_ref(&root_a), "# body", false).is_err());
+    assert!(
+      create_skill_in_roots("../evil", std::slice::from_ref(&root_a), "# body", false).is_err()
+    );
 
     // Happy path writes SKILL.md into every root.
-    let dests =
-      create_skill_in_roots("brand-new", &[root_a.clone(), root_b.clone()], "# body", false).unwrap();
+    let dests = create_skill_in_roots(
+      "brand-new",
+      &[root_a.clone(), root_b.clone()],
+      "# body",
+      false,
+    )
+    .unwrap();
     assert_eq!(dests.len(), 2);
-    assert_eq!(fs::read_to_string(root_a.join("brand-new/SKILL.md")).unwrap(), "# body");
-    assert_eq!(fs::read_to_string(root_b.join("brand-new/SKILL.md")).unwrap(), "# body");
+    assert_eq!(
+      fs::read_to_string(root_a.join("brand-new/SKILL.md")).unwrap(),
+      "# body"
+    );
+    assert_eq!(
+      fs::read_to_string(root_b.join("brand-new/SKILL.md")).unwrap(),
+      "# body"
+    );
 
     // A second call refuses to overwrite, and does not touch root_b either
     // (the existence check runs across all roots before any write happens).
     fs::write(root_a.join("brand-new/SKILL.md"), "# body").unwrap();
-    assert!(
-      create_skill_in_roots("brand-new", &[root_a.clone(), root_b.clone()], "# changed", false).is_err()
+    assert!(create_skill_in_roots(
+      "brand-new",
+      &[root_a.clone(), root_b.clone()],
+      "# changed",
+      false
+    )
+    .is_err());
+    assert_eq!(
+      fs::read_to_string(root_a.join("brand-new/SKILL.md")).unwrap(),
+      "# body"
     );
-    assert_eq!(fs::read_to_string(root_a.join("brand-new/SKILL.md")).unwrap(), "# body");
 
     // With overwrite=true the existing skill is replaced in place (and stale
     // files are cleared: the extra file below must be gone afterwards).
     fs::write(root_a.join("brand-new/stale.md"), "old").unwrap();
-    let dests =
-      create_skill_in_roots("brand-new", &[root_a.clone(), root_b.clone()], "# changed", true).unwrap();
+    let dests = create_skill_in_roots(
+      "brand-new",
+      &[root_a.clone(), root_b.clone()],
+      "# changed",
+      true,
+    )
+    .unwrap();
     assert_eq!(dests.len(), 2);
-    assert_eq!(fs::read_to_string(root_a.join("brand-new/SKILL.md")).unwrap(), "# changed");
+    assert_eq!(
+      fs::read_to_string(root_a.join("brand-new/SKILL.md")).unwrap(),
+      "# changed"
+    );
     assert!(!root_a.join("brand-new/stale.md").exists());
 
     let _ = fs::remove_dir_all(&base);
@@ -1433,7 +1582,13 @@ mod tests {
 
   #[test]
   fn create_skill_rejects_unknown_target() {
-    assert!(create_skill("new-skill".into(), vec!["cursor".into()], "# body".into(), false).is_err());
+    assert!(create_skill(
+      "new-skill".into(),
+      vec!["cursor".into()],
+      "# body".into(),
+      false
+    )
+    .is_err());
   }
 
   #[test]
@@ -1470,7 +1625,9 @@ mod tests {
   /// Point `AGENTPACK_SKILL_BACKUP_ROOT` at a fresh temp dir for the duration
   /// of `f`, serialized against every other test that mutates process env vars.
   fn with_backup_root<T>(f: impl FnOnce(&Path) -> T) -> T {
-    let _g = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = crate::TEST_ENV_LOCK
+      .lock()
+      .unwrap_or_else(|e| e.into_inner());
     let root = temp_dir("skill-backups");
     std::env::set_var("AGENTPACK_SKILL_BACKUP_ROOT", &root);
     let result = f(&root);
@@ -1501,10 +1658,14 @@ mod tests {
       fs::create_dir_all(&restore_root).unwrap();
       let src = backups_root.join(&backup.id).join("skill");
       let dests =
-        restore_backup_into_roots(&src, &backup.dir_name, std::slice::from_ref(&restore_root)).unwrap();
+        restore_backup_into_roots(&src, &backup.dir_name, std::slice::from_ref(&restore_root))
+          .unwrap();
       assert_eq!(dests.len(), 1);
       let restored = fs::read_to_string(restore_root.join("my-skill").join("SKILL.md")).unwrap();
-      assert!(restored.contains("original"), "restore must bring back the backed-up content");
+      assert!(
+        restored.contains("original"),
+        "restore must bring back the backed-up content"
+      );
 
       delete_skill_backup(backup.id.clone()).unwrap();
       let after_delete = list_skill_backups().unwrap();

@@ -195,7 +195,9 @@ function ShellBody() {
         async (tool) =>
           [
             tool.id,
-            await detectCli(tool.bin, !!tool.gui).catch(() => ({ installed: false })),
+            await detectCli(tool.bin, !!tool.gui, tool.appBundle).catch(() => ({
+              installed: false,
+            })),
           ] as const
       ),
       ...RUNTIMES.map(

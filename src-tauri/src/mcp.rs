@@ -41,7 +41,9 @@ pub fn registry_fetch(
   if let Some(c) = cursor.filter(|c| !c.is_empty()) {
     req = req.query("cursor", &c);
   }
-  let resp = req.call().map_err(|e| format!("registry fetch failed: {e}"))?;
+  let resp = req
+    .call()
+    .map_err(|e| format!("registry fetch failed: {e}"))?;
   resp.into_string().map_err(|e| e.to_string())
 }
 
@@ -153,7 +155,10 @@ pub fn mcp_probe_remote(
   let resp = match req.send_string(&body) {
     Ok(r) => r,
     Err(ureq::Error::Status(401, _)) | Err(ureq::Error::Status(403, _)) => {
-      return Ok(ProbeResult::fail("unauthorized", Some(start.elapsed().as_millis() as u64)))
+      return Ok(ProbeResult::fail(
+        "unauthorized",
+        Some(start.elapsed().as_millis() as u64),
+      ))
     }
     Err(ureq::Error::Status(code, _)) => {
       return Ok(ProbeResult::fail(
@@ -199,7 +204,10 @@ pub fn mcp_probe_stdio(
   for (k, v) in &env {
     cmd.env(k, v);
   }
-  cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+  cmd
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null());
 
   let mut child = match cmd.spawn() {
     Ok(c) => c,
@@ -241,7 +249,8 @@ pub fn mcp_probe_stdio(
 
   match outcome {
     Ok(line) => {
-      let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap_or(serde_json::Value::Null);
+      let v: serde_json::Value =
+        serde_json::from_str(line.trim()).unwrap_or(serde_json::Value::Null);
       match v.get("result") {
         Some(result) => Ok(ok_from_result(result, None)),
         None => Ok(ProbeResult::fail("not-mcp", None)),

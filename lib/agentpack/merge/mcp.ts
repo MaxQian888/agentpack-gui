@@ -130,6 +130,70 @@ export function buildClaudeMcpRemoveCommand(id: string): Command {
   return { file: "claude", args: ["mcp", "remove", id, "--scope", "user"] }
 }
 
+/**
+ * The `mcpServers.<id>` record `claude mcp add --scope user` would have written.
+ *
+ * Needed because the desktop app ships no `claude` binary — it bundles the agent
+ * internally — so on a desktop-only install there is no command to run and the
+ * config has to be written directly. Deliberately the exact shape the CLI
+ * produces (and `specFromClaudeRecord` reads back), so the two routes are
+ * interchangeable and a machine with both stays consistent.
+ */
+export function buildClaudeMcpEntryFromSpec(spec: McpSpec): Record<string, unknown> {
+  if (spec.transport === "http" || spec.transport === "sse") {
+    const headers = { ...spec.headers }
+    if (!("Authorization" in headers) && spec.bearerTokenEnvVar) {
+      headers["Authorization"] = `Bearer \${${spec.bearerTokenEnvVar}}`
+    }
+    return {
+      type: spec.transport,
+      url: spec.url,
+      ...(Object.keys(headers).length ? { headers } : {}),
+    }
+  }
+  const env: Record<string, string> = { ...spec.env }
+  // Same `${VAR}` indirection the command path uses, so a secret is read from
+  // the environment at launch rather than baked into the config file.
+  for (const [k, ref] of Object.entries(spec.envRefs ?? {})) env[k] = `\${${ref}}`
+  return {
+    type: "stdio",
+    command: spec.command,
+    args: [...spec.args],
+    ...(Object.keys(env).length ? { env } : {}),
+  }
+}
+
+/**
+ * Merge one `mcpServers.<id>` entry into `~/.claude.json`, preserving every
+ * other field — that file also holds unrelated Claude Code state.
+ *
+ * Unlike `claude mcp add`, which rejects a duplicate id, this overwrites: a
+ * merge that refused to touch an existing entry would make "edit" impossible on
+ * the desktop-only path.
+ */
+export function mergeClaudeMcp(
+  existingJson: string,
+  id: string,
+  entry: Record<string, unknown>
+): string {
+  const data = (existingJson.trim() ? JSON.parse(existingJson) : {}) as Record<string, unknown>
+  const servers = (data["mcpServers"] as Record<string, unknown>) ?? {}
+  servers[id] = entry
+  data["mcpServers"] = servers
+  return JSON.stringify(data, null, 2) + "\n"
+}
+
+/** Remove one `mcpServers.<id>` entry from `~/.claude.json`. Inverse of the above. */
+export function removeClaudeMcp(existingJson: string, id: string): string {
+  const data = (existingJson.trim() ? JSON.parse(existingJson) : {}) as Record<string, unknown>
+  const servers = data["mcpServers"] as Record<string, unknown> | undefined
+  if (servers && id in servers) {
+    delete servers[id]
+    data["mcpServers"] = servers
+  }
+  return JSON.stringify(data, null, 2) + "\n"
+}
+
 // ---------------------------------------------------------------------------
 // Codex — `[mcp_servers.<id>]` table in config.toml
 // ---------------------------------------------------------------------------

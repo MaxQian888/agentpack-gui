@@ -339,10 +339,28 @@ async function execute(step: StepDescriptor, ctx: ExecContext): Promise<StepReco
       return runCommandStep(step, ctx)
     case "releaseInstall": {
       const r = m.coreOutput
-      const release = await api.githubLatestRelease(step.source.repo, step.mirrorPrefix)
-      const asset = pickReleaseAsset(step.source, release.assets, step.os, step.arch)
-      if (!asset) throw new Error(r.releaseNoAsset(step.title, release.tag, step.arch))
-      log(r.releaseFound(step.title, release.tag, asset.name))
+      // Only the resolution differs between the two source kinds; download and
+      // install below are shared.
+      let asset: { name: string; url: string }
+      // A mirror prefix rewrites github.com URLs. Prepending it to a vendor's
+      // own host would point the download at somewhere that never had the file.
+      let mirrorPrefix = step.mirrorPrefix
+      if (step.source.kind === "manifest") {
+        const url = step.source.manifest[step.os]
+        if (!url) throw new Error(r.releaseNoAsset(step.title, "", step.arch))
+        const release = await api.manifestLatestRelease(url)
+        const only = release.assets[0]
+        if (!only) throw new Error(r.releaseNoAsset(step.title, release.tag, step.arch))
+        asset = only
+        mirrorPrefix = null
+        log(r.releaseFound(step.title, release.tag, only.name))
+      } else {
+        const release = await api.githubLatestRelease(step.source.repo, step.mirrorPrefix)
+        const picked = pickReleaseAsset(step.source, release.assets, step.os, step.arch)
+        if (!picked) throw new Error(r.releaseNoAsset(step.title, release.tag, step.arch))
+        asset = picked
+        log(r.releaseFound(step.title, release.tag, picked.name))
+      }
 
       // Progress is throttled by the backend; render it as a single line the
       // step log overwrites rather than a scrolling wall of percentages.
@@ -350,7 +368,7 @@ async function execute(step: StepDescriptor, ctx: ExecContext): Promise<StepReco
       const path = await api.downloadReleaseAsset(
         asset.url,
         asset.name,
-        step.mirrorPrefix,
+        mirrorPrefix,
         ({ received, total }) => {
           const pct = total > 0 ? Math.floor((received / total) * 100) : -1
           if (pct >= 0 && pct >= lastPct + 10) {

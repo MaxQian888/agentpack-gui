@@ -1,4 +1,4 @@
-import type { Arch, OS, ReleaseSource } from "./types"
+import type { Arch, GithubReleaseSource, OS, ReleaseSource } from "./types"
 
 /**
  * Picking the right file out of a GitHub release.
@@ -30,7 +30,7 @@ export interface ReleaseInfo {
  * resolves to whichever happened to be listed first.
  */
 export function pickReleaseAsset(
-  source: ReleaseSource,
+  source: GithubReleaseSource,
   assets: readonly ReleaseAsset[],
   os: OS,
   arch: Arch
@@ -55,5 +55,22 @@ export function pickReleaseAsset(
 
 /** Whether a tool can be installed from a release on this OS at all. */
 export function hasReleaseFor(source: ReleaseSource | undefined, os: OS): boolean {
-  return !!source?.asset[os]
+  if (!source) return false
+  return source.kind === "github" ? !!source.asset[os] : !!source.manifest[os]
+}
+
+/**
+ * What to name the source in a log or dry-run line — the repo for a GitHub
+ * release, the host for a vendor manifest. Both read as "install X from Y", so
+ * the two paths share one set of strings.
+ */
+export function releaseSourceLabel(source: ReleaseSource, os: OS): string {
+  if (source.kind === "github") return source.repo
+  const url = source.manifest[os]
+  if (!url) return ""
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
 }

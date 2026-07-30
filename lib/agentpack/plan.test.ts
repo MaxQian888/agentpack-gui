@@ -201,7 +201,10 @@ it("upgrades a native-installed CLI by re-running its native installer, not npm"
 })
 
 it("skips an already-installed CLI that is up to date (no re-install)", () => {
-  const upToDate = buildSteps(plan, paths, undefined, new Set(["claude-code"]), {
+  // No npx server in this plan either, so nothing at all wants Node — see
+  // "Node prerequisite for npx-launched MCP servers" for the case where one does.
+  const bare: Plan = { ...plan, skills: [], mcps: [] }
+  const upToDate = buildSteps(bare, paths, undefined, new Set(["claude-code"]), {
     versions: { "claude-code": "2.0.0" },
     latest: { "claude-code": "2.0.0" },
   }).map((s) => s.id)
@@ -249,6 +252,86 @@ describe("Node engines floor", () => {
       versions: { node: "v20.11.0" },
     }).find((s) => s.id === "cli-claude-code")!
     expect(step.kind).toBe("command")
+  })
+})
+
+describe("Claude MCP config on a desktop-only install", () => {
+  // No claude-code CLI anywhere: the desktop app bundles the agent and installs
+  // no binary, so `claude mcp add` would fail "command not found" every time.
+  const guiPlan: Plan = { ...plan, clis: ["claude-desktop"], skills: [], network: {} }
+
+  it("writes the config directly when there is no claude binary to run", () => {
+    const step = buildSteps(guiPlan, paths).find((s) => s.id === "mcp-claude-context7")!
+    expect(step.kind).toBe("mergeFile")
+    expect(step.kind === "mergeFile" && step.path).toBe(paths.claudeConfig)
+  })
+
+  it("produces the same entry `claude mcp add` would have written", () => {
+    const step = buildSteps(guiPlan, paths).find((s) => s.id === "mcp-claude-context7")!
+    if (step.kind !== "mergeFile") throw new Error("expected a mergeFile step")
+    const written = JSON.parse(step.merge("")) as {
+      mcpServers: Record<string, { type: string; command: string; args: string[] }>
+    }
+    const entry = written.mcpServers["context7"]!
+    expect(entry.type).toBe("stdio")
+    expect(entry.command).toBe("npx")
+    expect(entry.args.join(" ")).toContain("@upstash/context7-mcp")
+  })
+
+  it("preserves the rest of .claude.json — it holds unrelated Claude state", () => {
+    const step = buildSteps(guiPlan, paths).find((s) => s.id === "mcp-claude-context7")!
+    if (step.kind !== "mergeFile") throw new Error("expected a mergeFile step")
+    const before = JSON.stringify({ numStartups: 7, mcpServers: { other: { type: "stdio" } } })
+    const after = JSON.parse(step.merge(before)) as Record<string, unknown>
+    expect(after["numStartups"]).toBe(7)
+    expect(Object.keys(after["mcpServers"] as object).sort()).toEqual(["context7", "other"])
+  })
+
+  it("still shells out when the CLI is being installed alongside the app", () => {
+    const both: Plan = { ...guiPlan, clis: ["claude-desktop", "claude-code"] }
+    const step = buildSteps(both, paths).find((s) => s.id === "mcp-claude-context7")!
+    expect(step.kind).toBe("command")
+  })
+
+  it("still shells out when the CLI is already on the machine", () => {
+    const step = buildSteps(guiPlan, paths, undefined, new Set(["claude-code"])).find(
+      (s) => s.id === "mcp-claude-context7"
+    )!
+    expect(step.kind).toBe("command")
+  })
+})
+
+describe("Node prerequisite for npx-launched MCP servers", () => {
+  // The desktop-app path installs no npm CLI at all, but an npx-launched server
+  // still needs Node to *start* — and nothing says so at install time, because
+  // `claude mcp add` only writes config and reports success either way.
+  const guiPlan: Plan = { ...plan, clis: [], skills: [], network: {} }
+
+  it("installs Node for an npx server even with no npm-installed CLI", () => {
+    const ids = buildSteps(guiPlan, paths).map((s) => s.id)
+    expect(ids).toContain("runtime-node")
+  })
+
+  it("adds no Node step when the only servers are remote", () => {
+    const httpPlan: Plan = { ...guiPlan, mcps: [{ id: "github", targets: ["claude"] }] }
+    expect(buildSteps(httpPlan, paths).map((s) => s.id)).not.toContain("runtime-node")
+  })
+
+  it("adds no Node step when the only server runs through uvx", () => {
+    const uvPlan: Plan = { ...guiPlan, mcps: [{ id: "fetch", targets: ["claude"] }] }
+    expect(buildSteps(uvPlan, paths).map((s) => s.id)).not.toContain("runtime-node")
+  })
+
+  it("adds no Node step for a server nothing is targeting", () => {
+    const untargeted: Plan = { ...guiPlan, mcps: [{ id: "context7", targets: [] }] }
+    expect(buildSteps(untargeted, paths).map((s) => s.id)).not.toContain("runtime-node")
+  })
+
+  it("does not gate the MCP config on Node — writing config succeeds without it", () => {
+    // Same reasoning as uv: the config is correct and starts working the moment
+    // Node appears, so a failed Node install must not drop it.
+    const step = buildSteps(guiPlan, paths).find((s) => s.id === "mcp-claude-context7")!
+    expect(step.dependsOn ?? []).not.toContain("runtime-node")
   })
 })
 
@@ -337,7 +420,9 @@ describe("no package-manager path on this OS", () => {
     // automated path there is — and until now there was none at all.
     const step = buildSteps(linuxPlan, linuxPaths).find((s) => s.id === "cli-cc-switch-release")!
     expect(step.kind).toBe("releaseInstall")
-    expect(step.kind === "releaseInstall" && step.source.repo).toBe("farion1231/cc-switch")
+    expect(
+      step.kind === "releaseInstall" && step.source.kind === "github" && step.source.repo
+    ).toBe("farion1231/cc-switch")
     expect(step.kind === "releaseInstall" && step.os).toBe("linux")
   })
 

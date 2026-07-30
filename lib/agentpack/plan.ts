@@ -14,11 +14,13 @@ import { hasReleaseFor } from "./release"
 import { isUpgradeAvailable, majorVersion } from "./version"
 import {
   buildClaudeMcpCommandFromSpec,
+  buildClaudeMcpEntryFromSpec,
   buildClaudeMcpRemoveCommand,
   buildCodexMcpEntryFromSpec,
   buildOpencodeMcpEntryFromSpec,
   deleteCodexMcpEntry,
   deleteOpencodeMcpEntry,
+  mergeClaudeMcp,
   mergeCodexMcp,
   mergeOpencodeMcp,
   resolveCatalogSpec,
@@ -269,13 +271,24 @@ export function buildSteps(
   // isn't detected, install it first and make the npm CLI installs depend on it.
   const nodeStepId = "runtime-node"
   let nodeStepIsCommand = false
-  const needsNode = plan.clis.some((id) => {
+  const needsNodeForCli = plan.clis.some((id) => {
     const tool = findCli(id)
     if (!tool?.npmPackage) return false
     const r = resolveCli(tool)
     // A skipped (already-current) CLI does no npm work, so it needs no Node.
     return !r.skip && isNpmBased(r.methodId)
   })
+  // An npx-launched server needs Node to *start*, which is a different question
+  // from whether anything here is installed through npm. The desktop-app path
+  // installs no npm CLI at all, so without this its servers would be written to
+  // config and then silently never launch — `claude mcp add` only writes config
+  // and reports success either way. Same shape as `needsUv` below.
+  const needsNodeForMcp = plan.mcps.some((m) => {
+    if (m.targets.length === 0) return false
+    const server = findMcp(m.id)
+    return server?.transport === "stdio" && (server.runtime ?? "npx") === "npx"
+  })
+  const needsNode = needsNodeForCli || needsNodeForMcp
   if (needsNode && !installed.has("node")) {
     const node = findRuntime("node")
     const title = cat.runtime["node"]?.title ?? "Node.js"
@@ -413,6 +426,12 @@ export function buildSteps(
       ? ["cli-claude-code"]
       : undefined
 
+  // Whether a `claude` binary will exist to shell out to. On the desktop-only
+  // path it won't: the app bundles the agent and installs no CLI, so a
+  // `claude mcp add` step would fail with "command not found" for every server.
+  // The config is written directly instead — the app reads the same file.
+  const claudeCliPresent = plan.clis.includes("claude-code") || installed.has("claude-code")
+
   // 4. Skills — copy only into targets where the skill isn't already installed,
   // so a re-run never re-copies over an existing install.
   for (const sk of plan.skills) {
@@ -448,14 +467,26 @@ export function buildSteps(
     const stored = wrapStdioForOs(spec, plan.os)
 
     if (m.targets.includes("claude") && !claudeMcps.has(m.id)) {
-      steps.push({
-        kind: "command",
-        id: `mcp-claude-${m.id}`,
-        label: t.addMcpClaude(title),
-        command: buildClaudeMcpCommandFromSpec(server.id, spec),
-        // `claude mcp add` needs the claude binary that step installs.
-        dependsOn: claudeDep,
-      })
+      steps.push(
+        claudeCliPresent
+          ? {
+              kind: "command",
+              id: `mcp-claude-${m.id}`,
+              label: t.addMcpClaude(title),
+              command: buildClaudeMcpCommandFromSpec(server.id, spec),
+              // `claude mcp add` needs the claude binary that step installs.
+              dependsOn: claudeDep,
+            }
+          : {
+              kind: "mergeFile",
+              id: `mcp-claude-${m.id}`,
+              label: t.addMcpClaude(title),
+              path: paths.claudeConfig,
+              merge: (existing) =>
+                mergeClaudeMcp(existing, server.id, buildClaudeMcpEntryFromSpec(spec)),
+              writtenNote: t.claudeMcpWritten(server.id),
+            }
+      )
     }
     if (m.targets.includes("codex") && !codexMcps.has(m.id)) {
       const entry = buildCodexMcpEntryFromSpec(stored)
@@ -985,6 +1016,10 @@ function mcpAddSpecSteps(
 ): StepDescriptor[] {
   const title = mcpTitle(id, messages)
   const steps: StepDescriptor[] = []
+  // TODO: these ad-hoc adds (the MCP section) still assume a `claude` binary.
+  // `buildSteps` picks the direct-write route when there isn't one; this path
+  // can't, because it has no view of what's installed. Threading that in is the
+  // remaining half of desktop-only MCP support.
   if (targets.includes("claude")) {
     steps.push({
       kind: "command",

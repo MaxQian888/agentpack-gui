@@ -1,5 +1,6 @@
 import { en } from "@/lib/i18n/en"
 import type { Messages } from "@/lib/i18n/types"
+import { releaseSourceLabel } from "./release"
 import type { Command, Paths, StepDescriptor } from "./types"
 
 /** Render a command as a copy-pasteable shell string (best-effort quoting). */
@@ -21,14 +22,18 @@ export function previewLines(
   switch (step.kind) {
     case "command":
       return [`$ ${commandToString(step.command)}`, out.wouldRun(commandToString(step.command))]
-    case "releaseInstall":
+    case "releaseInstall": {
       // Named rather than resolved: looking the release up would be a network
       // call, and dry-run's promise is that it never leaves the machine.
+      const from = releaseSourceLabel(step.source, step.os)
+      // A mirror only rewrites github.com, so naming one for a vendor's own
+      // manifest would describe a download that isn't going to happen.
       return [
-        step.mirrorPrefix
-          ? out.wouldReleaseInstallVia(step.title, step.source.repo, step.mirrorPrefix)
-          : out.wouldReleaseInstall(step.title, step.source.repo),
+        step.mirrorPrefix && step.source.kind === "github"
+          ? out.wouldReleaseInstallVia(step.title, from, step.mirrorPrefix)
+          : out.wouldReleaseInstall(step.title, from),
       ]
+    }
     case "info":
       return step.lines
     case "mergeFile":

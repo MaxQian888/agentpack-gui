@@ -54,7 +54,10 @@ pub fn set_process_proxy(config: ProxyOverride) {
 }
 
 fn active_override() -> ProxyOverride {
-  override_slot().lock().map(|s| s.clone()).unwrap_or_default()
+  override_slot()
+    .lock()
+    .map(|s| s.clone())
+    .unwrap_or_default()
 }
 
 /// Non-empty environment value for the first of `names` that is set.
@@ -215,7 +218,11 @@ fn parse_scutil(text: &str) -> SystemProxySnapshot {
     };
     let port = fields.get(port_key).and_then(|p| p.parse::<u16>().ok());
     if let Some(port) = port {
-      entries.push(SystemProxyEntry { scheme: scheme.into(), host, port });
+      entries.push(SystemProxyEntry {
+        scheme: scheme.into(),
+        host,
+        port,
+      });
     }
   }
   let pac_url = if enabled("ProxyAutoConfigEnable") {
@@ -223,7 +230,11 @@ fn parse_scutil(text: &str) -> SystemProxySnapshot {
   } else {
     None
   };
-  SystemProxySnapshot { entries, pac_url, bypass }
+  SystemProxySnapshot {
+    entries,
+    pac_url,
+    bypass,
+  }
 }
 
 /// Split a `host:port` pair, defaulting the port per scheme.
@@ -276,7 +287,11 @@ fn parse_win_reg(text: &str) -> SystemProxySnapshot {
           }
         }
       } else if let Some((host, port)) = split_host_port(server, 80) {
-        entries.push(SystemProxyEntry { scheme: "http".into(), host, port });
+        entries.push(SystemProxyEntry {
+          scheme: "http".into(),
+          host,
+          port,
+        });
       }
     }
   }
@@ -293,7 +308,11 @@ fn parse_win_reg(text: &str) -> SystemProxySnapshot {
     .get("AutoConfigURL")
     .map(|s| s.trim().to_string())
     .filter(|s| !s.is_empty());
-  SystemProxySnapshot { entries, pac_url, bypass }
+  SystemProxySnapshot {
+    entries,
+    pac_url,
+    bypass,
+  }
 }
 
 /// Strip gsettings' quoting: `'value'` → `value`, `['a', 'b']` → `["a", "b"]`.
@@ -349,12 +368,18 @@ fn os_system_proxy() -> SystemProxySnapshot {
       ("org.gnome.system.proxy.https", "https"),
       ("org.gnome.system.proxy.socks", "socks"),
     ] {
-      let host = get(schema, "host").map(|v| unquote_gsettings(&v)).unwrap_or_default();
+      let host = get(schema, "host")
+        .map(|v| unquote_gsettings(&v))
+        .unwrap_or_default();
       let port = get(schema, "port")
         .and_then(|v| v.trim().parse::<u16>().ok())
         .unwrap_or(0);
       if !host.is_empty() && port > 0 {
-        entries.push(SystemProxyEntry { scheme: scheme.into(), host, port });
+        entries.push(SystemProxyEntry {
+          scheme: scheme.into(),
+          host,
+          port,
+        });
       }
     }
   }
@@ -368,7 +393,11 @@ fn os_system_proxy() -> SystemProxySnapshot {
   let bypass = get("org.gnome.system.proxy", "ignore-hosts")
     .map(|v| parse_gsettings_list(&v))
     .unwrap_or_default();
-  SystemProxySnapshot { entries, pac_url, bypass }
+  SystemProxySnapshot {
+    entries,
+    pac_url,
+    bypass,
+  }
 }
 
 /// Any other platform has no panel we know how to read.
@@ -420,7 +449,14 @@ fn parse_npm_config(text: &str) -> std::collections::HashMap<String, String> {
 pub fn tool_proxy_snapshot() -> ToolProxySnapshot {
   let npm = capture(
     "npm",
-    &["config", "get", "proxy", "https-proxy", "noproxy", "registry"],
+    &[
+      "config",
+      "get",
+      "proxy",
+      "https-proxy",
+      "noproxy",
+      "registry",
+    ],
     8,
   )
   .map(|out| parse_npm_config(&out))
@@ -491,7 +527,11 @@ pub fn proxy_check(
     .timeout(timeout)
     .redirects(2)
     .user_agent("agentpack-proxy-check");
-  if let Some(url) = proxy_url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+  if let Some(url) = proxy_url
+    .as_deref()
+    .map(str::trim)
+    .filter(|u| !u.is_empty())
+  {
     match ureq::Proxy::new(url) {
       Ok(proxy) => builder = builder.proxy(proxy),
       Err(_) => {
@@ -638,8 +678,16 @@ mod tests {
     assert_eq!(
       snap.entries,
       vec![
-        SystemProxyEntry { scheme: "http".into(), host: "127.0.0.1".into(), port: 7890 },
-        SystemProxyEntry { scheme: "https".into(), host: "127.0.0.1".into(), port: 7890 },
+        SystemProxyEntry {
+          scheme: "http".into(),
+          host: "127.0.0.1".into(),
+          port: 7890
+        },
+        SystemProxyEntry {
+          scheme: "https".into(),
+          host: "127.0.0.1".into(),
+          port: 7890
+        },
       ],
       "a disabled SOCKS entry must not be offered as a candidate"
     );
@@ -650,7 +698,10 @@ mod tests {
   #[test]
   fn scutil_reports_the_pac_url_only_when_enabled() {
     let on = "  ProxyAutoConfigEnable : 1\n  ProxyAutoConfigURLString : http://wpad/proxy.pac\n";
-    assert_eq!(parse_scutil(on).pac_url.as_deref(), Some("http://wpad/proxy.pac"));
+    assert_eq!(
+      parse_scutil(on).pac_url.as_deref(),
+      Some("http://wpad/proxy.pac")
+    );
     let off = "  ProxyAutoConfigEnable : 0\n  ProxyAutoConfigURLString : http://wpad/proxy.pac\n";
     assert_eq!(parse_scutil(off).pac_url, None);
   }
@@ -671,7 +722,11 @@ mod tests {
     let snap = parse_win_reg(text);
     assert_eq!(
       snap.entries,
-      vec![SystemProxyEntry { scheme: "http".into(), host: "127.0.0.1".into(), port: 7890 }]
+      vec![SystemProxyEntry {
+        scheme: "http".into(),
+        host: "127.0.0.1".into(),
+        port: 7890
+      }]
     );
     assert_eq!(snap.bypass, vec!["localhost", "127.*", "<local>"]);
   }
@@ -713,7 +768,10 @@ mod tests {
   fn npm_config_skips_unset_keys() {
     let text = "proxy=null\nhttps-proxy=http://127.0.0.1:7890\nnoproxy=localhost\nregistry=https://registry.npmjs.org/\n";
     let cfg = parse_npm_config(text);
-    assert!(!cfg.contains_key("proxy"), "npm prints `null` for an unset key");
+    assert!(
+      !cfg.contains_key("proxy"),
+      "npm prints `null` for an unset key"
+    );
     assert_eq!(cfg.get("https-proxy").unwrap(), "http://127.0.0.1:7890");
     assert_eq!(cfg.get("registry").unwrap(), "https://registry.npmjs.org/");
   }

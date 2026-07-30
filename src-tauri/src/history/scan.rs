@@ -11,8 +11,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::ipc::Channel;
 
-use crate::history_cache::{CachedEntry, CachedSeries, ScanCache};
 use super::{ParsedSession, SessionSummary};
+use crate::history_cache::{CachedEntry, CachedSeries, ScanCache};
 
 /// A candidate history file plus a cheap change-signature (a `stat`, no read).
 /// The signature is what the summary cache keys on: an unchanged `(mtime, size)`

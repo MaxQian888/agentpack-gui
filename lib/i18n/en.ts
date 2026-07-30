@@ -607,6 +607,16 @@ export const en = {
         title: "Claude Code",
         description: "Anthropic's terminal coding agent (@anthropic-ai/claude-code).",
       },
+      "claude-desktop": {
+        title: "Claude Desktop",
+        description:
+          "Claude Code in a window — no terminal and no Node.js needed. Shares your ~/.claude setup, so skills and plugins apply to both.",
+      },
+      "codex-app": {
+        title: "Codex app",
+        description:
+          "Codex in a window instead of the terminal. Shares your ~/.codex setup, so plugins apply to both.",
+      },
       codex: {
         title: "OpenAI Codex",
         description: "OpenAI's terminal coding agent (@openai/codex).",
@@ -777,6 +787,7 @@ export const en = {
     addMcpCodex: (title: string) => `Add MCP "${title}" → Codex`,
     addMcpOpencode: (title: string) => `Add MCP "${title}" → OpenCode`,
     codexMcpWritten: (id: string) => `mcp_servers.${id} written to config.toml`,
+    claudeMcpWritten: (id: string) => `mcpServers.${id} written to .claude.json`,
     opencodeMcpWritten: (id: string) => `mcp.${id} written to opencode.json`,
     proxyClaude: (url: string) => `Point Claude Code at the proxy → ${url}`,
     proxyNpmSet: (key: string, value: string) => `Set npm ${key} → ${value}`,

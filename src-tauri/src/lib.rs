@@ -152,6 +152,7 @@ pub fn run() {
       net::http_get,
       net::set_process_proxy,
       download::github_latest_release,
+      download::manifest_latest_release,
       download::download_release_asset,
       download::install_package,
       ccswitch::cc_load_providers,

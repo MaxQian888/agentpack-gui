@@ -203,7 +203,9 @@ mod tests {
   #[test]
   fn snapshot_list_restore_roundtrip() {
     // Shared with ccswitch tests: both mutate the same global env vars.
-    let _g = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = crate::TEST_ENV_LOCK
+      .lock()
+      .unwrap_or_else(|e| e.into_inner());
     let _env = crate::TestEnvGuard;
 
     let tmp = std::env::temp_dir().join(format!("apbk-{}", now_millis()));
@@ -218,7 +220,10 @@ mod tests {
 
     // Snapshot the original DB contents.
     let entry = snapshot("test").unwrap();
-    assert!(entry.files.iter().any(|f| f.original_path == db.to_string_lossy()));
+    assert!(entry
+      .files
+      .iter()
+      .any(|f| f.original_path == db.to_string_lossy()));
 
     // Mutate the DB, then confirm the snapshot is listed and restores the original.
     fs::write(&db, b"CHANGED").unwrap();
@@ -233,7 +238,9 @@ mod tests {
 
   #[test]
   fn snapshots_are_capped_and_never_carry_credentials() {
-    let _g = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = crate::TEST_ENV_LOCK
+      .lock()
+      .unwrap_or_else(|e| e.into_inner());
     let _env = crate::TestEnvGuard;
 
     let tmp = std::env::temp_dir().join(format!("apbk-cap-{}", now_nanos()));
@@ -261,7 +268,9 @@ mod tests {
 
   #[test]
   fn restore_skips_files_agentpack_no_longer_manages() {
-    let _g = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = crate::TEST_ENV_LOCK
+      .lock()
+      .unwrap_or_else(|e| e.into_inner());
     let _env = crate::TestEnvGuard;
 
     let tmp = std::env::temp_dir().join(format!("apbk-skip-{}", now_nanos()));

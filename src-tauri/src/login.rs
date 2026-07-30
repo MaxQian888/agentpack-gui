@@ -185,7 +185,11 @@ mod tests {
     let home = tmp_home("empty");
     assert!(!codex_login(&home).signed_in);
 
-    std::fs::write(crate::paths::codex_home(&home).join("auth.json"), "{not json").unwrap();
+    std::fs::write(
+      crate::paths::codex_home(&home).join("auth.json"),
+      "{not json",
+    )
+    .unwrap();
     let st = codex_login(&home);
     assert!(!st.signed_in);
     assert!(st.source.contains("unreadable"), "source: {}", st.source);

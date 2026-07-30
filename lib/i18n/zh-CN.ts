@@ -583,6 +583,16 @@ export const zhCN = {
         title: "Claude Code",
         description: "Anthropic 的终端编码代理（@anthropic-ai/claude-code）。",
       },
+      "claude-desktop": {
+        title: "Claude 桌面版",
+        description:
+          "在窗口里用的 Claude Code —— 不用开终端，也不用装 Node.js。和命令行版共用 ~/.claude 配置，技能和插件两边都生效。",
+      },
+      "codex-app": {
+        title: "Codex 桌面版",
+        description:
+          "在窗口里用的 Codex，不用开终端。和命令行版共用 ~/.codex 配置，插件两边都生效。",
+      },
       codex: {
         title: "OpenAI Codex",
         description: "OpenAI 的终端编码代理（@openai/codex）。",
@@ -746,6 +756,7 @@ export const zhCN = {
     addMcpCodex: (title: string) => `添加 MCP “${title}” → Codex`,
     addMcpOpencode: (title: string) => `添加 MCP “${title}” → OpenCode`,
     codexMcpWritten: (id: string) => `已写入 mcp_servers.${id} 到 config.toml`,
+    claudeMcpWritten: (id: string) => `已写入 mcpServers.${id} 到 .claude.json`,
     opencodeMcpWritten: (id: string) => `已写入 mcp.${id} 到 opencode.json`,
     proxyClaude: (url: string) => `让 Claude Code 走代理 → ${url}`,
     proxyNpmSet: (key: string, value: string) => `设置 npm ${key} → ${value}`,

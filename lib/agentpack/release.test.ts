@@ -1,6 +1,6 @@
 import { findCli } from "./registry"
-import { hasReleaseFor, pickReleaseAsset, type ReleaseAsset } from "./release"
-import type { ReleaseSource } from "./types"
+import { hasReleaseFor, pickReleaseAsset, releaseSourceLabel, type ReleaseAsset } from "./release"
+import type { GithubReleaseSource, ManifestReleaseSource } from "./types"
 
 /** The asset set a Tauri app's release actually ships. */
 const ASSETS: ReleaseAsset[] = [
@@ -13,7 +13,11 @@ const ASSETS: ReleaseAsset[] = [
   { name: "latest.json", url: "https://x/latest.json", size: 1 },
 ]
 
-const ccSwitch = findCli("cc-switch")!.release!
+const ccSwitchRelease = findCli("cc-switch")!.release!
+// Narrowed once, so every case below reads plainly — and if cc-switch ever moves
+// off GitHub Releases, this line says so instead of a wall of type errors.
+if (ccSwitchRelease.kind !== "github") throw new Error("cc-switch should use a GitHub release")
+const ccSwitch: GithubReleaseSource = ccSwitchRelease
 
 describe("pickReleaseAsset (against the real cc-switch matcher)", () => {
   it("picks the architecture-specific macOS build, not just the first .dmg", () => {
@@ -52,12 +56,17 @@ describe("pickReleaseAsset (against the real cc-switch matcher)", () => {
   })
 
   it("returns undefined for an OS the source declares nothing for", () => {
-    const macOnly: ReleaseSource = { repo: "o/r", asset: { mac: { pattern: "\\.dmg$" } } }
+    const macOnly: GithubReleaseSource = {
+      kind: "github",
+      repo: "o/r",
+      asset: { mac: { pattern: "\\.dmg$" } },
+    }
     expect(pickReleaseAsset(macOnly, ASSETS, "linux", "x64")).toBeUndefined()
   })
 
   it("survives a malformed pattern instead of throwing mid-install", () => {
-    const broken: ReleaseSource = {
+    const broken: GithubReleaseSource = {
+      kind: "github",
       repo: "o/r",
       asset: { mac: { pattern: "\\.dmg$", arch: { arm64: "([unclosed" } } },
     }
@@ -75,8 +84,61 @@ describe("hasReleaseFor", () => {
     }
   })
 
+  it("reads the right field for a manifest source", () => {
+    const source: ManifestReleaseSource = {
+      kind: "manifest",
+      manifest: { mac: "https://v.example/RELEASES.json" },
+    }
+    expect(hasReleaseFor(source, "mac")).toBe(true)
+    expect(hasReleaseFor(source, "win")).toBe(false)
+  })
+
   it("is false when a tool declares no release source at all", () => {
     expect(hasReleaseFor(undefined, "linux")).toBe(false)
-    expect(hasReleaseFor({ repo: "o/r", asset: {} }, "linux")).toBe(false)
+    expect(hasReleaseFor({ kind: "github", repo: "o/r", asset: {} }, "linux")).toBe(false)
+  })
+})
+
+describe("releaseSourceLabel", () => {
+  it("names the repo for a GitHub release", () => {
+    expect(releaseSourceLabel(ccSwitch, "mac")).toBe("farion1231/cc-switch")
+  })
+
+  it("names the host for a manifest, not the whole URL", () => {
+    const source: ManifestReleaseSource = {
+      kind: "manifest",
+      manifest: { mac: "https://downloads.claude.ai/releases/darwin/universal/RELEASES.json" },
+    }
+    expect(releaseSourceLabel(source, "mac")).toBe("downloads.claude.ai")
+  })
+
+  it("is empty for an OS with no manifest, rather than throwing", () => {
+    expect(releaseSourceLabel({ kind: "manifest", manifest: {} }, "linux")).toBe("")
+  })
+})
+
+describe("the desktop apps as registered", () => {
+  it("resolves Claude for macOS from the manifest, not a documented download link", () => {
+    // Those links exist but answer 403 to any non-browser client, so a direct
+    // URL here would be an install that can never succeed.
+    const release = findCli("claude-desktop")!.release!
+    expect(release.kind).toBe("manifest")
+    expect(hasReleaseFor(release, "mac")).toBe(true)
+  })
+
+  it("detects the desktop apps by bundle name — they put nothing on PATH", () => {
+    for (const id of ["claude-desktop", "codex-app"] as const) {
+      const tool = findCli(id)!
+      expect(tool.gui).toBe(true)
+      expect(tool.appBundle).toBeTruthy()
+    }
+  })
+
+  it("offers no automated Windows install for the Codex app", () => {
+    // `OpenAI.Codex` on winget is the CLI, not the app — so this must stay null
+    // and fall through to the manual note rather than installing the wrong thing.
+    const tool = findCli("codex-app")!
+    expect(tool.install.win).toBeNull()
+    expect(tool.manualNote).toContain("chatgpt.com/codex")
   })
 })
