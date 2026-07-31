@@ -28,7 +28,7 @@ import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { MCP_CATEGORY_ORDER, MCP_SERVERS } from "@/lib/agentpack/registry"
-import { mcpAddSpecStep, mcpAddStep, mcpRemoveStep } from "@/lib/agentpack/plan"
+import { claudeMcpRoute, mcpAddSpecStep, mcpAddStep, mcpRemoveStep } from "@/lib/agentpack/plan"
 import { mapRegistryResponse, type RegistryCandidate } from "@/lib/agentpack/registry-remote"
 import type { McpServer, McpTarget } from "@/lib/agentpack/types"
 import { isTauri } from "@/lib/tauri"
@@ -65,7 +65,13 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
   const [regError, setRegError] = useState(false)
   const [addCand, setAddCand] = useState<RegistryCandidate | null>(null)
 
-  const claudeDisabled = !detections["claude-code"]?.installed
+  // The desktop app has no `claude` binary but reads the same config file, so
+  // "no CLI" is not the same as "cannot configure Claude" any more.
+  const route = claudeMcpRoute(
+    !!detections["claude-code"]?.installed,
+    !!detections["claude-desktop"]?.installed
+  )
+  const claudeDisabled = route === "none"
   const takenIds = useMemo(() => existingIds(scan), [scan])
 
   const syncPlan = (id: string, target: McpTarget, add: boolean) => {
@@ -78,14 +84,14 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
 
   const addOne = async (server: McpServer, target: McpTarget) => {
     if (!paths) return
-    await run(mcpAddStep(server, [target], plan.mcpKeys[server.id], paths, t))
+    await run(mcpAddStep(server, [target], plan.mcpKeys[server.id], paths, t, route))
     syncPlan(server.id, target, true)
     refresh()
   }
 
   const removeOne = async (server: McpServer, target: McpTarget) => {
     if (!paths) return
-    await run(mcpRemoveStep(server.id, [target], paths, t))
+    await run(mcpRemoveStep(server.id, [target], paths, t, route))
     syncPlan(server.id, target, false)
     refresh()
   }
@@ -133,7 +139,7 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
 
   const addFromForm = async (v: CustomFormValue) => {
     if (!paths) return
-    await run(mcpAddSpecStep(v.id, v.spec, v.targets, paths, t))
+    await run(mcpAddSpecStep(v.id, v.spec, v.targets, paths, t, route))
     setAddCand(null)
     refresh()
   }

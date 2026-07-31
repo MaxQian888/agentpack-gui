@@ -16,6 +16,7 @@ import { HelpTip } from "../../help-tip"
 import { InstalledSkillsTab } from "./installed"
 import { CatalogTab } from "./catalog"
 import { AddSkillsTab } from "./add"
+import { DesktopOnlyNote } from "../../desktop-only-note"
 
 function StatTile({ label, value }: { label: string; value: number }) {
   return (
@@ -55,7 +56,7 @@ export function SkillsSection({ scan, loading, refresh }: SkillsSectionProps) {
     }
   }, [scan])
 
-  const notTauri = <p className="text-sm text-muted-foreground">{sb.notTauri}</p>
+  const notTauri = <DesktopOnlyNote>{sb.notTauri}</DesktopOnlyNote>
   const spinner = (
     <div className="flex items-center justify-center gap-2 p-10 text-sm text-muted-foreground">
       <Spinner className="size-4" />

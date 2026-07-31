@@ -155,6 +155,50 @@ describe("profiles", () => {
     await userEvent.click(screen.getByRole("button", { name: /delete/i }))
     expect(useAppStore.getState().profiles).toHaveLength(0)
   })
+
+  /**
+   * `persist()` silently no-ops in web mode, but the callers announced success
+   * anyway — the app told the user their profile was saved when nothing had
+   * been written. Save/Load in the same file always got this right.
+   */
+  it("does not claim a profile was saved when there is nowhere to save it", async () => {
+    ;(isTauri as jest.Mock).mockReturnValue(false)
+    renderIO()
+    await userEvent.type(screen.getByPlaceholderText(/profile name/i), "Work")
+    await userEvent.click(screen.getByRole("button", { name: /save current as profile/i }))
+
+    expect(writeTextFile).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalledWith(en.shell.notInTauri)
+    expect(toast.success).not.toHaveBeenCalledWith(en.profiles.saved("Work"))
+  })
+
+  it("does not claim a profile was deleted when the delete could not be written", async () => {
+    ;(readTextFile as jest.Mock).mockResolvedValue(
+      serializeProfiles({
+        version: 1,
+        profiles: [{ id: "p1", name: "Old", createdAt: 0, plan: useAppStore.getState().plan }],
+      })
+    )
+    renderIO()
+    await screen.findByText("Old")
+    ;(isTauri as jest.Mock).mockReturnValue(false)
+    await userEvent.click(screen.getByRole("button", { name: /delete/i }))
+
+    expect(toast.error).toHaveBeenCalledWith(en.shell.notInTauri)
+    expect(toast.success).not.toHaveBeenCalledWith(en.profiles.deleted("Old"))
+  })
+
+  // Applying only touches the in-memory plan, so it really does work here.
+  it("still confirms an applied profile in web mode — no write is involved", async () => {
+    const plan: Plan = { ...useAppStore.getState().plan, clis: ["codex"] }
+    ;(readTextFile as jest.Mock).mockResolvedValue(
+      serializeProfiles({ version: 1, profiles: [{ id: "p1", name: "Work", createdAt: 0, plan }] })
+    )
+    renderIO()
+    await userEvent.click(await screen.findByRole("button", { name: /^apply$/i }))
+    ;(isTauri as jest.Mock).mockReturnValue(false)
+    expect(toast.success).toHaveBeenCalledWith(en.profiles.applied("Work"))
+  })
 })
 
 describe("config files", () => {
@@ -198,5 +242,23 @@ describe("config files", () => {
     expect(await screen.findAllByRole("button", { name: en.configFiles.create })).toHaveLength(
       CONFIG_FILES.length
     )
+  })
+})
+
+/**
+ * Four sections had no story for web mode at all. The config card returned
+ * `null` and vanished outright; the CLI and runtime lists rendered without
+ * their status badges, which reads as "you have none of these" rather than
+ * "this can't be known here".
+ */
+describe("web mode says so instead of going quiet", () => {
+  it("explains the config editor instead of disappearing", async () => {
+    ;(isTauri as jest.Mock).mockReturnValue(false)
+    // Exactly what web mode looks like: the shell only calls setPaths in Tauri.
+    useAppStore.setState({ paths: null })
+    renderIO()
+    // The card is still there, titled, with a reason.
+    expect(await screen.findByText(en.configFiles.title)).toBeInTheDocument()
+    expect(screen.getByText(en.configFiles.notTauri)).toBeInTheDocument()
   })
 })

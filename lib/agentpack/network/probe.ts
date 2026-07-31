@@ -194,6 +194,26 @@ export interface NetworkProbeResult {
   pacUrl: string | null
 }
 
+/**
+ * Whether a measured probe has anything to propose — a proxy the machine needs,
+ * or a mirror faster than the default it would otherwise use.
+ *
+ * Lives here rather than in the wizard step because two callers have to agree:
+ * the step renders "nothing to do" from it, and the wizard skips the step
+ * entirely when it's false. A healthy machine shouldn't be made to read a page
+ * of green ticks and press Continue.
+ *
+ * Not yet measured (`null`) counts as nothing to propose — the wizard moves on
+ * rather than blocking on a probe that may still be in flight.
+ */
+export function probeSuggestsChange(probe: NetworkProbeResult | null): boolean {
+  if (!probe) return false
+  const needsProxy = !probe.directOk && !!probe.bestProxy
+  const npm = pickMirror(probe.npm, "suggest", isDefaultMirror)
+  const gh = pickMirror(probe.gh, "suggest", isDefaultMirror)
+  return needsProxy || !!npm?.preset.url || !!gh?.preset.url
+}
+
 export interface ProbeOptions {
   check: CheckFn
   /** Preset lists, overridable so tests don't probe the real catalog. */

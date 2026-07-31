@@ -549,3 +549,222 @@ pub(super) fn codex_sigs() -> Result<(Vec<FileSig>, HashMap<String, String>), St
     codex_titles(),
   ))
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use serde_json::json;
+  use std::path::Path;
+
+  fn parse(lines: Vec<Value>) -> ParsedSession {
+    codex_parse(Path::new("/p/rollout-1.jsonl"), &lines, &HashMap::new()).expect("parses")
+  }
+
+  fn event(ty: &str, payload: Value) -> Value {
+    json!({ "type": ty, "timestamp": "2026-01-01T00:00:00.000Z", "payload": payload })
+  }
+
+  fn token_count(total_in: u64, total_out: u64, last_in: u64, last_out: u64) -> Value {
+    event(
+      "event_msg",
+      json!({
+        "type": "token_count",
+        "info": {
+          "total_token_usage": { "input_tokens": total_in, "output_tokens": total_out },
+          "last_token_usage": { "input_tokens": last_in, "output_tokens": last_out },
+        },
+      }),
+    )
+  }
+
+  /// `total_token_usage` is cumulative: every `token_count` restates the running
+  /// total. Summing them would square the session's token count.
+  #[test]
+  fn keeps_the_latest_cumulative_total_rather_than_summing_them() {
+    let p = parse(vec![
+      token_count(100, 10, 100, 10),
+      token_count(250, 25, 150, 15),
+      token_count(400, 40, 150, 15),
+    ]);
+    assert_eq!(p.summary.usage.input, 400);
+    assert_eq!(p.summary.usage.output, 40);
+  }
+
+  /// The series wants the per-turn delta beside it, not the cumulative field.
+  #[test]
+  fn packs_the_per_turn_delta_into_the_series() {
+    let p = parse(vec![
+      token_count(100, 10, 100, 10),
+      token_count(250, 25, 150, 15),
+    ]);
+    assert_eq!(
+      p.series.events.len(),
+      2,
+      "one event per turn, not one running total"
+    );
+  }
+
+  /// A forked or sub-agent rollout replays the parent thread, carrying the
+  /// parent's own `session_meta` with it. Letting a later record win would stamp
+  /// every sibling fork with the parent's id and collapse them into one entry.
+  #[test]
+  fn takes_its_identity_from_the_first_session_meta_only() {
+    let p = parse(vec![
+      event("session_meta", json!({ "id": "mine", "cwd": "/work/a" })),
+      event(
+        "session_meta",
+        json!({ "id": "the-parent", "cwd": "/work/b" }),
+      ),
+    ]);
+    assert_eq!(p.summary.id, "mine");
+    assert_eq!(p.summary.cwd, "/work/a");
+  }
+
+  #[test]
+  fn falls_back_to_the_file_name_when_there_is_no_session_meta() {
+    assert_eq!(parse(vec![]).summary.id, "rollout-1");
+  }
+
+  #[test]
+  fn attributes_later_events_to_the_model_the_turn_switched_to() {
+    let p = parse(vec![
+      event("turn_context", json!({ "model": "gpt-5-codex" })),
+      token_count(10, 1, 10, 1),
+      event("turn_context", json!({ "model": "o3" })),
+      token_count(20, 2, 10, 1),
+    ]);
+    assert_eq!(
+      p.summary.models,
+      vec!["gpt-5-codex".to_string(), "o3".to_string()]
+    );
+  }
+
+  #[test]
+  fn counts_both_sides_of_the_conversation_as_messages() {
+    let p = parse(vec![
+      event(
+        "event_msg",
+        json!({ "type": "user_message", "message": "hello" }),
+      ),
+      event(
+        "event_msg",
+        json!({ "type": "agent_message", "message": "hi" }),
+      ),
+    ]);
+    assert_eq!(p.summary.message_count, 2);
+    assert_eq!(p.summary.title, "hello");
+  }
+
+  /// `#` and `<` openers are Codex's own injected context, not something typed.
+  #[test]
+  fn skips_injected_openers_when_picking_a_title() {
+    let p = parse(vec![
+      event(
+        "event_msg",
+        json!({ "type": "user_message", "message": "# instructions" }),
+      ),
+      event(
+        "event_msg",
+        json!({ "type": "user_message", "message": "<env>x</env>" }),
+      ),
+      event(
+        "event_msg",
+        json!({ "type": "user_message", "message": "the real ask" }),
+      ),
+    ]);
+    assert_eq!(p.summary.title, "the real ask");
+  }
+
+  /// Codex writes tool output as free text with no failure flag, so calls are
+  /// counted and errors deliberately left at zero rather than guessed at.
+  #[test]
+  fn counts_tool_calls_and_claims_no_knowledge_of_failures() {
+    let p = parse(vec![
+      event(
+        "response_item",
+        json!({ "type": "function_call", "name": "shell", "call_id": "c1" }),
+      ),
+      event(
+        "response_item",
+        json!({ "type": "custom_tool_call", "name": "apply_patch", "call_id": "c2" }),
+      ),
+    ]);
+    let mut tools: Vec<(String, u64, u64)> = p
+      .series
+      .tools
+      .iter()
+      .map(|t| (t.name.clone(), t.calls, t.errors))
+      .collect();
+    tools.sort();
+    assert_eq!(
+      tools,
+      vec![("apply_patch".into(), 1, 0), ("shell".into(), 1, 0)]
+    );
+  }
+
+  #[test]
+  fn ignores_a_null_info_block_instead_of_panicking() {
+    let p = parse(vec![event(
+      "event_msg",
+      json!({ "type": "token_count", "info": null }),
+    )]);
+    assert_eq!(p.summary.usage.input, 0);
+  }
+
+  #[test]
+  fn survives_records_with_no_timestamp_or_payload() {
+    let p = parse(vec![json!({ "type": "event_msg" }), json!({})]);
+    assert_eq!(p.summary.message_count, 0);
+  }
+
+  mod split_agent_message {
+    use super::*;
+
+    #[test]
+    fn pulls_the_kind_out_of_a_typed_agent_message() {
+      let (kind, body) = split_agent_message("Message Type: request\nPayload: do the thing");
+      assert_eq!(kind.as_deref(), Some("request"));
+      assert_eq!(body, "do the thing");
+    }
+
+    #[test]
+    fn leaves_an_ordinary_message_alone() {
+      let (kind, body) = split_agent_message("  just text  ");
+      assert_eq!(kind, None);
+      assert_eq!(body, "just text");
+    }
+  }
+
+  mod redact_encrypted_args {
+    use super::*;
+
+    /// A multi-KB Fernet blob would otherwise *be* the visible payload of the
+    /// call; the readable copy reaches the recipient's rollout separately.
+    #[test]
+    fn replaces_a_fernet_blob_with_a_marker() {
+      let blob = format!("gAAAAA{}", "x".repeat(300));
+      let out = redact_encrypted_args(&json!({ "message": blob }).to_string());
+      assert!(out.contains("<encrypted,"), "got {out}");
+      assert!(!out.contains("xxxx"));
+    }
+
+    #[test]
+    fn returns_arguments_without_a_blob_byte_for_byte() {
+      let input = r#"{"path":"/a/b.rs"}"#;
+      assert_eq!(redact_encrypted_args(input), input);
+    }
+
+    /// Short values that merely start with the prefix aren't tokens.
+    #[test]
+    fn leaves_a_short_lookalike_value_alone() {
+      let input = json!({ "message": "gAAAAAshort" }).to_string();
+      assert_eq!(redact_encrypted_args(&input), input);
+    }
+
+    #[test]
+    fn returns_unparseable_input_unchanged() {
+      let input = "gAAAAA not json at all";
+      assert_eq!(redact_encrypted_args(input), input);
+    }
+  }
+}

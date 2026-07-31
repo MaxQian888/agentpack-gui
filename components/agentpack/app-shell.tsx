@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { toast } from "sonner"
 import type { ListResult, ScanProgress, UsageSeriesResult } from "@/lib/history/types"
 import type { SkillsScanResult } from "@/lib/skills/types"
 import { isTauri } from "@/lib/tauri"
@@ -17,14 +18,15 @@ import {
   skillsScan,
 } from "@/lib/tauri/commands"
 import { checkForUpdate, getAppVersion } from "@/lib/tauri/updater"
-import { loadSettings, saveSettings } from "@/lib/tauri/settings"
+import { loadSettings, saveSettings, type OnboardingProgress } from "@/lib/tauri/settings"
 import { registerSummonShortcut } from "@/lib/tauri/shortcut"
 import { notify } from "@/lib/tauri/system"
 import { buildSteps, type InstalledState } from "@/lib/agentpack/plan"
 import { effectiveProxy } from "@/lib/agentpack/network/proxy"
 import { scanNetwork } from "@/lib/agentpack/network/scan"
 import { hostArch } from "@/lib/tauri/system"
-import { CLI_TOOLS, RUNTIMES, runtimePkgManager } from "@/lib/agentpack/registry"
+import { CLI_TOOLS, RUNTIMES, runtimePkgManager, SKILLS } from "@/lib/agentpack/registry"
+import { skillTargetsFor, type Surface } from "@/lib/agentpack/presets"
 import { useAppStore } from "@/store/app-store"
 import { useT } from "@/lib/i18n/provider"
 import { Header } from "./header"
@@ -63,6 +65,8 @@ function ShellBody() {
   const setNetworkProbe = useAppStore((s) => s.setNetworkProbe)
   const setNetworkProbing = useAppStore((s) => s.setNetworkProbing)
   const applyPreset = useAppStore((s) => s.applyPreset)
+  const setMcpKey = useAppStore((s) => s.setMcpKey)
+  const setSkill = useAppStore((s) => s.setSkill)
   const onboardingOpen = useAppStore((s) => s.onboardingOpen)
   const setOnboardingOpen = useAppStore((s) => s.setOnboardingOpen)
   const tourActive = useAppStore((s) => s.tourActive)
@@ -72,10 +76,24 @@ function ShellBody() {
   // One-page quick-install (customize) dialog, opened from the header Run ▾ menu.
   const [customizeOpen, setCustomizeOpen] = useState(false)
 
+  // Saved wizard progress, once settings have been read. The wizard seeds its
+  // state from this exactly once, so it is keyed on it below rather than gated
+  // behind it: gating on "settings loaded" would never release in web mode,
+  // where the hydration effect returns early, and the wizard could then never be
+  // opened outside Tauri at all.
+  const [restoredProgress, setRestoredProgress] = useState<OnboardingProgress | null>(null)
+  // The wizard's latest answers, kept in a ref because only the two exit paths
+  // read them — routing this through state would re-render the whole shell on
+  // every radio click.
+  const onboardingProgress = useRef<OnboardingProgress | null>(null)
+
   // Dashboard scan lives here (ShellBody never unmounts) so it runs once on
   // startup instead of re-scanning every time the user returns to the home page.
   const [dashboardScan, setDashboardScan] = useState<DashboardScan | null>(null)
   const [dashboardScanning, setDashboardScanning] = useState(false)
+  // Mirrors `dashboardScan`, but as a ref: runOneClick reads it at call time and
+  // must not be rebuilt (and re-created as a callback) on every scan.
+  const lastGoodScan = useRef<DashboardScan | null>(null)
 
   // Chat-history scan is lazy (it reads every JSONL + the OpenCode DB, too slow
   // to run on startup) and cached here so returning to History reuses it.
@@ -156,15 +174,24 @@ function ShellBody() {
     }
   }, [])
 
+  // Every scan goes through here, so "the last state we actually read from disk"
+  // has exactly one writer. A degraded scan still updates the dashboard (a
+  // partial view beats a stale one) but is NOT remembered as good, because the
+  // one-click install dedups against the remembered scan — see runOneClick.
+  const rememberScan = useCallback((scan: DashboardScan) => {
+    if (!scan.degraded) lastGoodScan.current = scan
+    setDashboardScan(scan)
+  }, [])
+
   const rescanDashboard = useCallback(async () => {
     if (!isTauri() || !paths) return
     setDashboardScanning(true)
     try {
-      setDashboardScan(await scanEnvironment(paths))
+      rememberScan(await scanEnvironment(paths))
     } finally {
       setDashboardScanning(false)
     }
-  }, [paths])
+  }, [paths, rememberScan])
 
   // Initial scan once paths are known. Fire-and-forget so the UI renders
   // immediately; the (now async) Rust commands run off the main thread, and
@@ -174,13 +201,13 @@ function ShellBody() {
     let cancelled = false
     scanEnvironment(paths)
       .then((result) => {
-        if (!cancelled) setDashboardScan(result)
+        if (!cancelled) rememberScan(result)
       })
       .catch(() => {})
     return () => {
       cancelled = true
     }
-  }, [paths])
+  }, [paths, rememberScan])
 
   // Detect every CLI + runtime and refresh latest-version info. Reused both on
   // startup and after every real run, so install/upgrade/uninstall are reflected
@@ -283,7 +310,10 @@ function ShellBody() {
       // Measure the network right after the proxy is restored, so the probe runs
       // through whatever route the user already configured.
       void probeNetworkNow()
-      // Greet a first-time user once; About can reopen the wizard later.
+      // Greet a first-time user; About can reopen the wizard later. Someone who
+      // closed it mid-way still counts as first-time and resumes where they were.
+      setRestoredProgress(settings.onboardingProgress)
+      onboardingProgress.current = settings.onboardingProgress
       if (!settings.onboarded) setOnboardingOpen(true)
       const version = await getAppVersion()
       if (!cancelled && version) setAppVersion(version)
@@ -395,7 +425,18 @@ function ShellBody() {
       const scan = await scanEnvironment(paths).catch(() => null)
       // Keep the dashboard in sync with the state this run deduped against (but
       // don't clobber a good cached scan if this fresh one failed).
-      if (scan) setDashboardScan(scan)
+      if (scan) rememberScan(scan)
+      // A scan that couldn't read its sources used to fall back to "nothing is
+      // installed", which turns the dedup off entirely: every MCP add and skill
+      // copy is re-emitted, and `claude mcp add` rejects a duplicate id, so a
+      // transient read error produced a screenful of red. Prefer the last good
+      // scan; with neither, refuse to run rather than guess — guessing wrong
+      // here is the loud, confusing case.
+      const effective = scan && !scan.degraded ? scan : lastGoodScan.current
+      if (!effective) {
+        toast.error(t.shell.scanFailed)
+        return
+      }
       const { plan, detections, latestVersions, cliManagers, settings } = useAppStore.getState()
       const arch = await hostArch()
       const installedTools = new Set(
@@ -407,11 +448,11 @@ function ShellBody() {
         versions: Object.fromEntries(Object.entries(detections).map(([id, d]) => [id, d.version])),
         latest: latestVersions,
         managers: cliManagers,
-        claudeMcps: scan ? [...scan.claudeMcps.known, ...scan.claudeMcps.custom] : [],
-        codexMcps: scan ? [...scan.codexMcps.known, ...scan.codexMcps.custom] : [],
-        opencodeMcps: scan ? [...scan.opencodeMcps.known, ...scan.opencodeMcps.custom] : [],
-        claudeSkills: scan ? [...scan.claudeSkills.known, ...scan.claudeSkills.custom] : [],
-        codexSkills: scan ? [...scan.codexSkills.known, ...scan.codexSkills.custom] : [],
+        claudeMcps: [...effective.claudeMcps.known, ...effective.claudeMcps.custom],
+        codexMcps: [...effective.codexMcps.known, ...effective.codexMcps.custom],
+        opencodeMcps: [...effective.opencodeMcps.known, ...effective.opencodeMcps.custom],
+        claudeSkills: [...effective.claudeSkills.known, ...effective.claudeSkills.custom],
+        codexSkills: [...effective.codexSkills.known, ...effective.codexSkills.custom],
       }
       void run(
         buildSteps(plan, paths, t, installedTools, installedState, {
@@ -421,14 +462,27 @@ function ShellBody() {
         { plan, review: true }
       )
     })()
-  }, [run, refreshDetections, t])
+  }, [run, refreshDetections, rememberScan, t])
 
-  // First-run wizard: persist that the newcomer has been greeted (so it doesn't
-  // reappear next launch — About can reopen it on demand), then close it.
-  const closeOnboarding = useCallback(() => {
+  // First-run wizard: the newcomer said "not now" (or just installed), so record
+  // that they've been greeted and stop resuming. About can reopen it on demand.
+  const dismissOnboarding = useCallback(() => {
     setOnboardingOpen(false)
-    setSettings({ onboarded: true })
-    void saveSettings({ onboarded: true })
+    onboardingProgress.current = null
+    setSettings({ onboarded: true, onboardingProgress: null })
+    void saveSettings({ onboarded: true, onboardingProgress: null })
+  }, [setOnboardingOpen, setSettings])
+
+  // First-run wizard closed incidentally — Esc, the overlay, or following the
+  // tour link. That is not the user declining to be onboarded, so `onboarded`
+  // stays false and we save their place instead: next launch picks up where they
+  // left off rather than greeting them from step 1 (or, as before, never again).
+  const suspendOnboarding = useCallback(() => {
+    setOnboardingOpen(false)
+    const progress = onboardingProgress.current
+    if (!progress) return
+    setSettings({ onboardingProgress: progress })
+    void saveSettings({ onboardingProgress: progress })
   }, [setOnboardingOpen, setSettings])
 
   // Apply a bundle and run the same one-click install as the header Run button.
@@ -436,20 +490,27 @@ function ShellBody() {
   // plan via getState) picks up the new bundle. Shared by the wizard Install, the
   // header Run ▾ quick-install menu, and — implicitly — the customize dialog.
   const runPreset = useCallback(
-    (presetId: string) => {
-      applyPreset(presetId)
+    (presetId: string, surface?: Surface) => {
+      applyPreset(presetId, surface)
       runOneClick()
     },
     [applyPreset, runOneClick]
   )
 
-  // Wizard "Install": dismiss the wizard, then run the chosen bundle.
+  // Wizard "Install": finish onboarding, then run the chosen bundle. Keys and
+  // skills are applied AFTER applyPreset, not before — applyPreset rebuilds the
+  // plan from the bundle and would drop anything written ahead of it.
   const installFromOnboarding = useCallback(
-    (presetId: string) => {
-      closeOnboarding()
-      runPreset(presetId)
+    (presetId: string, surface: Surface, keys: Record<string, string>, skills: string[]) => {
+      dismissOnboarding()
+      applyPreset(presetId, surface)
+      for (const [id, key] of Object.entries(keys)) setMcpKey(id, key)
+      // Both directions: the bundle may have selected skills the user unticked.
+      const targets = skillTargetsFor(useAppStore.getState().plan.clis)
+      for (const s of SKILLS) setSkill(s.id, skills.includes(s.id) ? targets : [])
+      runOneClick()
     },
-    [closeOnboarding, runPreset]
+    [dismissOnboarding, applyPreset, setMcpKey, setSkill, runOneClick]
   )
 
   // Customize dialog "Install now": close it, then run the plan the user tuned
@@ -459,11 +520,12 @@ function ShellBody() {
     runOneClick()
   }, [runOneClick])
 
-  // Wizard "Take a tour": dismiss the wizard (marks onboarded) and start the tour.
+  // Wizard "Take a tour": suspend rather than dismiss — taking the tour is a
+  // detour, not a decision to skip setup, so the wizard is still waiting after.
   const startTourFromOnboarding = useCallback(() => {
-    closeOnboarding()
+    suspendOnboarding()
     setTourActive(true)
-  }, [closeOnboarding, setTourActive])
+  }, [suspendOnboarding, setTourActive])
 
   // The tour drives section navigation itself; when it ends, return home.
   const endTour = useCallback(() => {
@@ -541,10 +603,19 @@ function ShellBody() {
         <main className="flex-1 overflow-auto p-6">{renderSection()}</main>
       </div>
       <ExecutionPanel />
+      {/* Keyed so that saved progress arriving after mount re-seeds the wizard,
+          which reads `progress` only as its initial state. It can flip at most
+          once, during startup, before the user has touched anything. */}
       <OnboardingDialog
+        key={restoredProgress ? "resumed" : "fresh"}
         open={onboardingOpen}
+        progress={restoredProgress}
+        onProgress={(p) => {
+          onboardingProgress.current = p
+        }}
         onInstall={installFromOnboarding}
-        onDismiss={closeOnboarding}
+        onLater={dismissOnboarding}
+        onSuspend={suspendOnboarding}
         onTour={startTourFromOnboarding}
       />
       <QuickInstallDialog

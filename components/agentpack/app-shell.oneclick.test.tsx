@@ -51,6 +51,7 @@ jest.mock("@/lib/tauri/settings", () => ({
     skippedVersion: null,
     lastCheckAt: null,
     onboarded: true,
+    onboardingProgress: null,
     quickStartDismissed: true,
   })),
   saveSettings: jest.fn(async () => undefined),
@@ -59,8 +60,12 @@ jest.mock("@/lib/tauri/settings", () => ({
     skippedVersion: null,
     lastCheckAt: null,
     onboarded: false,
+    onboardingProgress: null,
     quickStartDismissed: false,
   },
+}))
+jest.mock("sonner", () => ({
+  toast: { success: jest.fn(), error: jest.fn(), message: jest.fn() },
 }))
 jest.mock("@/lib/tauri/system", () => ({
   notify: jest.fn(async () => undefined),
@@ -71,6 +76,8 @@ import { render, screen, waitFor } from "@testing-library/react"
 import { act } from "react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
+import { toast } from "sonner"
+import { readTextFile, listSkills } from "@/lib/tauri/commands"
 import { useAppStore } from "@/store/app-store"
 import { AppShell } from "./app-shell"
 import { en } from "@/lib/i18n/en"
@@ -84,6 +91,13 @@ beforeEach(() => {
     latestVersions: {},
   })
   useAppStore.getState().resetPlan()
+  jest.clearAllMocks()
+  // Tests below make the reads fail; put the healthy machine back so the file
+  // stays order-independent. Only ~/.claude.json declares a server (memory).
+  ;(readTextFile as jest.Mock).mockImplementation(async (p: string) =>
+    p.includes(".claude.json") ? JSON.stringify({ mcpServers: { memory: {} } }) : ""
+  )
+  ;(listSkills as jest.Mock).mockImplementation(async () => [] as string[])
 })
 
 const claudeMcpLabel = (id: "memory" | "context7") =>
@@ -110,4 +124,56 @@ it("Run drops an already-installed MCP and keeps a missing one", async () => {
   await waitFor(() => expect(screen.getByText(claudeMcpLabel("context7"))).toBeInTheDocument())
   // …and the already-installed memory add was dropped.
   expect(screen.queryByText(claudeMcpLabel("memory"))).not.toBeInTheDocument()
+})
+
+/**
+ * The dedup is only as good as the scan behind it. A failed read used to fall
+ * back to "nothing is installed", which re-emits every MCP add — and
+ * `claude mcp add` rejects a duplicate id, so a transient error turned into a
+ * screenful of red. Prefer the last good scan; refuse to run without either.
+ */
+it("falls back to the last good scan when a fresh one fails", async () => {
+  render(
+    <I18nProvider>
+      <AppShell />
+    </I18nProvider>
+  )
+  // The startup scan succeeds and is remembered.
+  await waitFor(() => expect(useAppStore.getState().paths).not.toBeNull())
+  await waitFor(() => expect(readTextFile).toHaveBeenCalled())
+
+  act(() => {
+    useAppStore.getState().setMcp("memory", ["claude"])
+    useAppStore.getState().setMcp("context7", ["claude"])
+  })
+  // Now every read fails, so runOneClick's own scan comes back empty-handed.
+  ;(readTextFile as jest.Mock).mockRejectedValue(new Error("EBUSY"))
+  ;(listSkills as jest.Mock).mockRejectedValue(new Error("EBUSY"))
+
+  await userEvent.click(screen.getByRole("button", { name: en.shell.run }))
+
+  // Still deduped against the remembered scan: memory stays dropped.
+  await waitFor(() => expect(screen.getByText(claudeMcpLabel("context7"))).toBeInTheDocument())
+  expect(screen.queryByText(claudeMcpLabel("memory"))).not.toBeInTheDocument()
+})
+
+it("refuses to run at all when there is no readable scan to dedup against", async () => {
+  // Broken from the very first read, so nothing good was ever remembered.
+  ;(readTextFile as jest.Mock).mockRejectedValue(new Error("EACCES"))
+  ;(listSkills as jest.Mock).mockRejectedValue(new Error("EACCES"))
+  render(
+    <I18nProvider>
+      <AppShell />
+    </I18nProvider>
+  )
+  await waitFor(() => expect(useAppStore.getState().paths).not.toBeNull())
+  act(() => {
+    useAppStore.getState().setMcp("context7", ["claude"])
+  })
+
+  await userEvent.click(screen.getByRole("button", { name: en.shell.run }))
+
+  // No step list at all — better than a run that re-adds what's already there.
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith(en.shell.scanFailed))
+  expect(screen.queryByText(claudeMcpLabel("context7"))).not.toBeInTheDocument()
 })

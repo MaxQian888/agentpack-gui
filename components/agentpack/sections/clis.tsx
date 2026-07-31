@@ -19,6 +19,9 @@ import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
 import { HelpTip } from "../help-tip"
 import { useRunnerCtx } from "../run/runner-context"
+import { DesktopOnlyNote } from "../desktop-only-note"
+import { useMounted } from "@/hooks/use-mounted"
+import { isTauri } from "@/lib/tauri"
 
 export function ClisSection() {
   const t = useT()
@@ -31,6 +34,9 @@ export function ClisSection() {
   const cliManagers = useAppStore((s) => s.cliManagers)
   const effectiveOS = useAppStore((s) => s.effectiveOS)
   const { run } = useRunnerCtx()
+  // Paired with isTauri() because that's false in the pre-rendered HTML — see
+  // the same guard on the dashboard. Without it the note hydration-mismatches.
+  const mounted = useMounted()
 
   const upgradeNow = (tool: (typeof CLI_TOOLS)[number]) => {
     const cmd = upgradeCommandFor(tool, effectiveOS(), cliManagers[tool.id])
@@ -45,6 +51,9 @@ export function ClisSection() {
       help={<HelpTip text={t.help.cli} />}
     >
       <p className="-mt-2 text-xs text-muted-foreground">{t.tools.upgradeNote}</p>
+      {/* Detections are empty in web mode, so every status badge below silently
+          renders nothing — indistinguishable from "you have none of these". */}
+      {!isTauri() && mounted ? <DesktopOnlyNote>{t.tools.notTauri}</DesktopOnlyNote> : null}
       <div className="flex flex-col gap-3">
         {CLI_TOOLS.map((tool) => {
           const meta = t.catalog.cli[tool.id]

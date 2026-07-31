@@ -579,3 +579,218 @@ pub(super) fn claude_sigs() -> Result<Vec<FileSig>, String> {
   }
   Ok(sigs)
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use serde_json::json;
+  use std::path::Path;
+
+  /// Parse a session from in-memory lines, as `claude_parse` does on a cache miss.
+  fn parse(lines: Vec<Value>) -> ParsedSession {
+    claude_parse(Path::new("/p/sess-1.jsonl"), &lines).expect("parses")
+  }
+
+  /// One line of a streamed assistant turn. Claude writes one of these **per
+  /// content block**, each repeating the same id, requestId and whole-turn usage.
+  fn assistant_line(id: &str, req: &str, block: Value, usage: Value) -> Value {
+    json!({
+      "type": "assistant",
+      "timestamp": "2026-01-01T00:00:00.000Z",
+      "requestId": req,
+      "message": { "id": id, "model": "claude-opus-4-6", "content": [block], "usage": usage },
+    })
+  }
+
+  fn usage(input: u64, output: u64) -> Value {
+    json!({ "input_tokens": input, "output_tokens": output })
+  }
+
+  fn text(t: &str) -> Value {
+    json!({ "type": "text", "text": t })
+  }
+
+  fn tool_use(id: &str, name: &str) -> Value {
+    json!({ "type": "tool_use", "id": id, "name": name })
+  }
+
+  /// The rule the whole usage dashboard rests on. Without the dedup, real
+  /// transcripts read ~2.4× high — 1511 assistant lines carrying only 626
+  /// distinct message ids.
+  #[test]
+  fn counts_a_split_assistant_turn_once() {
+    let p = parse(vec![
+      assistant_line("msg_1", "req_1", text("thinking"), usage(100, 20)),
+      assistant_line("msg_1", "req_1", text("answer"), usage(100, 20)),
+      assistant_line("msg_1", "req_1", tool_use("t1", "Read"), usage(100, 20)),
+    ]);
+    assert_eq!(
+      p.summary.usage.input, 100,
+      "usage must not be summed per block"
+    );
+    assert_eq!(p.summary.usage.output, 20);
+    assert_eq!(p.summary.message_count, 1, "three lines are one turn");
+  }
+
+  /// Content blocks are NOT duplicated across those lines, so tool counting has
+  /// to sit outside the usage gate — one call each, not one for the whole turn.
+  #[test]
+  fn still_counts_every_tool_call_in_a_split_turn() {
+    let p = parse(vec![
+      assistant_line("msg_1", "req_1", tool_use("t1", "Read"), usage(10, 1)),
+      assistant_line("msg_1", "req_1", tool_use("t2", "Edit"), usage(10, 1)),
+      assistant_line("msg_1", "req_1", tool_use("t3", "Read"), usage(10, 1)),
+    ]);
+    let mut tools: Vec<(String, u64)> = p
+      .series
+      .tools
+      .iter()
+      .map(|t| (t.name.clone(), t.calls))
+      .collect();
+    tools.sort();
+    assert_eq!(tools, vec![("Edit".into(), 1), ("Read".into(), 2)]);
+    assert_eq!(
+      p.summary.usage.input, 10,
+      "and the bill is still counted once"
+    );
+  }
+
+  /// A genuine retry gets a new requestId and is a second, real bill.
+  #[test]
+  fn counts_a_retry_of_the_same_message_again() {
+    let p = parse(vec![
+      assistant_line("msg_1", "req_1", text("a"), usage(100, 20)),
+      assistant_line("msg_1", "req_2", text("a"), usage(100, 20)),
+    ]);
+    assert_eq!(p.summary.usage.input, 200);
+    assert_eq!(p.summary.message_count, 2);
+  }
+
+  /// …unless it's a sidechain, which replays a turn already recorded under a new
+  /// requestId. The exact (id, requestId) key alone would let that through.
+  #[test]
+  fn does_not_count_a_sidechain_replay_of_a_counted_turn() {
+    let mut replay = assistant_line("msg_1", "req_2", tool_use("t1", "Read"), usage(100, 20));
+    replay["isSidechain"] = json!(true);
+    let p = parse(vec![
+      assistant_line("msg_1", "req_1", text("a"), usage(100, 20)),
+      replay,
+    ]);
+    assert_eq!(p.summary.usage.input, 100);
+    assert_eq!(p.summary.message_count, 1);
+    // Neither its bill nor its tool calls happened a second time.
+    assert!(p.series.tools.is_empty());
+  }
+
+  /// A sidechain whose id has NOT been seen is a real sub-turn and does count.
+  #[test]
+  fn counts_a_sidechain_whose_turn_was_never_recorded() {
+    let mut only = assistant_line("msg_9", "req_9", text("a"), usage(100, 20));
+    only["isSidechain"] = json!(true);
+    assert_eq!(parse(vec![only]).summary.usage.input, 100);
+  }
+
+  #[test]
+  fn counts_each_user_line_as_its_own_message() {
+    let p = parse(vec![
+      json!({ "type": "user", "timestamp": "2026-01-01T00:00:00.000Z",
+              "message": { "content": "hello" } }),
+      json!({ "type": "user", "timestamp": "2026-01-01T00:01:00.000Z",
+              "message": { "content": "again" } }),
+    ]);
+    assert_eq!(p.summary.message_count, 2);
+    assert_eq!(
+      p.summary.title, "hello",
+      "the first real user line titles it"
+    );
+  }
+
+  /// A leading `<...>` line is machine-injected context, not something the user
+  /// typed, so it must not become the session's title.
+  #[test]
+  fn skips_an_injected_block_when_picking_a_title() {
+    let p = parse(vec![
+      json!({ "type": "user", "message": { "content": "<system-reminder>x</system-reminder>" } }),
+      json!({ "type": "user", "message": { "content": "the real question" } }),
+    ]);
+    assert_eq!(p.summary.title, "the real question");
+  }
+
+  #[test]
+  fn takes_the_session_range_from_the_earliest_and_latest_timestamps() {
+    let p = parse(vec![
+      json!({ "type": "user", "timestamp": "2026-01-01T10:00:00.000Z",
+              "message": { "content": "b" } }),
+      json!({ "type": "user", "timestamp": "2026-01-01T09:00:00.000Z",
+              "message": { "content": "a" } }),
+    ]);
+    assert!(p.summary.started_at < p.summary.updated_at);
+  }
+
+  /// `<synthetic>` marks a hook/injected turn, not a model the user paid for.
+  #[test]
+  fn leaves_the_synthetic_marker_out_of_the_model_list() {
+    let mut synthetic = assistant_line("msg_2", "req_2", text("x"), usage(1, 1));
+    synthetic["message"]["model"] = json!("<synthetic>");
+    let p = parse(vec![
+      assistant_line("msg_1", "req_1", text("a"), usage(1, 1)),
+      synthetic,
+    ]);
+    assert_eq!(p.summary.models, vec!["claude-opus-4-6".to_string()]);
+  }
+
+  /// A failed tool_result rides on the *user* line answering the call, and is
+  /// attributed back through the call id.
+  #[test]
+  fn attributes_a_tool_failure_back_to_the_call_that_made_it() {
+    let p = parse(vec![
+      assistant_line("msg_1", "req_1", tool_use("t1", "Bash"), usage(1, 1)),
+      json!({ "type": "user", "message": { "content": [
+        { "type": "tool_result", "tool_use_id": "t1", "is_error": true }
+      ]}}),
+    ]);
+    let bash = p
+      .series
+      .tools
+      .iter()
+      .find(|t| t.name == "Bash")
+      .expect("Bash counted");
+    assert_eq!((bash.calls, bash.errors), (1, 1));
+  }
+
+  /// Lines with no message id at all can't be deduped, so they must be let
+  /// through rather than silently collapsed into one.
+  #[test]
+  fn counts_every_line_that_carries_no_id_to_dedup_on() {
+    let mut a = assistant_line("", "", text("a"), usage(5, 1));
+    a["message"]["id"] = json!(null);
+    let p = parse(vec![a.clone(), a]);
+    assert_eq!(p.summary.usage.input, 10);
+  }
+
+  #[test]
+  fn sums_turn_durations_into_the_session_s_working_time() {
+    let p = parse(vec![
+      json!({ "type": "system", "subtype": "turn_duration", "durationMs": 1500 }),
+      json!({ "type": "system", "subtype": "turn_duration", "durationMs": 2500 }),
+    ]);
+    assert_eq!(p.summary.duration_ms, Some(4000));
+  }
+
+  /// A sub-agent transcript lives under `<parent>/subagents/...`; the id of the
+  /// session that spawned it is what lets the list nest it instead of listing it
+  /// as a peer.
+  #[test]
+  fn reads_a_sub_agent_s_parent_out_of_its_path() {
+    assert_eq!(
+      claude_parent_id(Path::new(
+        "/h/.claude/projects/p/parent-1/subagents/a/sub.jsonl"
+      )),
+      Some("parent-1".to_string())
+    );
+    assert_eq!(
+      claude_parent_id(Path::new("/h/.claude/projects/p/top.jsonl")),
+      None
+    );
+  }
+}

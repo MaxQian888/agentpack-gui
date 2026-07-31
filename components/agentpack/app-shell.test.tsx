@@ -59,6 +59,7 @@ it("shows the header update badge when an update is available and opens About", 
       skippedVersion: null,
       lastCheckAt: null,
       onboarded: true,
+      onboardingProgress: null,
       quickStartDismissed: false,
       ghMirrorPrefix: null,
       skillRepoSources: [],
@@ -70,4 +71,16 @@ it("shows the header update badge when an update is available and opens About", 
   renderShell()
   await userEvent.click(screen.getByRole("button", { name: en.about.updateAvailable("9.9.9") }))
   expect(screen.getByRole("heading", { name: en.about.title })).toBeInTheDocument()
+})
+
+/**
+ * The wizard seeds its state from persisted progress exactly once, so it waits
+ * for settings to be read — but the effect that reads them returns early outside
+ * Tauri. Without releasing the gate here the wizard could never be opened in web
+ * mode at all, and every other suite mocks isTauri as true, so nothing caught it.
+ */
+it("can still open the welcome wizard in web mode", async () => {
+  renderShell()
+  await userEvent.click(screen.getByRole("button", { name: en.quickStart.openGuide }))
+  expect(await screen.findByRole("heading", { name: en.welcome.title })).toBeInTheDocument()
 })

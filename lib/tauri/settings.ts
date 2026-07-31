@@ -1,6 +1,19 @@
 import { isTauri } from "@/lib/tauri"
 import type { RepoSource } from "@/lib/skills/types"
+import type { Surface } from "@/lib/agentpack/presets"
 import type { ProxyConfig } from "@/lib/agentpack/types"
+
+/**
+ * Where a half-finished first run got to. Written when the wizard is closed
+ * *incidentally* (Esc, the overlay, following the tour link) so the next launch
+ * resumes instead of restarting — the wizard's own state is component-local and
+ * dies with the process.
+ */
+export interface OnboardingProgress {
+  step: string
+  preset: string
+  surface: Surface
+}
 
 // Persisted app settings, backed by `@tauri-apps/plugin-store` (a small JSON KV
 // store in the app's data dir). The Zustand store (store/app-store.ts) has no
@@ -17,11 +30,19 @@ export interface AppSettings {
   /** Epoch ms of the last successful update check (for display). */
   lastCheckAt: number | null
   /**
-   * Whether the first-run welcome wizard has been completed or dismissed. False
-   * on a fresh install so the wizard greets a newcomer once; set true after they
-   * install or click "later". The About section can reopen the wizard regardless.
+   * Whether the first-run welcome wizard has been *deliberately* finished with.
+   * False on a fresh install so the wizard greets a newcomer; set true only when
+   * they install or click "later". Closing the wizard any other way (Esc, the
+   * overlay, the tour link) leaves this false and records `onboardingProgress`
+   * instead — a mis-click is not consent to never be guided again. The About
+   * section can reopen the wizard regardless.
    */
   onboarded: boolean
+  /**
+   * The step / bundle / surface a suspended wizard was on, or null when there's
+   * nothing to resume. Cleared once `onboarded` goes true.
+   */
+  onboardingProgress: OnboardingProgress | null
   /**
    * Whether the user permanently hid the dashboard "quick start" card via its
    * "don't show again". Independent of `onboarded`: the card is a lingering
@@ -67,6 +88,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   skippedVersion: null,
   lastCheckAt: null,
   onboarded: false,
+  onboardingProgress: null,
   quickStartDismissed: false,
   ghMirrorPrefix: null,
   skillRepoSources: [],

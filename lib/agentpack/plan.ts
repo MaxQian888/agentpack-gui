@@ -23,6 +23,7 @@ import {
   mergeClaudeMcp,
   mergeCodexMcp,
   mergeOpencodeMcp,
+  removeClaudeMcp,
   resolveCatalogSpec,
   setCodexMcpEnabled,
   setOpencodeMcpEnabled,
@@ -993,6 +994,26 @@ export function visibleAppsStep(
   }
 }
 
+/**
+ * How Claude's user-scope MCP config can be reached on this machine.
+ *
+ * - `cli` — shell out to `claude mcp add/remove`, the supported interface.
+ * - `file` — write `~/.claude.json` directly. The desktop app reads the same
+ *   file but ships no binary, so this is the only route it has.
+ * - `none` — neither is installed; there is nothing to configure yet.
+ *
+ * One function so the UI's "is this checkbox available" and the step builder's
+ * "which kind of step" can't drift: they used to answer from `claude-code`
+ * alone, which greyed the whole Claude column out on a desktop-only machine
+ * that was perfectly capable of running the servers.
+ */
+export type ClaudeMcpRoute = "cli" | "file" | "none"
+
+export function claudeMcpRoute(cliInstalled: boolean, desktopInstalled: boolean): ClaudeMcpRoute {
+  if (cliInstalled) return "cli"
+  return desktopInstalled ? "file" : "none"
+}
+
 /** Suffix for the rolling backup written before any mergeFile/ccVisibleApps write. */
 export const BACKUP_SUFFIX = ".agentpack.bak"
 
@@ -1012,21 +1033,29 @@ function mcpAddSpecSteps(
   spec: McpSpec,
   targets: McpTarget[],
   paths: Paths,
-  messages: Messages
+  messages: Messages,
+  route: ClaudeMcpRoute = "cli"
 ): StepDescriptor[] {
   const title = mcpTitle(id, messages)
   const steps: StepDescriptor[] = []
-  // TODO: these ad-hoc adds (the MCP section) still assume a `claude` binary.
-  // `buildSteps` picks the direct-write route when there isn't one; this path
-  // can't, because it has no view of what's installed. Threading that in is the
-  // remaining half of desktop-only MCP support.
-  if (targets.includes("claude")) {
-    steps.push({
-      kind: "command",
-      id: `mcp-add-claude-${id}`,
-      label: messages.steps.addMcpClaude(title),
-      command: buildClaudeMcpCommandFromSpec(id, spec),
-    })
+  if (targets.includes("claude") && route !== "none") {
+    steps.push(
+      route === "cli"
+        ? {
+            kind: "command",
+            id: `mcp-add-claude-${id}`,
+            label: messages.steps.addMcpClaude(title),
+            command: buildClaudeMcpCommandFromSpec(id, spec),
+          }
+        : {
+            kind: "mergeFile",
+            id: `mcp-add-claude-${id}`,
+            label: messages.steps.addMcpClaude(title),
+            path: paths.claudeConfig,
+            merge: (existing) => mergeClaudeMcp(existing, id, buildClaudeMcpEntryFromSpec(spec)),
+            writtenNote: messages.steps.claudeMcpWritten(id),
+          }
+    )
   }
   // Codex has no standalone SSE transport — it only speaks streamable-HTTP — so
   // an sse spec is skipped for Codex (the UI gates the checkbox too).
@@ -1066,9 +1095,17 @@ export function mcpAddStep(
   targets: McpTarget[],
   key: string | undefined,
   paths: Paths,
-  messages: Messages = en
+  messages: Messages = en,
+  route: ClaudeMcpRoute = "cli"
 ): StepDescriptor[] {
-  return mcpAddSpecSteps(server.id, resolveCatalogSpec(server, key), targets, paths, messages)
+  return mcpAddSpecSteps(
+    server.id,
+    resolveCatalogSpec(server, key),
+    targets,
+    paths,
+    messages,
+    route
+  )
 }
 
 /**
@@ -1081,9 +1118,10 @@ export function mcpAddSpecStep(
   spec: McpSpec,
   targets: McpTarget[],
   paths: Paths,
-  messages: Messages = en
+  messages: Messages = en,
+  route: ClaudeMcpRoute = "cli"
 ): StepDescriptor[] {
-  return mcpAddSpecSteps(id, spec, targets, paths, messages)
+  return mcpAddSpecSteps(id, spec, targets, paths, messages, route)
 }
 
 /**
@@ -1139,17 +1177,29 @@ export function mcpRemoveStep(
   id: string,
   targets: McpTarget[],
   paths: Paths,
-  messages: Messages = en
+  messages: Messages = en,
+  route: ClaudeMcpRoute = "cli"
 ): StepDescriptor[] {
   const title = mcpTitle(id, messages)
   const steps: StepDescriptor[] = []
-  if (targets.includes("claude")) {
-    steps.push({
-      kind: "command",
-      id: `mcp-remove-claude-${id}`,
-      label: messages.steps.removeMcpClaude(title),
-      command: buildClaudeMcpRemoveCommand(id),
-    })
+  if (targets.includes("claude") && route !== "none") {
+    steps.push(
+      route === "cli"
+        ? {
+            kind: "command",
+            id: `mcp-remove-claude-${id}`,
+            label: messages.steps.removeMcpClaude(title),
+            command: buildClaudeMcpRemoveCommand(id),
+          }
+        : {
+            kind: "mergeFile",
+            id: `mcp-remove-claude-${id}`,
+            label: messages.steps.removeMcpClaude(title),
+            path: paths.claudeConfig,
+            merge: (existing) => removeClaudeMcp(existing, id),
+            writtenNote: messages.steps.claudeMcpWritten(id),
+          }
+    )
   }
   if (targets.includes("codex")) {
     steps.push({

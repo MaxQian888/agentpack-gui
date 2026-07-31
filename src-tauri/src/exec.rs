@@ -836,6 +836,79 @@ pub fn quit_cc_switch() -> Result<bool, String> {
   Ok(wait_until_exited(&name, QUIT_FORCE_GRACE))
 }
 
+/// Launch a desktop app by the name it is installed under — the "open Claude"
+/// button at the end of a run.
+///
+/// Deliberately by name rather than by resolved path, because the two platforms
+/// disagree about what a path even is here: on macOS `open -a` searches both
+/// Applications directories itself, and on Windows an MSIX app has no
+/// launchable exe path at all, only a Start-menu AppID. Codex ships no Windows
+/// build, so `Get-StartApps` covers everything that can actually be launched.
+///
+/// Waits for the *launcher* — not the app. `open` and `Start-Process` both hand
+/// off to the OS and exit immediately, so their status is available right away
+/// and is the only thing that reports "no such app": `open -a` on a name that
+/// isn't installed exits 1 (verified), and spawning without waiting would turn
+/// that into a button that silently does nothing. The Linux fallback execs the
+/// binary itself, which never returns, so that one stays detached.
+#[tauri::command(async)]
+pub fn launch_app(app_bundle: String) -> Result<(), String> {
+  if app_bundle.trim().is_empty() {
+    return Err("no app name given".into());
+  }
+  #[cfg(target_os = "macos")]
+  let mut cmd = {
+    let mut c = Command::new("open");
+    // No `-n`: a second instance of an editor-like app is never what "open
+    // Claude" means — focus the window that's already there.
+    c.arg("-a").arg(&app_bundle);
+    c
+  };
+  #[cfg(windows)]
+  let mut cmd = {
+    // Single quotes are the escape inside a PowerShell single-quoted string.
+    let safe = app_bundle.replace('\'', "''");
+    build_command(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        &format!(
+          "$a = (Get-StartApps | Where-Object {{ $_.Name -eq '{safe}' }} | Select-Object -First 1).AppID; \
+           if ($a) {{ Start-Process \"shell:AppsFolder\\$a\" }} else {{ exit 1 }}"
+        ),
+      ],
+    )
+  };
+  #[cfg(all(not(windows), not(target_os = "macos")))]
+  let mut cmd = Command::new(&app_bundle);
+
+  apply_no_window(&mut cmd);
+  apply_env(&mut cmd);
+  cmd
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::null());
+
+  #[cfg(any(windows, target_os = "macos"))]
+  {
+    let status = cmd
+      .status()
+      .map_err(|e| format!("could not open {app_bundle}: {e}"))?;
+    if !status.success() {
+      return Err(format!("could not open {app_bundle} — is it installed?"));
+    }
+    Ok(())
+  }
+  #[cfg(all(not(windows), not(target_os = "macos")))]
+  {
+    cmd
+      .spawn()
+      .map(|_| ())
+      .map_err(|e| format!("could not open {app_bundle}: {e}"))
+  }
+}
+
 /// Launch the cc-switch desktop app so it self-creates its SQLite database on
 /// first run (`run_command` can't be reused: it blocks until exit, which a GUI
 /// app never does). Resolves the real install path — winget/brew put it off
@@ -1318,6 +1391,22 @@ mod tests {
       )
       .installed
     );
+  }
+
+  #[test]
+  fn launch_app_rejects_an_empty_name() {
+    // An empty `appBundle` would make `open -a ""` open something arbitrary.
+    assert!(launch_app(String::new()).is_err());
+    assert!(launch_app("   ".into()).is_err());
+  }
+
+  #[cfg(any(windows, target_os = "macos"))]
+  #[test]
+  fn launch_app_reports_a_missing_app_instead_of_pretending() {
+    // The whole reason this waits on the launcher: `open -a` exits 1 for a name
+    // that isn't installed, and a bare spawn() would have discarded that and
+    // left the caller showing a button that does nothing.
+    assert!(launch_app("DefinitelyNotAnInstalledAppXyz".into()).is_err());
   }
 
   #[cfg(target_os = "macos")]

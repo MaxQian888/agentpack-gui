@@ -12,6 +12,7 @@ import { useT } from "@/lib/i18n/provider"
 import type { ListResult, ScanProgress, UsageSeriesResult } from "@/lib/history/types"
 import { SessionBrowser, type BrowserFocus } from "./session-browser"
 import { UsageDashboard, type UsageDrilldown } from "./usage"
+import { DesktopOnlyNote } from "../../desktop-only-note"
 
 /**
  * Chat-history browser + usage dashboard. Prop-driven like `DashboardSection`:
@@ -84,7 +85,7 @@ export function HistorySection({
       </div>
 
       {!tauri ? (
-        <p className="text-sm text-muted-foreground">{h.notTauri}</p>
+        <DesktopOnlyNote>{h.notTauri}</DesktopOnlyNote>
       ) : result === null ? (
         <ScanStatus progress={progress} />
       ) : (

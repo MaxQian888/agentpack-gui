@@ -139,6 +139,46 @@ it("retry also re-runs steps skipped due to a failed dependency", async () => {
   expect(reRun.map((s) => s.id)).toEqual(["dep", "child"])
 })
 
+/**
+ * A retry used to replace `reports` and the pending step list wholesale with the
+ * retried subset: the first pass's successes vanished from the panel, the
+ * completion counts were recomputed over the subset, and a second retry had a
+ * narrowed list to draw from.
+ */
+it("retry updates the failed step in place, keeping the rest of the run", async () => {
+  const { result } = renderHook(() => useRunner(), { wrapper })
+  await act(async () => {
+    await result.current.run([cmd("ok", "OK"), cmd("bad", "FAIL"), cmd("ok2", "OK2")])
+  })
+  expect(result.current.reports).toHaveLength(3)
+
+  await act(async () => {
+    await result.current.retry()
+  })
+
+  // All three rows are still there, in order, with the untouched ones untouched.
+  expect(result.current.reports.map((r) => r.id)).toEqual(["ok", "bad", "ok2"])
+  expect(result.current.reports.find((r) => r.id === "ok")?.status).toBe("done")
+  expect(result.current.reports.find((r) => r.id === "ok2")?.status).toBe("done")
+})
+
+it("a second retry still sees the whole run, not just the last batch", async () => {
+  const { result } = renderHook(() => useRunner(), { wrapper })
+  await act(async () => {
+    await result.current.run([cmd("dep", "FAIL"), cmd("child", "SKIP"), cmd("ok", "OK")])
+  })
+  await act(async () => {
+    await result.current.retry()
+  })
+  ;(runSteps as jest.Mock).mockClear()
+  await act(async () => {
+    await result.current.retry()
+  })
+  // Still both of them — the first retry didn't shrink what's retryable.
+  const reRun = (runSteps as jest.Mock).mock.calls[0][0] as StepDescriptor[]
+  expect(reRun.map((s) => s.id)).toEqual(["dep", "child"])
+})
+
 it("retry is a no-op when nothing failed", async () => {
   const { result } = renderHook(() => useRunner(), { wrapper })
   await act(async () => {
@@ -159,4 +199,24 @@ it("cancel aborts an in-flight run", async () => {
   // Just exercising the cancel path; no controller is active after completion.
   act(() => result.current.cancel())
   expect(result.current.running).toBe(false)
+})
+
+/**
+ * `skipped` alone can't tell a stopped run from one whose prerequisite failed,
+ * and the completion screen needs to say different things about the two.
+ */
+it("records that the user cancelled, and forgets it on the next run", async () => {
+  const { result } = renderHook(() => useRunner(), { wrapper })
+  await act(async () => {
+    await result.current.run([cmd("a", "A")])
+  })
+  expect(result.current.cancelled).toBe(false)
+
+  act(() => result.current.cancel())
+  expect(result.current.cancelled).toBe(true)
+
+  await act(async () => {
+    await result.current.run([cmd("b", "B")])
+  })
+  expect(result.current.cancelled).toBe(false)
 })

@@ -52,6 +52,7 @@ import { SectionShell } from "./section-shell"
 import { CcConnectConfigEditor } from "./ccconnect-config"
 import { HelpTip } from "../help-tip"
 import { useRunnerCtx } from "../run/runner-context"
+import { DesktopOnlyNote } from "../desktop-only-note"
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -268,7 +269,7 @@ export function CcConnectSection() {
   if (!isTauri()) {
     return (
       <SectionShell title={c.menuTitle} help={<HelpTip text={t.help.ccconnect} />}>
-        <p className="text-sm text-muted-foreground">{t.shell.notInTauri}</p>
+        <DesktopOnlyNote>{t.shell.notInTauri}</DesktopOnlyNote>
       </SectionShell>
     )
   }

@@ -1,5 +1,6 @@
 import {
   buildSteps,
+  claudeMcpRoute,
   buildVerifySteps,
   cliInstallStep,
   cliUninstallStep,
@@ -252,6 +253,51 @@ describe("Node engines floor", () => {
       versions: { node: "v20.11.0" },
     }).find((s) => s.id === "cli-claude-code")!
     expect(step.kind).toBe("command")
+  })
+})
+
+describe("claudeMcpRoute", () => {
+  it("prefers the CLI when it is there — it's the supported interface", () => {
+    expect(claudeMcpRoute(true, false)).toBe("cli")
+    expect(claudeMcpRoute(true, true)).toBe("cli")
+  })
+
+  it("falls back to writing the file when only the desktop app is installed", () => {
+    // This is the case that used to grey the whole Claude column out.
+    expect(claudeMcpRoute(false, true)).toBe("file")
+  })
+
+  it("is none when neither is installed", () => {
+    expect(claudeMcpRoute(false, false)).toBe("none")
+  })
+})
+
+describe("ad-hoc MCP steps follow the route", () => {
+  const spec: McpSpec = { transport: "stdio", command: "npx", args: ["-y", "pkg"], env: {} }
+
+  it("adds via the file when there is no CLI", () => {
+    const [step] = mcpAddSpecStep("demo", spec, ["claude"], paths, en, "file")
+    expect(step.kind).toBe("mergeFile")
+    expect(step.kind === "mergeFile" && step.path).toBe(paths.claudeConfig)
+  })
+
+  it("removes via the file when there is no CLI", () => {
+    const [step] = mcpRemoveStep("demo", ["claude"], paths, en, "file")
+    expect(step.kind).toBe("mergeFile")
+    if (step.kind !== "mergeFile") throw new Error("expected a mergeFile step")
+    const before = JSON.stringify({ mcpServers: { demo: {}, keep: {} } })
+    const after = JSON.parse(step.merge(before)) as { mcpServers: Record<string, unknown> }
+    expect(Object.keys(after.mcpServers)).toEqual(["keep"])
+  })
+
+  it("emits nothing for Claude when neither route exists", () => {
+    // Better than a step that is certain to fail: there is nothing to write to.
+    expect(mcpAddSpecStep("demo", spec, ["claude"], paths, en, "none")).toEqual([])
+    expect(mcpRemoveStep("demo", ["claude"], paths, en, "none")).toEqual([])
+  })
+
+  it("still defaults to the command route for existing callers", () => {
+    expect(mcpAddSpecStep("demo", spec, ["claude"], paths, en)[0]!.kind).toBe("command")
   })
 })
 

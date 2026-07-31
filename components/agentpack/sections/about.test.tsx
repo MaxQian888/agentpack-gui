@@ -12,6 +12,7 @@ jest.mock("@/lib/tauri/settings", () => ({
     skippedVersion: null,
     lastCheckAt: null,
     onboarded: false,
+    onboardingProgress: null,
     quickStartDismissed: false,
   },
 }))
@@ -56,6 +57,7 @@ beforeEach(() => {
       skippedVersion: null,
       lastCheckAt: null,
       onboarded: true,
+      onboardingProgress: null,
       quickStartDismissed: false,
       ghMirrorPrefix: null,
       skillRepoSources: [],

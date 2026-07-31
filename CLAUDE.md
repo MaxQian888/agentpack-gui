@@ -26,7 +26,15 @@ pnpm typecheck        # TypeScript --noEmit
 # Testing
 pnpm test             # Run Jest tests
 pnpm test:watch       # Run tests in watch mode
-pnpm test:coverage    # Run tests with coverage report
+pnpm test:coverage    # Run tests with coverage report (90% gate — jest.config.ts)
+pnpm test:e2e         # Playwright specs in e2e/ (also run in CI)
+pnpm test:e2e:ui      # Playwright UI mode
+pnpm audit:catalog    # Check the registry against upstream (scripts/audit-catalog.ts)
+
+# Rust (from src-tauri/)
+cargo test            # Inline #[cfg(test)] suites — no tests/ directory
+cargo clippy -- -D warnings
+cargo fmt
 
 # Desktop (Tauri)
 pnpm tauri dev        # Dev mode with hot reload
@@ -58,10 +66,16 @@ Root `pnpm-lock.yaml` is the single lockfile for all packages. Run `pnpm install
 ### Frontend Structure (main app)
 
 - `app/` - Next.js App Router (layout.tsx, page.tsx, globals.css)
-- `components/ui/` - All 57 shadcn/ui components pre-installed (**no test files here**)
-- `components/agentpack/` - the agentpack installer UI (shell, header, sidebar, sections, run panel)
-- `hooks/` - Shared hooks (e.g., `use-mobile.ts`)
+- `components/ui/` - All 56 shadcn/ui components pre-installed (**no test files here**)
+- `components/agentpack/` - the agentpack installer UI (shell, header, sidebar, sections, run panel),
+  plus `onboarding-dialog` / `onboarding-network-step` / `guided-tour` (the three
+  guidance surfaces), `quick-install-dialog`, `config-io`, `bundle/*-dialog`,
+  `desktop-only-note`
+- `hooks/` - Shared hooks: `use-mobile`, `use-mounted`, `use-incremental`
 - `lib/utils.ts` - `cn()` utility (clsx + tailwind-merge)
+
+⚠️ `jest.config.ts`'s `collectCoverageFrom` covers `app/ components/ lib/` only,
+so `store/` and `hooks/` are outside the 90% gate even where they have tests.
 
 ### agentpack desktop app
 
@@ -73,20 +87,56 @@ MCP servers, network/mirrors and cc-switch.
 
 - `lib/agentpack/` — browser-safe pure logic (no Node builtins): `registry`,
   `presets`, `types` (incl. `StepDescriptor`/`Paths`), `config`, `report`,
-  `locale`, `merge/{mcp,network}`, `ccswitch/*`. `plan.ts` turns a `Plan` into a
-  declarative `StepDescriptor[]`; `preview.ts` renders dry-run "would …" lines;
-  `runner.ts` executes descriptors.
+  `locale`, `scan`, `profile`, `release`, `version`, `merge/{mcp,network}`,
+  `network/{discovery,mirrors,probe,proxy,recovery,scan}`, `bundle/*`,
+  `config-editor/*`, `mcp-{disabled,health,import}`, `ccconnect`, `ccswitch/*`.
+  `plan.ts` turns a `Plan` into a declarative `StepDescriptor[]`; `preview.ts`
+  renders dry-run "would …" lines; `runner.ts` executes descriptors.
+- `lib/skills/` — the Skills section's pure logic (`browse`, `conflicts`,
+  `frontmatter`, `github`, `meta`, `npx`, `paths`, `scaffold`, `updates`), backed
+  by `src-tauri/src/skills.rs`. `lib/highlight/` is the code-editor tokenizer.
 - `lib/tauri/commands.ts` — the SOLE bridge: typed `invoke`/`Channel` wrappers.
-- `src-tauri/src/{paths,exec,fsops,ccswitch}.rs` — the side-effects: `run_command`
-  (streams output via `tauri::ipc::Channel`), `detect_cli`, `is_process_running`,
-  file read/write/remove, resource-based `install_skill`, and the cc-switch
-  SQLite DB (`rusqlite`, bundled) with guardrails.
+  (`lib/tauri.ts` is only `isTauri()`; it calls no commands.)
+- `src-tauri/src/` — the side-effects. `exec.rs` (`run_command`, streaming output
+  via `tauri::ipc::Channel`; `detect_cli`, `is_process_running`, `launch_app`),
+  `fsops.rs` (file read/write/remove, resource-based `install_skill`), `paths.rs`
+  (all cross-platform path maths), `ccswitch.rs` (the bundled `rusqlite` DB, with
+  guardrails), plus `skills.rs` (the largest file here), `download.rs` (release
+  resolution + download), `net.rs` (probing), `backup.rs`, `mcp.rs`, `login.rs`.
 - `lib/i18n/` — the typed bilingual catalog (`en`/`zh-CN`, `Messages = typeof en`)
   - `I18nProvider`/`useT`/`useLocale`. `store/app-store.ts` is the Zustand store.
 
 **Dry-run is structural:** in preview mode `runner.ts` renders preview lines
 locally and NEVER calls a mutating Rust command. Skills ship as Tauri resources
 (`src-tauri/assets/skills/`, wired via `bundle.resources`).
+
+### Onboarding & run invariants
+
+Four rules the first-run and install paths depend on. Each replaced a behaviour
+that looked reasonable in the code and lied to the user in the app.
+
+1. **Only a deliberate exit marks someone onboarded.** `settings.onboarded` is
+   written by "Maybe later" and by Install — never by Esc, the overlay, or the
+   tour link, which write `settings.onboardingProgress` instead so the next
+   launch resumes. Treating every close as consent meant one mis-click on
+   question 1 and the user was never guided again.
+2. **A run's verdict reads all four statuses.** `done`, `warning`, `error` and
+   `skipped` together (plus `cancelled` from `useRunner`, since `skipped` alone
+   can't tell a stopped run from a dependency-skipped step). Counting only
+   `done`/`error` reported a cancelled run as "All set".
+3. **Retry merges in place.** The full step list lives in `useRunner`'s `all`
+   ref, which a retry must not narrow, and results merge back by **id** — a
+   retry batch is a subset, so batch indices don't line up.
+4. **The one-click dedup must have a real scan.** `DashboardScan.degraded` says
+   a source couldn't be read (as opposed to not existing — the Rust side already
+   draws that line: NotFound → `Ok("")`, real failure → `Err`). `runOneClick`
+   falls back to the last good scan and refuses to run without one. Deduping
+   against a scan that wrongly says "nothing is installed" re-adds everything,
+   and `claude mcp add` rejects a duplicate id.
+
+Also: the completion screen derives its next action and chores from `reports`,
+not from `plan` — with **no step at all** reading as success, because the dedup
+emits nothing for what's already installed.
 
 ### Chat history & usage statistics
 
@@ -97,7 +147,9 @@ split:
 - `src-tauri/src/history.rs` — reads the three on-disk formats **read-only** and
   normalizes each into one model (`SessionSummary` for the list, `SessionDetail`
   for a transcript, `SessionSeries` for the dashboard). Commands:
-  `history_list_sessions`, `history_usage_series`, `history_get_session`.
+  `history_list_sessions`, `history_usage_series`, `history_get_session`,
+  `history_get_part_text`. Per-CLI parsers live in `src-tauri/src/history/`
+  (`claude`, `codex`, `opencode`, `scan`, `util`).
 - `lib/history/` — browser-safe pure logic: `types` (mirrors the serde output),
   `stats` (usage aggregation + per-session cost), `pricing` (the **per-model $/1M
   pricing table** — cost is exact for OpenCode, estimated from tokens for
@@ -223,11 +275,24 @@ cn("base-classes", condition && "conditional", className)
 ```
 
 ```tsx
-// Calling Rust from the frontend (Tauri only) — see lib/tauri.ts
-import { greet, isTauri } from "@/lib/tauri"
+// Calling Rust from the frontend (Tauri only). isTauri() gates it; every
+// command itself comes from lib/tauri/commands.ts, the only caller of invoke.
+import { isTauri } from "@/lib/tauri"
+import { detectCli } from "@/lib/tauri/commands"
 if (isTauri()) {
-  greet("World").then((msg) => console.log(msg))
+  detectCli("claude").then((d) => console.log(d.installed))
 }
+```
+
+```tsx
+// Web mode (pnpm dev) can't reach the machine. Say so rather than rendering a
+// blank card or a badge-less row — and never toast success after a skipped write.
+import { DesktopOnlyNote } from "@/components/agentpack/desktop-only-note"
+{
+  !isTauri() && mounted ? <DesktopOnlyNote>{t.tools.notTauri}</DesktopOnlyNote> : null
+}
+// `mounted` (useMounted) is required: isTauri() is false in the pre-rendered
+// HTML, so an ungated note hydration-mismatches.
 ```
 
 ## Critical Notes
@@ -238,3 +303,13 @@ if (isTauri()) {
 - **Rust toolchain**: Requires v1.77.2+ for Tauri builds
 - **Docs `.source/` is generated**: run `pnpm docs:dev` or `pnpm docs:build` once before TypeScript resolves `collections/server`
 - shadcn/ui configured with "new-york" style and RSC mode
+- **Commits are gated**: `.husky/pre-commit` runs `lint-staged` (eslint --fix +
+  prettier) and `.husky/commit-msg` checks the message — a commit can rewrite
+  your staged files
+- **CI**: 9 workflows in `.github/workflows/` — `ci`, `test`, `quality`, `e2e`,
+  `rust`, `catalog-audit`, `build-tauri`, `release`, `deploy`
+- **Web mode is a real target**, not a degraded preview: `e2e/` exercises it, so
+  a section that can't work without Tauri must say so (`DesktopOnlyNote`) rather
+  than render blank — and must never confirm a write it skipped
+- `docs/content/docs/` currently holds one placeholder page; the Fumadocs site,
+  its sidebar and its Orama search route are all wired but have nothing to index

@@ -1,6 +1,5 @@
 mod backup;
 mod ccswitch;
-mod commands;
 mod download;
 mod exec;
 mod fsops;
@@ -105,10 +104,10 @@ pub fn run() {
     .plugin(tauri_plugin_os::init())
     .plugin(tauri_plugin_clipboard_manager::init())
     .invoke_handler(tauri::generate_handler![
-      commands::greet,
       paths::get_paths,
       exec::run_command,
       exec::cancel_command,
+      exec::launch_app,
       exec::launch_cc_switch,
       exec::quit_cc_switch,
       exec::cc_switch_running,

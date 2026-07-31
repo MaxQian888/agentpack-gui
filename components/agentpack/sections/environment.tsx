@@ -27,6 +27,9 @@ import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
 import { HelpTip } from "../help-tip"
 import { useRunnerCtx } from "../run/runner-context"
+import { DesktopOnlyNote } from "../desktop-only-note"
+import { useMounted } from "@/hooks/use-mounted"
+import { isTauri } from "@/lib/tauri"
 
 export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> }) {
   const t = useT()
@@ -34,6 +37,9 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
   const runtimeOwned = useAppStore((s) => s.runtimeOwned)
   const effectiveOS = useAppStore((s) => s.effectiveOS)
   const { run } = useRunnerCtx()
+  // isTauri() is false in the pre-rendered HTML, so the note has to wait for
+  // mount or it hydration-mismatches — same pairing as the dashboard.
+  const mounted = useMounted()
   // Chosen install method per runtime (runtimes are installed directly, not via
   // the plan, so the choice is local UI state rather than store state).
   const [methodChoice, setMethodChoice] = useState<Record<string, string>>({})
@@ -73,6 +79,9 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
       subtitle={t.environment.subtitle}
       help={<HelpTip text={t.help.runtime} />}
     >
+      {/* Same as the CLIs section: without detections every version below is
+          blank, which looks like a broken page rather than a web-mode limit. */}
+      {!isTauri() && mounted ? <DesktopOnlyNote>{t.environment.notTauri}</DesktopOnlyNote> : null}
       <div className="-mt-2 flex items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">{t.environment.installHint}</p>
         {refresh ? (

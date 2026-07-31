@@ -405,3 +405,144 @@ pub(super) fn opencode_detail(id: &str) -> Result<SessionDetail, String> {
   }
   Ok(SessionDetail { summary, messages })
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  /// A session table with just the columns `OPENCODE_COLS` reads, so the SELECT
+  /// under test is the real one rather than a paraphrase of it.
+  fn db() -> Connection {
+    let c = Connection::open_in_memory().expect("in-memory db");
+    c.execute_batch(
+      "CREATE TABLE session (
+         id TEXT PRIMARY KEY, title TEXT, slug TEXT, directory TEXT, model TEXT, cost REAL,
+         tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER,
+         tokens_cache_read INTEGER, tokens_cache_write INTEGER,
+         time_created INTEGER, time_updated INTEGER);
+       CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT);",
+    )
+    .expect("schema");
+    c
+  }
+
+  fn select_one(c: &Connection, id: &str) -> SessionSummary {
+    let sql = format!("SELECT {OPENCODE_COLS} FROM session s WHERE s.id = ?1");
+    c.query_row(&sql, [id], opencode_row_to_summary)
+      .expect("row maps")
+  }
+
+  #[test]
+  fn maps_a_full_row_into_a_summary() {
+    let c = db();
+    c.execute(
+      "INSERT INTO session VALUES ('s1','Refactor the parser','refactor','/work/app',
+        '{\"id\":\"anthropic/claude-opus-4-6\"}', 0.42, 100, 20, 5, 7, 3, 1000, 2000)",
+      [],
+    )
+    .unwrap();
+    // Two messages here and one on another session: msg_count is a correlated
+    // subquery, so it must not pick up the neighbour's row.
+    c.execute(
+      "INSERT INTO message VALUES ('m1','s1'),('m2','s1'),('m3','other')",
+      [],
+    )
+    .unwrap();
+
+    let s = select_one(&c, "s1");
+    assert_eq!(s.id, "s1");
+    assert_eq!(s.source, "opencode");
+    assert_eq!(s.title, "Refactor the parser");
+    assert_eq!(s.model, "anthropic/claude-opus-4-6");
+    assert_eq!(s.project_name, "app");
+    // OpenCode is the one source that records real money, so it is passed
+    // through rather than estimated from tokens.
+    assert_eq!(s.cost, Some(0.42));
+    assert_eq!(s.message_count, 2);
+    assert_eq!((s.started_at, s.updated_at), (1000, 2000));
+  }
+
+  /// `total` is the billable sum: reasoning tokens are already inside `output`,
+  /// so adding them again would double-count them.
+  #[test]
+  fn totals_input_output_and_both_cache_columns() {
+    let c = db();
+    c.execute(
+      "INSERT INTO session VALUES ('s1',NULL,NULL,'/w',NULL,NULL,100,20,9,7,3,0,0)",
+      [],
+    )
+    .unwrap();
+    let s = select_one(&c, "s1");
+    assert_eq!(s.usage.total, 130);
+    assert_eq!(s.usage.reasoning, 9);
+  }
+
+  #[test]
+  fn falls_back_from_a_blank_title_to_the_slug_then_to_a_placeholder() {
+    let c = db();
+    c.execute(
+      "INSERT INTO session VALUES ('a','   ','the-slug','/w',NULL,NULL,0,0,0,0,0,0,0)",
+      [],
+    )
+    .unwrap();
+    c.execute(
+      "INSERT INTO session VALUES ('b',NULL,NULL,'/w',NULL,NULL,0,0,0,0,0,0,0)",
+      [],
+    )
+    .unwrap();
+    assert_eq!(select_one(&c, "a").title, "the-slug");
+    assert_eq!(select_one(&c, "b").title, "Untitled session");
+  }
+
+  /// Every numeric column is nullable in practice; a NULL must read as 0, not
+  /// abort the whole scan.
+  #[test]
+  fn treats_null_counters_as_zero_rather_than_failing_the_row() {
+    let c = db();
+    c.execute(
+      "INSERT INTO session VALUES ('s1','t',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)",
+      [],
+    )
+    .unwrap();
+    let s = select_one(&c, "s1");
+    assert_eq!(s.usage.total, 0);
+    assert_eq!(s.cost, None);
+    assert_eq!(
+      s.project_name, "—",
+      "no directory means no project name to show"
+    );
+    assert_eq!(s.message_count, 0);
+  }
+
+  #[test]
+  fn leaves_the_model_list_empty_when_the_model_column_is_unreadable() {
+    let c = db();
+    c.execute(
+      "INSERT INTO session VALUES ('s1','t',NULL,'/w','not json',NULL,0,0,0,0,0,0,0)",
+      [],
+    )
+    .unwrap();
+    let s = select_one(&c, "s1");
+    assert_eq!(s.model, "");
+    assert!(s.models.is_empty());
+  }
+
+  mod opencode_model_id {
+    use super::*;
+
+    #[test]
+    fn reads_the_id_out_of_the_stored_json() {
+      assert_eq!(
+        opencode_model_id(Some(r#"{"id":"anthropic/claude-opus-4-6","x":1}"#.into())),
+        "anthropic/claude-opus-4-6"
+      );
+    }
+
+    #[test]
+    fn returns_empty_for_null_malformed_or_id_less_json() {
+      assert_eq!(opencode_model_id(None), "");
+      assert_eq!(opencode_model_id(Some("not json".into())), "");
+      assert_eq!(opencode_model_id(Some(r#"{"name":"x"}"#.into())), "");
+    }
+  }
+}

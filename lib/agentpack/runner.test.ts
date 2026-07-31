@@ -787,3 +787,193 @@ describe("network auto-recovery", () => {
     expect(api.runCommand).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * `releaseInstall` is the most side-effect-dense branch in the runner — two
+ * resolution paths, a throttled progress callback, a download and an installer
+ * exec, with four distinct throw sites — and it is the only kind that can put
+ * the wrong-architecture binary on the machine. It had no runner test at all.
+ */
+describe("releaseInstall", () => {
+  const base = {
+    kind: "releaseInstall",
+    id: "r",
+    label: "Claude",
+    title: "Claude",
+    os: "mac",
+    arch: "arm64",
+  } as const
+  const github = (mirrorPrefix: string | null = null): StepDescriptor => ({
+    ...base,
+    source: { kind: "github", repo: "owner/tool", asset: { mac: { pattern: "\\.dmg$" } } },
+    mirrorPrefix,
+  })
+
+  beforeEach(() => {
+    ;(api.downloadReleaseAsset as jest.Mock).mockResolvedValue("/tmp/Tool.dmg")
+    ;(api.installPackage as jest.Mock).mockResolvedValue(0)
+  })
+
+  it("resolves a GitHub release, downloads the matching asset and installs it", async () => {
+    ;(api.githubLatestRelease as jest.Mock).mockResolvedValue({
+      tag: "v1.2.3",
+      assets: [
+        { name: "Tool-linux.AppImage", url: "https://x/linux" },
+        { name: "Tool-mac.dmg", url: "https://x/mac" },
+      ],
+    })
+    const reports = await runSteps([github()], { dryRun: false, paths })
+    expect(reports[0].status).toBe("done")
+    // The asset is picked by pattern, not by position.
+    expect(api.downloadReleaseAsset).toHaveBeenCalledWith(
+      "https://x/mac",
+      "Tool-mac.dmg",
+      null,
+      expect.any(Function)
+    )
+    expect(api.installPackage).toHaveBeenCalledWith("/tmp/Tool.dmg", expect.any(Function))
+  })
+
+  it("fails loudly when no asset matches this OS and arch", async () => {
+    ;(api.githubLatestRelease as jest.Mock).mockResolvedValue({
+      tag: "v1.2.3",
+      assets: [{ name: "Tool-windows.exe", url: "https://x/win" }],
+    })
+    const reports = await runSteps([github()], { dryRun: false, paths })
+    expect(reports[0].status).toBe("error")
+    // Better a clear failure than silently installing something for another arch.
+    expect(reports[0].error).toContain("arm64")
+    expect(api.downloadReleaseAsset).not.toHaveBeenCalled()
+  })
+
+  it("reports a non-zero installer exit as a failure", async () => {
+    ;(api.githubLatestRelease as jest.Mock).mockResolvedValue({
+      tag: "v1",
+      assets: [{ name: "Tool-mac.dmg", url: "https://x/mac" }],
+    })
+    ;(api.installPackage as jest.Mock).mockResolvedValue(1)
+    const reports = await runSteps([github()], { dryRun: false, paths })
+    expect(reports[0].status).toBe("error")
+  })
+
+  // A mirror prefix rewrites github.com only; prepending it to a vendor's own
+  // host would point the download at somewhere that never had the file.
+  it("drops the mirror prefix for a vendor manifest", async () => {
+    ;(api.manifestLatestRelease as jest.Mock).mockResolvedValue({
+      tag: "v9",
+      assets: [{ name: "Tool.dmg", url: "https://vendor.example/Tool.dmg" }],
+    })
+    const step: StepDescriptor = {
+      ...base,
+      source: { kind: "manifest", manifest: { mac: "https://vendor.example/RELEASES.json" } },
+      mirrorPrefix: "https://gh-proxy.com/",
+    }
+    const reports = await runSteps([step], { dryRun: false, paths })
+    expect(reports[0].status).toBe("done")
+    expect(api.downloadReleaseAsset).toHaveBeenCalledWith(
+      "https://vendor.example/Tool.dmg",
+      "Tool.dmg",
+      null,
+      expect.any(Function)
+    )
+  })
+
+  it("keeps the mirror prefix for a GitHub download", async () => {
+    ;(api.githubLatestRelease as jest.Mock).mockResolvedValue({
+      tag: "v1",
+      assets: [{ name: "Tool-mac.dmg", url: "https://github.com/x" }],
+    })
+    await runSteps([github("https://gh-proxy.com/")], { dryRun: false, paths })
+    expect(api.githubLatestRelease).toHaveBeenCalledWith("owner/tool", "https://gh-proxy.com/")
+    expect(api.downloadReleaseAsset).toHaveBeenCalledWith(
+      "https://github.com/x",
+      "Tool-mac.dmg",
+      "https://gh-proxy.com/",
+      expect.any(Function)
+    )
+  })
+
+  it("fails when the manifest has no entry for this OS, without calling out", async () => {
+    const step: StepDescriptor = {
+      ...base,
+      source: { kind: "manifest", manifest: { win: "https://vendor.example/RELEASES.json" } },
+      mirrorPrefix: null,
+    }
+    const reports = await runSteps([step], { dryRun: false, paths })
+    expect(reports[0].status).toBe("error")
+    expect(api.manifestLatestRelease).not.toHaveBeenCalled()
+  })
+
+  it("logs download progress in coarse steps rather than every percent", async () => {
+    ;(api.githubLatestRelease as jest.Mock).mockResolvedValue({
+      tag: "v1",
+      assets: [{ name: "Tool-mac.dmg", url: "https://x/mac" }],
+    })
+    ;(api.downloadReleaseAsset as jest.Mock).mockImplementation(
+      async (_u: string, _n: string, _m: string | null, onProgress: (p: unknown) => void) => {
+        for (let received = 0; received <= 100; received++) onProgress({ received, total: 100 })
+        return "/tmp/Tool.dmg"
+      }
+    )
+    const reports = await runSteps([github()], { dryRun: false, paths })
+    const pctLines = reports[0].output.filter((l) => /%/.test(l))
+    // 101 progress events, but only ~10 lines: throttled to every 10%.
+    expect(pctLines.length).toBeGreaterThan(0)
+    expect(pctLines.length).toBeLessThanOrEqual(11)
+  })
+})
+
+/** The rollback safety net — also previously untested in the runner. */
+describe("snapshot", () => {
+  it("takes a backup and names the entry it created", async () => {
+    ;(api.backupSnapshot as jest.Mock).mockResolvedValue({ id: "snap-1" })
+    const step: StepDescriptor = { kind: "snapshot", id: "s", label: "s", reason: "before import" }
+    const reports = await runSteps([step], { dryRun: false, paths })
+    expect(reports[0].status).toBe("done")
+    expect(api.backupSnapshot).toHaveBeenCalledWith("before import")
+    expect(reports[0].output.join("\n")).toContain("snap-1")
+  })
+
+  it("takes no backup at all on a dry run", async () => {
+    const step: StepDescriptor = { kind: "snapshot", id: "s", label: "s", reason: "before import" }
+    const reports = await runSteps([step], { dryRun: true, paths })
+    expect(reports[0].status).toBe("done")
+    expect(api.backupSnapshot).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * `writtenNote` was a required field set at 27 call sites in plan.ts and read by
+ * nobody — the runner logged the bare path instead, so a run said
+ * "wrote /Users/x/.claude.json" where it could have said what that write did.
+ */
+describe("mergeFile logging", () => {
+  it("logs what the write meant rather than the file it touched", async () => {
+    ;(api.readTextFile as jest.Mock).mockResolvedValue("{}")
+    ;(api.pathExists as jest.Mock).mockResolvedValue(true)
+    const steps: StepDescriptor[] = [
+      {
+        kind: "mergeFile",
+        id: "m",
+        label: "m",
+        path: "/h/.claude.json",
+        merge: (e) => e,
+        writtenNote: "Added Context7 to Claude Code",
+      },
+    ]
+    const reports = await runSteps(steps, { dryRun: false, paths })
+    expect(reports[0].output).toContain("Added Context7 to Claude Code")
+    expect(reports[0].output.join("\n")).not.toContain("wrote /h/.claude.json")
+  })
+
+  // ccVisibleApps shares this branch but carries no note of its own.
+  it("falls back to naming the file when a step has no note", async () => {
+    ;(api.readTextFile as jest.Mock).mockResolvedValue("{}")
+    ;(api.pathExists as jest.Mock).mockResolvedValue(true)
+    const steps: StepDescriptor[] = [
+      { kind: "ccVisibleApps", id: "v", label: "v", path: "/cfg.json", merge: (e) => e },
+    ]
+    const reports = await runSteps(steps, { dryRun: false, paths })
+    expect(reports[0].output.join("\n")).toContain("/cfg.json")
+  })
+})

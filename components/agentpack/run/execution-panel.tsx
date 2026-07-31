@@ -15,15 +15,18 @@ import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { useRunnerCtx } from "./runner-context"
 import { StepLog } from "./step-log"
-import { Summary } from "./summary"
+import { Completion } from "./completion"
 
 export function ExecutionPanel() {
   const t = useT()
   const open = useAppStore((s) => s.panelOpen)
   const setPanelOpen = useAppStore((s) => s.setPanelOpen)
-  const { reports, running, dryRun, awaitingConfirm, confirm, retry, cancel } = useRunnerCtx()
+  const { reports, running, dryRun, awaitingConfirm, cancelled, confirm, retry, cancel } =
+    useRunnerCtx()
   const finished = !running && !awaitingConfirm && reports.length > 0
-  const hasErrors = reports.some((r) => r.status === "error")
+  // Also offered after a cancelled run: everything still to do is `skipped`, and
+  // retry picks those up, so Retry is how you resume.
+  const canRetry = reports.some((r) => r.status === "error" || r.status === "skipped")
   const doneCount = reports.filter((r) => r.status !== "pending" && r.status !== "running").length
 
   return (
@@ -53,7 +56,7 @@ export function ExecutionPanel() {
         ) : null}
 
         <div className="flex-1 space-y-4 overflow-auto px-4">
-          {finished ? <Summary reports={reports} dryRun={dryRun} /> : null}
+          {finished ? <Completion reports={reports} dryRun={dryRun} cancelled={cancelled} /> : null}
           <StepLog reports={reports} />
         </div>
 
@@ -71,7 +74,7 @@ export function ExecutionPanel() {
             </Button>
           ) : (
             <>
-              {finished && hasErrors ? (
+              {finished && canRetry ? (
                 <Button variant="outline" onClick={() => void retry()}>
                   {t.shell.retry}
                 </Button>

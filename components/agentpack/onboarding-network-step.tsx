@@ -6,6 +6,7 @@ import {
   isDefaultBrew,
   isDefaultMirror,
   pickMirror,
+  probeSuggestsChange,
   type NetworkProbeResult,
 } from "@/lib/agentpack/network/probe"
 import { saveSettings } from "@/lib/tauri/settings"
@@ -38,6 +39,7 @@ export function OnboardingNetworkStep({
   const setSettings = useAppStore((s) => s.setSettings)
   const npmRegistry = useAppStore((s) => s.plan.network.npmRegistry)
   const proxyMode = useAppStore((s) => s.plan.network.proxy?.mode)
+  const ghMirrorPrefix = useAppStore((s) => s.settings.ghMirrorPrefix)
 
   if (probing || !probe) {
     return (
@@ -59,9 +61,17 @@ export function OnboardingNetworkStep({
   const suggestsProxy = !probe.directOk && !!proxy
   const suggestsNpm = !!npm?.preset.url
   const suggestsGh = !!gh?.preset.url
-  const nothingToDo = !suggestsProxy && !suggestsNpm && !suggestsGh
+  // Same predicate the wizard uses to skip this step, so "nothing to do" and
+  // "don't show the page at all" can never disagree.
+  const nothingToDo = !probeSuggestsChange(probe)
+  // "Adopted" means every suggestion has landed, not just one of them. Checking
+  // npm and proxy alone left the button live forever when a GitHub mirror was
+  // the only suggestion, so it never read as done and each further click
+  // silently re-applied it.
   const applied =
-    (suggestsNpm && npmRegistry === npm.preset.url) || (suggestsProxy && proxyMode === "manual")
+    (!suggestsProxy || proxyMode === "manual") &&
+    (!suggestsNpm || npmRegistry === npm.preset.url) &&
+    (!suggestsGh || ghMirrorPrefix === gh.preset.url)
 
   const adopt = () => {
     if (suggestsProxy && proxy) {
@@ -80,7 +90,14 @@ export function OnboardingNetworkStep({
     }
   }
 
-  const lines: { ok: boolean; text: string }[] = [
+  /**
+   * `note` marks a line Adopt cannot act on. PyPI and Homebrew mirrors are env
+   * vars agentpack injects only into a failed step's retry — there is no setting
+   * to write — so listing all four the same way under one button put two of them
+   * in a promise the button doesn't keep.
+   */
+  type Line = { ok: boolean; text: string; note?: string }
+  const lines: Line[] = [
     probe.directOk ? { ok: true, text: p.directOk } : { ok: false, text: p.directBlocked },
     proxy?.result?.latencyMs !== undefined
       ? { ok: true, text: p.proxyFound(hostOf(proxy.url), proxy.result.latencyMs) }
@@ -89,11 +106,13 @@ export function OnboardingNetworkStep({
         : { ok: false, text: p.noProxyFound },
     npm?.preset.url ? { ok: true, text: p.fastestMirror("npm", npm.preset.label) } : null,
     gh?.preset.url ? { ok: true, text: p.fastestMirror("GitHub", gh.preset.label) } : null,
-    pypi?.preset.url ? { ok: true, text: p.fastestMirror("PyPI", pypi.preset.label) } : null,
-    brew?.preset.apiDomain
-      ? { ok: true, text: p.fastestMirror("Homebrew", brew.preset.label) }
+    pypi?.preset.url
+      ? { ok: true, text: p.fastestMirror("PyPI", pypi.preset.label), note: p.retryOnly }
       : null,
-  ].filter((l): l is { ok: boolean; text: string } => l !== null)
+    brew?.preset.apiDomain
+      ? { ok: true, text: p.fastestMirror("Homebrew", brew.preset.label), note: p.retryOnly }
+      : null,
+  ].filter((l): l is Line => l !== null)
 
   return (
     <div className="flex flex-col gap-3">
@@ -108,7 +127,10 @@ export function OnboardingNetworkStep({
             ) : (
               <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-500" aria-hidden="true" />
             )}
-            <span>{line.text}</span>
+            <span>
+              {line.text}
+              {line.note ? <span className="text-muted-foreground"> — {line.note}</span> : null}
+            </span>
           </div>
         ))}
       </div>

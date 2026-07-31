@@ -25,7 +25,8 @@ describe("pendingKeyEnvs", () => {
       mcps: [{ id: "context7", targets: ["claude"] }],
       mcpKeys: {},
     }
-    expect(pendingKeyEnvs(plan)).toEqual(["CONTEXT7_API_KEY"])
+    // The id rides along so callers can tell whether that server actually installed.
+    expect(pendingKeyEnvs(plan)).toEqual([{ id: "context7", env: "CONTEXT7_API_KEY" }])
   })
 
   it("omits MCPs whose key was provided", () => {

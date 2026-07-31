@@ -60,8 +60,11 @@ export function previewLines(
     case "skillCreate":
       return step.dests.map((d) => out.wouldWrite(d))
     case "ccProvider": {
+      // The only branch here that used to build its line by hand: it was
+      // hardcoded English and leaked the internal op verb ("setCurrent") into
+      // what a zh-CN user reads.
       const app = (step.payload as { app?: string }).app ?? ""
-      return [`would run: ${step.op} provider (${app})`]
+      return [out.wouldCcProvider[step.op](app)]
     }
     case "fileRestore":
       return [out.wouldRestore(step.backupPath, step.path)]

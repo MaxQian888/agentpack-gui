@@ -22,6 +22,12 @@ export interface RunnerState {
   dryRun: boolean
   awaitingConfirm: boolean
   /**
+   * Whether the user stopped the last run. `skipped` alone can't say so — it also
+   * covers steps dropped because a prerequisite failed — and the two need
+   * different verdicts on the completion screen.
+   */
+  cancelled: boolean
+  /**
    * Prepare/run a set of descriptors. Resolves with the final reports so callers
    * can react to success/failure (empty when the run was gated or bailed out).
    */
@@ -46,8 +52,13 @@ export function useRunner(): RunnerState {
   const [reports, setReports] = useState<StepReport[]>([])
   const [running, setRunning] = useState(false)
   const [awaitingConfirm, setAwaitingConfirm] = useState(false)
+  const [cancelled, setCancelled] = useState(false)
   const ctrl = useRef<AbortController | null>(null)
   const pending = useRef<StepDescriptor[]>([])
+  // The run's full step list, which a retry must NOT narrow: `pending` used to be
+  // overwritten with the retried subset, so the first pass's successes vanished
+  // from the panel and a second retry had nothing left to draw from.
+  const all = useRef<StepDescriptor[]>([])
   const afterRun = useRef<Set<() => void>>(new Set())
   // `execute` calls the persist prompt, and the persist prompt runs steps —
   // a cycle React's hook ordering can't express directly, so it goes through a
@@ -105,10 +116,21 @@ export function useRunner(): RunnerState {
   )
 
   const execute = useCallback(
-    async (steps: StepDescriptor[]): Promise<StepReport[]> => {
+    async (steps: StepDescriptor[], merge = false): Promise<StepReport[]> => {
       if (!paths) return []
       pending.current = steps
-      setReports(steps.map((s) => ({ id: s.id, label: s.label, status: "pending", output: [] })))
+      if (!merge) {
+        all.current = steps
+        setReports(steps.map((s) => ({ id: s.id, label: s.label, status: "pending", output: [] })))
+      } else {
+        // Retry: put the steps being re-run back to pending in place, leaving
+        // every other row of the original run exactly as it was.
+        const retrying = new Set(steps.map((s) => s.id))
+        setReports((prev) =>
+          prev.map((r) => (retrying.has(r.id) ? { ...r, status: "pending", output: [] } : r))
+        )
+      }
+      setCancelled(false)
       setRunning(true)
       ctrl.current = new AbortController()
       const reports = await runSteps(steps, {
@@ -120,12 +142,12 @@ export function useRunner(): RunnerState {
         // after this hook rendered. Undefined until something measured works,
         // which is what keeps recovery from "retrying" with nothing to change.
         recovery: useAppStore.getState().recoveryContext(),
-        onUpdate: (r, i) =>
-          setReports((prev) => {
-            const next = [...prev]
-            next[i] = { ...r, output: [...r.output] }
-            return next
-          }),
+        // Matched by id rather than by the batch index `i`: on a retry the batch
+        // is a subset, so its indices don't line up with the full report list.
+        onUpdate: (r) =>
+          setReports((prev) =>
+            prev.map((prior) => (prior.id === r.id ? { ...r, output: [...r.output] } : prior))
+          ),
       })
       setRunning(false)
       // A real run may have installed/removed a tool — let subscribers re-detect
@@ -150,8 +172,9 @@ export function useRunner(): RunnerState {
         toast.error(t.shell.notInTauri)
         return []
       }
-      const all = opts.plan && !dryRun ? [...steps, ...buildVerifySteps(opts.plan, t)] : steps
-      if (all.length === 0) {
+      const withVerify =
+        opts.plan && !dryRun ? [...steps, ...buildVerifySteps(opts.plan, t)] : steps
+      if (withVerify.length === 0) {
         // Distinguish "nothing was selected" from "everything selected is already
         // installed" — the latter produced zero steps only because the one-click
         // dedup dropped them all, so "select CLIs first" would be wrong and
@@ -161,14 +184,18 @@ export function useRunner(): RunnerState {
       }
       setPanelOpen(true)
       if (opts.review && !dryRun) {
-        pending.current = all
-        setReports(all.map((s) => ({ id: s.id, label: s.label, status: "pending", output: [] })))
+        pending.current = withVerify
+        all.current = withVerify
+        setReports(
+          withVerify.map((s) => ({ id: s.id, label: s.label, status: "pending", output: [] }))
+        )
         setRunning(false)
+        setCancelled(false)
         setAwaitingConfirm(true)
         return []
       }
       setAwaitingConfirm(false)
-      return execute(all)
+      return execute(withVerify)
     },
     [dryRun, paths, setPanelOpen, t, execute]
   )
@@ -186,12 +213,17 @@ export function useRunner(): RunnerState {
     const retryable = new Set(
       reports.filter((r) => r.status === "error" || r.status === "skipped").map((r) => r.id)
     )
-    const steps = pending.current.filter((s) => retryable.has(s.id))
+    // Drawn from the full run, not from whatever the last batch was, and merged
+    // back in place so the panel keeps showing the whole run.
+    const steps = all.current.filter((s) => retryable.has(s.id))
     if (steps.length === 0) return
-    await execute(steps)
+    await execute(steps, true)
   }, [reports, execute])
 
-  const cancel = useCallback(() => ctrl.current?.abort(), [])
+  const cancel = useCallback(() => {
+    setCancelled(true)
+    ctrl.current?.abort()
+  }, [])
 
   const onAfterRun = useCallback((fn: () => void) => {
     afterRun.current.add(fn)
@@ -200,5 +232,16 @@ export function useRunner(): RunnerState {
     }
   }, [])
 
-  return { reports, running, dryRun, awaitingConfirm, run, confirm, retry, cancel, onAfterRun }
+  return {
+    reports,
+    running,
+    dryRun,
+    awaitingConfirm,
+    cancelled,
+    run,
+    confirm,
+    retry,
+    cancel,
+    onAfterRun,
+  }
 }

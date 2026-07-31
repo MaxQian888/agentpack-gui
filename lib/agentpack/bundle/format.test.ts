@@ -40,6 +40,7 @@ const SETTINGS: AppSettings = {
   skippedVersion: "9.9.9",
   lastCheckAt: 123,
   onboarded: true,
+  onboardingProgress: null,
   quickStartDismissed: true,
   ghMirrorPrefix: "https://mirror/",
   skillRepoSources: [],

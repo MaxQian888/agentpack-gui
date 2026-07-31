@@ -49,14 +49,20 @@ export function ConfigIO({ onOpenMcp }: { onOpenMcp?: () => void }) {
       .catch(() => {})
   }, [paths, setProfiles])
 
-  // Persist whatever the store currently holds (called after each mutation).
-  const persist = useCallback(async () => {
-    if (!isTauri() || !paths) return
+  /**
+   * Persist whatever the store currently holds (called after each mutation).
+   * Reports whether the write actually happened: in web mode there is nowhere to
+   * write, and the callers below used to announce success regardless — telling
+   * the user their profile was saved when nothing had been.
+   */
+  const persist = useCallback(async (): Promise<boolean> => {
+    if (!isTauri() || !paths) return false
     const list = useAppStore.getState().profiles
     await writeTextFile(
       profilesPath(paths.home),
       serializeProfiles({ version: PROFILE_VERSION, profiles: list })
     )
+    return true
   }, [paths])
 
   const onSaveProfile = async () => {
@@ -64,10 +70,12 @@ export function ConfigIO({ onOpenMcp }: { onOpenMcp?: () => void }) {
     if (!name) return toast.error(t.profiles.nameRequired)
     saveCurrentAsProfile(name)
     setNewName("")
-    await persist()
+    if (!(await persist())) return toast.error(t.shell.notInTauri)
     toast.success(t.profiles.saved(name))
   }
 
+  // No write involved — applying a profile only touches the in-memory plan, so
+  // it genuinely does work in web mode.
   const onApply = (id: string, name: string) => {
     applyProfile(id)
     toast.success(t.profiles.applied(name))
@@ -75,7 +83,7 @@ export function ConfigIO({ onOpenMcp }: { onOpenMcp?: () => void }) {
 
   const onDelete = async (id: string, name: string) => {
     deleteProfile(id)
-    await persist()
+    if (!(await persist())) return toast.error(t.shell.notInTauri)
     toast.success(t.profiles.deleted(name))
   }
 
@@ -83,7 +91,7 @@ export function ConfigIO({ onOpenMcp }: { onOpenMcp?: () => void }) {
     const name = editName.trim()
     if (editingId && name) {
       renameProfile(editingId, name)
-      await persist()
+      if (!(await persist())) toast.error(t.shell.notInTauri)
     }
     setEditingId(null)
     setEditName("")

@@ -15,20 +15,13 @@ export const en = {
     dryRunBadge: "  [dry-run]",
   },
 
-  nav: {
-    hint: "↑↓ move · space toggle · enter confirm",
-    back: "esc back",
-    continue: "Press enter to continue…",
-    proceed: "Proceed? ",
-    leaveBlank: "Press enter to leave blank / skip.",
-  },
-
   welcome: {
     title: "Welcome to agentpack",
+    // Subtitle of step 1, which asks window-or-terminal — so it must not promise
+    // a bundle picker that only appears on step 2.
     intro:
-      "New here? agentpack installs and sets up your AI coding tools in one click. Pick a bundle below and press Install — nothing is changed until you confirm.",
-    language: "Language",
-    hint: "↑↓ switch language · enter to start",
+      "New here? agentpack installs and sets up your AI coding tools for you. First, how do you want to use them? Nothing is changed until you confirm.",
+    continue: "Continue",
     // First-run wizard (GUI). Plain-language walkthrough of what gets set up.
     whatTitle: "What it sets up for you",
     whatClis: "AI coding assistants (Claude Code, Codex) you chat with in your terminal.",
@@ -41,12 +34,37 @@ export const en = {
     previewHint: "See exactly what would happen — without changing anything.",
     later: "Maybe later",
     install: "Install now",
-    installPreview: "Preview plan",
     reopen: "Show welcome guide",
     // Step 2/3 subtitles. The network step comes before installing on purpose:
     // finding out the network is blocked beats watching six steps go red.
     networkIntro: "A quick look at your network, so the install doesn't fail halfway.",
-    installIntro: "That's everything — ready when you are.",
+    installIntro: "Here's exactly what will happen. Nothing runs until you press Install.",
+    // Final step: the list of what the chosen bundle installs, plus the keys the
+    // key-gated servers need — asked here because a server without its key
+    // installs cleanly and then never works.
+    summaryClis: "Assistants",
+    summarySkills: "Skills",
+    summaryMcp: "MCP servers",
+    summaryNothing: "This bundle installs nothing on its own.",
+    summaryInstalled: "already installed",
+    summaryWritesTo: (targets: string) => `Configured for: ${targets}`,
+    // Skills are opt-in per stack: bundling all six would hand a Rust developer
+    // an Android playbook, so the wizard asks instead of guessing.
+    skillsHint: "Optional — pick the ones matching what you build. You can add more later.",
+    keysTitle: "API keys",
+    keysHint: "Optional — you can add these later in the MCP section. Blank is fine.",
+    // Step 1 asks how they intend to use it, because that decides what
+    // "install Claude" means: the app, the terminal command, or both.
+    surfaceLabel: "How do you want to use it?",
+    surfaceHint: "You can add the other one later — nothing here is final.",
+    surfaceGui: "In a window",
+    surfaceGuiHint: "Installs the desktop apps. No terminal to open.",
+    surfaceCli: "In the terminal",
+    surfaceCliHint: "Installs the command-line versions you run by typing `claude`.",
+    surfaceBoth: "Both",
+    surfaceBothHint: "Set up the apps and the terminal commands together.",
+    recommendedTag: "Recommended",
+    bundleIntro: "Now pick what to set up. You can change any of it afterwards.",
   },
 
   /** Guided product tour — a spotlight walkthrough that visits each part of the app. */
@@ -211,6 +229,8 @@ export const en = {
     subtitle: "Already-installed tools are unchecked by default.",
     upgradeNote: "Tick an already-installed tool to upgrade it to the latest version.",
     installedSuffix: "  (installed)",
+    notTauri:
+      "Install status can't be checked here — run the desktop app to see what's already on your machine and to install anything.",
   },
 
   environment: {
@@ -218,6 +238,7 @@ export const en = {
     subtitle:
       "The agent CLIs need Node.js (with npm). Bun is an optional faster runtime; Python and uv power Python-based MCP servers and tooling.",
     detecting: "Detecting installed runtimes…",
+    notTauri: "Runtime detection needs the desktop app — here the versions below stay blank.",
     installHint: "Missing a runtime? Install it directly — detection re-runs after each install.",
     noInstaller: "No automated installer on this OS — see the note below.",
     recheck: "Re-detect",
@@ -534,6 +555,10 @@ export const en = {
       proxyFound: (host: string, ms: number) => `Found a working proxy: ${host} (${ms}ms)`,
       noProxyFound: "No working proxy found on this machine.",
       fastestMirror: (kind: string, label: string) => `Fastest ${kind}: ${label}`,
+      // PyPI and Homebrew are env vars agentpack only injects into a failed
+      // step's retry, so Adopt cannot apply them. Say so beside them rather than
+      // listing four mirrors under a button that applies two.
+      retryOnly: "used automatically if an install fails",
       adopt: "Use these settings",
       adopted: "Applied.",
       skip: "Skip for now",
@@ -570,6 +595,35 @@ export const en = {
     savedConfig: (path: string) => `Saved config to ${path}`,
     retryHint: "press r to retry failed steps",
     exit: "Press enter to exit.",
+  },
+
+  /** The end of a run: verdict, one next action, and what still needs a human. */
+  completion: {
+    done: "All set",
+    partial: "Finished, with some problems",
+    // A run the user stopped, and a run that finished but had something to say.
+    // Neither is "All set", which is what they used to be reported as.
+    cancelled: "Stopped before it finished",
+    withWarnings: "Done, with a couple of notes",
+    counts: (ok: number, warned: number, failed: number) =>
+      [
+        `${ok} done`,
+        warned ? `${warned} needing attention` : "",
+        failed ? `${failed} could not be completed` : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    openApp: (name: string) => `Open ${name}`,
+    cliHint: "Open your terminal and run:",
+    copied: "Copied",
+    todoTitle: "Still to do",
+    todoKey: (env: string) =>
+      `Add your ${env} key in the Plugins section — the server is installed but can't run without it.`,
+    todoSignIn: "Sign in to Claude when it opens. The Code tab needs a paid plan.",
+    todoWindowsGit: "Install Git — Claude needs it to work with local folders on Windows.",
+    todoCcSwitchGateway:
+      "Keep cc-switch running while you use Claude, and restart Claude after switching provider.",
+    details: "Show the full log",
   },
 
   verify: {
@@ -842,6 +896,12 @@ export const en = {
     wouldRestore: (src: string, dest: string) => `would restore ${src} -> ${dest}`,
     snapshot: (id: string) => `backed up → ${id}`,
     wouldSnapshot: "would back up cc-switch DB and live configs",
+    wouldCcProvider: {
+      add: (app: string) => `would add a provider to ${app}`,
+      update: (app: string) => `would update a provider in ${app}`,
+      delete: (app: string) => `would remove a provider from ${app}`,
+      setCurrent: (app: string) => `would switch ${app} to another provider`,
+    },
     wouldBackupSkill: (path: string) => `would back up ${path}`,
     skippedDependency: (label: string) => `skipped — required step "${label}" failed`,
     skippedCancelled: "skipped — run cancelled",
@@ -1421,6 +1481,8 @@ export const en = {
     emptyPlan: "Your plan is empty. Select CLIs, skills, MCP servers or network options first.",
     nothingToDo: "Everything in your plan is already installed and up to date — nothing to do.",
     notInTauri: "Run the desktop app (pnpm tauri dev) to execute installs.",
+    scanFailed:
+      "Couldn't read what's already set up, so the install was not started — running blind would try to re-add things you already have. Try again in a moment.",
     // Shown after a network retry rescued a step. Nothing was written to get
     // there, so making it permanent is the user's call.
     recoveredTitle: (label: string) => `Installed via ${label}`,
@@ -1860,6 +1922,7 @@ export const en = {
     create: "Create",
     present: "present",
     missing: "missing",
+    notTauri: "Editing your config files needs the desktop app.",
     tabForm: "Form",
     tabRaw: "Text",
     save: "Save",

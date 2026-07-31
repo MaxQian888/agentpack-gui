@@ -30,7 +30,7 @@ import { readTextFile } from "@/lib/tauri/commands"
 import { useIncremental } from "@/hooks/use-incremental"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { findMcp } from "@/lib/agentpack/registry"
-import { mcpAddSpecStep, mcpRemoveStep } from "@/lib/agentpack/plan"
+import { claudeMcpRoute, mcpAddSpecStep, mcpRemoveStep } from "@/lib/agentpack/plan"
 import {
   parseClaudeMcpEntry,
   parseCodexMcpEntry,
@@ -93,7 +93,11 @@ export function MatrixTab({ scan, refresh }: { scan: DashboardScan | null; refre
   const [confirm, setConfirm] = useState<{ row: McpRow; target: McpTarget } | null>(null)
   const isMobile = useIsMobile()
 
-  const claudeDisabled = !detections["claude-code"]?.installed
+  const route = claudeMcpRoute(
+    !!detections["claude-code"]?.installed,
+    !!detections["claude-desktop"]?.installed
+  )
+  const claudeDisabled = route === "none"
   const titleOf = (id: string) => t.catalog.mcp[id]?.title ?? id
 
   const rows = useMemo(() => installedRows(scan), [scan])
@@ -117,14 +121,14 @@ export function MatrixTab({ scan, refresh }: { scan: DashboardScan | null; refre
     if (!paths) return
     const spec = specForCopy(row)
     if (!spec) return
-    await run(mcpAddSpecStep(row.id, spec, [target], paths, t))
+    await run(mcpAddSpecStep(row.id, spec, [target], paths, t, route))
     toast.success(m.copyDone(m.targets[target]))
     refresh()
   }
 
   const removeFrom = async (row: McpRow, target: McpTarget) => {
     if (!paths) return
-    await run(mcpRemoveStep(row.id, [target], paths, t))
+    await run(mcpRemoveStep(row.id, [target], paths, t, route))
     refresh()
   }
 

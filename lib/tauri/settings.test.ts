@@ -33,6 +33,7 @@ describe("loadSettings", () => {
       skippedVersion: "9.9.9",
       lastCheckAt: null,
       onboarded: false,
+      onboardingProgress: null,
       quickStartDismissed: false,
       ghMirrorPrefix: null,
       skillRepoSources: [],

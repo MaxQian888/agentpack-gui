@@ -442,6 +442,11 @@ export interface MergeFileStep extends StepBase {
   kind: "mergeFile"
   path: string
   merge: (existing: string) => string
+  /**
+   * What the write means, in the user's language — "added the MCP server to
+   * Claude", not "/Users/x/.claude.json". The runner logs this instead of the
+   * bare path, which is why every call site is expected to supply one.
+   */
   writtenNote: string
 }
 

@@ -16,6 +16,7 @@ import { formatCost, formatNumber, formatTokens } from "@/lib/history/format"
 import { formatDelta } from "@/lib/history/report"
 import { SOURCE_COLORS } from "@/lib/history/display"
 import type { SectionKey } from "../sidebar-nav"
+import { DesktopOnlyNote } from "../desktop-only-note"
 
 /** The startup history scan, as the dashboard sees it. */
 export interface HistoryFeed {
@@ -57,7 +58,7 @@ export function SpendCard({
 
   const body = () => {
     if (mounted && !isTauri()) {
-      return <p className="text-sm text-muted-foreground">{s.notTauri}</p>
+      return <DesktopOnlyNote>{s.notTauri}</DesktopOnlyNote>
     }
     if (!spend) return <ScanningBody label={s.scanning} progress={history.progress} />
     if (!spend.hasActivity) {

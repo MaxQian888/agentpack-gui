@@ -402,7 +402,10 @@ async function execute(step: StepDescriptor, ctx: ExecContext): Promise<StepReco
           log(m.coreOutput.backup(backup))
         }
       }
-      log(m.coreOutput.write(step.path))
+      // `writtenNote` says what the write *means* ("added the MCP server to
+      // Claude") rather than just naming a file, so prefer it. `ccVisibleApps`
+      // has no note of its own and falls back to the path.
+      log("writtenNote" in step ? step.writtenNote : m.coreOutput.write(step.path))
       await api.writeTextFile(step.path, step.merge(existing))
       return
     }

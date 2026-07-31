@@ -1,4 +1,5 @@
 import { previewLines, commandToString } from "./preview"
+import { zhCN } from "@/lib/i18n/zh-CN"
 import type { Paths, StepDescriptor } from "./types"
 
 const paths = {
@@ -85,7 +86,7 @@ it("ccProvider preview names the op and app", () => {
     op: "add",
     payload: { app: "claude" },
   }
-  expect(previewLines(s, paths)).toEqual(["would run: add provider (claude)"])
+  expect(previewLines(s, paths)).toEqual(["would add a provider to claude"])
 })
 
 it("ccProvider preview tolerates a missing app", () => {
@@ -96,7 +97,24 @@ it("ccProvider preview tolerates a missing app", () => {
     op: "delete",
     payload: {},
   }
-  expect(previewLines(s, paths)).toEqual(["would run: delete provider ()"])
+  expect(previewLines(s, paths)).toEqual(["would remove a provider from "])
+})
+
+/**
+ * This was the one branch that built its line by hand instead of reading the
+ * catalog, so a zh-CN dry run printed English — and printed the internal op
+ * verb, `setCurrent`, at that.
+ */
+it("ccProvider preview is translated like every other kind", () => {
+  const s: StepDescriptor = {
+    kind: "ccProvider",
+    id: "p",
+    label: "p",
+    op: "setCurrent",
+    payload: { app: "claude" },
+  }
+  expect(previewLines(s, paths, zhCN)).toEqual(["将把 claude 切换到另一个供应商"])
+  expect(previewLines(s, paths)[0]).not.toContain("setCurrent")
 })
 
 it("fileRestore preview shows would restore from backup", () => {
@@ -181,4 +199,64 @@ it("skillCreate preview lists the SKILL.md dests it would write", () => {
     dests: ["/h/.claude/skills/web"],
   }
   expect(previewLines(s, paths)).toEqual(["would write /h/.claude/skills/web"])
+})
+
+/**
+ * The two highest-side-effect kinds, and until now the only two with no preview
+ * test at all. `releaseInstall` downloads and runs an installer; `snapshot` is
+ * the rollback safety net. Dry-run's whole promise is that neither happens.
+ */
+describe("releaseInstall preview", () => {
+  const base = { kind: "releaseInstall", id: "r", label: "r", title: "Claude", os: "mac" } as const
+
+  it("names the GitHub repo it would install from, without resolving it", () => {
+    const s: StepDescriptor = {
+      ...base,
+      source: { kind: "github", repo: "owner/tool", asset: { mac: { pattern: ".*\\.dmg" } } },
+      arch: "arm64",
+      mirrorPrefix: null,
+    }
+    expect(previewLines(s, paths)).toEqual([
+      "would download the latest Claude release from owner/tool and install it",
+    ])
+  })
+
+  it("names the mirror when a GitHub download would go through one", () => {
+    const s: StepDescriptor = {
+      ...base,
+      source: { kind: "github", repo: "owner/tool", asset: { mac: { pattern: ".*\\.dmg" } } },
+      arch: "arm64",
+      mirrorPrefix: "https://gh-proxy.com/",
+    }
+    expect(previewLines(s, paths)[0]).toContain("https://gh-proxy.com/")
+  })
+
+  // A mirror prefix only rewrites github.com, so naming one for a vendor's own
+  // manifest host would describe a download that is not going to happen.
+  it("ignores the mirror for a vendor manifest, and names the host instead", () => {
+    const s: StepDescriptor = {
+      ...base,
+      source: { kind: "manifest", manifest: { mac: "https://vendor.example/RELEASES.json" } },
+      arch: "arm64",
+      mirrorPrefix: "https://gh-proxy.com/",
+    }
+    const [line] = previewLines(s, paths)
+    expect(line).toContain("vendor.example")
+    expect(line).not.toContain("gh-proxy")
+  })
+
+  it("is translated", () => {
+    const s: StepDescriptor = {
+      ...base,
+      source: { kind: "github", repo: "owner/tool", asset: {} },
+      arch: "arm64",
+      mirrorPrefix: null,
+    }
+    expect(previewLines(s, paths, zhCN)[0]).not.toEqual(previewLines(s, paths)[0])
+  })
+})
+
+it("snapshot preview announces the backup without taking one", () => {
+  const s: StepDescriptor = { kind: "snapshot", id: "s", label: "s", reason: "before import" }
+  expect(previewLines(s, paths)).toEqual(["would back up cc-switch DB and live configs"])
 })

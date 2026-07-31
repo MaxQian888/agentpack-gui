@@ -62,6 +62,18 @@ export interface DashboardScan {
   providers: Provider[]
   claudeSettings: FileHealth
   codexConfig: FileHealth
+  /**
+   * At least one source could not be read — as opposed to not being there.
+   *
+   * The Rust side already draws that line (`read_text_file` maps NotFound to an
+   * empty string and only a real failure to an Err), but every read here is
+   * `.catch`ed to a benign default, so without this flag a locked or
+   * permission-denied config is indistinguishable from a clean machine. The
+   * one-click install reads it: deduping against a scan that wrongly says
+   * "nothing is installed" re-adds everything, and `claude mcp add` rejects a
+   * duplicate id, so the run fills with red.
+   */
+  degraded: boolean
 }
 
 const emptyScan = (): DashboardScan => ({
@@ -75,6 +87,7 @@ const emptyScan = (): DashboardScan => ({
   providers: [],
   claudeSettings: { status: "missing", hasBackup: false },
   codexConfig: { status: "missing", hasBackup: false },
+  degraded: false,
 })
 
 /**
@@ -97,6 +110,17 @@ function jsonHealth(text: string): FileStatus {
 }
 
 export async function scanEnvironment(paths: Paths): Promise<DashboardScan> {
+  // Each read still falls back to a benign default so one bad file can't blank
+  // the dashboard — but the failure is recorded rather than forgotten. Only the
+  // sources the dedup relies on count: a missing cc-switch DB or backup file
+  // says nothing about whether the MCP and skill config could be read.
+  let degraded = false
+  const soft = <T,>(p: Promise<T>, fallback: T, counts = true): Promise<T> =>
+    p.catch(() => {
+      if (counts) degraded = true
+      return fallback
+    })
+
   const [
     claudeJson,
     claudeConfig,
@@ -107,20 +131,20 @@ export async function scanEnvironment(paths: Paths): Promise<DashboardScan> {
     providers,
     codexBak,
   ] = await Promise.all([
-    readTextFile(paths.claudeSettings).catch(() => ""),
+    soft(readTextFile(paths.claudeSettings), ""),
     // User-scope MCP servers live in ~/.claude.json; read it directly instead of
     // the ~45s health-checking `claude mcp list`, which also risks hanging.
-    readTextFile(paths.claudeConfig).catch(() => ""),
-    readTextFile(paths.codexConfig).catch(() => ""),
-    readTextFile(paths.opencodeConfig).catch(() => ""),
-    listSkills(paths.claudeSkillsDir).catch(() => [] as string[]),
-    listSkills(paths.codexSkillsDir).catch(() => [] as string[]),
-    ccLoadProviders().catch(() => [] as Provider[]),
-    pathExists(`${paths.codexConfig}${BACKUP_SUFFIX}`).catch(() => false),
+    soft(readTextFile(paths.claudeConfig), ""),
+    soft(readTextFile(paths.codexConfig), ""),
+    soft(readTextFile(paths.opencodeConfig), ""),
+    soft(listSkills(paths.claudeSkillsDir), [] as string[]),
+    soft(listSkills(paths.codexSkillsDir), [] as string[]),
+    soft(ccLoadProviders(), [] as Provider[], false),
+    soft(pathExists(`${paths.codexConfig}${BACKUP_SUFFIX}`), false, false),
   ])
 
   const codex = parseCodexConfig(codexToml)
-  const claudeBak = await pathExists(`${paths.claudeSettings}${BACKUP_SUFFIX}`).catch(() => false)
+  const claudeBak = await soft(pathExists(`${paths.claudeSettings}${BACKUP_SUFFIX}`), false, false)
 
   return {
     claudeMcps: classifyAgainstRegistry(parseClaudeMcpConfig(claudeConfig), MCP_REGISTRY_IDS),
@@ -136,6 +160,7 @@ export async function scanEnvironment(paths: Paths): Promise<DashboardScan> {
       status: codexToml.trim() ? "ok" : "missing",
       hasBackup: codexBak,
     },
+    degraded,
   }
 }
 

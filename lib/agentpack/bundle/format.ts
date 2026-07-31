@@ -50,8 +50,9 @@ export interface BundleSource {
  * denylist so a setting added later — which may well hold a credential — is not
  * exported by default just because nobody remembered to exclude it.
  *
- * Omitted on purpose: `skippedVersion`, `lastCheckAt`, `onboarded` and
- * `quickStartDismissed` describe this install's history, not its configuration.
+ * Omitted on purpose: `skippedVersion`, `lastCheckAt`, `onboarded`,
+ * `onboardingProgress` and `quickStartDismissed` describe this install's
+ * history, not its configuration.
  */
 export const EXPORTED_SETTINGS_KEYS = [
   "autoCheckUpdates",

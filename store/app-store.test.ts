@@ -41,6 +41,25 @@ it("applyPreset recommended fills clis", () => {
   expect(useAppStore.getState().plan.clis).toContain("cc-switch")
 })
 
+it("applyPreset installs the surface the wizard asked for", () => {
+  useAppStore.getState().applyPreset("recommended", "gui")
+  const gui = useAppStore.getState().plan
+  expect(gui.clis).toContain("claude-desktop")
+  expect(gui.clis).not.toContain("claude-code")
+  // Targets are derived AFTER the surface is applied, so a desktop-only
+  // selection still configures both agents rather than falling back to Claude.
+  expect(gui.mcps[0]!.targets).toEqual(["claude", "codex"])
+
+  useAppStore.getState().applyPreset("recommended", "both")
+  const both = useAppStore.getState().plan
+  expect(both.clis).toEqual(expect.arrayContaining(["claude-code", "claude-desktop"]))
+})
+
+it("applyPreset without a surface leaves the bundle as authored", () => {
+  useAppStore.getState().applyPreset("recommended")
+  expect(useAppStore.getState().plan.clis).not.toContain("claude-desktop")
+})
+
 it("applyPreset targets every agent the bundle installs", () => {
   useAppStore.getState().applyPreset("recommended")
   // "recommended" installs Claude Code + Codex, so its MCP servers configure both.
@@ -94,7 +113,10 @@ it("syncTargetsToClis re-points selections at the currently chosen CLIs", () => 
   s.applyPreset("everything")
   expect(useAppStore.getState().plan.mcps[0].targets).toEqual(["claude", "codex", "opencode"])
   useAppStore.getState().toggleCli("opencode")
+  // Both forms of Codex, or the surface survives: the app reads the same
+  // ~/.codex config the CLI does, so dropping only the CLI leaves it targeted.
   useAppStore.getState().toggleCli("codex")
+  useAppStore.getState().toggleCli("codex-app")
   useAppStore.getState().syncTargetsToClis()
   const { skills, mcps } = useAppStore.getState().plan
   for (const m of mcps) expect(m.targets).toEqual(["claude"])

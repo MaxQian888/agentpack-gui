@@ -13,20 +13,13 @@ export const zhCN = {
     dryRunBadge: "  [演练]",
   },
 
-  nav: {
-    hint: "↑↓ 移动 · 空格 选择 · 回车 确认",
-    back: "esc 返回",
-    continue: "按回车继续…",
-    proceed: "继续？ ",
-    leaveBlank: "按回车留空 / 跳过。",
-  },
-
   welcome: {
     title: "欢迎使用 agentpack",
+    // 第 1 步的副标题，这一步问的是「窗口还是终端」，所以不能承诺一个
+    // 要到第 2 步才出现的套餐选择器。
     intro:
-      "第一次用？agentpack 帮你一键安装并配置好 AI 编程工具。在下面选一个套餐，点「一键安装」即可 —— 确认之前不会改动任何文件。",
-    language: "语言",
-    hint: "↑↓ 切换语言 · 回车 开始",
+      "第一次用？agentpack 帮你安装并配置好 AI 编程工具。先说说，你打算怎么用它们？确认之前不会改动任何文件。",
+    continue: "继续",
     // 首次启动向导（GUI）。用大白话讲清楚会装些什么。
     whatTitle: "它会帮你装好这些",
     whatClis: "AI 编程助手（Claude Code、Codex）—— 在终端里和你对话的那位。",
@@ -39,12 +32,36 @@ export const zhCN = {
     previewHint: "先看清楚会发生什么 —— 不改动任何东西。",
     later: "以后再说",
     install: "一键安装",
-    installPreview: "预览方案",
     reopen: "重新查看入门引导",
     // 第 2、3 步的副标题。网络自检特意放在安装之前：提前发现网络不通，
     // 好过看着六个步骤一个个变红。
     networkIntro: "先快速看一眼网络，免得安装到一半失败。",
-    installIntro: "都准备好了 —— 随时可以开始。",
+    installIntro: "下面就是将要发生的事。不点「一键安装」之前不会执行任何操作。",
+    // 最后一步：列出所选套餐会装什么，以及需要密钥的服务要填的密钥 ——
+    // 放在这里问，是因为缺密钥的服务能装上但根本用不了。
+    summaryClis: "AI 助手",
+    summarySkills: "工程技能",
+    summaryMcp: "MCP 服务",
+    summaryNothing: "这个套餐本身不安装任何东西。",
+    summaryInstalled: "已安装",
+    summaryWritesTo: (targets: string) => `配置到：${targets}`,
+    // 技能是按技术栈选的：全塞给用户等于给写 Rust 的人装一套安卓套路，
+    // 所以向导问一句，而不是替他猜。
+    skillsHint: "选装 —— 挑和你写的东西对得上的。之后也能再加。",
+    keysTitle: "API 密钥",
+    keysHint: "可选 —— 之后也能在「MCP 服务」里补填，留空没关系。",
+    // 第 1 步先问打算怎么用，因为它决定了「装 Claude」到底指什么：
+    // 桌面 App、终端命令，还是两个都要。
+    surfaceLabel: "你打算怎么用它？",
+    surfaceHint: "之后随时可以再加另一种，这里选什么都不是定死的。",
+    surfaceGui: "在窗口里点着用",
+    surfaceGuiHint: "安装桌面 App，不用开终端。",
+    surfaceCli: "在终端里敲命令",
+    surfaceCliHint: "安装命令行版，输入 `claude` 就能用。",
+    surfaceBoth: "两个都要",
+    surfaceBothHint: "桌面 App 和终端命令一起装好。",
+    recommendedTag: "推荐",
+    bundleIntro: "接下来选装哪些能力。选完之后每一项都还能改。",
   },
 
   /** 功能漫游导览 —— 聚光灯式逐步走查 App 各个部分。 */
@@ -199,6 +216,7 @@ export const zhCN = {
     subtitle: "已安装的工具默认不勾选。",
     upgradeNote: "勾选已安装的工具可将其升级到最新版本。",
     installedSuffix: "  (已安装)",
+    notTauri: "这里查不到安装状态 —— 请在桌面应用中运行，才能看到本机已有什么、以及执行安装。",
   },
 
   environment: {
@@ -206,6 +224,7 @@ export const zhCN = {
     subtitle:
       "Agent CLI 需要 Node.js（含 npm）。Bun 是可选的更快运行时；Python 与 uv 用于 Python 系 MCP 服务与工具。",
     detecting: "正在检测已安装的运行时…",
+    notTauri: "检测运行时需要桌面应用 —— 这里下方的版本会一直是空的。",
     installHint: "缺少运行时？直接安装即可——每次安装后会重新检测。",
     noInstaller: "本系统没有自动安装方式——请参见下方说明。",
     recheck: "重新检测",
@@ -515,6 +534,9 @@ export const zhCN = {
       proxyFound: (host: string, ms: number) => `找到可用代理：${host}（${ms}ms）`,
       noProxyFound: "没有在这台机器上找到可用的代理。",
       fastestMirror: (kind: string, label: string) => `最快的 ${kind}：${label}`,
+      // PyPI 和 Homebrew 是 agentpack 只在失败重试时注入的环境变量，「采用」
+      // 应用不了它们。与其把四个镜像并排列在一个只管两个的按钮下面，不如注明。
+      retryOnly: "安装失败时会自动用上",
       adopt: "采用这些设置",
       adopted: "已应用。",
       skip: "暂时跳过",
@@ -551,6 +573,28 @@ export const zhCN = {
     savedConfig: (path: string) => `已保存配置到 ${path}`,
     retryHint: "按 r 重试失败的步骤",
     exit: "按回车退出。",
+  },
+
+  /** 一次执行的结尾：结论、一个下一步动作、以及还需要人工处理的事。 */
+  completion: {
+    done: "都装好了",
+    partial: "跑完了，但有几项没成功",
+    // 用户中途停止，以及跑完但有话要说 —— 这两种以前都被报成「都装好了」。
+    cancelled: "已停止，没有跑完",
+    withWarnings: "跑完了，有几点要留意",
+    counts: (ok: number, warned: number, failed: number) =>
+      [`成功 ${ok} 项`, warned ? `${warned} 项需要留意` : "", failed ? `${failed} 项没能完成` : ""]
+        .filter(Boolean)
+        .join(" · "),
+    openApp: (name: string) => `打开 ${name}`,
+    cliHint: "打开终端，输入：",
+    copied: "已复制",
+    todoTitle: "还需要你做",
+    todoKey: (env: string) => `到「插件」里填上 ${env} 密钥 —— 服务已装好，但没有它跑不起来。`,
+    todoSignIn: "打开 Claude 后先登录。Code 标签页需要付费套餐。",
+    todoWindowsGit: "装一下 Git —— Windows 上 Claude 要靠它才能操作本地文件夹。",
+    todoCcSwitchGateway: "用 Claude 期间保持 cc-switch 开着；切换供应商后要重启 Claude。",
+    details: "查看完整日志",
   },
 
   verify: {
@@ -809,6 +853,12 @@ export const zhCN = {
     wouldRestore: (src: string, dest: string) => `将恢复 ${src} -> ${dest}`,
     snapshot: (id: string) => `已备份 → ${id}`,
     wouldSnapshot: "将备份 cc-switch 数据库与实际配置",
+    wouldCcProvider: {
+      add: (app: string) => `将向 ${app} 添加一个供应商`,
+      update: (app: string) => `将更新 ${app} 中的一个供应商`,
+      delete: (app: string) => `将从 ${app} 移除一个供应商`,
+      setCurrent: (app: string) => `将把 ${app} 切换到另一个供应商`,
+    },
     wouldBackupSkill: (path: string) => `将备份 ${path}`,
     skippedDependency: (label: string) => `已跳过 —— 依赖的步骤 “${label}” 失败了`,
     skippedCancelled: "已跳过 —— 运行已取消",
@@ -1372,6 +1422,8 @@ export const zhCN = {
     emptyPlan: "计划为空。请先选择 CLI、技能、MCP 服务或网络选项。",
     nothingToDo: "计划里的项目都已安装且为最新 —— 无需执行。",
     notInTauri: "请在桌面应用中运行（pnpm tauri dev）以执行安装。",
+    scanFailed:
+      "读不到当前已配置的内容，本次安装没有启动 —— 盲跑会重复添加你已经有的东西。请稍后重试。",
     // 网络重试救回某个步骤后提示。整个过程没有写入任何配置，是否固化由用户决定。
     recoveredTitle: (label: string) => `已通过 ${label} 安装成功`,
     recoveredBody:
@@ -1786,6 +1838,7 @@ export const zhCN = {
     create: "创建",
     present: "已存在",
     missing: "未创建",
+    notTauri: "编辑配置文件需要桌面应用。",
     tabForm: "表单",
     tabRaw: "文本",
     save: "保存",

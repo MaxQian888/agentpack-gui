@@ -18,7 +18,12 @@ import {
 import { brewMirrorEnv } from "@/lib/agentpack/network/mirrors"
 import type { RecoveryContext } from "@/lib/agentpack/network/recovery"
 import type { Profile } from "@/lib/agentpack/profile"
-import { findPreset, mcpTargetsFor, skillTargetsFor } from "@/lib/agentpack/presets"
+import {
+  mcpTargetsFor,
+  presetSelection,
+  skillTargetsFor,
+  type Surface,
+} from "@/lib/agentpack/presets"
 import type { UpdateInfo } from "@/lib/tauri/updater"
 import { type AppSettings, DEFAULT_SETTINGS } from "@/lib/tauri/settings"
 
@@ -145,7 +150,12 @@ interface State {
   /** Merge into `plan.network.proxy`, seeding the default config on first touch. */
   setProxy: (patch: Partial<ProxyConfig>) => void
   /** Replace the selection with a bundle's, keeping network config + MCP keys. */
-  applyPreset: (presetId: string) => void
+  /**
+   * Load a bundle's selection. `surface` decides whether its agents arrive as
+   * desktop apps, terminal CLIs, or both — the bundle itself says only *which*
+   * agents, so it needs no GUI variant.
+   */
+  applyPreset: (presetId: string, surface?: Surface) => void
   loadPlan: (plan: Plan) => void
   /** Clear the selection (CLIs / skills / MCP), keeping network config + MCP keys. */
   resetPlan: () => void
@@ -285,25 +295,25 @@ export const useAppStore = create<State>((set, get) => ({
       const proxy = { ...DEFAULT_PROXY, ...s.plan.network.proxy, ...patch }
       return { plan: { ...s.plan, network: { ...s.plan.network, proxy } } }
     }),
-  applyPreset: (presetId) =>
+  applyPreset: (presetId, surface) =>
     set((s) => {
-      const p = findPreset(presetId)
       const base = { ...emptyPlan(s.plan.os), ...keptOnReselect(s.plan) }
-      if (!p) return { plan: base }
+      // Shared with the welcome wizard's "what this installs" list, so the
+      // preview the user reads is derived from the same code as the plan.
+      const picked = presetSelection(presetId, surface)
+      if (!picked) return { plan: base }
       // Keep a deliberate install-channel choice (e.g. Claude Code via the native
       // script instead of npm) for every CLI the bundle still installs; drop the
       // rest, like toggleCli does when a CLI is deselected.
       const cliMethods = Object.fromEntries(
-        Object.entries(s.plan.cliMethods ?? {}).filter(([id]) => p.clis.includes(id))
+        Object.entries(s.plan.cliMethods ?? {}).filter(([id]) => picked.clis.includes(id))
       )
       return {
         plan: {
           ...base,
-          clis: p.clis as Plan["clis"],
-          // Targets follow the bundle's own CLIs, so a bundle that installs Codex
-          // configures Codex too instead of writing Claude-only config.
-          skills: p.skills.map((id) => ({ id, targets: skillTargetsFor(p.clis) })),
-          mcps: p.mcps.map((id) => ({ id, targets: mcpTargetsFor(p.clis) })),
+          clis: picked.clis as Plan["clis"],
+          skills: picked.skills,
+          mcps: picked.mcps,
           ...(Object.keys(cliMethods).length > 0 ? { cliMethods } : {}),
         },
       }

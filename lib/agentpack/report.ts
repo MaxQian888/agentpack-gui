@@ -3,17 +3,25 @@ import { en } from "@/lib/i18n/en"
 import type { Messages } from "@/lib/i18n/types"
 import type { Plan, StepReport } from "./types"
 
-/** Env vars for selected MCP servers that were left without a key. */
-export function pendingKeyEnvs(plan: Plan): string[] {
+/**
+ * Selected MCP servers left without a key, as `{ id, env }`.
+ *
+ * The server id comes along because the completion screen has to decide whether
+ * the server it belongs to actually installed — an env var alone can't be traced
+ * back to a step.
+ */
+export function pendingKeyEnvs(plan: Plan): { id: string; env: string }[] {
   return plan.mcps
     .map((m) => findMcp(m.id))
     .filter((s) => s?.keyEnv && !plan.mcpKeys[s.id])
-    .map((s) => s!.keyEnv!)
+    .map((s) => ({ id: s!.id, env: s!.keyEnv! }))
 }
 
 /**
- * Build a plain-text post-run report shared by the interactive Summary screen
- * and the headless path, so the two never drift.
+ * Build the plain-text post-run report. Rendered verbatim behind the completion
+ * screen's "show the full log" disclosure — the one place every failed step and
+ * pending key is listed in full. (It is not shared with a headless path; an
+ * earlier comment here claimed one, and none exists in this repo.)
  */
 export function summarize(
   reports: StepReport[],
@@ -42,7 +50,7 @@ export function summarize(
   const pending = pendingKeyEnvs(plan)
   if (pending.length) {
     lines.push(s.pendingKeys)
-    for (const k of pending) lines.push(`  • ${k}`)
+    for (const k of pending) lines.push(`  • ${k.env}`)
   }
 
   const next: string[] = []

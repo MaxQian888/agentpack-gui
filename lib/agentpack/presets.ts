@@ -39,14 +39,61 @@ export function findPreset(id: string): Preset | undefined {
 }
 
 /**
- * CLI id → the agent whose config surface hosts skills and MCP servers. Only the
- * three agent CLIs host anything: cc-switch and cc-connect are companions and map
- * to nothing.
+ * Tool id → the agent whose config surface hosts skills and MCP servers.
+ * cc-switch and cc-connect are companions and map to nothing.
+ *
+ * A desktop app maps to the same surface as its CLI, because it reads the same
+ * files. Without this a desktop-only selection fell through to the "no agent at
+ * all" fallback and configured Claude only, leaving the Codex app with nothing.
  */
 const AGENT_OF: Readonly<Record<string, McpTarget>> = {
   "claude-code": "claude",
+  "claude-desktop": "claude",
   codex: "codex",
+  "codex-app": "codex",
   opencode: "opencode",
+}
+
+/** Which form of the agents to install. Chosen on the wizard's first step. */
+export type Surface = "gui" | "cli" | "both"
+
+/** The desktop app that replaces each agent CLI, and vice versa. */
+const DESKTOP_OF: Readonly<Record<string, string>> = {
+  "claude-code": "claude-desktop",
+  codex: "codex-app",
+}
+
+/**
+ * Rewrite a bundle's tool list for the surface the user picked.
+ *
+ * The bundles say *which agents* to set up; this says *what form* they take, so
+ * the two questions stay separate — a bundle doesn't need a GUI and a CLI
+ * variant. Only the agents have two forms: cc-switch, cc-connect and OpenCode
+ * pass through untouched (OpenCode is a TUI and ships no desktop app).
+ *
+ * Order is preserved, and each id appears once, so "both" reads as
+ * claude-code, claude-desktop, codex, codex-app rather than an interleaving
+ * that depends on the bundle's original order.
+ */
+export function applySurface(clis: readonly string[], surface: Surface): string[] {
+  const out: string[] = []
+  const add = (id: string) => {
+    if (!out.includes(id)) out.push(id)
+  }
+  for (const id of clis) {
+    // An id that's already a desktop app resolves back to its CLI first, so
+    // re-applying a surface to an existing selection is idempotent rather than
+    // additive.
+    const cli = Object.keys(DESKTOP_OF).find((k) => DESKTOP_OF[k] === id) ?? id
+    const desktop = DESKTOP_OF[cli]
+    if (!desktop) {
+      add(cli)
+      continue
+    }
+    if (surface !== "gui") add(cli)
+    if (surface !== "cli") add(desktop)
+  }
+  return out
 }
 
 /**
@@ -73,6 +120,39 @@ export function mcpTargetsFor(clis: readonly string[]): McpTarget[] {
 export function skillTargetsFor(clis: readonly string[]): AgentTarget[] {
   const targets = mcpTargetsFor(clis).filter((tg): tg is AgentTarget => tg !== "opencode")
   return targets.length > 0 ? targets : ["claude"]
+}
+
+/** What a bundle resolves to for a given surface: ids plus where each one lands. */
+export interface PresetSelection {
+  clis: string[]
+  skills: { id: string; targets: AgentTarget[] }[]
+  mcps: { id: string; targets: McpTarget[] }[]
+}
+
+/**
+ * Resolve a bundle id + surface into the exact selection it installs.
+ *
+ * Pure, so the welcome wizard can *show* what Install is about to do without
+ * mutating the shared plan first — a preview that had to write to the store
+ * would apply the bundle to someone who then pressed Back. The store's
+ * `applyPreset` is the only writer, and it calls this, so the list the user
+ * reads and the plan that runs can't drift.
+ *
+ * Null for an unknown id, which the store turns into an empty selection.
+ */
+export function presetSelection(presetId: string, surface?: Surface): PresetSelection | null {
+  const found = findPreset(presetId)
+  if (!found) return null
+  // Resolve the surface up front so every derivation below — targets, and the
+  // caller's kept install methods — sees the tools that will actually be installed.
+  const clis = surface ? applySurface(found.clis, surface) : [...found.clis]
+  return {
+    clis,
+    // Targets follow the bundle's own CLIs, so a bundle that installs Codex
+    // configures Codex too instead of writing Claude-only config.
+    skills: found.skills.map((id) => ({ id, targets: skillTargetsFor(clis) })),
+    mcps: found.mcps.map((id) => ({ id, targets: mcpTargetsFor(clis) })),
+  }
 }
 
 const sameSet = (a: readonly string[], b: readonly string[]): boolean => {

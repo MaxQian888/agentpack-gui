@@ -9,6 +9,7 @@ import { isTauri } from "@/lib/tauri"
 import { pathExists } from "@/lib/tauri/commands"
 import { useAppStore } from "@/store/app-store"
 import { ConfigFileEditor } from "./config-file-editor"
+import { DesktopOnlyNote } from "../desktop-only-note"
 
 /**
  * The agent CLIs' own config files, with an editor per file. Presence is probed
@@ -37,17 +38,19 @@ export function ConfigFilesCard({ onOpenMcp }: { onOpenMcp?: () => void }) {
     }
   }, [paths, tick])
 
-  if (!paths) return null
-
   return (
     <Card className="gap-4 p-5">
       <div>
         <div className="text-sm font-medium">{t.title}</div>
         <p className="text-xs text-muted-foreground">{t.subtitle}</p>
       </div>
+      {/* Without paths there are no files to point at. Returning null here made
+          the whole editor — eight files and their presence badges — disappear
+          without a word, which reads as a missing feature rather than a limit. */}
+      {!paths ? <DesktopOnlyNote>{t.notTauri}</DesktopOnlyNote> : null}
       <div className="flex flex-col gap-2">
-        {CONFIG_FILES.map((def) => {
-          const path = paths[def.pathKey]
+        {(paths ? CONFIG_FILES : []).map((def) => {
+          const path = paths![def.pathKey]
           const exists = present[def.id] ?? false
           return (
             <div

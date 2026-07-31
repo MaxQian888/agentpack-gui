@@ -94,6 +94,14 @@ export const TIMEOUT_ERR = "agentpack:timeout"
 export const launchCcSwitch = () => invoke<void>("launch_cc_switch")
 
 /**
+ * Open a desktop app by the name it is installed under — `CliTool.appBundle`.
+ * Detached, so it resolves once spawned rather than when the window appears.
+ * Rejects when the app isn't there, which is the signal the caller wants: the
+ * "open Claude" button should say so rather than appear to do nothing.
+ */
+export const launchApp = (appBundle: string) => invoke<void>("launch_app", { appBundle })
+
+/**
  * Ask cc-switch to quit (gracefully first, forced only if it won't), and wait
  * for it to actually exit. Resolves `false` when it outlived both attempts —
  * a result the UI explains rather than an error.

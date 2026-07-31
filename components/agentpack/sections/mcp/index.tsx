@@ -15,6 +15,7 @@ import { CatalogTab } from "./catalog"
 import { InstalledTab } from "./installed"
 import { MatrixTab } from "./matrix"
 import { AddCustomTab } from "./add-custom"
+import { DesktopOnlyNote } from "../../desktop-only-note"
 
 /**
  * MCP manager: browse the built-in catalog, manage everything configured on disk
@@ -66,7 +67,7 @@ export function McpSection({ scan, loading, refresh }: McpSectionProps) {
       </div>
 
       {!tauri ? (
-        <p className="text-sm text-muted-foreground">{m.notTauri}</p>
+        <DesktopOnlyNote>{m.notTauri}</DesktopOnlyNote>
       ) : (
         <Tabs defaultValue="catalog">
           <div className="max-w-full overflow-x-auto">
