@@ -1541,6 +1541,7 @@ mod tests {
     let (file, args) = elevated_wrapper(
       "winget",
       &["install".into(), "--id".into(), "OpenJS.NodeJS.LTS".into()],
+      &HashMap::new(),
     )
     .expect("wrapper should be built");
     assert_eq!(file, "powershell");
@@ -1580,7 +1581,8 @@ mod tests {
   fn elevated_wrapper_escapes_single_quotes_in_args() {
     // A single quote in an arg must be doubled so it can't break out of the
     // PowerShell single-quoted literal (defensive; our real args never contain one).
-    let (_file, args) = elevated_wrapper("winget", &["a'b".into()]).expect("wrapper");
+    let (_file, args) =
+      elevated_wrapper("winget", &["a'b".into()], &HashMap::new()).expect("wrapper");
     let outer_path = args.last().unwrap();
     let inner_path = outer_path.replace(".outer.ps1", ".inner.ps1");
     let inner = std::fs::read_to_string(&inner_path).expect("inner written");
