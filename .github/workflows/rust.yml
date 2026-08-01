@@ -110,52 +110,104 @@ jobs:
         timeout-minutes: 40
         run: cargo test --all-features --no-run
 
-      # Serial on purpose, for two reasons. Several tests mutate process-global
-      # state — env vars behind TEST_ENV_LOCK, AGENTPACK_SKILL_BACKUP_ROOT — and
-      # a lock is a weaker guarantee than simply not racing. It also makes a hang
-      # diagnosable: libtest prints each test's name *before* running it when
-      # single-threaded, so a killed run still names the test it died in. With
-      # the default thread pool a blocked test prints nothing at all.
+      # ── The suite, one step per top-level module ────────────────────────────
       #
-      # Now that the build is its own step, everything here is execution, and
-      # five minutes is enormously generous for a suite that takes eight seconds.
-      - name: cargo test (run)
+      # One `cargo test` would be shorter, and for a year that is what this was.
+      # It cannot stay that way, because of how the Linux job fails: the runner
+      # itself goes down mid-suite — "the hosted runner lost communication with
+      # the server" — and GitHub archives **no log at all** for a job that ends
+      # that way. Neither the `timeout` bound below nor the step's own
+      # `timeout-minutes` can fire, because nothing is left alive to fire them.
+      # A single step therefore leaves exactly one bit of evidence: "the tests
+      # didn't finish". Which test took the machine down is unrecoverable.
+      #
+      # Step conclusions, unlike logs, are reported to the server as each step
+      # ends — those survived every one of these deaths. So the suite is split
+      # along module lines, and the step that never completed names the module.
+      # Each `cargo test` re-uses the binary built above, so the split costs
+      # seconds, not minutes.
+      #
+      # `ci-run-tests.sh` holds the bound and the serial-execution rationale;
+      # keep this list in sync with the `mod` list in src/lib.rs.
+      - name: cargo test — backup
         working-directory: src-tauri
         shell: bash
-        timeout-minutes: 10
-        run: |
-          # The bound is `timeout(1)`, not the step's own `timeout-minutes`:
-          # GitHub records anything *it* kills as cancelled, and archives no log
-          # for a cancelled job. A command that exits on its own is an ordinary
-          # failure, and a failed job keeps its log. SIGINT first so libtest can
-          # flush the progress lines, SIGKILL after — `timeout` otherwise waits
-          # forever for a child that ignores the signal. macOS has no `timeout`
-          # (GNU coreutils), so it is applied only where it exists.
-          if command -v timeout >/dev/null 2>&1; then
-            bound=(timeout --signal=INT --kill-after=30 300)
-          else
-            bound=()
-          fi
-          # Redirected to a file, never piped: `timeout` kills cargo, but any
-          # process the run leaves behind inherits the write end of a pipe and
-          # `tee` then blocks on an EOF that never comes — which made the bound
-          # itself unbounded. Waiting on one process fixes that.
-          rc=0
-          "${bound[@]}" cargo test --all-features -- --test-threads=1 --nocapture \
-            > "$RUNNER_TEMP/cargo-test.txt" 2>&1 || rc=$?
-          tail -n 60 "$RUNNER_TEMP/cargo-test.txt"
-          if [ "$rc" -ne 0 ]; then
-            echo "::error::cargo test exited $rc (124/137 means the bound fired — the last 'test …' line above names the test that hung)"
-          fi
-          exit "$rc"
+        timeout-minutes: 6
+        run: ./ci-run-tests.sh backup
 
-      # Belt and braces: if log archiving misbehaves again, the transcript is
-      # still retrievable as an artifact.
-      - name: Upload test transcript
+      - name: cargo test — ccswitch
+        working-directory: src-tauri
+        shell: bash
+        timeout-minutes: 6
+        run: ./ci-run-tests.sh ccswitch
+
+      - name: cargo test — download
+        working-directory: src-tauri
+        shell: bash
+        timeout-minutes: 6
+        run: ./ci-run-tests.sh download
+
+      - name: cargo test — exec
+        working-directory: src-tauri
+        shell: bash
+        timeout-minutes: 6
+        run: ./ci-run-tests.sh exec
+
+      - name: cargo test — fsops
+        working-directory: src-tauri
+        shell: bash
+        timeout-minutes: 6
+        run: ./ci-run-tests.sh fsops
+
+      - name: cargo test — history
+        working-directory: src-tauri
+        shell: bash
+        timeout-minutes: 6
+        run: ./ci-run-tests.sh history
+
+      - name: cargo test — history_cache
+        working-directory: src-tauri
+        shell: bash
+        timeout-minutes: 6
+        run: ./ci-run-tests.sh history_cache
+
+      - name: cargo test — login
+        working-directory: src-tauri
+        shell: bash
+        timeout-minutes: 6
+        run: ./ci-run-tests.sh login
+
+      - name: cargo test — mcp
+        working-directory: src-tauri
+        shell: bash
+        timeout-minutes: 6
+        run: ./ci-run-tests.sh mcp
+
+      - name: cargo test — net
+        working-directory: src-tauri
+        shell: bash
+        timeout-minutes: 6
+        run: ./ci-run-tests.sh net
+
+      - name: cargo test — paths
+        working-directory: src-tauri
+        shell: bash
+        timeout-minutes: 6
+        run: ./ci-run-tests.sh paths
+
+      - name: cargo test — skills
+        working-directory: src-tauri
+        shell: bash
+        timeout-minutes: 6
+        run: ./ci-run-tests.sh skills
+
+      # Belt and braces: if log archiving misbehaves again, the transcripts are
+      # still retrievable as an artifact. One file per module now.
+      - name: Upload test transcripts
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: cargo-test-${{ matrix.platform }}
-          path: ${{ runner.temp }}/cargo-test.txt
+          path: ${{ runner.temp }}/cargo-test-*.txt
           retention-days: 7
           if-no-files-found: ignore
