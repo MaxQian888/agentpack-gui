@@ -224,7 +224,17 @@ mod tests {
     let _env = EnvRestore::set(&[("CODEX_HOME", None)]);
     let p = get_paths().expect("home dir resolves");
     let h = p.home.clone();
-    let join = |rest: &str| PathBuf::from(&h).join(rest).to_string_lossy().into_owned();
+    // Split on `/` and join component by component, exactly as `get_paths`
+    // does. A single `join(".claude/settings.json")` keeps the slash verbatim,
+    // so on Windows the expectation reads `…\.claude/settings.json` and every
+    // nested path in here fails against a correct implementation.
+    let join = |rest: &str| {
+      rest
+        .split('/')
+        .fold(PathBuf::from(&h), |acc, part| acc.join(part))
+        .to_string_lossy()
+        .into_owned()
+    };
 
     assert_eq!(p.claude_settings, join(".claude/settings.json"));
     // User-scope MCP servers live in ~/.claude.json, NOT in settings.json.
