@@ -183,7 +183,7 @@ jobs:
       # It stays out of tauri.conf.json so the unsigned validation build in
       # build-tauri.yml and local `pnpm tauri build` keep working regardless.
       - name: Build & publish release (installers)
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
