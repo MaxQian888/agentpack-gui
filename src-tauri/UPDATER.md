@@ -42,19 +42,37 @@ Set these GitHub Actions repository secrets (Tauri v2 names):
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the password (empty string if you
   skipped one).
 
-`.github/workflows/release.yml` already references both in the `tauri-action`
-step.
+> ⚠️ **Both lines.** A minisign key file is an `untrusted comment: …` line
+> followed by the base64 body, and Tauri wants the whole file. A secret holding
+> only the base64 line fails with **"failed to decode secret key: incorrect
+> updater private key password: Missing comment in secret key"** — a message
+> that blames the password for a truncated key. The key must also match the
+> `pubkey` already in `tauri.conf.json`; regenerate one and you must update the
+> other.
 
 ## 4. How CI ships updates
+
+> **Currently disabled.** `release.yml` ships installers only. The secret above
+> is not a well-formed key, and the failure lands _after_ bundling — so v0.11.0
+> and v0.12.0 each built four working installers and published none of them,
+> which is a worse outcome than shipping without auto-update. Fix the secret,
+> then re-enable it as described below.
 
 `release.yml` builds every platform with `tauri-apps/tauri-action`, which — with
 the secrets above and `--config {"bundle":{"createUpdaterArtifacts":true}}` —
 generates the signed `.sig` artifacts and the macOS `.app.tar.gz`, then merges
 each platform's signature into a single `latest.json` on the GitHub Release.
 
-`createUpdaterArtifacts` is enabled **only** in the release job (via `--config`),
-so the unsigned validation build in `build-tauri.yml` and local `pnpm tauri build`
-keep working without a signing key.
+To turn that back on, restore three things in the `tauri-action` step of
+`release.yml`: the `TAURI_SIGNING_PRIVATE_KEY` / `…_PASSWORD` env vars,
+`includeUpdaterJson: true`, and the `--config` fragment in `args`. Verify with a
+pre-release tag (`v0.13.1-rc1`) before a real one — the signing step is the last
+thing to run, so a bad key costs a full four-platform build to discover.
+
+`createUpdaterArtifacts` belongs **only** in the release job (via `--config`),
+never in `tauri.conf.json`, so the unsigned validation build in
+`build-tauri.yml` and local `pnpm tauri build` keep working without a signing
+key.
 
 ## 5. Release
 

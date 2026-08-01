@@ -86,11 +86,11 @@ jobs:
     uses: ./.github/workflows/rust.yml
 
   # Build every platform and publish the GitHub release via the official
-  # tauri-action. With the signing secrets set and createUpdaterArtifacts enabled
-  # (via --config, so unsigned CI in build-tauri.yml stays green), each matrix job
-  # uploads its installers + `.sig` to the tag; tauri-action merges the platform
-  # signatures into a single `latest.json` served at
-  # `releases/latest/download/latest.json` (the updater endpoint).
+  # tauri-action. Each matrix job uploads its installers to the tag.
+  #
+  # ⚠️ The signed updater artifacts are currently NOT built — see the build step
+  # below. Installers ship; the in-app updater has nothing to find until the
+  # signing key is fixed. src-tauri/UPDATER.md has the one-line way back.
   release:
     name: Release (${{ matrix.target }})
     needs: [verify-version, quality, test, rust]
@@ -165,22 +165,34 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      # Ships installers + the signed updater artifacts. `createUpdaterArtifacts`
-      # is enabled here via --config (NOT in tauri.conf.json) so the unsigned
-      # validation build in build-tauri.yml and local `pnpm tauri build` keep
-      # working without a signing key. See src-tauri/UPDATER.md.
-      - name: Build & publish release (installers + updater)
+      # Ships the installers. The signed updater artifacts are OFF, and that is a
+      # deliberate, reversible state rather than an oversight:
+      #
+      # `TAURI_SIGNING_PRIVATE_KEY` does not currently hold a well-formed
+      # minisign key — a key file is an `untrusted comment: …` line followed by
+      # the base64 body, and the stored secret is missing the comment line, so
+      # every platform failed with "failed to decode secret key … Missing
+      # comment in secret key". It failed AFTER bundling, so v0.11.0 and v0.12.0
+      # built four working installers each and published none of them.
+      #
+      # Rather than keep tagging releases that never appear, the release now
+      # ships what it can build. To turn updates back on once the secret is a
+      # valid key (see src-tauri/UPDATER.md), restore three things: the two
+      # signing env vars, `includeUpdaterJson: true`, and the
+      # `--config {"bundle":{"createUpdaterArtifacts":true}}` in `args`.
+      # It stays out of tauri.conf.json so the unsigned validation build in
+      # build-tauri.yml and local `pnpm tauri build` keep working regardless.
+      - name: Build & publish release (installers)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: agentpack ${{ github.ref_name }}
-          # Every platform job merges its signature into one latest.json, which
-          # plugins.updater.endpoints points at.
-          includeUpdaterJson: true
+          # No `.sig` files are produced, so there is nothing to merge into a
+          # latest.json — asking for one would publish an empty/broken manifest
+          # at the very URL plugins.updater.endpoints points at.
+          includeUpdaterJson: false
           releaseBody: |
             ## 安装 / Install
 
@@ -206,8 +218,11 @@ jobs:
 
             ---
 
-            装好之后，应用内的「关于」页可以直接检查并安装后续更新，不用再手动下载。
+            这个版本暂时不支持应用内自动更新，下一版请回来这里下载。
+
+            > In-app auto-update is not available in this build — check back here
+            > for the next version.
           releaseDraft: false
           # Tags containing a hyphen (e.g. v1.0.0-beta) are published as pre-releases.
           prerelease: ${{ contains(github.ref_name, '-') }}
-          args: '--target ${{ matrix.target }} --config {"bundle":{"createUpdaterArtifacts":true}}'
+          args: "--target ${{ matrix.target }}"
