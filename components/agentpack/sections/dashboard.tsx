@@ -1,10 +1,8 @@
 "use client"
 
 import {
-  AlertTriangle,
   ArrowLeftRight,
   ArrowRight,
-  CheckCircle2,
   Globe,
   RefreshCw,
   Server,
@@ -39,6 +37,9 @@ import { isTauri } from "@/lib/tauri"
 import { saveSettings } from "@/lib/tauri/settings"
 import { useMounted } from "@/hooks/use-mounted"
 import { SpendCard, type HistoryFeed } from "./dashboard-spend"
+import { DiagnosticsList } from "./diagnostics-list"
+import { ActivityCard } from "./activity-card"
+import { buildDiagnostics, type DiagnosticItem } from "@/lib/agentpack/diagnostics"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
@@ -195,13 +196,6 @@ function mergeEntries(groups: { target: string; ids: ClassifiedIds }[]): Overvie
   )
 }
 
-/** Something the user should act on, with the one-click fix when we have one. */
-interface HealthIssue {
-  key: string
-  label: string
-  action?: { label: string; onClick: () => void }
-}
-
 /**
  * The dashboard scan is owned by `ShellBody` (which never unmounts) and passed
  * in, so navigating away and back to the home page reuses the cached result
@@ -234,6 +228,7 @@ export function DashboardSection({
   const settings = useAppStore((s) => s.settings)
   const setSettings = useAppStore((s) => s.setSettings)
   const setOnboardingOpen = useAppStore((s) => s.setOnboardingOpen)
+  const setPanelOpen = useAppStore((s) => s.setPanelOpen)
   const { run } = useRunnerCtx()
   // `isTauri()` is false in the pre-rendered HTML but true inside the desktop
   // webview; gate the runtime-only branch on mount so the first client render
@@ -245,7 +240,7 @@ export function DashboardSection({
     // `review: true` opens the confirm gate and returns *before* the steps run,
     // so we must not rescan here. The central afterRun hook (app-shell) re-scans
     // and re-detects once the reviewed steps actually execute.
-    void run(steps, { review: true })
+    void run(steps)
   }
 
   const view = scan ?? emptyScan()
@@ -269,48 +264,46 @@ export function DashboardSection({
   // At-a-glance counts for the overview strip — derived from the same merged
   // lists the cards render, so a tile and its card can never disagree.
   const allTools = [...CLI_TOOLS, ...RUNTIMES]
-  const installedTools = allTools.filter((tool) => detections[tool.id]?.installed).length
   const relayConfigured = !!(view.relay.baseUrl || view.relay.hasToken || view.hasCodexRelay)
 
   // Everything that needs the user's attention, leading the page. Derived from
-  // the existing scan + detections — no extra probing.
-  const issues: HealthIssue[] = []
-  for (const tool of CLI_TOOLS) {
-    const det = detections[tool.id]
-    const latest = latestVersions[tool.id]
-    if (!det?.installed || !latest || !isUpgradeAvailable(det.version, latest)) continue
-    const cmd = upgradeCommandFor(tool, os, cliManagers[tool.id])
-    const title = t.catalog.cli[tool.id]?.title ?? tool.id
-    issues.push({
-      key: `upgrade-${tool.id}`,
-      label: d.healthUpgrade(title, latest),
-      action: cmd
-        ? {
-            label: t.shell.upgrade,
-            onClick: () => runThen([cliInstallStep(tool.id, cmd, true, t)]),
-          }
-        : undefined,
-    })
-  }
-  for (const file of [
-    { label: d.fileClaudeSettings, health: view.claudeSettings, path: paths?.claudeSettings },
-    { label: d.fileCodexConfig, health: view.codexConfig, path: paths?.codexConfig },
-  ]) {
-    // "missing" alone is the normal state on a machine that never set that agent
-    // up — flagging it would make the banner shout forever. It only becomes an
-    // issue once a backup proves the file used to exist.
-    const broken = file.health.status === "invalid"
-    const vanished = file.health.status === "missing" && file.health.hasBackup
-    if (!broken && !vanished) continue
-    const path = file.path
-    issues.push({
-      key: `config-${file.label}`,
-      label: d.healthConfig(file.label, broken ? d.configInvalid : d.configMissing),
-      action:
-        file.health.hasBackup && path
-          ? { label: d.restore, onClick: () => runThen([fileRestoreStep(path, t)]) }
-          : undefined,
-    })
+  // the scan + detections + the startup probe by one pure function — no extra
+  // probing, and no branch of it can reach the disk. See lib/agentpack/diagnostics.
+  const probe = useAppStore((s) => s.networkProbe)
+  const activity = useAppStore((s) => s.activity)
+  const diagnostics = buildDiagnostics(t, {
+    scan,
+    detections,
+    latestVersions,
+    cliManagers,
+    networkProbe: probe,
+    paths,
+    os,
+  })
+
+  /**
+   * One item, one action. Every branch that writes goes back through `run`,
+   * which stages it for review — the to-do list is a shortcut to the change,
+   * never a shortcut past the gate.
+   */
+  const actOn = (item: DiagnosticItem) => {
+    const a = item.action.run
+    switch (a.kind) {
+      case "rescan":
+        return void rescan()
+      case "openOnboarding":
+        return setOnboardingOpen(true)
+      case "navigate":
+        return onNavigate(item.destination)
+      case "restoreFile":
+        return runThen([fileRestoreStep(a.path, t)])
+      case "upgradeCli": {
+        const tool = CLI_TOOLS.find((c) => c.id === a.id)
+        const cmd = tool && upgradeCommandFor(tool, os, cliManagers[a.id])
+        if (!tool || !cmd) return onNavigate(item.destination)
+        return runThen([cliInstallStep(tool.id, cmd, true, t)])
+      }
+    }
   }
 
   // The quick-start card is a safety net for anyone who skipped the welcome
@@ -318,7 +311,6 @@ export function DashboardSection({
   // explicitly hide it via "don't show again". It reopens the same wizard.
   const noAgentCli = !detections["claude-code"]?.installed && !detections["codex"]?.installed
   const showQuickStart = !settings.quickStartDismissed && noAgentCli
-  const probe = useAppStore((s) => s.networkProbe)
   const dismissQuickStart = () => {
     setSettings({ quickStartDismissed: true })
     void saveSettings({ quickStartDismissed: true })
@@ -358,38 +350,16 @@ export function DashboardSection({
         </div>
       ) : null}
 
-      <HealthBanner issues={issues} loading={loading} d={d} />
-
-      {/* Overview */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatTile
-          icon={Terminal}
-          label={d.overviewTools}
-          value={`${installedTools}/${allTools.length}`}
-          tint="sky"
-        />
-        <StatTile
-          icon={Server}
-          label={d.overviewMcp}
-          value={mcpEntries.length}
-          loading={loading}
-          tint="violet"
-        />
-        <StatTile
-          icon={Wrench}
-          label={d.overviewSkills}
-          value={skillEntries.length}
-          loading={loading}
-          tint="amber"
-        />
-        <StatTile
-          icon={ArrowLeftRight}
-          label={d.overviewProviders}
-          value={view.providers.length}
-          loading={loading}
-          tint="emerald"
-        />
-      </div>
+      {/* The page leads with what needs doing. The four identical tinted stat
+          tiles that used to sit here are gone: they ranked nothing, four
+          colours competing for a glance said less than one ordered list, and
+          the counts they held are already on the cards below. */}
+      <DiagnosticsList
+        items={diagnostics}
+        loading={loading}
+        available={!mounted || isTauri()}
+        onAct={actOn}
+      />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {/* Spend leads the grid: it is the only figure here the user cares
@@ -397,6 +367,12 @@ export function DashboardSection({
             cards so one screen answers both "what did this cost" and "what is
             installed". */}
         <SpendCard history={history} onNavigate={onNavigate} />
+
+        <ActivityCard
+          records={activity}
+          available={!mounted || isTauri()}
+          onOpenPanel={() => setPanelOpen(true)}
+        />
 
         {/* CLIs & runtimes — read-only status; installs and removals live in
             the CLIs / Environment sections. */}
@@ -592,138 +568,6 @@ function QuickStartCard({
   )
 }
 
-/**
- * The page's lead: what needs doing, with its fix inline. When there is nothing
- * to do it collapses to a single quiet line rather than a reassuring banner —
- * "all good" should not out-shout the real content below it.
- */
-function HealthBanner({
-  issues,
-  loading,
-  d,
-}: {
-  issues: HealthIssue[]
-  loading: boolean
-  d: ReturnType<typeof useT>["dashboard"]
-}) {
-  if (loading) {
-    return (
-      <Card className="p-4">
-        <SkeletonRows rows={2} />
-      </Card>
-    )
-  }
-  if (issues.length === 0) {
-    return (
-      <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-2.5 text-sm">
-        <CheckCircle2
-          className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
-          aria-hidden="true"
-        />
-        <span className="font-medium">{d.healthAllGood}</span>
-        <span className="truncate text-muted-foreground">{d.healthAllGoodHint}</span>
-      </div>
-    )
-  }
-  return (
-    <Card className="gap-3 border-amber-500/30 bg-amber-500/5 p-4">
-      <div className="flex items-center gap-2">
-        <AlertTriangle
-          className="size-4 shrink-0 text-amber-600 dark:text-amber-500"
-          aria-hidden="true"
-        />
-        <h3 className="font-semibold">{d.healthNeedsAttention(issues.length)}</h3>
-      </div>
-      <div className="flex flex-col gap-1">
-        {issues.map((issue) => (
-          <div
-            key={issue.key}
-            className="-mx-2 flex items-center justify-between gap-3 rounded-md px-2 py-1 text-sm"
-          >
-            <span className="min-w-0 truncate">{issue.label}</span>
-            {issue.action ? (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 shrink-0 bg-background"
-                onClick={issue.action.onClick}
-              >
-                {issue.action.label}
-              </Button>
-            ) : null}
-          </div>
-        ))}
-      </div>
-    </Card>
-  )
-}
-
-const STAT_TINTS = {
-  sky: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
-  violet: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
-  amber: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  emerald: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-} as const
-
-/** Compact metric tile for the overview strip. */
-function StatTile({
-  icon: Icon,
-  label,
-  value,
-  loading,
-  tint,
-}: {
-  icon: LucideIcon
-  label: string
-  value: string | number
-  loading?: boolean
-  tint: keyof typeof STAT_TINTS
-}) {
-  return (
-    <Card className="flex-row items-center gap-3 p-4">
-      <span
-        className={cn(
-          "flex size-10 shrink-0 items-center justify-center rounded-lg",
-          STAT_TINTS[tint]
-        )}
-      >
-        <Icon className="size-5" aria-hidden="true" />
-      </span>
-      <div className="flex min-w-0 flex-col gap-1">
-        <span className="truncate text-xs font-medium text-muted-foreground">{label}</span>
-        {loading ? (
-          <Skeleton className="h-6 w-10" />
-        ) : (
-          <span className="text-2xl leading-none font-semibold tabular-nums">{value}</span>
-        )}
-      </div>
-    </Card>
-  )
-}
-
-/** A card title with a matching icon badge and an optional trailing action. */
-function CardHead({
-  icon: Icon,
-  title,
-  action,
-}: {
-  icon: LucideIcon
-  title: string
-  action?: React.ReactNode
-}) {
-  return (
-    <div className="flex items-center justify-between gap-2">
-      <div className="flex items-center gap-2">
-        <span className="flex size-7 items-center justify-center rounded-md bg-muted text-muted-foreground">
-          <Icon className="size-4" aria-hidden="true" />
-        </span>
-        <h3 className="font-medium">{title}</h3>
-      </div>
-      {action}
-    </div>
-  )
-}
-
 /** The small on/off dot shared by the CLI, provider and relay rows. */
 function StatusDot({ on }: { on: boolean }) {
   return (
@@ -760,6 +604,27 @@ function ViewAll({ label, onClick }: { label: string; onClick: () => void }) {
       {label}
       <ArrowRight className="size-3" aria-hidden="true" />
     </Button>
+  )
+}
+
+/** A card's heading row: an icon in a well, the title, and an optional action. */
+function CardHead({
+  icon: Icon,
+  title,
+  action,
+}: {
+  icon: LucideIcon
+  title: string
+  action?: React.ReactNode
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center gap-2">
+        <Icon className="size-4 text-muted-foreground" aria-hidden="true" />
+        <h3 className="text-sm font-medium">{title}</h3>
+      </div>
+      {action}
+    </div>
   )
 }
 

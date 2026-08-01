@@ -557,6 +557,20 @@ export interface SnapshotStep extends StepBase {
   reason: string
 }
 
+/**
+ * Put a snapshot's files back.
+ *
+ * A step rather than a direct command call because a restore is the most
+ * consequential thing this app does — it overwrites live config wholesale — and
+ * so it belongs in front of the same review panel as everything else. It also
+ * takes its own safety snapshot on the way through, which the report carries
+ * back as `artifact`: the undo is itself undoable.
+ */
+export interface SnapshotRestoreStep extends StepBase {
+  kind: "snapshotRestore"
+  snapshotId: string
+}
+
 export type StepDescriptor =
   | CommandStep
   | ReleaseInstallStep
@@ -573,6 +587,7 @@ export type StepDescriptor =
   | CcVisibleAppsStep
   | FileRestoreStep
   | SnapshotStep
+  | SnapshotRestoreStep
 
 /**
  * How a step that first failed on the network was rescued. Present only when a
@@ -598,4 +613,13 @@ export interface StepReport {
   durationMs?: number
   /** Set when the step only succeeded after a network retry (see `StepRecovery`). */
   recovery?: StepRecovery
+  /**
+   * An identifier for the restore point this step created — a config snapshot
+   * id, or the path of a skill backup.
+   *
+   * Only steps that genuinely produced one set this. An installed CLI has no
+   * snapshot and must not pretend otherwise: the activity log shows "no
+   * automatic undo" for those rather than offering a button that would fail.
+   */
+  artifact?: string
 }

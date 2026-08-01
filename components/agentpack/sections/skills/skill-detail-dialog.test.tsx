@@ -18,7 +18,7 @@ import { useAppStore } from "@/store/app-store"
 import { readTextFile, writeTextFile } from "@/lib/tauri/commands"
 import { openPath, revealPath } from "@/lib/tauri/system"
 import type { SkillRow } from "@/lib/skills/types"
-import { RunnerProvider } from "../../run/runner-context"
+import { RunnerHarness } from "../../run/__testing__/harness"
 import { SkillDetailDialog } from "./skill-detail-dialog"
 
 const paths = {
@@ -66,15 +66,15 @@ const row: SkillRow = {
 }
 
 beforeEach(() => {
-  useAppStore.setState({ paths, dryRun: false, panelOpen: false })
+  useAppStore.setState({ paths, panelOpen: false })
 })
 
 function renderDialog() {
   return render(
     <I18nProvider>
-      <RunnerProvider>
+      <RunnerHarness autoApply>
         <SkillDetailDialog row={row} open onOpenChange={jest.fn()} refresh={jest.fn()} />
-      </RunnerProvider>
+      </RunnerHarness>
     </I18nProvider>
   )
 }
@@ -174,9 +174,9 @@ it("renders highlighted frontmatter fields and allowed-tools chips", () => {
   }
   render(
     <I18nProvider>
-      <RunnerProvider>
+      <RunnerHarness autoApply>
         <SkillDetailDialog row={rich} open onOpenChange={jest.fn()} refresh={jest.fn()} />
-      </RunnerProvider>
+      </RunnerHarness>
     </I18nProvider>
   )
   expect(screen.getByText(en.skillsBrowser.whenToUseLabel)).toBeInTheDocument()

@@ -70,5 +70,7 @@ export function previewLines(
       return [out.wouldRestore(step.backupPath, step.path)]
     case "snapshot":
       return [out.wouldSnapshot]
+    case "snapshotRestore":
+      return [out.wouldRestoreSnapshot(step.snapshotId)]
   }
 }

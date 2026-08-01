@@ -37,13 +37,12 @@ import {
   probePort,
   proxyCheck,
   proxyEnvSnapshot,
-  readTextFile,
   runCommand,
   setProcessProxy,
   writeTextFile,
 } from "@/lib/tauri/commands"
 import { saveSettings } from "@/lib/tauri/settings"
-import { RunnerProvider } from "../../run/runner-context"
+import { RunnerHarness } from "../../run/__testing__/harness"
 import { NetworkSection } from "./index"
 
 const paths = {
@@ -87,7 +86,7 @@ beforeEach(() => {
   // resetPlan preserves network config by design (it outlives a bundle switch), so
   // wipe it explicitly here — these tests each start from an unconfigured network.
   useAppStore.setState((s) => ({ plan: { ...s.plan, network: {} } }))
-  useAppStore.setState({ paths, dryRun: false, panelOpen: false })
+  useAppStore.setState({ paths, panelOpen: false })
   useAppStore.getState().setNetworkProbe(null)
   useAppStore.getState().setNetworkProbing(false)
 })
@@ -95,9 +94,9 @@ beforeEach(() => {
 function renderSection() {
   return render(
     <I18nProvider>
-      <RunnerProvider>
+      <RunnerHarness autoApply>
         <NetworkSection />
-      </RunnerProvider>
+      </RunnerHarness>
     </I18nProvider>
   )
 }
@@ -231,20 +230,33 @@ it("applies the proxy: writes the selected targets, then makes it real for agent
   )
 })
 
-it("a preview run changes nothing outside the plan", async () => {
-  useAppStore.setState({ dryRun: true })
-  renderSection()
+it("writes nothing until the staged changes are applied", async () => {
+  // The gate, from the section's side: Apply opens the review panel and stops.
+  // Nothing reaches the machine — and the settings write, which is ours rather
+  // than the runner's, must not run ahead of it either.
+  render(
+    <I18nProvider>
+      <RunnerHarness panel>
+        <NetworkSection />
+      </RunnerHarness>
+    </I18nProvider>
+  )
   await userEvent.click(screen.getByRole("radio", { name: en.network.proxy.mode.manual }))
   await userEvent.type(screen.getByLabelText(en.network.proxy.httpLabel), "127.0.0.1:7890")
   await userEvent.click(screen.getByRole("button", { name: en.network.proxy.apply }))
 
-  // The run happened (the execution panel opened) but nothing was touched.
   await waitFor(() => expect(useAppStore.getState().panelOpen).toBe(true))
+  await screen.findByRole("button", { name: en.review.apply })
   expect(writeTextFile).not.toHaveBeenCalled()
-  expect(readTextFile).not.toHaveBeenCalled()
   expect(runCommand).not.toHaveBeenCalled()
   expect(setProcessProxy).not.toHaveBeenCalled()
   expect(saveSettings).not.toHaveBeenCalled()
+
+  // And a preview still writes nothing, while leaving Apply on the table.
+  await userEvent.click(screen.getByRole("button", { name: en.review.previewOnly }))
+  await waitFor(() => expect(writeTextFile).not.toHaveBeenCalled())
+  expect(runCommand).not.toHaveBeenCalled()
+  expect(screen.getByRole("button", { name: en.review.apply })).toBeEnabled()
 })
 
 it("clearing turns the proxy off and releases agentpack's own traffic", async () => {

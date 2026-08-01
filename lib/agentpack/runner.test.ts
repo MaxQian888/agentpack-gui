@@ -940,6 +940,54 @@ describe("snapshot", () => {
     expect(reports[0].status).toBe("done")
     expect(api.backupSnapshot).not.toHaveBeenCalled()
   })
+
+  it("records the snapshot as this step's restore point", async () => {
+    ;(api.backupSnapshot as jest.Mock).mockResolvedValue({ id: "snap-1" })
+    const step: StepDescriptor = { kind: "snapshot", id: "s", label: "s", reason: "before import" }
+    const reports = await runSteps([step], { dryRun: false, paths })
+    expect(reports[0].artifact).toBe("snap-1")
+  })
+})
+
+describe("snapshotRestore", () => {
+  const step: StepDescriptor = {
+    kind: "snapshotRestore",
+    id: "r",
+    label: "r",
+    snapshotId: "snap-1",
+  }
+
+  it("restores every file and reports the restore point it created", async () => {
+    ;(api.backupRestore as jest.Mock).mockResolvedValue({
+      restoredPaths: ["/h/.claude/settings.json", "/h/.codex/config.toml"],
+      safetySnapshotId: "snap-safety",
+    })
+    const reports = await runSteps([step], { dryRun: false, paths })
+    expect(reports[0].status).toBe("done")
+    expect(api.backupRestore).toHaveBeenCalledWith("snap-1")
+    const log = reports[0].output.join("\n")
+    expect(log).toContain("/h/.claude/settings.json")
+    expect(log).toContain("/h/.codex/config.toml")
+    // The undo is itself undoable, and the step says which snapshot to use.
+    expect(log).toContain("snap-safety")
+    expect(reports[0].artifact).toBe("snap-safety")
+  })
+
+  it("writes nothing on a dry run, and says what it would overwrite", async () => {
+    const reports = await runSteps([step], { dryRun: true, paths })
+    expect(reports[0].status).toBe("done")
+    expect(api.backupRestore).not.toHaveBeenCalled()
+    expect(reports[0].output.join("\n")).toContain("snap-1")
+  })
+
+  it("fails loudly rather than silently when the restore is refused", async () => {
+    // Rust refuses while cc-switch is running, to avoid corrupting the DB
+    // underneath it. That must surface as a failed step, not a green row.
+    ;(api.backupRestore as jest.Mock).mockRejectedValue(new Error("cc-switch is running"))
+    const reports = await runSteps([step], { dryRun: false, paths })
+    expect(reports[0].status).toBe("error")
+    expect(reports[0].artifact).toBeUndefined()
+  })
 })
 
 /**

@@ -18,6 +18,7 @@ import {
 import { brewMirrorEnv } from "@/lib/agentpack/network/mirrors"
 import type { RecoveryContext } from "@/lib/agentpack/network/recovery"
 import type { Profile } from "@/lib/agentpack/profile"
+import type { ActivityRecord } from "@/lib/agentpack/activity"
 import {
   mcpTargetsFor,
   presetSelection,
@@ -69,7 +70,12 @@ export type UpdateState =
 
 interface State {
   plan: Plan
-  dryRun: boolean
+  /**
+   * Preview is no longer a mode. It used to be a global switch in the title bar,
+   * which meant every write in the app had to remember to ask about it and the
+   * user had to remember it was on — so it is now a button inside the review
+   * panel, scoped to the one run it previews. See `useRunner.previewPending`.
+   */
   osOverride: OS | null
   paths: Paths | null
   panelOpen: boolean
@@ -102,6 +108,11 @@ interface State {
   networkProbing: boolean
   profiles: Profile[]
   currentProfileId: string | null
+  /**
+   * What this app has done to this machine, newest first. Hydrated once at
+   * startup and replaced after each real run; the file on disk is the truth.
+   */
+  activity: ActivityRecord[]
 
   // App self-update + persisted settings.
   appVersion: string | null
@@ -133,7 +144,6 @@ interface State {
    */
   recoveryContext: () => RecoveryContext | undefined
   setPaths: (p: Paths) => void
-  toggleDryRun: () => void
   setOsOverride: (os: OS | null) => void
   setPanelOpen: (open: boolean) => void
   setOnboardingOpen: (open: boolean) => void
@@ -168,6 +178,8 @@ interface State {
    */
   syncTargetsToClis: () => void
 
+  setActivity: (activity: ActivityRecord[]) => void
+
   setProfiles: (profiles: Profile[]) => void
   /** Snapshot the current plan as a new profile; returns it so callers persist. */
   saveCurrentAsProfile: (name: string) => Profile
@@ -178,7 +190,6 @@ interface State {
 
 export const useAppStore = create<State>((set, get) => ({
   plan: emptyPlan("mac"),
-  dryRun: false,
   osOverride: null,
   paths: null,
   panelOpen: false,
@@ -192,6 +203,7 @@ export const useAppStore = create<State>((set, get) => ({
   networkProbing: false,
   profiles: [],
   currentProfileId: null,
+  activity: [],
 
   appVersion: null,
   updateState: "idle",
@@ -250,7 +262,6 @@ export const useAppStore = create<State>((set, get) => ({
     return ctx
   },
   setPaths: (p) => set((s) => ({ paths: p, plan: { ...s.plan, os: s.osOverride ?? p.os } })),
-  toggleDryRun: () => set((s) => ({ dryRun: !s.dryRun })),
   setOsOverride: (os) =>
     set((s) => ({ osOverride: os, plan: { ...s.plan, os: os ?? s.paths?.os ?? "mac" } })),
   setPanelOpen: (open) => set({ panelOpen: open }),
@@ -328,6 +339,8 @@ export const useAppStore = create<State>((set, get) => ({
         mcps: s.plan.mcps.map((x) => ({ ...x, targets: mcpTargetsFor(s.plan.clis) })),
       },
     })),
+
+  setActivity: (activity) => set({ activity }),
 
   setProfiles: (profiles) => set({ profiles }),
   saveCurrentAsProfile: (name) => {

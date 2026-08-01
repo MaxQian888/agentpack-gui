@@ -34,7 +34,7 @@ import {
 } from "@/lib/tauri/commands"
 import type { InstalledSkill, SkillsScanResult } from "@/lib/skills/types"
 import { openPath, revealPath } from "@/lib/tauri/system"
-import { RunnerProvider } from "../../run/runner-context"
+import { RunnerHarness } from "../../run/__testing__/harness"
 import { InstalledSkillsTab } from "./installed"
 
 const paths = {
@@ -79,15 +79,15 @@ const scan: SkillsScanResult = {
 }
 
 beforeEach(() => {
-  useAppStore.setState({ paths, dryRun: false, panelOpen: false })
+  useAppStore.setState({ paths, panelOpen: false })
 })
 
 function renderTab(refresh = jest.fn()) {
   render(
     <I18nProvider>
-      <RunnerProvider>
+      <RunnerHarness autoApply>
         <InstalledSkillsTab scan={scan} refresh={refresh} />
-      </RunnerProvider>
+      </RunnerHarness>
     </I18nProvider>
   )
   return refresh
@@ -208,9 +208,9 @@ it("checks for updates and flags a managed skill with a pending update", async (
   ])
   render(
     <I18nProvider>
-      <RunnerProvider>
+      <RunnerHarness autoApply>
         <InstalledSkillsTab scan={managedScan} refresh={jest.fn()} />
-      </RunnerProvider>
+      </RunnerHarness>
     </I18nProvider>
   )
   await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.checkUpdates }))
@@ -246,9 +246,9 @@ it("updates a single managed skill from its row menu", async () => {
   ])
   render(
     <I18nProvider>
-      <RunnerProvider>
+      <RunnerHarness autoApply>
         <InstalledSkillsTab scan={managedScan} refresh={jest.fn()} />
-      </RunnerProvider>
+      </RunnerHarness>
     </I18nProvider>
   )
   await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.checkUpdates }))

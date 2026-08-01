@@ -9,7 +9,7 @@ jest.mock("@/lib/tauri/commands", () => ({
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
-import { RunnerProvider } from "../../run/runner-context"
+import { RunnerHarness } from "../../run/__testing__/harness"
 import { useAppStore } from "@/store/app-store"
 import { installSkill, removeDir } from "@/lib/tauri/commands"
 import type { SkillsScanResult } from "@/lib/skills/types"
@@ -43,15 +43,15 @@ const rustInstalled: SkillsScanResult = {
 
 beforeEach(() => {
   useAppStore.getState().resetPlan()
-  useAppStore.setState({ paths, dryRun: false, panelOpen: false })
+  useAppStore.setState({ paths, panelOpen: false })
 })
 
 function renderCatalog(scan: SkillsScanResult = emptyScan) {
   return render(
     <I18nProvider>
-      <RunnerProvider>
+      <RunnerHarness autoApply>
         <CatalogTab scan={scan} refresh={jest.fn()} />
-      </RunnerProvider>
+      </RunnerHarness>
     </I18nProvider>
   )
 }

@@ -26,7 +26,7 @@ jest.mock("@/lib/tauri/system", () => ({
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
-import { RunnerProvider } from "../run/runner-context"
+import { RunnerHarness } from "../run/__testing__/harness"
 import { useAppStore } from "@/store/app-store"
 import { toast } from "sonner"
 import {
@@ -66,7 +66,6 @@ beforeEach(() => {
   ;(stopCcConnect as jest.Mock).mockResolvedValue(undefined)
   useAppStore.setState({
     paths,
-    dryRun: false,
     panelOpen: false,
     osOverride: null,
     detections: {},
@@ -78,9 +77,9 @@ beforeEach(() => {
 function renderCc() {
   return render(
     <I18nProvider>
-      <RunnerProvider>
+      <RunnerHarness autoApply>
         <CcConnectSection />
-      </RunnerProvider>
+      </RunnerHarness>
     </I18nProvider>
   )
 }
@@ -179,15 +178,6 @@ it("surfaces a stop failure as a toast", async () => {
   renderCc()
   await userEvent.click(await screen.findByRole("button", { name: en.ccconnect.stop }))
   await waitFor(() => expect(toast.error).toHaveBeenCalledWith(en.ccconnect.stopFailed))
-})
-
-it("disables start/stop and shows a hint in preview (dry-run) mode", async () => {
-  ;(detectCli as jest.Mock).mockResolvedValue({ installed: true, version: "1.4.1" })
-  useAppStore.setState({ dryRun: true })
-  renderCc()
-  const start = await screen.findByRole("button", { name: en.ccconnect.start })
-  expect(start).toBeDisabled()
-  expect(screen.getByText(en.ccconnect.dryRunBlocked)).toBeInTheDocument()
 })
 
 it("disables start while cc-connect is not installed", async () => {

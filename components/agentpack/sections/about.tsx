@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Kbd } from "@/components/ui/kbd"
 import { Label } from "@/components/ui/label"
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Progress } from "@/components/ui/progress"
 import { Switch } from "@/components/ui/switch"
 import { Spinner } from "@/components/ui/spinner"
@@ -26,14 +27,21 @@ import {
   unregisterSummonShortcut,
 } from "@/lib/tauri/shortcut"
 import { openUrl, revealPath } from "@/lib/tauri/system"
-import { useT } from "@/lib/i18n/provider"
+import { useLocale, useT } from "@/lib/i18n/provider"
+import type { Lang } from "@/lib/i18n/types"
+import type { OS } from "@/lib/agentpack/types"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
 
 const RELEASES_URL = "https://github.com/Arxtect/agentpack-gui/releases"
 
+const OS_OPTIONS: OS[] = ["win", "mac", "linux"]
+
 export function AboutSection() {
   const t = useT()
+  const { lang, setLang } = useLocale()
+  const osOverride = useAppStore((s) => s.osOverride)
+  const setOsOverride = useAppStore((s) => s.setOsOverride)
   const appVersion = useAppStore((s) => s.appVersion)
   const updateState = useAppStore((s) => s.updateState)
   const updateInfo = useAppStore((s) => s.updateInfo)
@@ -214,6 +222,48 @@ export function AboutSection() {
             </div>
           </div>
         ) : null}
+
+        {/* Language and the OS override moved here out of the header: they are
+            set once and then never again, and the title bar's job is to say
+            where you are, not to hold every preference the app has. */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+          <Label htmlFor="app-language" className="cursor-pointer text-sm">
+            {t.shell.language}
+          </Label>
+          <NativeSelect
+            id="app-language"
+            size="sm"
+            value={lang}
+            onChange={(e) => setLang(e.target.value as Lang)}
+          >
+            <NativeSelectOption value="en">EN</NativeSelectOption>
+            <NativeSelectOption value="zh-CN">中文</NativeSelectOption>
+          </NativeSelect>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+          <div className="min-w-0">
+            <Label htmlFor="os-override" className="cursor-pointer text-sm">
+              {t.shell.osOverride}
+            </Label>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t.about.osOverrideHint}</p>
+          </div>
+          <NativeSelect
+            id="os-override"
+            size="sm"
+            value={osOverride ?? "auto"}
+            onChange={(e) =>
+              setOsOverride(e.target.value === "auto" ? null : (e.target.value as OS))
+            }
+          >
+            <NativeSelectOption value="auto">{t.shell.osAuto}</NativeSelectOption>
+            {OS_OPTIONS.map((os) => (
+              <NativeSelectOption key={os} value={os}>
+                {os}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
 
         <div className="flex items-center justify-between gap-3 border-t pt-4">
           <Label htmlFor="auto-check" className="cursor-pointer text-sm">

@@ -144,6 +144,9 @@ export async function runSteps(steps: StepDescriptor[], opts: RunOptions): Promi
           signal: opts.signal,
           recovery: opts.recovery,
           allowFallbacks: true,
+          setArtifact: (id) => {
+            report.artifact = id
+          },
         })
         if (recovered) report.recovery = recovered
       }
@@ -215,6 +218,13 @@ interface ExecContext {
   recovery?: RecoveryContext
   /** False inside a fallback, so a fallback can never spawn fallbacks of its own. */
   allowFallbacks: boolean
+  /**
+   * Record the restore point this step created. Only the two steps that
+   * genuinely make one call it — an installed CLI has no snapshot, and the
+   * activity log says "no automatic undo" for those rather than offering a
+   * button that would fail.
+   */
+  setArtifact: (id: string) => void
 }
 
 /**
@@ -466,6 +476,17 @@ async function execute(step: StepDescriptor, ctx: ExecContext): Promise<StepReco
     case "snapshot": {
       const entry = await api.backupSnapshot(step.reason)
       log(m.coreOutput.snapshot(entry.id))
+      ctx.setArtifact(entry.id)
+      return
+    }
+    case "snapshotRestore": {
+      const result = await api.backupRestore(step.snapshotId)
+      for (const path of result.restoredPaths) log(m.coreOutput.restored(path))
+      // The restore took its own snapshot on the way through, so this step is
+      // itself reversible — which is the whole reason a restore is allowed to
+      // overwrite live config at all.
+      log(m.coreOutput.restorePoint(result.safetySnapshotId))
+      ctx.setArtifact(result.safetySnapshotId)
       return
     }
     case "ccProvider": {

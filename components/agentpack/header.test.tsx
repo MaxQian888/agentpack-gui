@@ -16,68 +16,77 @@ import { Header } from "./header"
 import { en } from "@/lib/i18n/en"
 
 beforeEach(() => {
-  useAppStore.setState({ dryRun: false, osOverride: null })
+  useAppStore.setState({ osOverride: null })
   ;(detectOs as jest.Mock).mockResolvedValue(null)
 })
 
-function renderHeader(onRun = jest.fn()) {
+function renderHeader(props: Partial<React.ComponentProps<typeof Header>> = {}): {
+  onNavigate: jest.Mock
+  onOpenCommand: jest.Mock
+} {
+  const onNavigate = jest.fn()
+  const onOpenCommand = jest.fn()
   render(
     <I18nProvider>
-      <Header onRun={onRun} />
+      <Header
+        workspace="overview"
+        section="dashboard"
+        onNavigate={onNavigate}
+        onOpenCommand={onOpenCommand}
+        {...props}
+      />
     </I18nProvider>
   )
-  return { onRun }
+  return { onNavigate, onOpenCommand }
 }
 
-it("toggles dry-run via the preview switch", async () => {
-  renderHeader()
-  expect(useAppStore.getState().dryRun).toBe(false)
-  await userEvent.click(screen.getByLabelText(en.shell.preview))
-  expect(useAppStore.getState().dryRun).toBe(true)
+describe("context", () => {
+  it("names the workspace, and stays quiet about the section when there's only one", () => {
+    renderHeader()
+    expect(screen.getByText(en.workspaces.overview)).toBeInTheDocument()
+    expect(screen.queryByText(en.menu.dashboard)).not.toBeInTheDocument()
+  })
+
+  it("names both once the workspace has tabs to be lost among", () => {
+    renderHeader({ workspace: "install", section: "network" })
+    expect(screen.getByText(en.workspaces.install)).toBeInTheDocument()
+    expect(screen.getByText(en.menu.network)).toBeInTheDocument()
+  })
 })
 
-it("invokes onRun when the run button is clicked", async () => {
-  const { onRun } = renderHeader()
-  await userEvent.click(screen.getByRole("button", { name: en.shell.run }))
-  expect(onRun).toHaveBeenCalled()
-})
+describe("controls", () => {
+  it("opens the command palette from the search affordance", async () => {
+    const { onOpenCommand } = renderHeader()
+    await userEvent.click(screen.getByRole("button", { name: /⌘K/ }))
+    expect(onOpenCommand).toHaveBeenCalled()
+  })
 
-it("toggles the theme without throwing", async () => {
-  renderHeader()
-  await userEvent.click(screen.getByRole("button", { name: en.shell.toggleTheme }))
-  expect(screen.getByRole("button", { name: en.shell.toggleTheme })).toBeInTheDocument()
-})
+  it("toggles the theme without throwing", async () => {
+    renderHeader()
+    await userEvent.click(screen.getByRole("button", { name: en.shell.toggleTheme }))
+    expect(screen.getByRole("button", { name: en.shell.toggleTheme })).toBeInTheDocument()
+  })
 
-it("renders only the plain Run button when the quick-install handlers are absent", () => {
-  renderHeader()
-  expect(screen.getByRole("button", { name: en.shell.run })).toBeInTheDocument()
-  expect(screen.queryByRole("button", { name: en.shell.quickInstall })).not.toBeInTheDocument()
-})
+  it("carries no run control — the title bar can't show what it would do", () => {
+    // A one-click install that is always in reach, on the one row of the window
+    // that never explains itself, is exactly the control this refactor removed.
+    renderHeader()
+    expect(screen.queryByRole("button", { name: en.shell.run })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: en.shell.quickInstall })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(en.shell.preview)).not.toBeInTheDocument()
+  })
 
-function renderMenuHeader() {
-  const onRun = jest.fn()
-  const onQuickInstall = jest.fn()
-  const onCustomize = jest.fn()
-  render(
-    <I18nProvider>
-      <Header onRun={onRun} onQuickInstall={onQuickInstall} onCustomize={onCustomize} />
-    </I18nProvider>
-  )
-  return { onRun, onQuickInstall, onCustomize }
-}
-
-it("runs a preset bundle from the Run ▾ quick-install menu", async () => {
-  const { onQuickInstall } = renderMenuHeader()
-  await userEvent.click(screen.getByRole("button", { name: en.shell.quickInstall }))
-  await userEvent.click(screen.getByRole("menuitem", { name: en.presets.everything.title }))
-  expect(onQuickInstall).toHaveBeenCalledWith("everything")
-})
-
-it("opens the customize dialog from the Run ▾ menu", async () => {
-  const { onCustomize } = renderMenuHeader()
-  await userEvent.click(screen.getByRole("button", { name: en.shell.quickInstall }))
-  await userEvent.click(screen.getByRole("menuitem", { name: en.shell.customize }))
-  expect(onCustomize).toHaveBeenCalled()
+  it("shows the update affordance only when there is an update to take", async () => {
+    const onShowUpdates = jest.fn()
+    useAppStore.setState({
+      updateState: "available",
+      updateInfo: { version: "9.9.9" } as never,
+    })
+    renderHeader({ onShowUpdates })
+    await userEvent.click(screen.getByRole("button", { name: en.about.updateAvailable("9.9.9") }))
+    expect(onShowUpdates).toHaveBeenCalled()
+    useAppStore.setState({ updateState: "idle", updateInfo: null })
+  })
 })
 
 // The header doubles as the title bar once the window frame is gone.
@@ -111,8 +120,8 @@ describe("frameless window", () => {
     // Tauri's drag script bails on BUTTON/LABEL/role-bearing elements, so this
     // guards the thing that would break if we ever swapped a control for a div.
     ;(detectOs as jest.Mock).mockResolvedValue("win")
-    const { onRun } = renderHeader()
-    await userEvent.click(await screen.findByRole("button", { name: en.shell.run }))
-    expect(onRun).toHaveBeenCalled()
+    const { onOpenCommand } = renderHeader()
+    await userEvent.click(await screen.findByRole("button", { name: /⌘K/ }))
+    expect(onOpenCommand).toHaveBeenCalled()
   })
 })

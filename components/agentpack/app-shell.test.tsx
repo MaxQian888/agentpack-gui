@@ -3,13 +3,14 @@ jest.mock("sonner", () => ({
   toast: { success: jest.fn(), error: jest.fn(), message: jest.fn() },
 }))
 
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { toast } from "sonner"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { AppShell } from "./app-shell"
-import { SECTIONS } from "./sidebar-nav"
+import { SECTIONS, sectionMeta, workspaceMeta } from "./sidebar-nav"
+import { hasTabs, workspaceOf, type SectionKey } from "@/lib/agentpack/workspaces"
 import { en } from "@/lib/i18n/en"
 
 beforeEach(() => {
@@ -25,28 +26,54 @@ function renderShell() {
   )
 }
 
-it("renders the presets section by default and the run control", () => {
+/** Open a workspace from the rail, then a section from its tab strip. */
+async function goTo(section: SectionKey) {
+  const w = workspaceOf(section)
+  const rail = screen.getByRole("navigation", { name: en.workspaces.nav })
+  await userEvent.click(within(rail).getByRole("button", { name: workspaceMeta(w).label(en) }))
+  if (hasTabs(w)) {
+    await userEvent.click(screen.getByRole("tab", { name: sectionMeta(section).label(en) }))
+  }
+}
+
+it("lands on the overview, named in the title bar", () => {
   renderShell()
-  expect(screen.getByRole("button", { name: en.shell.run })).toBeInTheDocument()
+  expect(screen.getByRole("navigation", { name: en.workspaces.nav })).toBeInTheDocument()
+  expect(screen.getByText(en.dashboard.title)).toBeInTheDocument()
 })
 
-it("renders each section branch when its nav item is selected", async () => {
+it("reaches every section through its workspace", async () => {
   renderShell()
   for (const s of SECTIONS) {
-    const label = s.label(en)
-    // Nav buttons share their label with the section heading; the nav item is first.
-    await userEvent.click(screen.getAllByRole("button", { name: label })[0])
-    expect(screen.getByRole("button", { name: en.shell.run })).toBeInTheDocument()
+    await goTo(s.key)
+    // Each destination is a real panel, not a blank: its heading is on screen.
+    expect(screen.getAllByText(sectionMeta(s.key).label(en)).length).toBeGreaterThan(0)
   }
   // The config section exposes its own load action (navigate to it explicitly
   // so this doesn't depend on which section the loop ends on).
-  await userEvent.click(screen.getAllByRole("button", { name: en.menu.saveConfig })[0])
+  await goTo("config")
   expect(screen.getByRole("button", { name: /load config/i })).toBeInTheDocument()
 })
 
-it("toasts when Run is pressed with no resolved paths (web mode)", async () => {
+it("shows a tab strip only where a workspace has more than one destination", async () => {
   renderShell()
-  await userEvent.click(screen.getByRole("button", { name: en.shell.run }))
+  await goTo("dashboard")
+  expect(screen.queryByRole("tablist")).not.toBeInTheDocument()
+  await goTo("network")
+  expect(screen.getByRole("tablist")).toBeInTheDocument()
+})
+
+it("only offers the review tray once something is selected", async () => {
+  renderShell()
+  expect(screen.queryByRole("button", { name: en.tray.review })).not.toBeInTheDocument()
+  useAppStore.getState().applyPreset("minimal")
+  expect(await screen.findByRole("button", { name: en.tray.review })).toBeInTheDocument()
+})
+
+it("toasts when a review is requested with no resolved paths (web mode)", async () => {
+  renderShell()
+  useAppStore.getState().applyPreset("minimal")
+  await userEvent.click(await screen.findByRole("button", { name: en.tray.review }))
   expect(toast.error).toHaveBeenCalled()
 })
 

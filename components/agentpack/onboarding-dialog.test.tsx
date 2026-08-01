@@ -23,7 +23,6 @@ const healthyProbe: NetworkProbeResult = {
 }
 
 beforeEach(() => {
-  useAppStore.setState({ dryRun: false })
   useAppStore.getState().resetPlan()
   useAppStore.setState((s) => ({ plan: { ...s.plan, network: {} } }))
   useAppStore.getState().setNetworkProbe(healthyProbe)
@@ -321,14 +320,13 @@ describe("step 4 — install", () => {
     expect(screen.queryByText(en.welcome.keysTitle)).not.toBeInTheDocument()
   })
 
-  it("offers no dry-run toggle — that question belongs in the header", async () => {
+  it("offers no preview toggle — that question belongs in the review panel", async () => {
     // As the first thing a newcomer is asked it only invites the wrong answer:
     // they preview, see every step report it *would* have run, and conclude the
-    // install failed.
+    // install failed. Preview now lives next to the step list it previews.
     renderDialog()
     await goToInstall()
     expect(screen.queryByRole("switch")).not.toBeInTheDocument()
-    expect(useAppStore.getState().dryRun).toBe(false)
   })
 })
 

@@ -1,5 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+/* The design system's portable half. Must stay above every rule below, and
+   above the shadcn variable blocks it feeds — see design.md. */
+@import "../tokens.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -112,12 +115,148 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/*
+ * ---------------------------------------------------------------------------
+ * Hallmark · Cobalt mapping
+ * ---------------------------------------------------------------------------
+ * The shadcn variable NAMES above are the contract all 56 ui/ components are
+ * written against, so the system is applied by re-pointing them at tokens.css
+ * rather than by rewriting components. Everything here is an override of a
+ * value declared earlier in this file; nothing is renamed or removed.
+ */
+:root {
+  --background: var(--hm-paper);
+  --foreground: var(--hm-ink);
+  /* Panels sit ON the paper and are drawn with a rule, not lifted off it — so
+     card and paper are deliberately the same colour. Depth is the hairline. */
+  --card: var(--hm-paper);
+  --card-foreground: var(--hm-ink);
+  /* Overlays are the one exception: they float above a scrim, so they step up
+     to keep the boundary readable when the rule alone can't carry it. */
+  --popover: var(--hm-paper);
+  --popover-foreground: var(--hm-ink);
+  --primary: var(--hm-accent);
+  --primary-foreground: var(--hm-accent-ink);
+  --secondary: var(--hm-paper-2);
+  --secondary-foreground: var(--hm-ink);
+  --muted: var(--hm-paper-2);
+  --muted-foreground: var(--hm-ink-3);
+  /* shadcn's `accent` is its hover/active fill, not a brand colour — mapping it
+     to the cobalt would flood every menu row with the signal. */
+  --accent: var(--hm-paper-3);
+  --accent-foreground: var(--hm-ink);
+  --destructive: var(--hm-danger);
+  --border: var(--hm-rule);
+  --input: var(--hm-rule-2);
+  --ring: var(--hm-focus);
+
+  /* Categorical ramp: the signal first, then four hues held at comparable
+     lightness and chroma so no series shouts louder than its neighbours. */
+  --chart-1: var(--hm-accent);
+  --chart-2: oklch(58% 0.11 195);
+  --chart-3: oklch(56% 0.14 305);
+  --chart-4: oklch(64% 0.13 75);
+  --chart-5: oklch(58% 0.15 12);
+
+  --sidebar: var(--hm-paper-2);
+  --sidebar-foreground: var(--hm-ink-2);
+  --sidebar-primary: var(--hm-accent);
+  --sidebar-primary-foreground: var(--hm-accent-ink);
+  --sidebar-accent: var(--hm-paper-3);
+  --sidebar-accent-foreground: var(--hm-ink);
+  --sidebar-border: var(--hm-rule);
+  --sidebar-ring: var(--hm-focus);
+}
+
+.dark {
+  --background: var(--hm-paper);
+  --foreground: var(--hm-ink);
+  --card: var(--hm-paper);
+  --card-foreground: var(--hm-ink);
+  --popover: var(--hm-paper-2);
+  --popover-foreground: var(--hm-ink);
+  --primary: var(--hm-accent);
+  --primary-foreground: var(--hm-accent-ink);
+  --secondary: var(--hm-paper-2);
+  --secondary-foreground: var(--hm-ink);
+  --muted: var(--hm-paper-2);
+  --muted-foreground: var(--hm-ink-3);
+  --accent: var(--hm-paper-3);
+  --accent-foreground: var(--hm-ink);
+  --destructive: var(--hm-danger);
+  --border: var(--hm-rule);
+  --input: var(--hm-rule-2);
+  --ring: var(--hm-focus);
+
+  --chart-1: var(--hm-accent);
+  --chart-2: oklch(72% 0.1 195);
+  --chart-3: oklch(70% 0.13 305);
+  --chart-4: oklch(78% 0.12 75);
+  --chart-5: oklch(70% 0.14 12);
+
+  --sidebar: var(--hm-paper-2);
+  --sidebar-foreground: var(--hm-ink-2);
+  --sidebar-primary: var(--hm-accent);
+  --sidebar-primary-foreground: var(--hm-accent-ink);
+  --sidebar-accent: var(--hm-paper-3);
+  --sidebar-accent-foreground: var(--hm-ink);
+  --sidebar-border: var(--hm-rule);
+  --sidebar-ring: var(--hm-focus);
+}
+
+/*
+ * Two Tailwind-scale corrections, so the utilities the components already use
+ * land on the system instead of on the framework defaults:
+ *   · controls are 6px and containers 10px, per design.md § Structure;
+ *   · the small shadows are cut, because a hairline already drew the edge.
+ *     `shadow-md`/`lg` survive for true overlays (dialog, popover, dropdown),
+ *     which float above a scrim and can't rely on a rule alone.
+ */
+@theme inline {
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --shadow-2xs: 0 0 #0000;
+  --shadow-xs: 0 0 #0000;
+  --shadow-sm: 0 0 #0000;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
   body {
     @apply bg-background text-foreground;
+    font-size: var(--hm-text-base);
+    line-height: var(--hm-leading-normal);
+  }
+
+  /* Every number that can be compared down a column is compared down a column:
+     token counts, costs, durations, versions, byte sizes. */
+  :where(table, [data-tabular]) {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* One ring, drawn instantly. Animating focus is how a keyboard user loses
+     track of where they are. */
+  :where(:focus-visible) {
+    outline: var(--hm-focus-width) solid var(--hm-focus);
+    outline-offset: var(--hm-focus-offset);
+    transition: none;
+  }
+
+  /* Spatial motion collapses to a crossfade; nothing that conveys state is
+     removed, only the distance it travels. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 
   /*

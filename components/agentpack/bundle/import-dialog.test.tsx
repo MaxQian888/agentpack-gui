@@ -1,4 +1,8 @@
-const run = jest.fn<Promise<unknown[]>, [StepDescriptor[]]>(async () => [])
+// `run` now resolves with the reports of the run the user APPLIED, and with []
+// when they dismissed the review panel instead. The default stands in for
+// "reviewed and applied"; the dismissal case gets its own test below.
+const applied = [{ id: "s", label: "s", status: "done", output: [] }]
+const run = jest.fn<Promise<unknown[]>, [StepDescriptor[]]>(async () => applied)
 jest.mock("../run/runner-context", () => ({ useRunnerCtx: () => ({ run }) }))
 jest.mock("sonner", () => ({
   toast: { success: jest.fn(), error: jest.fn(), message: jest.fn() },
@@ -82,8 +86,8 @@ beforeEach(() => {
     plan: LOCAL,
     paths: PATHS,
     profiles: [],
-    dryRun: false,
   })
+  run.mockResolvedValue(applied)
 })
 
 async function openWith(text: string) {
@@ -190,8 +194,10 @@ it("writes nothing to the store when a step failed", async () => {
   expect(useAppStore.getState().plan.clis).toEqual(["claude-code"])
 })
 
-it("runs the steps but leaves the store alone in dry-run mode", async () => {
-  useAppStore.setState({ dryRun: true })
+it("leaves the store alone when the review panel is dismissed without applying", async () => {
+  // The store writes below (plan, profiles, settings) are ours, not the
+  // runner's — so a run that never happened must not move them either.
+  run.mockResolvedValueOnce([])
   await openWith(bundleText({ profiles: [{ id: "p", name: "P", createdAt: 0, plan: INCOMING }] }))
   await screen.findByText(b.partPlan)
   await clickImport()

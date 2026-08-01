@@ -17,9 +17,9 @@ interface TourStep {
 }
 
 /**
- * The ordered walkthrough: the sidebar, then **every** section in the order it
- * appears there, then the two header controls that tie the flow together
- * (preview + run).
+ * The ordered walkthrough: the task rail, then **every** section in the order it
+ * appears there, then the two things that tie the flow together — the ⌘K
+ * palette and the change tray that leads to the review panel.
  *
  * Every section gets a stop on purpose — a tour that skips five of them leaves
  * the user believing those features don't exist. The section list is derived
@@ -33,8 +33,8 @@ interface TourStep {
 const STEPS: readonly TourStep[] = [
   { id: "nav", section: "dashboard", target: "nav" },
   ...SECTIONS.map((s) => ({ id: s.key, section: s.key, target: "section-heading" })),
-  { id: "preview", section: "dashboard" as SectionKey, target: "preview" },
-  { id: "run", section: "dashboard" as SectionKey, target: "run" },
+  { id: "command", section: "dashboard" as SectionKey, target: "command" },
+  { id: "review", section: "presets" as SectionKey, target: "tray" },
 ]
 
 interface Rect {

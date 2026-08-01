@@ -82,7 +82,6 @@ export function CcConnectSection() {
   const c = t.ccconnect
   const paths = useAppStore((s) => s.paths)
   const effectiveOS = useAppStore((s) => s.effectiveOS)
-  const dryRun = useAppStore((s) => s.dryRun)
   const latestVersions = useAppStore((s) => s.latestVersions)
   const cliManagers = useAppStore((s) => s.cliManagers)
   const storeDetected = useAppStore((s) => s.detections["cc-connect"])
@@ -191,7 +190,7 @@ export function CcConnectSection() {
   // the flip (spawn/kill return before the ports open/close). If the poll gives
   // up, the state didn't change — surface that as a failure.
   const setService = async (start: boolean) => {
-    if (dryRun || busy) return
+    if (busy) return
     setBusy(true)
     try {
       await (start ? startCcConnect() : stopCcConnect([mgmtPort, bridgePort, webhookPort]))
@@ -218,7 +217,7 @@ export function CcConnectSection() {
   // skips its login form. This folds the old enable → start → open steps into
   // one and fixes "the dashboard still asks me to log in".
   const openDashboard = async () => {
-    if (!paths || dryRun || webBusy) return
+    if (!paths || webBusy) return
     setWebBusy(true)
     try {
       const text = await readTextFile(paths.ccConnectConfig)
@@ -348,7 +347,7 @@ export function CcConnectSection() {
               variant="outline"
               size="sm"
               className="gap-1"
-              disabled={busy || dryRun}
+              disabled={busy}
               onClick={() => void setService(false)}
             >
               {busy ? (
@@ -363,7 +362,7 @@ export function CcConnectSection() {
               variant="outline"
               size="sm"
               className="gap-1"
-              disabled={busy || dryRun || detected !== true}
+              disabled={busy || detected !== true}
               onClick={() => void setService(true)}
             >
               {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
@@ -371,9 +370,7 @@ export function CcConnectSection() {
             </Button>
           )}
         </div>
-        <p className="border-t pt-3 text-xs text-muted-foreground">
-          {dryRun ? c.dryRunBlocked : c.daemonNote}
-        </p>
+        <p className="border-t pt-3 text-xs text-muted-foreground">{c.daemonNote}</p>
       </Card>
 
       {/* Web dashboard */}
@@ -395,7 +392,7 @@ export function CcConnectSection() {
             variant="outline"
             size="sm"
             className="gap-1"
-            disabled={webBusy || dryRun || detected !== true || !paths}
+            disabled={webBusy || detected !== true || !paths}
             onClick={() => void openDashboard()}
           >
             {webBusy ? (

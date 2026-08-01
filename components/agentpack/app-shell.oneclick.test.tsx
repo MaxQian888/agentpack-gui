@@ -86,7 +86,6 @@ beforeEach(() => {
   useAppStore.setState({
     paths: null,
     panelOpen: false,
-    dryRun: false,
     detections: {},
     latestVersions: {},
   })
@@ -118,7 +117,7 @@ it("Run drops an already-installed MCP and keeps a missing one", async () => {
     useAppStore.getState().setMcp("context7", ["claude"])
   })
 
-  await userEvent.click(screen.getByRole("button", { name: en.shell.run }))
+  await userEvent.click(await screen.findByRole("button", { name: en.tray.review }))
 
   // The review panel shows the deduped plan: context7 add is present…
   await waitFor(() => expect(screen.getByText(claudeMcpLabel("context7"))).toBeInTheDocument())
@@ -150,7 +149,7 @@ it("falls back to the last good scan when a fresh one fails", async () => {
   ;(readTextFile as jest.Mock).mockRejectedValue(new Error("EBUSY"))
   ;(listSkills as jest.Mock).mockRejectedValue(new Error("EBUSY"))
 
-  await userEvent.click(screen.getByRole("button", { name: en.shell.run }))
+  await userEvent.click(await screen.findByRole("button", { name: en.tray.review }))
 
   // Still deduped against the remembered scan: memory stays dropped.
   await waitFor(() => expect(screen.getByText(claudeMcpLabel("context7"))).toBeInTheDocument())
@@ -171,7 +170,7 @@ it("refuses to run at all when there is no readable scan to dedup against", asyn
     useAppStore.getState().setMcp("context7", ["claude"])
   })
 
-  await userEvent.click(screen.getByRole("button", { name: en.shell.run }))
+  await userEvent.click(await screen.findByRole("button", { name: en.tray.review }))
 
   // No step list at all — better than a run that re-adds what's already there.
   await waitFor(() => expect(toast.error).toHaveBeenCalledWith(en.shell.scanFailed))

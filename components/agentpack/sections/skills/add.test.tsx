@@ -40,7 +40,7 @@ import {
 } from "@/lib/tauri/commands"
 import { pickFolder } from "@/lib/tauri/dialog"
 import { saveSettings } from "@/lib/tauri/settings"
-import { RunnerProvider } from "../../run/runner-context"
+import { RunnerHarness } from "../../run/__testing__/harness"
 import { AddSkillsTab } from "./add"
 
 const paths = {
@@ -57,7 +57,6 @@ const paths = {
 beforeEach(() => {
   useAppStore.setState({
     paths,
-    dryRun: false,
     panelOpen: false,
     settings: {
       autoCheckUpdates: true,
@@ -74,9 +73,9 @@ beforeEach(() => {
 function renderAdd(refresh = jest.fn()) {
   render(
     <I18nProvider>
-      <RunnerProvider>
+      <RunnerHarness autoApply>
         <AddSkillsTab installed={{ skills: [], errors: [] }} refresh={refresh} />
-      </RunnerProvider>
+      </RunnerHarness>
     </I18nProvider>
   )
   return refresh

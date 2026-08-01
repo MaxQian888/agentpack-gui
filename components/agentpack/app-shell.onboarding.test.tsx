@@ -84,7 +84,6 @@ beforeEach(() => {
     paths: null,
     panelOpen: false,
     onboardingOpen: false,
-    dryRun: false,
     detections: {},
     latestVersions: {},
   })

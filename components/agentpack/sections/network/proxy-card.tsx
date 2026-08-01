@@ -61,7 +61,7 @@ export function ProxyCard({
   const setSettings = useAppStore((s) => s.setSettings)
   const paths = useAppStore((s) => s.paths)
   const effectiveOS = useAppStore((s) => s.effectiveOS)
-  const { run, dryRun } = useRunnerCtx()
+  const { run } = useRunnerCtx()
   const [testUrl, setTestUrl] = useState(PROXY_TEST_URLS[0].url)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<ProxyCheckResult | null>(null)
@@ -90,7 +90,8 @@ export function ProxyCard({
       return
     }
     const reports = await run(proxyApplySteps(proxy, paths, effectiveOS(), t))
-    if (dryRun || reports.length === 0) return
+    // Empty means the user closed the review panel without applying.
+    if (reports.length === 0) return
     if (reports.some((r) => r.status === "error")) return
     // Make it real for agentpack itself (skill downloads, the MCP registry, every
     // spawned CLI) and keep it across restarts.
@@ -107,7 +108,7 @@ export function ProxyCard({
     if (!paths) return
     const targets = proxy.targets.length ? proxy.targets : PROXY_TARGETS
     const reports = await run(proxyClearSteps(targets, paths, effectiveOS(), t))
-    if (dryRun || reports.length === 0) return
+    if (reports.length === 0) return
     setProxy({ mode: "off" })
     await setProcessProxy({})
     setSettings(await saveSettings({ proxy: null }))

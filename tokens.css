@@ -1,0 +1,150 @@
+/* Hallmark · macrostructure: Workbench · tone: technical · anchor hue: cobalt 256
+ * genre: modern-minimal · theme: Cobalt (Geist substituted for Space Grotesk/Inter,
+ * preserved from the project's existing next/font stack)
+ * axes: paper-band = light (98.5%) · display-style = grotesk-sans · accent-hue = cool
+ *
+ * The portable half of the design system. Every colour, size, duration and easing
+ * the app draws with is named here; nothing downstream may inline a raw value.
+ * The prose that explains WHY each of these is what it is lives in ../design.md.
+ */
+
+:root {
+  /* ---- Type ------------------------------------------------------------ */
+  /* Geist carries display and body alike; the mono is for readouts, paths,
+     versions, keyboard hints and every number that has to line up. */
+  --hm-font-display: var(--font-geist-sans);
+  --hm-font-body: var(--font-geist-sans);
+  --hm-font-mono: var(--font-geist-mono);
+
+  /* Major third (1.25) walked out from 14px — a desktop tool's reading size,
+     not a marketing page's. Rounded to the nearest 1px so hairlines stay crisp. */
+  --hm-text-2xs: 0.6875rem; /* 11 — mono meta, kbd hints */
+  --hm-text-xs: 0.75rem; /* 12 — labels, badges, table headers */
+  --hm-text-sm: 0.8125rem; /* 13 — secondary body, captions */
+  --hm-text-base: 0.875rem; /* 14 — body */
+  --hm-text-lg: 1.0625rem; /* 17 — card titles */
+  --hm-text-xl: 1.3125rem; /* 21 — section titles */
+  --hm-text-2xl: 1.625rem; /* 26 — workspace titles */
+  --hm-text-3xl: 2.0625rem; /* 33 — the one number worth reading across a room */
+
+  --hm-leading-tight: 1.25;
+  --hm-leading-snug: 1.4;
+  --hm-leading-normal: 1.55;
+
+  --hm-tracking-tight: -0.011em; /* display sizes only */
+  --hm-tracking-normal: 0em;
+  --hm-tracking-mono: 0.06em; /* UPPERCASE mono labels */
+
+  /* ---- Space (4pt, semantic) ------------------------------------------- */
+  --hm-space-3xs: 0.125rem; /* 2 */
+  --hm-space-2xs: 0.25rem; /* 4 */
+  --hm-space-xs: 0.5rem; /* 8 */
+  --hm-space-sm: 0.75rem; /* 12 */
+  --hm-space-md: 1rem; /* 16 */
+  --hm-space-lg: 1.5rem; /* 24 */
+  --hm-space-xl: 2rem; /* 32 */
+  --hm-space-2xl: 3rem; /* 48 */
+  --hm-space-3xl: 4rem; /* 64 */
+
+  /* ---- Structure ------------------------------------------------------- */
+  /* Hairlines carry the layout. There is no generic elevation token on
+     purpose: a raised-looking box is a box that isn't drawn. */
+  --hm-rule-width: 1px;
+  --hm-radius-control: 6px; /* buttons, inputs, tabs, chips */
+  --hm-radius-surface: 10px; /* panels, cards, dialogs, code blocks */
+  --hm-radius-dot: 999px; /* status dots and count bubbles ONLY */
+
+  /* The task rail. Two widths, one step — narrow enough that a 900px window
+     still has a workspace, wide enough that labels never wrap. */
+  --hm-rail-width: 11.5rem;
+  --hm-rail-width-wide: 13rem;
+
+  /* ---- Motion ---------------------------------------------------------- */
+  --hm-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --hm-ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --hm-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --hm-dur-fast: 120ms; /* state change on a control */
+  --hm-dur-base: 180ms; /* panel fade, tab swap */
+  --hm-dur-slow: 260ms; /* the tray sliding in */
+
+  /* ---- Colour · light -------------------------------------------------- */
+  /* Cool engineered near-white, never #fff. Cool charcoal ink, never #000. */
+  --hm-paper: oklch(98.5% 0.004 250);
+  --hm-paper-2: oklch(96.6% 0.005 252); /* rail, table headers, inset wells */
+  --hm-paper-3: oklch(94.2% 0.006 253); /* hover, muted fills */
+  --hm-paper-4: oklch(91% 0.007 253); /* pressed */
+
+  --hm-ink: oklch(24% 0.02 258); /* headings, primary text */
+  --hm-ink-2: oklch(34% 0.018 257); /* body */
+  --hm-ink-3: oklch(52% 0.015 256); /* muted, meta, placeholders */
+
+  --hm-rule: oklch(89% 0.008 254); /* the default hairline */
+  --hm-rule-2: oklch(82% 0.01 254); /* input borders, emphasis rules */
+
+  /* ONE signal. Under 5% of any viewport: the active rail item, the primary
+     button, focus rings, links, the live status chip. Nothing decorative. */
+  --hm-accent: oklch(55% 0.2 256);
+  --hm-accent-strong: oklch(48% 0.19 256); /* hover / active on a filled control */
+  --hm-accent-ink: oklch(99% 0.005 250); /* text ON the accent */
+  --hm-accent-soft: oklch(96% 0.025 256); /* selection wash, active row tint */
+
+  --hm-graphite: oklch(22% 0.016 260); /* code blocks, log output */
+  --hm-graphite-ink: oklch(92% 0.008 252);
+
+  /* Status. Functional, not decorative — these appear as dots, chips and one
+     word of text, never as a filled card background. */
+  --hm-ok: oklch(52% 0.13 155);
+  --hm-ok-soft: oklch(95% 0.03 155);
+  --hm-warn: oklch(60% 0.13 75);
+  --hm-warn-soft: oklch(96% 0.04 85);
+  --hm-danger: oklch(53% 0.19 27);
+  --hm-danger-soft: oklch(96% 0.025 27);
+  --hm-neutral: oklch(62% 0.012 256); /* skipped / not applicable */
+
+  /* Per-CLI identity, used only where a row must say which agent it came from.
+     Kept low-chroma so a history list doesn't turn into a fruit salad. */
+  --hm-source-claude: oklch(58% 0.13 45);
+  --hm-source-codex: oklch(56% 0.1 200);
+  --hm-source-opencode: oklch(56% 0.11 300);
+
+  --hm-focus: var(--hm-accent);
+  --hm-focus-width: 2px;
+  --hm-focus-offset: 2px;
+}
+
+.dark {
+  /* Cobalt is a light theme with one dark band. Its dark mode grounds the whole
+     app on that band's graphite rather than inventing a second palette. */
+  --hm-paper: oklch(19% 0.014 260);
+  --hm-paper-2: oklch(22.5% 0.016 260);
+  --hm-paper-3: oklch(26.5% 0.016 260);
+  --hm-paper-4: oklch(30% 0.016 260);
+
+  --hm-ink: oklch(96% 0.006 250);
+  --hm-ink-2: oklch(87% 0.008 252);
+  --hm-ink-3: oklch(66% 0.012 254);
+
+  --hm-rule: oklch(30% 0.014 258);
+  --hm-rule-2: oklch(38% 0.016 258);
+
+  /* Lifted so the signal keeps ≥4.5:1 on graphite and reads as the same blue. */
+  --hm-accent: oklch(70% 0.16 256);
+  --hm-accent-strong: oklch(78% 0.14 256);
+  --hm-accent-ink: oklch(17% 0.02 260);
+  --hm-accent-soft: oklch(30% 0.06 256);
+
+  --hm-graphite: oklch(15% 0.014 260);
+  --hm-graphite-ink: oklch(90% 0.008 252);
+
+  --hm-ok: oklch(72% 0.14 155);
+  --hm-ok-soft: oklch(28% 0.05 155);
+  --hm-warn: oklch(78% 0.13 80);
+  --hm-warn-soft: oklch(30% 0.05 80);
+  --hm-danger: oklch(68% 0.17 27);
+  --hm-danger-soft: oklch(28% 0.06 27);
+  --hm-neutral: oklch(58% 0.012 256);
+
+  --hm-source-claude: oklch(72% 0.12 45);
+  --hm-source-codex: oklch(70% 0.09 200);
+  --hm-source-opencode: oklch(72% 0.1 300);
+}

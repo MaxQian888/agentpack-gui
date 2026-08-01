@@ -128,7 +128,6 @@ export function ImportBundleDialog({ onImported }: { onImported?: () => void }) 
   const paths = useAppStore((s) => s.paths)
   const profiles = useAppStore((s) => s.profiles)
   const settings = useAppStore((s) => s.settings)
-  const dryRun = useAppStore((s) => s.dryRun)
   const effectiveOS = useAppStore((s) => s.effectiveOS)
   const loadPlan = useAppStore((s) => s.loadPlan)
   const setProfiles = useAppStore((s) => s.setProfiles)
@@ -219,9 +218,10 @@ export function ImportBundleDialog({ onImported }: { onImported?: () => void }) 
       // A failed write means the machine is in a state we didn't intend; don't
       // compound it by moving the in-memory store somewhere else too.
       if (reports.some((r) => r.status === "error")) return
-      // Dry-run must mean dry-run: the runner honours it for steps, but these
-      // store writes are ours and would otherwise land for real.
-      if (dryRun) {
+      // No reports at all means the user closed the review panel without
+      // applying — the store writes below are ours, and must not land for a
+      // run that never happened.
+      if (reports.length === 0) {
         toast.message(b.dryRunSkipped)
         setOpen(false)
         return

@@ -522,6 +522,21 @@ export function buildSteps(
  * complete, runnable plan, so neither the runner's "your plan is empty" toast
  * nor the quick-install dialog's disabled button may treat it as nothing.
  */
+/**
+ * How many things the user has picked, for the change tray's count.
+ *
+ * Counts *selections*, not the steps they will become — one skill selected for
+ * three agents is one decision the user made, and a tray reading "3" for it
+ * would be lying about what they chose. The network config counts as one
+ * regardless of how many surfaces it writes to, for the same reason.
+ */
+export function countSelections(plan: Plan | undefined): number {
+  if (!plan) return 0
+  const net = plan.network
+  const network = (net.npmRegistry ? 1 : 0) + (isProxyActive(net.proxy) ? 1 : 0)
+  return plan.clis.length + plan.skills.length + plan.mcps.length + network
+}
+
 export function planHasSelections(plan: Plan | undefined): boolean {
   if (!plan) return false
   const net = plan.network

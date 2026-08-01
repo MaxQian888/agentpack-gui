@@ -31,13 +31,16 @@ jest.mock("@/lib/tauri/commands", () => ({
   pathExists: jest.fn(async () => true),
   backupList: jest.fn(async () => [] as unknown[]),
   backupSnapshot: jest.fn(async () => ({ id: "snapshot-1", ts: 1, reason: "x", files: [] })),
-  backupRestore: jest.fn(async () => ["/h/.claude/settings.json"]),
+  backupRestore: jest.fn(async () => ({
+    restoredPaths: ["/h/.claude/settings.json"],
+    safetySnapshotId: "snapshot-safety",
+  })),
 }))
 
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
-import { RunnerProvider } from "../../run/runner-context"
+import { RunnerHarness } from "../../run/__testing__/harness"
 import { useAppStore } from "@/store/app-store"
 import { toast } from "sonner"
 import {
@@ -96,15 +99,15 @@ beforeEach(() => {
   ])
   // The import tests point this at a bundle; left set, a later test would open it.
   ;(openDialog as jest.Mock).mockResolvedValue(null)
-  useAppStore.setState({ paths, dryRun: false, panelOpen: false, osOverride: null })
+  useAppStore.setState({ paths, panelOpen: false, osOverride: null })
 })
 
 function renderCc() {
   return render(
     <I18nProvider>
-      <RunnerProvider>
+      <RunnerHarness autoApply>
         <CcSwitchSection />
-      </RunnerProvider>
+      </RunnerHarness>
     </I18nProvider>
   )
 }
@@ -516,7 +519,7 @@ it("syncs the first provider of an app live (the DB marks it current)", async ()
   )
 })
 
-it("renders the backup history and restores an entry", async () => {
+it("renders the backup history and restores an entry through the review panel", async () => {
   ;(backupList as jest.Mock).mockResolvedValue([
     { id: "snapshot-9", ts: 1700000000000, reason: "provider write", files: [{}, {}] },
   ])
@@ -527,6 +530,8 @@ it("renders the backup history and restores an entry", async () => {
   await userEvent.click(within(dialog).getByRole("button", { name: en.ccswitch.restore }))
   await waitFor(() => expect(backupRestore).toHaveBeenCalledWith("snapshot-9"))
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith(en.ccswitch.restored))
+  // The step log names the restore point the restore itself created — the undo
+  // is undoable, and the user is told so rather than having to trust it.
 })
 
 it("toasts an error when a restore fails", async () => {

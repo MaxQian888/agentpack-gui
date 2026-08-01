@@ -78,8 +78,8 @@ export const en = {
     progress: (i: number, n: number) => `${i} / ${n}`,
     steps: {
       nav: {
-        title: "Everything lives here",
-        body: "The left sidebar groups every feature — jump to any part of agentpack from here.",
+        title: "Five places, not twelve",
+        body: "The rail on the left is grouped by what you're trying to do: check the machine, install and repair, manage capabilities, look at usage, change settings.",
       },
       dashboard: {
         title: "Dashboard",
@@ -129,13 +129,13 @@ export const en = {
         title: "Updates & settings",
         body: "Check for a new agentpack version, set a global summon hotkey, and reopen this guide any time.",
       },
-      preview: {
-        title: "Preview first",
-        body: "Turn this on to see exactly what a run would do — without changing anything.",
+      command: {
+        title: "One way to anywhere",
+        body: "Press ⌘K (Ctrl+K on Windows and Linux) to jump to any task area, or to run an app action without hunting for it.",
       },
-      run: {
-        title: "Install in one click",
-        body: "Once your plan looks right, run it here. Already-installed items are skipped automatically.",
+      review: {
+        title: "Nothing is written until you say so",
+        body: "Whatever you pick collects at the bottom of the window. Reviewing it shows the exact steps — preview them, then apply.",
       },
     } as Record<string, { title: string; body: string }>,
   },
@@ -171,6 +171,10 @@ export const en = {
     writesTo: (agents: string) => `Set up for ${agents}`,
     install: "Install now",
     installPreview: "Preview plan",
+    /** The selection summary column (folded into the change tray when narrow). */
+    summary: "Your selection",
+    summaryEmpty: "Nothing yet.",
+    alreadyInstalled: "already installed",
   },
 
   /**
@@ -569,6 +573,15 @@ export const en = {
   review: {
     title: "Review plan",
     dryRunSuffix: " (dry-run — nothing will be changed)",
+    /** The two explicit exits from the review gate. */
+    heading: "Review changes",
+    stepCount: (n: number) => `${n} step${n === 1 ? "" : "s"} will run on this machine.`,
+    previewOnly: "Preview only",
+    previewing: "Previewing…",
+    previewDone: "Previewed — nothing was written. Apply when you're ready.",
+    apply: "Apply changes",
+    applying: "Applying…",
+    discard: "Discard",
     installClis: "Install CLIs:",
     skills: "Skills:",
     mcpServers: "MCP servers:",
@@ -872,6 +885,7 @@ export const en = {
     noUninstaller: (title: string) => `No automated uninstaller for ${title} on this OS.`,
     restoreFile: (path: string) => `Restore ${path} from backup`,
     snapshot: "Back up cc-switch DB and live configs",
+    snapshotRestore: (id: string) => `Restore everything from backup ${id}`,
     bundleFile: (path: string) => `Restore ${path} from the backup`,
     bundleFileWritten: (path: string) => `restored ${path}`,
     syncClaude: "Sync provider → Claude Code settings.json",
@@ -895,7 +909,11 @@ export const en = {
     restore: (src: string, dest: string) => `restore ${src} -> ${dest}`,
     wouldRestore: (src: string, dest: string) => `would restore ${src} -> ${dest}`,
     snapshot: (id: string) => `backed up → ${id}`,
+    restored: (path: string) => `restored ${path}`,
+    restorePoint: (id: string) => `restore point for this restore → ${id}`,
     wouldSnapshot: "would back up cc-switch DB and live configs",
+    wouldRestoreSnapshot: (id: string) =>
+      `would restore every file from backup ${id}, snapshotting the current state first`,
     wouldCcProvider: {
       add: (app: string) => `would add a provider to ${app}`,
       update: (app: string) => `would update a provider in ${app}`,
@@ -1439,6 +1457,114 @@ export const en = {
   },
 
   /** GUI shell strings (header controls, dialogs) — GUI-only, not in the TUI. */
+  /**
+   * The five task domains in the rail. Named after what someone is trying to
+   * do, which is why none of them is called after a file format or a vendor.
+   */
+  workspaces: {
+    nav: "Task areas",
+    open: "Open task areas",
+    overview: "Overview",
+    overviewHint: "What this machine looks like right now.",
+    install: "Install & repair",
+    installHint: "Put the agents, runtimes and network route in place.",
+    capabilities: "Capabilities",
+    capabilitiesHint: "Skills, MCP servers and providers the agents can reach.",
+    usage: "Usage",
+    usageHint: "What the agents have been doing, and what it cost.",
+    settings: "Settings",
+    settingsHint: "Profiles, config files, and the app itself.",
+  },
+
+  /**
+   * The ⌘K command palette. It indexes destinations and app actions only —
+   * never chat transcripts, config contents or keys.
+   */
+  palette: {
+    open: "Search",
+    title: "Command palette",
+    description: "Jump to a task area or run an app action.",
+    placeholder: "Go to a task area, or type an action…",
+    empty: "Nothing matches that.",
+    groupGo: "Go to",
+    groupActions: "Actions",
+    quickConfig: "Open quick config",
+    rescan: "Rescan this machine",
+    review: "Review pending changes",
+    reviewCount: (n: number) => `Review ${n} pending change${n === 1 ? "" : "s"}`,
+    toggleTheme: "Switch light / dark",
+    onboarding: "Reopen the setup guide",
+    updates: "Check for app updates",
+  },
+
+  /**
+   * The overview's to-do list. Each line names what was observed on this
+   * machine — never a category, never a score.
+   */
+  diagnostics: {
+    title: "Needs your attention",
+    clean: "Nothing needs attention.",
+    cleanDetail: "Every config parsed, every installed tool is current.",
+    notScanned: "Run the desktop app to check this machine.",
+    severity: {
+      critical: "Blocking",
+      warning: "Worth a look",
+      info: "Optional",
+    },
+    rescan: "Rescan",
+    restore: "Restore from backup",
+    open: "Open",
+    setUp: "Set one up",
+    openNetwork: "Open network",
+    degradedTitle: "Some of this machine couldn't be read",
+    degradedDetail:
+      "A config file was locked or unreadable, so everything below was worked out from a partial view. Installs are held back until a clean scan lands.",
+    noAgentTitle: "No coding agent installed",
+    noAgentDetail: "Neither Claude Code nor Codex was found on this machine.",
+    fileClaudeSettings: "Claude settings",
+    fileCodexConfig: "Codex config",
+    configInvalidTitle: (file: string) => `${file} doesn't parse`,
+    configMissingTitle: (file: string) => `${file} is gone, but a backup is here`,
+    networkTitle: "Nothing was reachable",
+    networkDetail:
+      "The network check reached neither the direct route nor any proxy it found. Installs will fail until that changes.",
+    upgradeTitle: (tool: string, version: string) => `${tool} ${version} is out`,
+    upgradeFrom: (version: string) => `You have ${version}.`,
+  },
+
+  /** The overview's record of what this app has actually done to the machine. */
+  activity: {
+    title: "Recent activity",
+    empty: "Nothing yet. Runs you apply will be listed here.",
+    notTauri: "Run the desktop app to keep a record of what changed.",
+    viewAll: "Open the run panel",
+    steps: (n: number) => `${n} step${n === 1 ? "" : "s"}`,
+    outcome: {
+      done: "Applied",
+      warning: "Applied with warnings",
+      error: "Failed",
+      cancelled: "Stopped",
+    },
+    source: {
+      "quick-config": "Quick config",
+      section: "Section action",
+      recovery: "Network recovery",
+      restore: "Restore",
+      unknown: "Run",
+    } as Record<string, string>,
+    /** Said plainly rather than offering an undo that would fail. */
+    noUndo: "No automatic undo",
+    restorePoint: "Restore point kept",
+  },
+
+  /** The bottom change tray — what's selected but not yet reviewed. */
+  tray: {
+    label: "Pending selection",
+    count: (n: number) => `${n} selected`,
+    clear: "Clear selection",
+    review: "Review changes",
+  },
+
   shell: {
     toggleTheme: "Toggle theme",
     light: "Light",
@@ -1827,6 +1953,7 @@ export const en = {
     skipVersion: "Skip this version",
     viewOnGitHub: "View on GitHub",
     checkFailed: "Update check failed. Please try again later.",
+    osOverrideHint: "Build install commands for a different OS than this one.",
     autoCheckLabel: "Check for updates on startup",
     summonShortcutLabel: "Global hotkey",
     summonShortcutHint: "Bring agentpack to the front from anywhere with",

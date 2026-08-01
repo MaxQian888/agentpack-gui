@@ -7,7 +7,7 @@ import { GuidedTour } from "./guided-tour"
 import { SECTIONS } from "./sidebar-nav"
 
 const s = en.tour.steps
-/** Sidebar + every section + the two header controls. */
+/** The rail + every section + the palette and the change tray. */
 const TOTAL = SECTIONS.length + 3
 
 afterEach(() => jest.restoreAllMocks())
@@ -38,9 +38,10 @@ it("steps forward through the sections, auto-navigating each", async () => {
   const { onNavigate } = renderTour()
   await clickNext() // → dashboard
   expect(screen.getByText(s.dashboard.title)).toBeInTheDocument()
-  await clickNext() // → history
-  expect(screen.getByText(s.history.title)).toBeInTheDocument()
-  expect(onNavigate).toHaveBeenCalledWith("history")
+  await clickNext() // → the second section in rail order
+  const second = SECTIONS[1].key
+  expect(screen.getByText(s[second].title)).toBeInTheDocument()
+  expect(onNavigate).toHaveBeenCalledWith(second)
   expect(screen.getByText(en.tour.progress(3, TOTAL))).toBeInTheDocument()
 })
 
@@ -58,7 +59,7 @@ describe("coverage", () => {
   })
 
   it("has copy for every stop in both languages", () => {
-    const ids = ["nav", ...SECTIONS.map((x) => x.key), "preview", "run"]
+    const ids = ["nav", ...SECTIONS.map((x) => x.key), "command", "review"]
     for (const id of ids) {
       expect(en.tour.steps[id]?.title).toBeTruthy()
       expect(en.tour.steps[id]?.body).toBeTruthy()
@@ -79,7 +80,7 @@ it("goes back to the previous step", async () => {
 it("finishes on the last step via Done", async () => {
   const { onClose } = renderTour()
   for (let i = 0; i < TOTAL - 1; i++) await clickNext()
-  expect(screen.getByText(s.run.title)).toBeInTheDocument()
+  expect(screen.getByText(s.review.title)).toBeInTheDocument()
   expect(screen.queryByRole("button", { name: en.tour.next })).not.toBeInTheDocument()
   await userEvent.click(screen.getByRole("button", { name: en.tour.done }))
   expect(onClose).toHaveBeenCalled()

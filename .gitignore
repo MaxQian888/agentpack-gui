@@ -63,3 +63,6 @@ next-env.d.ts
 /blob-report/
 /playwright/.cache/
 /.playwright-mcp/
+
+# Hallmark keeps its local design-audit memory here — not shared state.
+/.hallmark/

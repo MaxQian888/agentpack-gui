@@ -491,7 +491,13 @@ export const backupSnapshot = (reason: string) => invoke<BackupEntry>("backup_sn
 
 export const backupList = () => invoke<BackupEntry[]>("backup_list")
 
-export const backupRestore = (id: string) => invoke<string[]>("backup_restore", { id })
+/** What a restore wrote, plus the snapshot taken of the state it replaced. */
+export interface RestoreResult {
+  restoredPaths: string[]
+  safetySnapshotId: string
+}
+
+export const backupRestore = (id: string) => invoke<RestoreResult>("backup_restore", { id })
 
 /**
  * Scan Claude Code / Codex / OpenCode for chat sessions and return normalized

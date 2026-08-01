@@ -18,6 +18,7 @@ import {
   skillsScan,
 } from "@/lib/tauri/commands"
 import { checkForUpdate, getAppVersion } from "@/lib/tauri/updater"
+import { loadActivity } from "@/lib/tauri/activity"
 import { loadSettings, saveSettings, type OnboardingProgress } from "@/lib/tauri/settings"
 import { registerSummonShortcut } from "@/lib/tauri/shortcut"
 import { notify } from "@/lib/tauri/system"
@@ -27,10 +28,19 @@ import { scanNetwork } from "@/lib/agentpack/network/scan"
 import { hostArch } from "@/lib/tauri/system"
 import { CLI_TOOLS, RUNTIMES, runtimePkgManager, SKILLS } from "@/lib/agentpack/registry"
 import { skillTargetsFor, type Surface } from "@/lib/agentpack/presets"
+import {
+  hasTabs,
+  workspaceOf,
+  type SectionKey,
+  type WorkspaceKey,
+} from "@/lib/agentpack/workspaces"
 import { useAppStore } from "@/store/app-store"
 import { useT } from "@/lib/i18n/provider"
 import { Header } from "./header"
-import { SidebarNav, type SectionKey } from "./sidebar-nav"
+import { WorkspaceRail } from "./sidebar-nav"
+import { WorkspaceTabs } from "./workspace-tabs"
+import { ChangeTray } from "./change-tray"
+import { CommandPalette, useCommandShortcut } from "./command-palette"
 import { DashboardSection, scanEnvironment, type DashboardScan } from "./sections/dashboard"
 import { HistorySection } from "./sections/history"
 import { PresetsSection } from "./sections/presets"
@@ -44,7 +54,6 @@ import { CcConnectSection } from "./sections/ccconnect"
 import { AboutSection } from "./sections/about"
 import { ConfigIO } from "./config-io"
 import { OnboardingDialog } from "./onboarding-dialog"
-import { QuickInstallDialog } from "./quick-install-dialog"
 import { GuidedTour } from "./guided-tour"
 import { RunnerProvider, useRunnerCtx } from "./run/runner-context"
 import { ExecutionPanel } from "./run/execution-panel"
@@ -53,6 +62,7 @@ function ShellBody() {
   const t = useT()
   const paths = useAppStore((s) => s.paths)
   const setPaths = useAppStore((s) => s.setPaths)
+  const setActivity = useAppStore((s) => s.setActivity)
   const setDetections = useAppStore((s) => s.setDetections)
   const setLatestVersion = useAppStore((s) => s.setLatestVersion)
   const setCliManager = useAppStore((s) => s.setCliManager)
@@ -69,12 +79,27 @@ function ShellBody() {
   const setSkill = useAppStore((s) => s.setSkill)
   const onboardingOpen = useAppStore((s) => s.onboardingOpen)
   const setOnboardingOpen = useAppStore((s) => s.setOnboardingOpen)
+  const setPanelOpen = useAppStore((s) => s.setPanelOpen)
   const tourActive = useAppStore((s) => s.tourActive)
   const setTourActive = useAppStore((s) => s.setTourActive)
-  const { run, onAfterRun } = useRunnerCtx()
+  const { run, onAfterRun, pendingCount } = useRunnerCtx()
+  // Where we are: a task domain, and which of its destinations is showing. Both
+  // are held here because the header names them, the rail highlights one and the
+  // tab strip the other — a single `section` would leave the rail guessing.
+  const [workspace, setWorkspace] = useState<WorkspaceKey>("overview")
   const [section, setSection] = useState<SectionKey>("dashboard")
-  // One-page quick-install (customize) dialog, opened from the header Run ▾ menu.
-  const [customizeOpen, setCustomizeOpen] = useState(false)
+  const [commandOpen, setCommandOpen] = useState(false)
+
+  const navigate = useCallback((next: WorkspaceKey, to: SectionKey) => {
+    setWorkspace(next)
+    setSection(to)
+  }, [])
+
+  /** Navigate by destination — for the tour, the dashboard's links and the palette. */
+  const goToSection = useCallback((to: SectionKey) => navigate(workspaceOf(to), to), [navigate])
+
+  const openCommand = useCallback(() => setCommandOpen(true), [])
+  useCommandShortcut(openCommand)
 
   // Saved wizard progress, once settings have been read. The wizard seeds its
   // state from this exactly once, so it is keyed on it below rather than gated
@@ -267,10 +292,18 @@ function ShellBody() {
   useEffect(() => {
     if (!isTauri()) return
     getPaths()
-      .then(setPaths)
+      .then((p) => {
+        setPaths(p)
+        // What this app has already done to the machine. Read once, here,
+        // because the overview shows it before the user touches anything —
+        // and because it costs one small JSON read, unlike the scans above.
+        loadActivity(p.home)
+          .then(setActivity)
+          .catch(() => {})
+      })
       .catch(() => {})
     void refreshDetections()
-  }, [setPaths, refreshDetections])
+  }, [setPaths, setActivity, refreshDetections])
 
   // Hydrate persisted settings + app version once on startup, then (if enabled)
   // silently check for an app update — surfaced via the header/sidebar badge and
@@ -404,15 +437,14 @@ function ShellBody() {
     [onAfterRun, refreshDetections, rescanDashboard, loadSkills]
   )
 
-  // One-click install: build the plan against a FRESH scan of the current
-  // on-disk state, so already-installed items are skipped instead of re-installed
-  // — the whole point of the header Run button (and the welcome wizard's Install)
-  // being "correct". Plan and paths are read via getState() at call time, not
-  // captured in a closure, so a preset applied moments earlier (from the wizard)
-  // is already reflected. Otherwise already-installed items get re-installed — a
-  // duplicate `claude mcp add` errors, and a redundant CLI/Node install can
-  // re-trigger a UAC prompt.
-  const runOneClick = useCallback(() => {
+  // Turn the current selection into a reviewable change set, built against a
+  // FRESH scan of the on-disk state so already-installed items are skipped
+  // instead of re-installed. Plan and paths are read via getState() at call
+  // time, not captured in a closure, so a bundle applied moments earlier (from
+  // the wizard) is already reflected. Otherwise already-installed items get
+  // re-emitted — a duplicate `claude mcp add` errors, and a redundant CLI/Node
+  // install can re-trigger a UAC prompt.
+  const reviewChanges = useCallback(() => {
     const paths = useAppStore.getState().paths
     if (!paths) {
       void run([], { plan: useAppStore.getState().plan })
@@ -454,13 +486,21 @@ function ShellBody() {
         claudeSkills: [...effective.claudeSkills.known, ...effective.claudeSkills.custom],
         codexSkills: [...effective.codexSkills.known, ...effective.codexSkills.custom],
       }
-      void run(
+      const reports = await run(
         buildSteps(plan, paths, t, installedTools, installedState, {
           arch,
           ghMirrorPrefix: settings.ghMirrorPrefix,
         }),
-        { plan, review: true }
+        { plan, activity: { title: t.tray.review, source: "quick-config" } }
       )
+      // Clear the selection only once it has actually landed. An error or a
+      // skipped step means part of the plan is still outstanding, and wiping it
+      // would leave the user to rebuild by hand exactly when they are least
+      // inclined to. `resetPlan` keeps the network config and MCP keys either
+      // way — those are the machine's setup, not this batch's selection.
+      const settled = reports.length > 0
+      const incomplete = reports.some((r) => r.status === "error" || r.status === "skipped")
+      if (settled && !incomplete) useAppStore.getState().resetPlan()
     })()
   }, [run, refreshDetections, rememberScan, t])
 
@@ -485,18 +525,6 @@ function ShellBody() {
     void saveSettings({ onboardingProgress: progress })
   }, [setOnboardingOpen, setSettings])
 
-  // Apply a bundle and run the same one-click install as the header Run button.
-  // applyPreset writes the store synchronously, so runOneClick (which reads the
-  // plan via getState) picks up the new bundle. Shared by the wizard Install, the
-  // header Run ▾ quick-install menu, and — implicitly — the customize dialog.
-  const runPreset = useCallback(
-    (presetId: string, surface?: Surface) => {
-      applyPreset(presetId, surface)
-      runOneClick()
-    },
-    [applyPreset, runOneClick]
-  )
-
   // Wizard "Install": finish onboarding, then run the chosen bundle. Keys and
   // skills are applied AFTER applyPreset, not before — applyPreset rebuilds the
   // plan from the bundle and would drop anything written ahead of it.
@@ -508,17 +536,10 @@ function ShellBody() {
       // Both directions: the bundle may have selected skills the user unticked.
       const targets = skillTargetsFor(useAppStore.getState().plan.clis)
       for (const s of SKILLS) setSkill(s.id, skills.includes(s.id) ? targets : [])
-      runOneClick()
+      reviewChanges()
     },
-    [dismissOnboarding, applyPreset, setMcpKey, setSkill, runOneClick]
+    [dismissOnboarding, applyPreset, setMcpKey, setSkill, reviewChanges]
   )
-
-  // Customize dialog "Install now": close it, then run the plan the user tuned
-  // in place (no preset applied — the dialog wrote straight to the plan).
-  const installFromCustomize = useCallback(() => {
-    setCustomizeOpen(false)
-    runOneClick()
-  }, [runOneClick])
 
   // Wizard "Take a tour": suspend rather than dismiss — taking the tour is a
   // detour, not a decision to skip setup, so the wizard is still waiting after.
@@ -530,8 +551,8 @@ function ShellBody() {
   // The tour drives section navigation itself; when it ends, return home.
   const endTour = useCallback(() => {
     setTourActive(false)
-    setSection("dashboard")
-  }, [setTourActive])
+    navigate("overview", "dashboard")
+  }, [setTourActive, navigate])
 
   const renderSection = () => {
     switch (section) {
@@ -541,7 +562,7 @@ function ShellBody() {
             scan={dashboardScan}
             scanning={dashboardScanning}
             rescan={rescanDashboard}
-            onNavigate={setSection}
+            onNavigate={goToSection}
             history={{ data: historyResult, progress: historyProgress }}
           />
         )
@@ -560,7 +581,7 @@ function ShellBody() {
           />
         )
       case "presets":
-        return <PresetsSection onCustomize={() => setCustomizeOpen(true)} />
+        return <PresetsSection />
       case "environment":
         return <EnvironmentSection refresh={refreshDetections} />
       case "clis":
@@ -584,7 +605,7 @@ function ShellBody() {
       case "ccconnect":
         return <CcConnectSection />
       case "config":
-        return <ConfigIO onOpenMcp={() => setSection("mcp")} />
+        return <ConfigIO onOpenMcp={() => goToSection("mcp")} />
       case "about":
         return <AboutSection />
     }
@@ -592,17 +613,46 @@ function ShellBody() {
 
   return (
     <div className="flex h-dvh bg-background text-foreground">
-      <SidebarNav active={section} onSelect={setSection} />
+      <WorkspaceRail active={workspace} onSelect={navigate} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Header
-          onRun={runOneClick}
-          onQuickInstall={runPreset}
-          onCustomize={() => setCustomizeOpen(true)}
-          onShowUpdates={() => setSection("about")}
+          workspace={workspace}
+          section={section}
+          onNavigate={navigate}
+          onOpenCommand={openCommand}
+          onShowUpdates={() => goToSection("about")}
         />
-        <main className="flex-1 overflow-auto p-6">{renderSection()}</main>
+        {hasTabs(workspace) ? (
+          <WorkspaceTabs workspace={workspace} active={section} onSelect={setSection} />
+        ) : null}
+        <main
+          id={`panel-${section}`}
+          role={hasTabs(workspace) ? "tabpanel" : undefined}
+          aria-labelledby={hasTabs(workspace) ? `tab-${section}` : undefined}
+          tabIndex={-1}
+          className="flex-1 overflow-auto p-4 sm:p-6"
+        >
+          {renderSection()}
+        </main>
+        {/* Docked to the workspace column rather than the window, so it never
+            covers the rail — the tray is a summary of what you picked, not a
+            modal you have to dismiss to navigate. */}
+        <ChangeTray onReview={reviewChanges} />
       </div>
       <ExecutionPanel />
+      <CommandPalette
+        open={commandOpen}
+        onOpenChange={setCommandOpen}
+        pendingChanges={pendingCount}
+        handlers={{
+          navigate: (a) => navigate(a.workspace, a.section),
+          quickConfig: () => navigate("install", "presets"),
+          rescan: () => void rescanDashboard(),
+          review: () => setPanelOpen(true),
+          onboarding: () => setOnboardingOpen(true),
+          updates: () => goToSection("about"),
+        }}
+      />
       {/* Keyed so that saved progress arriving after mount re-seeds the wizard,
           which reads `progress` only as its initial state. It can flip at most
           once, during startup, before the user has touched anything. */}
@@ -618,12 +668,7 @@ function ShellBody() {
         onSuspend={suspendOnboarding}
         onTour={startTourFromOnboarding}
       />
-      <QuickInstallDialog
-        open={customizeOpen}
-        onInstall={installFromCustomize}
-        onClose={() => setCustomizeOpen(false)}
-      />
-      {tourActive ? <GuidedTour onNavigate={setSection} onClose={endTour} /> : null}
+      {tourActive ? <GuidedTour onNavigate={goToSection} onClose={endTour} /> : null}
     </div>
   )
 }

@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
-import { RunnerProvider } from "../run/runner-context"
+import { RunnerHarness } from "../run/__testing__/harness"
 import { useAppStore } from "@/store/app-store"
 import { ClisSection } from "./clis"
 
@@ -13,9 +13,9 @@ beforeEach(() => {
 function renderClis() {
   return render(
     <I18nProvider>
-      <RunnerProvider>
+      <RunnerHarness autoApply>
         <ClisSection />
-      </RunnerProvider>
+      </RunnerHarness>
     </I18nProvider>
   )
 }
@@ -60,7 +60,6 @@ it("runs an upgrade step when the upgrade button is clicked", async () => {
     detections: { "claude-code": { installed: true, version: "1.0.0" } },
     latestVersions: { "claude-code": "2.0.0" },
     paths: { os: "mac" } as never,
-    dryRun: true,
     panelOpen: false,
   })
   renderClis()

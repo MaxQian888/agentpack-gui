@@ -9,7 +9,7 @@ jest.mock("@/lib/tauri/system", () => ({ openUrl: jest.fn() }))
 
 import { render, screen } from "@testing-library/react"
 import { I18nProvider } from "@/lib/i18n/provider"
-import { RunnerProvider } from "../../run/runner-context"
+import { RunnerHarness } from "../../run/__testing__/harness"
 import { useAppStore } from "@/store/app-store"
 import { isTauri } from "@/lib/tauri"
 import { MCP_SERVERS } from "@/lib/agentpack/registry"
@@ -34,15 +34,15 @@ const scan = (over: Partial<DashboardScan> = {}): DashboardScan =>
 beforeEach(() => {
   ;(isTauri as jest.Mock).mockReturnValue(true)
   useAppStore.getState().resetPlan()
-  useAppStore.setState({ paths: { home: "/h" } as never, dryRun: false, panelOpen: false })
+  useAppStore.setState({ paths: { home: "/h" } as never, panelOpen: false })
 })
 
 function renderSection(loading = false) {
   return render(
     <I18nProvider>
-      <RunnerProvider>
+      <RunnerHarness autoApply>
         <McpSection scan={scan()} loading={loading} refresh={() => {}} />
-      </RunnerProvider>
+      </RunnerHarness>
     </I18nProvider>
   )
 }

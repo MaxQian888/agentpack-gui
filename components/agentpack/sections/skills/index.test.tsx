@@ -18,7 +18,7 @@ import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
 import { useAppStore } from "@/store/app-store"
 import type { SkillsScanResult } from "@/lib/skills/types"
-import { RunnerProvider } from "../../run/runner-context"
+import { RunnerHarness } from "../../run/__testing__/harness"
 import { SkillsSection } from "./index"
 
 const paths = {
@@ -33,15 +33,15 @@ const paths = {
 } as never
 
 beforeEach(() => {
-  useAppStore.setState({ paths, dryRun: false, panelOpen: false })
+  useAppStore.setState({ paths, panelOpen: false })
 })
 
 function renderSection(scan: SkillsScanResult | null, loading = false) {
   return render(
     <I18nProvider>
-      <RunnerProvider>
+      <RunnerHarness autoApply>
         <SkillsSection scan={scan} loading={loading} refresh={jest.fn()} />
-      </RunnerProvider>
+      </RunnerHarness>
     </I18nProvider>
   )
 }

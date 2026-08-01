@@ -67,10 +67,10 @@ Root `pnpm-lock.yaml` is the single lockfile for all packages. Run `pnpm install
 
 - `app/` - Next.js App Router (layout.tsx, page.tsx, globals.css)
 - `components/ui/` - All 56 shadcn/ui components pre-installed (**no test files here**)
-- `components/agentpack/` - the agentpack installer UI (shell, header, sidebar, sections, run panel),
-  plus `onboarding-dialog` / `onboarding-network-step` / `guided-tour` (the three
-  guidance surfaces), `quick-install-dialog`, `config-io`, `bundle/*-dialog`,
-  `desktop-only-note`
+- `components/agentpack/` - the agentpack installer UI (shell, header, task rail,
+  `workspace-tabs`, `change-tray`, `command-palette`, sections, run panel), plus
+  `onboarding-dialog` / `onboarding-network-step` / `guided-tour` (the three
+  guidance surfaces), `config-io`, `bundle/*-dialog`, `desktop-only-note`
 - `hooks/` - Shared hooks: `use-mobile`, `use-mounted`, `use-incremental`
 - `lib/utils.ts` - `cn()` utility (clsx + tailwind-merge)
 
@@ -89,7 +89,10 @@ MCP servers, network/mirrors and cc-switch.
   `presets`, `types` (incl. `StepDescriptor`/`Paths`), `config`, `report`,
   `locale`, `scan`, `profile`, `release`, `version`, `merge/{mcp,network}`,
   `network/{discovery,mirrors,probe,proxy,recovery,scan}`, `bundle/*`,
-  `config-editor/*`, `mcp-{disabled,health,import}`, `ccconnect`, `ccswitch/*`.
+  `config-editor/*`, `mcp-{disabled,health,import}`, `ccconnect`, `ccswitch/*`,
+  plus `workspaces` (the five task domains over the twelve `SectionKey`s),
+  `diagnostics` (the overview's to-do list), `palette` (⌘K contents) and
+  `activity` (the run log's shape + redaction).
   `plan.ts` turns a `Plan` into a declarative `StepDescriptor[]`; `preview.ts`
   renders dry-run "would …" lines; `runner.ts` executes descriptors.
 - `lib/skills/` — the Skills section's pure logic (`browse`, `conflicts`,
@@ -110,9 +113,24 @@ MCP servers, network/mirrors and cc-switch.
 locally and NEVER calls a mutating Rust command. Skills ship as Tauri resources
 (`src-tauri/assets/skills/`, wired via `bundle.resources`).
 
+### Shell & design system
+
+The window is a **Workbench**: a five-item task rail (`sidebar-nav.tsx`), a
+title bar that says where you are, a sub-tab strip per workspace, the workspace
+itself, and a change tray docked at the bottom. `lib/agentpack/workspaces.ts`
+owns the mapping — the twelve `SectionKey`s are unchanged and remain the target
+of every navigation, they are just grouped into **Overview · Install & repair ·
+Capabilities · Usage · Settings**. Below 900px the rail becomes a Sheet.
+
+`design.md` at the repo root is the locked design system (Cobalt / modern-minimal)
+and `tokens.css` is its machine-readable half, imported at the top of
+`app/globals.css`, which then re-points the shadcn variable _names_ at those
+tokens. **Read design.md before adding a surface; add a token before adding a
+value** — no `oklch(...)`, px radius or `font-family` belongs anywhere else.
+
 ### Onboarding & run invariants
 
-Four rules the first-run and install paths depend on. Each replaced a behaviour
+Five rules the first-run and install paths depend on. Each replaced a behaviour
 that looked reasonable in the code and lied to the user in the app.
 
 1. **Only a deliberate exit marks someone onboarded.** `settings.onboarded` is
@@ -134,9 +152,26 @@ that looked reasonable in the code and lied to the user in the app.
    against a scan that wrongly says "nothing is installed" re-adds everything,
    and `claude mcp add` rejects a duplicate id.
 
+5. **Every write goes through the review panel.** `useRunner.run()` stages steps
+   and resolves only once the user applies them (or `[]` if they walk away), so
+   a caller still reads `const reports = await run(steps)` — it just waits for a
+   human in between. There is no global dry-run mode any more: **Preview only**
+   and **Apply changes** are two buttons inside the panel, next to the step list
+   they act on, and a preview leaves the steps staged so applying afterwards is
+   one click. Section tests use `run/__testing__/harness` (`autoApply` to stand
+   in for the user, `panel` to drive the gate by hand).
+
 Also: the completion screen derives its next action and chores from `reports`,
 not from `plan` — with **no step at all** reading as success, because the dedup
 emits nothing for what's already installed.
+
+⚠️ The **activity log** (`~/.agentpack/activity.json`) records what ran, and its
+redaction is a deliberate line, not an oversight: title, source, timestamp,
+outcome, per-step status/duration and any restore point — never command output,
+config bodies, env vars or API keys. `recordRun` copies fields explicitly rather
+than spreading `StepReport`, so the next field added there can't leak by
+default. Previews write no record at all. The ⌘K palette is bound by the same
+rule: it indexes destinations and app actions, never content.
 
 ### Chat history & usage statistics
 

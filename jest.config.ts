@@ -29,6 +29,10 @@ const config: Config = {
     "!**/coverage/**",
     "!**/out/**",
     "!components/ui/**",
+    // Test-only harnesses. Not under a `__tests__/` name because jest would then
+    // try to run them as suites; excluded here so they aren't counted as
+    // uncovered product code either.
+    "!**/__testing__/**",
     "!app/**/layout.{js,jsx,ts,tsx}",
     // Pure type-only modules (interfaces / type aliases) — no runtime to cover.
     "!lib/agentpack/types.ts",

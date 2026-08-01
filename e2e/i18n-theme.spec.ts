@@ -1,21 +1,22 @@
 import { test, expect } from "@playwright/test"
-import { openApp } from "./helpers"
+import { openApp, navTo } from "./helpers"
 
 test.beforeEach(async ({ page }) => openApp(page))
 
 test("switches interface language between English and Chinese", async ({ page }) => {
-  // Sidebar starts in English. Language lives behind the header's settings gear
-  // as a radio group — the trigger's aria-label is localized, so it is matched
-  // per language rather than once.
-  await expect(page.getByRole("button", { name: "Quick setup (preset)" })).toBeVisible()
+  // Language is a set-once preference, so it moved out of the title bar and into
+  // Settings → About with the rest of them.
+  // The rail's own accessible name is localized too, so it is re-queried each
+  // time rather than captured once.
+  const rail = (name: string) => page.getByRole("navigation", { name })
+  await expect(rail("Task areas").getByRole("button", { name: "Install & repair" })).toBeVisible()
 
-  await page.getByRole("button", { name: "Settings" }).click()
-  await page.getByRole("menuitemradio", { name: "中文" }).click()
-  await expect(page.getByRole("button", { name: "一键预设安装" })).toBeVisible()
+  await navTo(page, "about")
+  await page.getByLabel("Language").selectOption("zh-CN")
+  await expect(rail("任务分区").getByRole("button", { name: "安装与修复" })).toBeVisible()
 
-  await page.getByRole("button", { name: "设置" }).click()
-  await page.getByRole("menuitemradio", { name: "EN" }).click()
-  await expect(page.getByRole("button", { name: "Quick setup (preset)" })).toBeVisible()
+  await page.getByLabel("语言").selectOption("en")
+  await expect(rail("Task areas").getByRole("button", { name: "Install & repair" })).toBeVisible()
 })
 
 test("toggles the color theme on the document root", async ({ page }) => {
@@ -26,9 +27,7 @@ test("toggles the color theme on the document root", async ({ page }) => {
   await expect(html).toHaveClass(/dark/)
 })
 
-test("toggles dry-run preview mode", async ({ page }) => {
-  const preview = page.getByRole("switch", { name: "Preview (dry-run)" })
-  await expect(preview).not.toBeChecked()
-  await preview.click()
-  await expect(preview).toBeChecked()
+test("carries no global preview switch — preview belongs to a run", async ({ page }) => {
+  await expect(page.getByRole("switch", { name: "Preview (dry-run)" })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Run plan" })).toHaveCount(0)
 })

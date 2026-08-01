@@ -75,7 +75,6 @@ import type {
 } from "@/lib/agentpack/ccswitch/types"
 import {
   backupList,
-  backupRestore,
   ccInitDb,
   ccLoadProviders,
   ccSchemaStatus,
@@ -476,15 +475,29 @@ export function CcSwitchSection() {
     setImportPlan(plan)
   }
 
+  /**
+   * A restore overwrites the live config of every agent at once — the single
+   * most consequential thing this app can do — so it goes through the same
+   * review panel as everything else rather than firing on a confirm dialog.
+   * The step records the safety snapshot it takes on the way through, which is
+   * what lets the activity log offer a way back out of the way back.
+   */
   const doRestore = async (id: string) => {
-    try {
-      await backupRestore(id)
-      toast.success(c.restored)
-    } catch {
-      toast.error(c.restoreFailed)
-    } finally {
-      await reload()
-    }
+    const reports = await run(
+      [
+        {
+          kind: "snapshotRestore",
+          id: `snapshot-restore-${id}`,
+          label: t.steps.snapshotRestore(id),
+          snapshotId: id,
+        },
+      ],
+      { activity: { title: t.steps.snapshotRestore(id), source: "restore" } }
+    )
+    if (reports.length === 0) return
+    if (reports.some((r) => r.status === "error")) toast.error(c.restoreFailed)
+    else toast.success(c.restored)
+    await reload()
   }
 
   const tool = CLI_TOOLS.find((x) => x.id === "cc-switch")!

@@ -12,14 +12,14 @@ jest.mock("@/lib/tauri/settings", () => ({
 }))
 
 import { useCallback, useEffect, useState } from "react"
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import * as api from "@/lib/tauri/commands"
 import { DEFAULT_SETTINGS, saveSettings } from "@/lib/tauri/settings"
 import type { Provider } from "@/lib/agentpack/ccswitch/types"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
-import { RunnerProvider } from "../run/runner-context"
+import { RunnerHarness } from "../run/__testing__/harness"
 import { useAppStore } from "@/store/app-store"
 import type { Paths } from "@/lib/agentpack/types"
 import { BACKUP_SUFFIX } from "@/lib/agentpack/plan"
@@ -52,8 +52,10 @@ beforeEach(() => {
     detections: {},
     paths,
     panelOpen: false,
-    dryRun: true,
     onboardingOpen: false,
+    networkProbe: null,
+    latestVersions: {},
+    activity: [],
     settings: { ...DEFAULT_SETTINGS },
   })
   // User-scope MCP servers are now read from ~/.claude.json (not `claude mcp list`);
@@ -108,9 +110,9 @@ function renderDashboard() {
   const onNavigate = jest.fn()
   render(
     <I18nProvider>
-      <RunnerProvider>
+      <RunnerHarness autoApply>
         <DashboardHarness onNavigate={onNavigate} />
-      </RunnerProvider>
+      </RunnerHarness>
     </I18nProvider>
   )
   return { onNavigate }
@@ -141,7 +143,6 @@ it("renders rich scan state without any management actions", async () => {
   useAppStore.setState({
     detections: { "claude-code": { installed: true, version: "1.0.0" } },
     latestVersions: { "claude-code": "2.0.0" },
-    dryRun: true,
   })
   ;(api.readTextFile as jest.Mock).mockImplementation(async (p: string) => {
     if (p === paths.claudeSettings)
@@ -172,14 +173,13 @@ it("renders rich scan state without any management actions", async () => {
   expect(screen.queryByRole("button", { name: /apply/i })).not.toBeInTheDocument()
 })
 
-it("leads with a health banner and runs its fixes", async () => {
+it("leads with the diagnostics list and stages its fixes for review", async () => {
   useAppStore.setState({
     detections: { "claude-code": { installed: true, version: "1.0.0" } },
     latestVersions: { "claude-code": "2.0.0" },
-    dryRun: true,
   })
   // settings.json exists but doesn't parse — a real problem — and it has a
-  // backup, so the banner can offer to restore it.
+  // backup, so the list can offer to restore it.
   ;(api.readTextFile as jest.Mock).mockImplementation(async (p: string) =>
     p === paths.claudeSettings ? "{ not json" : ""
   )
@@ -189,28 +189,57 @@ it("leads with a health banner and runs its fixes", async () => {
 
   renderDashboard()
 
-  // Two issues: the upgradable CLI and the unparsable settings.json. The absent
-  // codex config.toml is NOT one — a file that was never there on a machine
-  // without Codex is the normal state, not something to fix.
-  expect(await screen.findByText(en.dashboard.healthNeedsAttention(2))).toBeInTheDocument()
+  // The unparsable settings.json, and the upgradable CLI. The absent codex
+  // config.toml is NOT one — a file that was never there on a machine without
+  // Codex is the normal state, not something to fix.
+  await screen.findByText(en.diagnostics.configInvalidTitle(en.diagnostics.fileClaudeSettings))
+  const list = screen.getByRole("region", { name: en.diagnostics.title })
   expect(
-    screen.getByText(
-      en.dashboard.healthConfig(en.dashboard.fileClaudeSettings, en.dashboard.configInvalid)
-    )
-  ).toBeInTheDocument()
-  expect(screen.queryByText(new RegExp(en.dashboard.fileCodexConfig))).not.toBeInTheDocument()
+    within(list).queryByText(new RegExp(en.diagnostics.fileCodexConfig))
+  ).not.toBeInTheDocument()
 
-  await userEvent.click(screen.getByRole("button", { name: en.shell.upgrade }))
+  // Both fixes stage a run for review rather than writing anything.
+  await userEvent.click(within(list).getByRole("button", { name: en.shell.upgrade }))
   expect(useAppStore.getState().panelOpen).toBe(true)
-
-  await userEvent.click(screen.getByRole("button", { name: en.dashboard.restore }))
+  await userEvent.click(within(list).getByRole("button", { name: en.diagnostics.restore }))
   expect(useAppStore.getState().panelOpen).toBe(true)
 })
 
+it("ranks a blocking finding above an optional one", async () => {
+  useAppStore.setState({
+    detections: { "claude-code": { installed: true, version: "1.0.0" } },
+    latestVersions: { "claude-code": "2.0.0" },
+  })
+  ;(api.readTextFile as jest.Mock).mockImplementation(async (p: string) =>
+    p === paths.claudeSettings ? "{ not json" : ""
+  )
+  ;(api.pathExists as jest.Mock).mockImplementation(
+    async (p: string) => p === `${paths.claudeSettings}${BACKUP_SUFFIX}`
+  )
+  renderDashboard()
+  await screen.findByText(en.diagnostics.configInvalidTitle(en.diagnostics.fileClaudeSettings))
+  const list = screen.getByRole("region", { name: en.diagnostics.title })
+  const rows = within(list).getAllByRole("listitem")
+  expect(rows[0]).toHaveTextContent(
+    en.diagnostics.configInvalidTitle(en.diagnostics.fileClaudeSettings)
+  )
+  expect(rows[rows.length - 1]).toHaveTextContent(/2\.0\.0/)
+})
+
 it("says everything is fine when there is nothing to fix", async () => {
+  useAppStore.setState({ detections: { "claude-code": { installed: true, version: "1.0.0" } } })
   renderDashboard()
   await screen.findByText("my-custom") // flush the async scan
-  expect(screen.getByText(en.dashboard.healthAllGood)).toBeInTheDocument()
+  expect(await screen.findByText(en.diagnostics.clean)).toBeInTheDocument()
+})
+
+it("names the missing agent as the blocking finding on a bare machine", async () => {
+  renderDashboard()
+  await screen.findByText("my-custom")
+  const list = screen.getByRole("region", { name: en.diagnostics.title })
+  expect(within(list).getByText(en.diagnostics.noAgentTitle)).toBeInTheDocument()
+  await userEvent.click(within(list).getByRole("button", { name: en.diagnostics.setUp }))
+  expect(useAppStore.getState().onboardingOpen).toBe(true)
 })
 
 it("truncates a long list and hands off to the owning section", async () => {

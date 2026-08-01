@@ -1,11 +1,22 @@
 import { test, expect } from "@playwright/test"
-import { openApp, navTo, NOT_IN_TAURI } from "./helpers"
+import { openApp, navTo, reviewChanges, NOT_IN_TAURI } from "./helpers"
 
 test.beforeEach(async ({ page }) => openApp(page))
 
-test("Run plan in web mode prompts to use the desktop app", async ({ page }) => {
-  await page.getByRole("button", { name: "Run plan" }).click()
+test("reviewing changes in web mode prompts to use the desktop app", async ({ page }) => {
+  await navTo(page, "presets")
+  await page.getByRole("button", { name: "Recommended", exact: true }).click()
+  await reviewChanges(page)
   await expect(page.getByText(NOT_IN_TAURI).first()).toBeVisible()
+})
+
+test("the change tray appears only once something is selected", async ({ page }) => {
+  await navTo(page, "presets")
+  await expect(page.getByRole("button", { name: "Review changes" })).toHaveCount(0)
+  await page.getByRole("button", { name: "Recommended", exact: true }).click()
+  await expect(page.getByRole("button", { name: "Review changes" })).toBeVisible()
+  await page.getByRole("button", { name: "Clear selection" }).click()
+  await expect(page.getByRole("button", { name: "Review changes" })).toHaveCount(0)
 })
 
 test("save and load config are gated to the desktop runtime", async ({ page }) => {

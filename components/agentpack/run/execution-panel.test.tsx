@@ -3,22 +3,31 @@ import type { StepReport } from "@/lib/agentpack/types"
 interface Ctx {
   reports: StepReport[]
   running: boolean
-  dryRun: boolean
+  previewing: boolean
   awaitingConfirm: boolean
-  confirm: jest.Mock
+  lastWasPreview: boolean
+  cancelled: boolean
+  previewPending: jest.Mock
+  applyPending: jest.Mock
+  abandonPending: jest.Mock
   retry: jest.Mock
   cancel: jest.Mock
 }
 
-const ctx: Ctx = {
-  reports: [],
+const blank = (): Omit<Ctx, "reports"> => ({
   running: false,
-  dryRun: false,
+  previewing: false,
   awaitingConfirm: false,
-  confirm: jest.fn(),
+  lastWasPreview: false,
+  cancelled: false,
+  previewPending: jest.fn(),
+  applyPending: jest.fn(),
+  abandonPending: jest.fn(),
   retry: jest.fn(),
   cancel: jest.fn(),
-}
+})
+
+const ctx: Ctx = { reports: [], ...blank() }
 
 jest.mock("./runner-context", () => ({ useRunnerCtx: () => ctx }))
 
@@ -33,15 +42,7 @@ const done: StepReport = { id: "a", label: "Step A", status: "done", output: [] 
 const failed: StepReport = { id: "b", label: "Step B", status: "error", output: [], error: "x" }
 
 beforeEach(() => {
-  Object.assign(ctx, {
-    reports: [],
-    running: false,
-    dryRun: false,
-    awaitingConfirm: false,
-    confirm: jest.fn(),
-    retry: jest.fn(),
-    cancel: jest.fn(),
-  })
+  Object.assign(ctx, { reports: [], ...blank() })
   useAppStore.setState({ paths: { os: "mac" } as never, panelOpen: true })
 })
 
@@ -53,36 +54,73 @@ function renderPanel() {
   )
 }
 
-it("shows a confirm gate while awaiting confirmation", async () => {
-  ctx.awaitingConfirm = true
-  ctx.reports = [{ ...done, status: "pending" }]
-  renderPanel()
-  const proceed = screen.getByRole("button", { name: /proceed/i })
-  await userEvent.click(proceed)
-  expect(ctx.confirm).toHaveBeenCalled()
+describe("the review gate", () => {
+  beforeEach(() => {
+    ctx.awaitingConfirm = true
+    ctx.reports = [{ ...done, status: "pending" }]
+  })
+
+  it("offers preview and apply as two named, separate exits", async () => {
+    renderPanel()
+    expect(screen.getByText(en.review.stepCount(1))).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: en.review.previewOnly }))
+    expect(ctx.previewPending).toHaveBeenCalled()
+    expect(ctx.applyPending).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole("button", { name: en.review.apply }))
+    expect(ctx.applyPending).toHaveBeenCalled()
+  })
+
+  it("keeps Apply available after a preview, and says nothing was written", () => {
+    ctx.lastWasPreview = true
+    renderPanel()
+    expect(screen.getByText(en.review.previewDone)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: en.review.apply })).toBeEnabled()
+  })
+
+  it("discarding abandons the staged steps rather than just hiding them", async () => {
+    renderPanel()
+    await userEvent.click(screen.getByRole("button", { name: en.review.discard }))
+    expect(ctx.abandonPending).toHaveBeenCalled()
+    expect(useAppStore.getState().panelOpen).toBe(false)
+  })
+
+  it("locks both exits while a preview is in flight", () => {
+    ctx.previewing = true
+    renderPanel()
+    expect(screen.getByRole("button", { name: en.review.apply })).toBeDisabled()
+    expect(screen.getByText(en.review.previewing).closest("button")).toBeDisabled()
+  })
 })
 
-it("shows a cancel button while running", async () => {
-  ctx.running = true
-  ctx.reports = [{ ...done, status: "running" }]
-  renderPanel()
-  await userEvent.click(screen.getByRole("button", { name: /cancel/i }))
-  expect(ctx.cancel).toHaveBeenCalled()
-})
+describe("running and finished", () => {
+  it("shows a cancel button while running", async () => {
+    ctx.running = true
+    ctx.reports = [{ ...done, status: "running" }]
+    renderPanel()
+    await userEvent.click(screen.getByRole("button", { name: /cancel/i }))
+    expect(ctx.cancel).toHaveBeenCalled()
+  })
 
-it("offers retry and a summary when finished with errors", async () => {
-  ctx.reports = [done, failed]
-  renderPanel()
-  expect(screen.getByText(/Setup complete/i)).toBeInTheDocument()
-  await userEvent.click(screen.getByRole("button", { name: /retry/i }))
-  expect(ctx.retry).toHaveBeenCalled()
-})
+  it("offers retry and a summary when finished with errors", async () => {
+    ctx.reports = [done, failed]
+    renderPanel()
+    expect(screen.getByText(/Setup complete/i)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: /retry/i }))
+    expect(ctx.retry).toHaveBeenCalled()
+  })
 
-it("hides retry when finished without errors and renders a dry-run badge", () => {
-  ctx.reports = [done]
-  ctx.dryRun = true
-  renderPanel()
-  expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument()
-  // The dry-run badge surfaces the preview label in the panel title.
-  expect(screen.getByText(en.shell.preview)).toBeInTheDocument()
+  it("hides retry when finished without errors", () => {
+    ctx.reports = [done]
+    renderPanel()
+    expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument()
+  })
+
+  it("reports a finished preview as a preview, not as an install", () => {
+    ctx.reports = [done]
+    ctx.lastWasPreview = true
+    renderPanel()
+    expect(screen.getByText(en.summary.dryRunComplete)).toBeInTheDocument()
+  })
 })

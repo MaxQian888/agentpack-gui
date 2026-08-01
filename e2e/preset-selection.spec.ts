@@ -5,7 +5,7 @@ test.beforeEach(async ({ page }) => openApp(page))
 
 test("applying the Recommended preset pre-checks CLIs", async ({ page }) => {
   await navTo(page, "presets")
-  await page.getByRole("button", { name: /^Recommended/ }).click()
+  await page.getByRole("button", { name: "Recommended", exact: true }).click()
   await navTo(page, "clis")
   await expect(page.locator("#cli-claude-code")).toBeChecked()
   await expect(page.locator("#cli-codex")).toBeChecked()
@@ -13,11 +13,11 @@ test("applying the Recommended preset pre-checks CLIs", async ({ page }) => {
 
 test("Custom preset clears any selection", async ({ page }) => {
   await navTo(page, "presets")
-  await page.getByRole("button", { name: /^Recommended/ }).click()
-  await page.getByRole("button", { name: /^Custom/ }).click()
-  // Custom resets the plan and opens the customize dialog — dismiss it before navigating.
-  await page.keyboard.press("Escape")
-  await expect(page.getByRole("dialog")).toBeHidden()
+  await page.getByRole("button", { name: "Recommended", exact: true }).click()
+  // Custom now clears in place — the checklists it used to open a dialog for are
+  // on this very page.
+  await page.getByRole("button", { name: "Custom", exact: true }).click()
+  await expect(page.getByRole("dialog")).toHaveCount(0)
   await navTo(page, "clis")
   await expect(page.locator("#cli-claude-code")).not.toBeChecked()
 })
@@ -32,14 +32,11 @@ test("a CLI can be toggled manually", async ({ page }) => {
   await expect(claude).not.toBeChecked()
 })
 
-test("the OS override can be changed from the header", async ({ page }) => {
-  // Behind the settings gear, in an "OS" submenu.
-  await page.getByRole("button", { name: "Settings" }).click()
-  await page.getByRole("menuitem", { name: "OS" }).click()
-  await page.getByRole("menuitemradio", { name: "win" }).click()
-
-  // Reopen and confirm the choice stuck.
-  await page.getByRole("button", { name: "Settings" }).click()
-  await page.getByRole("menuitem", { name: "OS" }).click()
-  await expect(page.getByRole("menuitemradio", { name: "win" })).toBeChecked()
+test("the OS override can be changed from Settings", async ({ page }) => {
+  await navTo(page, "about")
+  await page.getByLabel("OS", { exact: true }).selectOption("win")
+  // Leave and come back: the choice is held in the store, not the control.
+  await navTo(page, "presets")
+  await navTo(page, "about")
+  await expect(page.getByLabel("OS", { exact: true })).toHaveValue("win")
 })

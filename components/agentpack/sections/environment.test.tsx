@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
 import { openUrl } from "@/lib/tauri/system"
-import { RunnerProvider } from "../run/runner-context"
+import { RunnerHarness } from "../run/__testing__/harness"
 import { useAppStore } from "@/store/app-store"
 import { EnvironmentSection } from "./environment"
 
@@ -18,16 +18,15 @@ beforeEach(() => {
     runtimeOwned: {},
     paths: null,
     panelOpen: false,
-    dryRun: true,
   })
 })
 
 function renderEnv() {
   return render(
     <I18nProvider>
-      <RunnerProvider>
+      <RunnerHarness autoApply>
         <EnvironmentSection />
-      </RunnerProvider>
+      </RunnerHarness>
     </I18nProvider>
   )
 }
@@ -133,9 +132,9 @@ it("shows a re-detect button that calls refresh, and hides it without a handler"
   const refresh = jest.fn(async () => {})
   render(
     <I18nProvider>
-      <RunnerProvider>
+      <RunnerHarness autoApply>
         <EnvironmentSection refresh={refresh} />
-      </RunnerProvider>
+      </RunnerHarness>
     </I18nProvider>
   )
   await userEvent.click(screen.getByRole("button", { name: en.environment.recheck }))

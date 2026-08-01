@@ -161,15 +161,30 @@ fn cc_switch_running() -> bool {
   crate::exec::is_process_running("cc-switch".into())
 }
 
+/// What a restore did, and how to undo it.
+///
+/// The safety snapshot was always taken; it just used to be thrown away, which
+/// left the one operation whose whole purpose is "go back" as the one operation
+/// you could not go back from. Returning its id is what lets the UI record a
+/// restore point for the restore itself.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreResult {
+  /// One line per file: the path written, or a "skipped (not managed)" note.
+  pub restored_paths: Vec<String>,
+  /// The snapshot taken immediately before this restore.
+  pub safety_snapshot_id: String,
+}
+
 /// Restore every file recorded in a snapshot back to its original path. Takes a
 /// fresh "before restore" snapshot first so the restore itself is reversible.
 /// Refuses while cc-switch is running to avoid corrupting the DB underneath it.
 #[tauri::command(async)]
-pub fn backup_restore(id: String) -> Result<Vec<String>, String> {
+pub fn backup_restore(id: String) -> Result<RestoreResult, String> {
   if cc_switch_running() {
     return Err("cc-switch is running — close it before restoring.".into());
   }
-  let _ = snapshot("before restore")?;
+  let safety = snapshot("before restore")?;
 
   let dir = backup_root().join(&id);
   let text =
@@ -193,7 +208,10 @@ pub fn backup_restore(id: String) -> Result<Vec<String>, String> {
     fs::copy(dir.join(&f.stored_name), &dest).map_err(|e| e.to_string())?;
     restored.push(f.original_path.clone());
   }
-  Ok(restored)
+  Ok(RestoreResult {
+    restored_paths: restored,
+    safety_snapshot_id: safety.id,
+  })
 }
 
 #[cfg(test)]
@@ -230,8 +248,33 @@ mod tests {
     let list = backup_list().unwrap();
     assert!(list.iter().any(|e| e.id == entry.id));
 
-    backup_restore(entry.id.clone()).unwrap();
+    let result = backup_restore(entry.id.clone()).unwrap();
     assert_eq!(fs::read(&db).unwrap(), b"ORIGINAL");
+
+    // The restore is itself reversible: it hands back the snapshot it took of
+    // the pre-restore state, and that snapshot really holds the mutated bytes.
+    assert!(!result.safety_snapshot_id.is_empty());
+    assert_ne!(result.safety_snapshot_id, entry.id);
+    let safety = backup_list()
+      .unwrap()
+      .into_iter()
+      .find(|e| e.id == result.safety_snapshot_id)
+      .expect("safety snapshot is listed");
+    assert_eq!(safety.reason, "before restore");
+    let stored = safety
+      .files
+      .iter()
+      .find(|f| f.original_path == db.to_string_lossy())
+      .expect("safety snapshot captured the db");
+    assert_eq!(
+      fs::read(root.join(&safety.id).join(&stored.stored_name)).unwrap(),
+      b"CHANGED"
+    );
+
+    // And restoring THAT undoes the undo, which is the property the UI's
+    // "restore point" promise depends on.
+    backup_restore(result.safety_snapshot_id.clone()).unwrap();
+    assert_eq!(fs::read(&db).unwrap(), b"CHANGED");
 
     let _ = fs::remove_dir_all(&tmp);
   }
@@ -289,7 +332,7 @@ mod tests {
     let entry = snapshot_files("legacy", &[db.clone(), auth.clone()]).unwrap();
     fs::write(&auth, b"CURRENT-LOGIN").unwrap();
 
-    let log = backup_restore(entry.id.clone()).unwrap();
+    let log = backup_restore(entry.id.clone()).unwrap().restored_paths;
     // The DB rolls back; the credential file is left exactly as it is.
     assert_eq!(fs::read(&db).unwrap(), b"DB");
     assert_eq!(fs::read(&auth).unwrap(), b"CURRENT-LOGIN");
