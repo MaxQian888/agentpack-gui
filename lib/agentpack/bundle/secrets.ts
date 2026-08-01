@@ -13,11 +13,7 @@ import { parse, stringify } from "smol-toml"
 
 /** Config files a bundle can carry. Keys are `Paths` field names, so `paths[key]` resolves. */
 export type BundleFileKey =
-  | "claudeSettings"
-  | "claudeConfig"
-  | "codexConfig"
-  | "opencodeConfig"
-  | "ccConnectConfig"
+  "claudeSettings" | "claudeConfig" | "codexConfig" | "opencodeConfig" | "ccConnectConfig"
 
 export const BUNDLE_FILE_KEYS: readonly BundleFileKey[] = [
   "claudeSettings",
