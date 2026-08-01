@@ -30,10 +30,19 @@ fn kill_tree(pid: u32) {
 fn kill_tree(pid: u32) {
   // The child is spawned in its own process group (see `apply_process_group`),
   // so a negative pid signals the whole group — killing descendants too.
-  let _ = Command::new("kill")
-    .arg("-9")
-    .arg(format!("-{pid}"))
-    .output();
+  //
+  // `kill(2)` directly, NOT `Command::new("kill").arg("-9").arg("-<pid>")`. The
+  // two are not equivalent, and the difference is invisible on the machine most
+  // of this was written on: BSD `kill` (macOS) reads `-1234` as a process group
+  // and does the right thing, while procps `kill` (Linux) reads it as a second
+  // signal specification, exits 1, and kills nothing at all. Every timeout and
+  // every `cancel_command` was therefore a silent no-op on Linux — the install
+  // it claimed to have stopped kept running. Spawning a process to send a
+  // signal was also the reason a failure here was so easy to miss: the exit
+  // status went straight into `let _ =`.
+  unsafe {
+    libc::kill(-(pid as i32), libc::SIGKILL);
+  }
 }
 
 /// Put the spawned child in its own process group so `kill_tree` can signal the
@@ -1515,6 +1524,7 @@ mod tests {
     } else {
       ("sleep", vec!["20".into()])
     };
+    let started = Instant::now();
     let res = run_command(
       file.into(),
       args,
@@ -1525,6 +1535,17 @@ mod tests {
       None,
     );
     assert_eq!(res, Err(TIMEOUT_ERR.to_string()));
+    // …and the child must actually be dead, not merely reported as timed out.
+    // The sentinel comes from the monitor thread, which returns `true` whether
+    // or not `kill_tree` managed anything, so the verdict alone cannot tell a
+    // real kill from a no-op — on Linux, where `kill_tree` was a no-op for as
+    // long as it shelled out, this assertion is the whole test: the call
+    // returned the right error after sitting through all 20 seconds of `sleep`.
+    let elapsed = started.elapsed();
+    assert!(
+      elapsed < Duration::from_secs(10),
+      "run_command returned the timeout sentinel but waited out the whole child ({elapsed:?}) — kill_tree did not kill it"
+    );
     // The child must be deregistered once the call returns.
     assert!(running_children()
       .lock()

@@ -57,6 +57,14 @@ sha2 = "0.10"
 tauri-plugin-single-instance = "2"
 tauri-plugin-global-shortcut = "2"
 
+# `kill(2)` with a negative pid, to signal a whole process group. Shelling out to
+# `kill -9 -<pgid>` looked equivalent and is not: BSD `kill` (macOS) reads the
+# negative argument as a process group, procps `kill` (Linux) reads it as a
+# second signal specification and fails, so every timeout and every cancel was a
+# silent no-op on Linux. See exec::kill_tree.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # Read the live persisted PATH from the registry so tools installed mid-session
 # (Node via winget, claude via `npm i -g`) are found without an app restart.
 [target.'cfg(windows)'.dependencies]
