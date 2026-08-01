@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-01
+
+### Added
+
+- **The window is a Workbench.** Five task areas on the rail — Overview ·
+  Install & repair · Capabilities · Usage · Settings — a title bar that says
+  where you are, a sub-tab strip per workspace, and a change tray docked at the
+  bottom. `lib/agentpack/workspaces.ts` owns the mapping; the twelve
+  `SectionKey`s are unchanged and remain the target of every navigation, so
+  nothing that pointed at a section had to move. Below 900px the rail is a Sheet
+- **A locked design system.** `design.md` (Cobalt / modern-minimal) and its
+  machine-readable half `tokens.css`, imported at the top of `app/globals.css`,
+  which then re-points the shadcn variable _names_ at those tokens. No
+  `oklch(...)`, px radius or `font-family` belongs anywhere else
+- **A diagnostics list on the overview** — what's missing or broken, as a to-do
+  list you can act on, rather than a wall of green ticks
+- **An activity log** (`~/.agentpack/activity.json`) and the card that shows it:
+  what ran, when, from where, and how each step ended. Its redaction is
+  deliberate — title, source, timestamp, outcome, per-step status/duration and
+  any restore point, and **never** command output, config bodies, env vars or
+  API keys. `recordRun` copies fields explicitly rather than spreading
+  `StepReport`, so the next field added there can't leak by default. Previews
+  write no record at all
+- **A ⌘K command palette** over destinations and app actions, bound by the same
+  rule: it indexes where to go, never content
+- `run/__testing__/harness` — `autoApply` to stand in for the user, `panel` to
+  drive the review gate by hand
+
+### Changed
+
+- **Every write now goes through the review panel.** `useRunner.run()` stages
+  steps and resolves only once the user applies them (or `[]` if they walk
+  away), so a caller still reads `const reports = await run(steps)` — it just
+  waits for a human in between
+- **The global dry-run switch is gone.** "Preview only" and "Apply changes" are
+  two buttons inside the panel, next to the step list they act on, and a preview
+  leaves the steps staged so applying afterwards is one click. A preview still
+  never reaches a mutating Rust command
+
+### Removed
+
+- `quick-install-dialog` — the change tray covers what it did, in place
+
 ## [0.12.0] - 2026-08-01
 
 _The first release since v0.11.0, which was tagged but never published._
@@ -282,7 +325,8 @@ _Tagged but never published — the release build failed the coverage gate._
 
 - Initial release
 
-[Unreleased]: https://github.com/Arxtect/agentpack-gui/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/Arxtect/agentpack-gui/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/Arxtect/agentpack-gui/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/Arxtect/agentpack-gui/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/Arxtect/agentpack-gui/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Arxtect/agentpack-gui/compare/v0.9.0...v0.10.0
