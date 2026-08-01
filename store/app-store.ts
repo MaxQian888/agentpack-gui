@@ -60,13 +60,7 @@ export type Detection = { installed: boolean; version?: string }
 
 /** Lifecycle of the app self-update flow (About section + header badge). */
 export type UpdateState =
-  | "idle"
-  | "checking"
-  | "upToDate"
-  | "available"
-  | "downloading"
-  | "ready"
-  | "error"
+  "idle" | "checking" | "upToDate" | "available" | "downloading" | "ready" | "error"
 
 interface State {
   plan: Plan

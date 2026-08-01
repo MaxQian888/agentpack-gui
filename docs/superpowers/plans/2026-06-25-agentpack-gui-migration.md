@@ -180,12 +180,7 @@ export interface Paths {
 }
 
 export type StepKind =
-  | "command"
-  | "mergeFile"
-  | "skillInstall"
-  | "skillRemove"
-  | "ccProvider"
-  | "ccVisibleApps"
+  "command" | "mergeFile" | "skillInstall" | "skillRemove" | "ccProvider" | "ccVisibleApps"
 
 interface StepBase {
   id: string

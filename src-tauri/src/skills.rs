@@ -144,7 +144,15 @@ pub(crate) fn hash_skill_dir(dir: &Path) -> String {
     hasher.update((bytes.len() as u64).to_le_bytes());
     hasher.update(&bytes);
   }
-  format!("{:x}", hasher.finalize())
+  // sha2 0.11 hands back a `hybrid_array::Array`, which has no `LowerHex`, so
+  // spell the lowercase hex out — the digest string itself is unchanged.
+  let digest = hasher.finalize();
+  let mut hex = String::with_capacity(digest.len() * 2);
+  for byte in digest {
+    hex.push(char::from_digit((byte >> 4) as u32, 16).unwrap_or('0'));
+    hex.push(char::from_digit((byte & 0x0f) as u32, 16).unwrap_or('0'));
+  }
+  hex
 }
 
 fn collect_hashable_paths(dir: &Path, root: &Path, depth: usize, out: &mut Vec<(String, PathBuf)>) {
