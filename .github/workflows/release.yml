@@ -186,6 +186,21 @@ jobs:
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS signing + notarization, opt-in and dormant until the six
+          # secrets exist. An unset secret expands to an empty string, which the
+          # Tauri CLI reads as "no identity", so the build stays unsigned exactly
+          # as it is today. Once they are set, the .dmg/.app are signed with the
+          # hardened runtime and notarized, and the Gatekeeper "is damaged" error
+          # in the release note below stops happening. Setup: MACOS_SIGNING.md.
+          #
+          # Unrelated to the updater key in UPDATER.md — that one signs in-app
+          # updates; these decide whether macOS opens the app at all.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: agentpack ${{ github.ref_name }}
