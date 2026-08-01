@@ -81,6 +81,9 @@ agentpack 把两件事放进同一个窗口：看到花销，然后当场处理 
 xattr -dr com.apple.quarantine /Applications/agentpack.app
 ```
 
+维护者：[`src-tauri/MACOS_SIGNING.md`](src-tauri/MACOS_SIGNING.md) 写了一次性的签名 +
+公证配置，配好之后这段提示就再也用不上了。
+
 ### ⚠️ Windows 弹 SmartScreen 警告
 
 点「更多信息」→「仍要运行」。原因一样：安装包还没有签名。

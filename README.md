@@ -91,6 +91,9 @@ to Applications, then run this once:
 xattr -dr com.apple.quarantine /Applications/agentpack.app
 ```
 
+Maintainers: [`src-tauri/MACOS_SIGNING.md`](src-tauri/MACOS_SIGNING.md) is the
+one-time setup that retires this note for good.
+
 ### ⚠️ Windows SmartScreen warning
 
 Click **More info** → **Run anyway**. Same cause: the installer isn't signed yet.
