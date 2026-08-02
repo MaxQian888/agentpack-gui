@@ -113,6 +113,10 @@ export const en = {
         title: "Network",
         body: "Detect and apply a proxy, or pick faster mirrors for npm, pip and friends.",
       },
+      cleanup: {
+        title: "Clean up",
+        body: "The CLIs keep every transcript, cache and log forever. See what they're holding, and clear what you don't need — recoverably.",
+      },
       ccswitch: {
         title: "cc-switch",
         body: "Keep several API providers/keys and switch the active one with a click.",
@@ -235,6 +239,15 @@ export const en = {
     installedSuffix: "  (installed)",
     notTauri:
       "Install status can't be checked here — run the desktop app to see what's already on your machine and to install anything.",
+    /** Headings for the two halves of the catalog (see `CliKind`). */
+    kinds: {
+      agent: "Coding agents",
+      companion: "Companions",
+    } as Record<string, string>,
+    kindNotes: {
+      agent: "The agents themselves — pick as many as you use.",
+      companion: "Tools that manage or connect the agents above.",
+    } as Record<string, string>,
   },
 
   environment: {
@@ -248,6 +261,240 @@ export const en = {
     recheck: "Re-detect",
     notManaged: (manager: string) =>
       `Not installed via ${manager}, so it can't be updated or reinstalled here — download the latest version from the official site instead.`,
+  },
+
+  /**
+   * Environment cleanup.
+   *
+   * `impact` is the load-bearing string in this block. A row that says only
+   * "Chat records · 1.9 GB" is a number next to a checkbox; the user needs to
+   * know that ticking it also empties the Chat history section. Every `impact`
+   * below answers "what do I lose", never "what is this".
+   */
+  cleanup: {
+    title: "Clean up",
+    subtitle:
+      "The agent CLIs keep every transcript, cache and log forever. Clear what you don't need — nothing here can touch your credentials, config or installed skills.",
+    notTauri: "Cleaning needs the desktop app — in the browser there is no machine to scan.",
+    scan: "Rescan",
+    scanning: "Measuring what's on disk…",
+    empty: "Nothing to clean — no caches or records found for the tools on this machine.",
+    emptyHint: "Install Claude Code, Codex or OpenCode and their data will show up here.",
+    reclaimable: (size: string) => `${size} can be cleared`,
+    selectedSummary: (size: string, files: number) => `${size} selected · ${files} file(s)`,
+    nothingSelected: "Pick what to clear",
+    clean: "Clean selected…",
+    quickClean: "Clear caches",
+    quickCleanHint: "Ticks only the safe, regenerated items — nothing you wrote.",
+    selectAll: "Select all",
+    clearSelection: "Clear",
+    degraded: "Part of this couldn't be read, so the size is a minimum.",
+    running: (name: string) => `${name} is running — close it first, or files it holds open stay.`,
+    spanning: (from: string, to: string) => `${from} – ${to}`,
+    fileCount: (n: number) => `${n} file(s)`,
+    pathsLabel: "Paths",
+
+    apps: {
+      claude: "Claude Code",
+      codex: "Codex",
+      opencode: "OpenCode",
+      copilot: "Copilot CLI",
+      cursor: "Cursor CLI",
+      "cc-switch": "cc-switch",
+      agentpack: "agentpack",
+    } as Record<string, string>,
+
+    categories: {
+      cache: "Caches",
+      logs: "Logs & telemetry",
+      artifacts: "Generated files",
+      backups: "Old backups",
+      state: "Working state",
+      chats: "Chat records",
+      hooks: "Hooks",
+    } as Record<string, string>,
+
+    risks: {
+      safe: "Regenerated",
+      review: "Your data",
+      behavioural: "Changes behaviour",
+    } as Record<string, string>,
+
+    riskHints: {
+      safe: "Rebuilt automatically the next time the tool runs.",
+      review: "Real content. Recoverable from the recycle area until you empty it.",
+      behavioural: "Changes how the agent behaves, not just what it stores.",
+    } as Record<string, string>,
+
+    /** Per-target copy. Keys match `CLEANUP_TARGETS` / `CLEANUP_CONFIG_TARGETS`. */
+    targets: {
+      "claude-chats": {
+        title: "Chat transcripts",
+        impact:
+          "Every past Claude Code session, including sub-agent runs. They also disappear from the Chat history section and from its usage totals.",
+      },
+      "claude-prompt-history": {
+        title: "Prompt history",
+        impact: "The list ↑ recalls in the Claude Code prompt.",
+      },
+      "claude-plans": {
+        title: "Saved plans",
+        impact: "Plan documents written during plan mode.",
+      },
+      "claude-tasks": {
+        title: "Task & session state",
+        impact:
+          "Todo lists and per-session scratch state. A session you resume later starts without its todos.",
+      },
+      "claude-file-history": {
+        title: "File edit history",
+        impact:
+          "Copies of files kept so an edit can be undone. Undo stops reaching past this point.",
+      },
+      "claude-shell-snapshots": {
+        title: "Shell snapshots",
+        impact: "A copy of your shell environment per session. Re-created on the next run.",
+      },
+      "claude-cache": {
+        title: "Plugin & lookup caches",
+        impact: "Downloaded plugin payloads and lookup caches. Re-fetched on demand.",
+      },
+      "claude-mcp-logs": {
+        title: "MCP server logs",
+        impact: "Per-project logs from MCP servers, in the OS cache directory.",
+      },
+      "claude-telemetry": {
+        title: "Unsent telemetry",
+        impact: "Analytics events that failed to upload and are queued forever.",
+      },
+      "claude-config-backups": {
+        title: "Rotated config backups",
+        impact:
+          "Old copies of ~/.claude.json. The live file is never touched — only its dated backups.",
+      },
+      "claude-hooks": {
+        title: "Hooks in settings.json",
+        impact:
+          "The hook commands Claude Code runs around each tool call, in settings.json. The rest of your settings stay, and the file is backed up first.",
+      },
+      "claude-project-history": {
+        title: "Per-project prompt history",
+        impact:
+          "The prompt log ~/.claude.json keeps for every project you have ever opened. Projects and their settings stay; only the typed history is emptied.",
+      },
+      "codex-chats": {
+        title: "Chat transcripts",
+        impact:
+          "Every past Codex thread. They also disappear from the Chat history section and from its usage totals.",
+      },
+      "codex-archived-chats": {
+        title: "Archived threads",
+        impact: "Threads you archived rather than deleted.",
+      },
+      "codex-prompt-history": {
+        title: "Prompt & voice history",
+        impact: "Typed prompt history and voice transcription records.",
+      },
+      "codex-logs": {
+        title: "Log database",
+        impact:
+          "Codex's log database and its write-ahead files. Often the single largest thing it keeps. Close Codex first.",
+      },
+      "codex-shell-snapshots": {
+        title: "Shell snapshots",
+        impact: "A copy of your shell environment per thread. Re-created on the next run.",
+      },
+      "codex-generated": {
+        title: "Images & attachments",
+        impact:
+          "Images, visualisations and attachments produced during threads. Anything you want to keep, copy out first.",
+      },
+      "codex-cache": {
+        title: "Model & plugin caches",
+        impact: "Model lists, app directory and plugin download caches. Re-fetched on demand.",
+      },
+      "codex-temp": {
+        title: "Temp & interrupted writes",
+        impact: "Scratch directories and half-written state files left behind by crashes.",
+      },
+      "codex-hooks-file": {
+        title: "hooks.json",
+        impact:
+          "hooks.json — the commands Codex runs around tool calls. Removing it turns every hook off.",
+      },
+      "opencode-chats": {
+        title: "Chat database",
+        impact:
+          "OpenCode stores every session in one database. Clearing it removes all of them, and empties OpenCode from the Chat history section. Close OpenCode first.",
+      },
+      "opencode-cache": {
+        title: "Caches & logs",
+        impact: "Re-created on the next run.",
+      },
+      "copilot-logs": {
+        title: "Session logs",
+        impact: "One log file per Copilot CLI process, kept indefinitely.",
+      },
+      "cursor-hooks": {
+        title: "hooks.json",
+        impact:
+          "The commands Cursor CLI runs around tool calls. Removing the file turns every hook off.",
+      },
+      "agentpack-activity": {
+        title: "agentpack activity log",
+        impact: "The record of what this app changed on this machine, and when.",
+      },
+      "agentpack-history-cache": {
+        title: "Chat history cache",
+        impact:
+          "agentpack's parsed copy of your transcripts. Clearing it costs one slow rescan, never any data.",
+      },
+      "cc-switch-backups": {
+        title: "cc-switch snapshots",
+        impact:
+          "Config restore points taken before each provider switch. Clearing them removes those undo points.",
+      },
+    } as Record<string, { title: string; impact: string }>,
+
+    age: {
+      label: "Keep the last",
+      all: "Everything",
+      days: (n: number) => `${n} days`,
+      note: "Applies to dated records only — caches and databases are all-or-nothing.",
+    },
+
+    mode: {
+      label: "How to remove",
+      quarantine: "Move to the recycle area",
+      quarantineHint: "Instant, and undoable until you empty it. Disk space comes back on empty.",
+      delete: "Delete permanently",
+      deleteHint: "Frees the space now. Cannot be undone.",
+    },
+
+    /**
+     * The recycle area. Named for what it is rather than "trash": it is not the
+     * OS trash, emptying it is a separate deliberate act, and it holds the only
+     * copy of whatever was cleared.
+     */
+    trash: {
+      title: "Recycle area",
+      subtitle:
+        "Cleared items wait here until you put them back or empty it. They still take up disk space until then.",
+      empty: "Nothing here.",
+      holding: (size: string, batches: number) => `${size} across ${batches} batch(es)`,
+      restore: "Put back",
+      restoreAll: "Put everything back",
+      purge: "Empty",
+      purgeAll: "Empty everything",
+      purgeConfirmTitle: "Empty the recycle area?",
+      purgeConfirmBody: (size: string) =>
+        `${size} will be deleted permanently. This is the only copy — it cannot be undone.`,
+      batch: (items: number, size: string) => `${items} item(s) · ${size}`,
+      restored: (count: number) => `Put back ${count} item(s).`,
+      restoreSkipped: (count: number) =>
+        `${count} item(s) stayed here — the tool has written to those paths again since.`,
+      purged: (size: string) => `Emptied — ${size} freed.`,
+    },
   },
 
   skills: {
@@ -700,6 +947,44 @@ export const en = {
         title: "OpenCode",
         description: "Open-source terminal coding agent (opencode-ai).",
       },
+      "gemini-cli": {
+        title: "Gemini CLI",
+        description: "Google's open-source terminal agent, powered by Gemini (@google/gemini-cli).",
+      },
+      "qwen-code": {
+        title: "Qwen Code",
+        description: "Alibaba's terminal coding agent for the Qwen models (@qwen-code/qwen-code).",
+      },
+      "copilot-cli": {
+        title: "GitHub Copilot CLI",
+        description: "GitHub's Copilot coding agent in your terminal (@github/copilot).",
+      },
+      crush: {
+        title: "Crush",
+        description: "Charm's terminal coding agent — bring your own model (@charmland/crush).",
+      },
+      amp: {
+        title: "Amp",
+        description: "Sourcegraph's terminal coding agent (@ampcode/cli).",
+      },
+      cline: {
+        title: "Cline",
+        description: "The open-source Cline agent, as a terminal CLI (cline).",
+      },
+      auggie: {
+        title: "Auggie",
+        description:
+          "Augment Code's terminal agent, built around a codebase index (@augmentcode/auggie).",
+      },
+      droid: {
+        title: "Droid",
+        description: "Factory's terminal coding agent. Installs a native binary — no Node needed.",
+      },
+      "cursor-cli": {
+        title: "Cursor CLI",
+        description:
+          "Cursor's agent outside the editor. Installs a native binary — no Node needed.",
+      },
     } as Record<string, { title: string; description: string }>,
     runtime: {
       node: {
@@ -892,6 +1177,10 @@ export const en = {
     syncCodex: "Sync provider → Codex config.toml",
     syncOpencode: "Sync provider → OpenCode opencode.json",
     opencodeProviderUpdated: "OpenCode provider updated",
+    cleanupQuarantine: (size: string) => `Clear ${size} to the recycle area`,
+    cleanupDelete: (size: string) => `Permanently delete ${size}`,
+    cleanupConfig: (title: string) => `Clear ${title}`,
+    cleanupConfigWritten: (title: string, path: string) => `cleared ${title} from ${path}`,
   },
 
   /** Low-level execution / file output lines from exec/skills/configfiles. */
@@ -921,6 +1210,19 @@ export const en = {
       setCurrent: (app: string) => `would switch ${app} to another provider`,
     },
     wouldBackupSkill: (path: string) => `would back up ${path}`,
+    wouldQuarantine: (path: string, size: string, files: number) =>
+      `would move ${path} to the recycle area — ${size}, ${files} file(s)`,
+    wouldDeleteSized: (path: string, size: string, files: number) =>
+      `would permanently delete ${path} — ${size}, ${files} file(s)`,
+    wouldQuarantineTotal: (size: string) =>
+      `${size} in total, recoverable until you empty the recycle area`,
+    wouldDeleteTotal: (size: string) => `${size} in total, freed immediately and not recoverable`,
+    cleanupQuarantined: (size: string, count: number) =>
+      `moved ${count} item(s), ${size}, to the recycle area`,
+    cleanupDeleted: (size: string, count: number) =>
+      `permanently deleted ${count} item(s), ${size}`,
+    cleanupSkipped: (detail: string) => `skipped — ${detail}`,
+    cleanupNothingRemoved: "Nothing could be cleared — see the skipped lines above.",
     skippedDependency: (label: string) => `skipped — required step "${label}" failed`,
     skippedCancelled: "skipped — run cancelled",
     notOnPathHint: (file: string) =>
@@ -975,6 +1277,7 @@ export const en = {
     clis: "Install / upgrade CLIs",
     mcp: "MCP servers",
     network: "Network / mirrors",
+    cleanup: "Clean up",
     saveConfig: "Save current setup as config",
     about: "About & updates",
     exit: "Exit",
@@ -1357,22 +1660,36 @@ export const en = {
     start: "Start",
     stop: "Stop",
     startFailed:
-      "Couldn't start cc-connect. With an empty config it exits at once — enable web admin (or add a project) first, then try again.",
+      "Couldn't start cc-connect. Check config.toml — it exits at once on a config it can't load.",
     stopFailed: "Couldn't stop cc-connect. Stop it manually, then click Refresh.",
+    noProjects: "○ no project configured",
+    needsProject:
+      "cc-connect won't start until config.toml declares at least one [[projects]] entry with a platform — it refuses the config before opening any port. Use Create config for a filled-in starting point, then replace the placeholders.",
     daemonNote:
-      "Installed the system daemon on macOS/Linux? Manage it with `cc-connect daemon start/stop` instead.",
+      "Installed cc-connect as a system service? Manage it with `cc-connect daemon start/stop` instead — this app drives the plain background process.",
     dryRunBlocked: "Preview mode is on — starting or stopping the service is disabled.",
     webTitle: "Web dashboard",
     webUrl: (url: string) => `Served at ${url} while the bridge runs with web admin enabled.`,
     openWeb: "Open dashboard",
     enableAndOpen: "Enable & open dashboard",
+    openInBrowser: "In browser",
+    embedTitle: "cc-connect dashboard",
+    embedDescription: (url: string) => `The cc-connect management dashboard served at ${url}.`,
+    embedLoading: "Loading the dashboard…",
+    embedStalled:
+      "The dashboard hasn't loaded. Reload it, or open it in your browser to see what the page says.",
+    embedLoginHint:
+      "Asked for a token? The dashboard remembered an older one. Reload — it has cleared it by now.",
+    embedReload: "Reload",
+    embedExternal: "Open in browser",
+    embedClose: "Close",
     enableWebAdmin: "Enable web admin",
     webAdminEnabled: "Web admin enabled — start the bridge to open the dashboard.",
     webAdminFailed: "Couldn't open the dashboard. Check config.toml, then try again.",
     webAdminHint:
-      "The dashboard is off by default. One click enables the management server, starts the bridge and opens it — already logged in — so you can add projects, providers and platforms.",
+      "The dashboard is off by default. One click enables the management server and the bridge, starts the service and opens it right here — already logged in — so you can edit projects, providers and platforms without leaving the app.",
     webReadyHint:
-      "Opens the dashboard pre-authenticated (via a login token) and starts the bridge first if it isn't running.",
+      "Opens the dashboard in a panel here, pre-authenticated (via a login token), starting the service first if it isn't running. Use In browser to hand the same page to your browser instead.",
     managementEnabled: "✔ web admin enabled",
     managementDisabled: "○ web admin disabled",
     configTitle: "Configuration",
@@ -1403,8 +1720,11 @@ export const en = {
       tts: "Text-to-speech",
       display: "Display",
       streamPreview: "Streaming preview",
-      rateLimit: "Rate limit",
+      instantReply: "Instant reply",
+      rateLimit: "Rate limit (incoming)",
+      outgoingRateLimit: "Rate limit (outgoing)",
       relay: "Relay",
+      cron: "Scheduling & queue",
       timeouts: "Timeouts (minutes)",
     },
     fields: {
@@ -1415,6 +1735,8 @@ export const en = {
       attachmentSend: "Attachment send-back",
       maxAttachmentSize: "Max attachment size (MB)",
       quiet: "Quiet mode",
+      bannedWords: "Banned words",
+      providerPresetsUrl: "Provider presets URL",
       logLevel: "Log level",
       enabled: "Enabled",
       port: "Port",
@@ -1429,10 +1751,12 @@ export const en = {
       speechLanguage: "Recognition language",
       voice: "Voice",
       voiceId: "Voice ID",
+      languageType: "Language hint",
       speed: "Speed",
       ttsMode: "TTS mode",
       maxTextLen: "Max text length",
       displayMode: "Display mode",
+      cardMode: "Card style",
       thinkingMessages: "Show thinking",
       thinkingMaxLen: "Thinking max length",
       toolMessages: "Show tool use",
@@ -1444,15 +1768,20 @@ export const en = {
       intervalMs: "Update interval (ms)",
       minDeltaChars: "Min delta chars",
       maxChars: "Max chars",
+      disabledPlatforms: "Disabled on platforms",
+      instantReplyContent: "Reply text",
       maxMessages: "Max messages",
       windowSecs: "Window (seconds)",
+      maxPerSecond: "Max messages / second",
+      burst: "Burst",
       relayTimeout: "Relay timeout (seconds)",
       visibility: "Visibility",
+      cronSilent: "Silent cron start",
+      cronSessionMode: "Cron session mode",
+      queueMaxDepth: "Queue depth per session",
       idleTimeout: "Idle timeout",
       maxTurnTime: "Max turn time",
-      resetOnIdle: "Reset on idle",
       workspaceIdleTimeout: "Workspace idle timeout",
-      agentSessionIdleTimeout: "Agent session idle timeout",
     },
   },
 
@@ -1778,6 +2107,20 @@ export const en = {
     ratePerMillion: (input: string, output: string) => `${input} / ${output} per 1M`,
     chartByDay: "Tokens by day",
     chartCostByDay: "Cost by day",
+    costViewLabel: "Cost chart view",
+    costView: { heatmap: "Heatmap", bar: "Bar chart" } as Record<string, string>,
+    heatmapHint: "One cell per day, shaded by that day's cost.",
+    heatmapStat: (total: string, days: number) => `${total} across ${days} active days`,
+    heatmapCell: (date: string, cost: string) => `${date}: ${cost}`,
+    heatmapCellEmpty: (date: string) => `${date}: no usage`,
+    heatmapLabel: "Daily cost heatmap",
+    heatmapLegendLabel: "Cost intensity",
+    // A `{{level}}` template rather than a function: the heatmap primitive does
+    // the interpolation itself when it renders the legend swatches.
+    heatmapLegendLevel: "Cost intensity level {{level}}",
+    heatmapLess: "Less",
+    heatmapMore: "More",
+    heatmapPick: "Hover or focus a day to see its cost.",
     chartBySource: "Tokens by tool",
     chartByModel: "Tokens by model",
     chartByHour: "Activity by hour",
@@ -1800,6 +2143,7 @@ export const en = {
       today: "Today",
       "7d": "7 days",
       "30d": "30 days",
+      "90d": "90 days",
       month: "This month",
       all: "All time",
       custom: "Custom",

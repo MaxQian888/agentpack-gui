@@ -32,6 +32,12 @@ test("navigates through every section, via its workspace", async ({ page }) => {
   await navTo(page, "network")
   await expect(page.getByRole("heading", { name: "Network configuration" })).toBeVisible()
 
+  await navTo(page, "cleanup")
+  await expect(page.getByRole("heading", { name: "Clean up" })).toBeVisible()
+  // Web mode has no machine to measure, so the section says so instead of
+  // rendering an empty list that looks like a clean disk.
+  await expect(page.getByText("Cleaning needs the desktop app", { exact: false })).toBeVisible()
+
   await navTo(page, "ccswitch")
   await expect(page.getByRole("button", { name: "+ Add provider" })).toBeVisible()
 

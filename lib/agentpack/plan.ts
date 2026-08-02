@@ -1,6 +1,7 @@
 import { en } from "@/lib/i18n/en"
 import type { Messages } from "@/lib/i18n/types"
 import { restoreBlankedSecrets, type BundleFileKey } from "./bundle/secrets"
+import { formatBytes, type CleanupConfigTarget } from "./cleanup"
 import {
   fallbackMethodsFor,
   findCli,
@@ -71,6 +72,7 @@ import {
 } from "./ccswitch/sync"
 import type {
   Arch,
+  CleanupSpecDescriptor,
   CliInstallManager,
   CliTool,
   Command,
@@ -1585,4 +1587,61 @@ export function syncLiveConfigSteps(
       dependsOn,
     },
   ]
+}
+
+/**
+ * Clear a set of cleanup targets in one step.
+ *
+ * One step for the whole selection rather than one per target: to the user this
+ * is a single decision ("clear these seven things"), the backend does it in one
+ * pass, and it produces exactly one restore point — a per-target step list would
+ * scatter a single quarantine batch across seven reports that each claim it.
+ *
+ * `entries` is measured by the section's scan, which only ever `stat`s. That is
+ * what lets the preview name every path and its real size while keeping the
+ * dry-run promise that nothing is touched.
+ */
+export function cleanupStep(
+  specs: CleanupSpecDescriptor[],
+  entries: { path: string; bytes: number; files: number }[],
+  mode: "quarantine" | "delete",
+  messages: Messages = en
+): StepDescriptor {
+  const bytes = entries.reduce((sum, e) => sum + e.bytes, 0)
+  return {
+    kind: "cleanup",
+    id: `cleanup-${mode}`,
+    label:
+      mode === "quarantine"
+        ? messages.steps.cleanupQuarantine(formatBytes(bytes))
+        : messages.steps.cleanupDelete(formatBytes(bytes)),
+    mode,
+    specs,
+    entries,
+  }
+}
+
+/**
+ * Clear a config-key cleanup target (hooks, the per-project prompt history in
+ * `~/.claude.json`).
+ *
+ * Rides `mergeFile` deliberately: these edit a file that also holds settings the
+ * user cares about, and `mergeFile` is the path that snapshots the original to
+ * `.agentpack.bak` first. A cleanup step would have moved the whole file to
+ * quarantine — correct for a cache directory, wrong for `settings.json`.
+ */
+export function cleanupConfigStep(
+  target: CleanupConfigTarget,
+  path: string,
+  messages: Messages = en
+): StepDescriptor {
+  const title = messages.cleanup.targets[target.id]?.title ?? target.id
+  return {
+    kind: "mergeFile",
+    id: `cleanup-config-${target.id}`,
+    label: messages.steps.cleanupConfig(title),
+    path,
+    merge: target.edit,
+    writtenNote: messages.steps.cleanupConfigWritten(title, path),
+  }
 }

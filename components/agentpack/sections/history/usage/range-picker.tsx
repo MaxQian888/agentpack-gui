@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import { customRange, resolveRange, type Granularity, type TimeRange } from "@/lib/history/range"
 
-const PRESETS = ["today", "7d", "30d", "month", "all"] as const
+const PRESETS = ["today", "7d", "30d", "90d", "month", "all"] as const
 
 /**
  * Range + granularity control shared by all three usage tabs.

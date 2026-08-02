@@ -24,6 +24,7 @@ const ALL: readonly SectionKey[] = [
   "skills",
   "mcp",
   "network",
+  "cleanup",
   "ccswitch",
   "ccconnect",
   "config",

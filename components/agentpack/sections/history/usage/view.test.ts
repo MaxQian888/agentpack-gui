@@ -137,3 +137,32 @@ describe("buildView", () => {
     expect(view.buckets[0].tokens).toBe(500)
   })
 })
+
+describe("buildView — daily buckets", () => {
+  // Monday the 13th and Friday the 17th: one calendar week, five calendar days.
+  const sessions = [
+    session({ id: "a", updatedAt: day(13), cost: 1 }),
+    session({ id: "b", updatedAt: day(17), cost: 2 }),
+  ]
+  const range = customRange(day(13), day(17))
+
+  it("hands the heatmap one cell per day even when the charts group by week", () => {
+    const view = buildView({ sessions, series: null, range, granularity: "week", now: NOW })
+    // A week's grouping collapses the two sessions into one bar…
+    expect(view.buckets).toHaveLength(1)
+    // …but the heatmap still gets every day in the range, gaps included.
+    expect(view.dailyBuckets.map((b) => b.key)).toEqual([
+      "2026-07-13",
+      "2026-07-14",
+      "2026-07-15",
+      "2026-07-16",
+      "2026-07-17",
+    ])
+    expect(view.dailyBuckets.map((b) => b.cost)).toEqual([1, 0, 0, 0, 2])
+  })
+
+  it("reuses the same array when the charts are already daily", () => {
+    const view = buildView({ sessions, series: null, range, granularity: "day", now: NOW })
+    expect(view.dailyBuckets).toBe(view.buckets)
+  })
+})

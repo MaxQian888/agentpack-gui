@@ -94,7 +94,10 @@ it("closes the editor with a toast when the config can't be read", async () => {
 it("edits CORS origins as a comma-separated list and writes them as an array", async () => {
   ;(readTextFile as jest.Mock).mockResolvedValue('[management]\nenabled = true\ntoken = "x"\n')
   await openDialog(true)
-  const cors = await screen.findByLabelText(en.ccconnect.fields.corsOrigins)
+  // Management and bridge both carry cors_origins under the same label, so the
+  // section-namespaced id is what tells them apart.
+  await screen.findAllByLabelText(en.ccconnect.fields.corsOrigins)
+  const cors = document.getElementById("ccconf-management-corsOrigins")!
   // Set the whole value in one event: this controlled field re-serializes the
   // entire TOML doc on every keystroke, so per-character typing re-rendered the
   // form 28× and tipped the test past 5 s under coverage. We only assert the

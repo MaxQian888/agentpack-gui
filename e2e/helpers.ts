@@ -21,6 +21,7 @@ export const NAV = {
   environment: { workspace: "install", tab: "Runtime environment" },
   clis: { workspace: "install", tab: "Install / upgrade CLIs" },
   network: { workspace: "install", tab: "Network / mirrors" },
+  cleanup: { workspace: "install", tab: "Clean up" },
   skills: { workspace: "capabilities", tab: "Engineering skills" },
   mcp: { workspace: "capabilities", tab: "MCP servers" },
   ccswitch: { workspace: "capabilities", tab: "cc-switch management" },

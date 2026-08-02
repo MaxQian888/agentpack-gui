@@ -3,6 +3,7 @@ import {
   MCP_CATEGORY_ORDER,
   MCP_SERVERS,
   RUNTIMES,
+  clisByKind,
   findCli,
   findMcp,
   findRuntime,
@@ -12,6 +13,7 @@ import {
   upgradeCommandFor,
 } from "./registry"
 import { PRESETS, findPreset } from "./presets"
+import { CLI_KINDS } from "./types"
 import { en } from "../i18n/en"
 import { zhCN } from "../i18n/zh-CN"
 
@@ -46,6 +48,130 @@ it("everything preset covers the whole MCP registry", () => {
 it("everything preset covers the whole CLI registry", () => {
   const e = findPreset("everything")!
   expect(e.clis.length).toBe(CLI_TOOLS.length)
+})
+
+describe("catalog groups", () => {
+  it("gives every tool a kind the install lists know how to render", () => {
+    for (const c of CLI_TOOLS) expect(CLI_KINDS).toContain(c.kind)
+  })
+
+  it("groups every tool exactly once, keeping registry order inside each group", () => {
+    const grouped = clisByKind().flatMap((g) => g.tools.map((c) => c.id))
+    expect(grouped.sort()).toEqual(CLI_TOOLS.map((c) => c.id).sort())
+    for (const { kind, tools } of clisByKind()) {
+      expect(tools.map((c) => c.id)).toEqual(
+        CLI_TOOLS.filter((c) => c.kind === kind).map((c) => c.id)
+      )
+    }
+  })
+
+  it("emits no empty group — an unused kind would render a heading with nothing under it", () => {
+    for (const g of clisByKind()) expect(g.tools.length).toBeGreaterThan(0)
+  })
+
+  it("labels every rendered kind in both locales", () => {
+    const kinds = clisByKind().map((g) => g.kind)
+    for (const cat of [en.tools, zhCN.tools] as const) {
+      for (const kind of kinds) {
+        expect(cat.kinds[kind]).toBeTruthy()
+        expect(cat.kindNotes[kind]).toBeTruthy()
+      }
+    }
+  })
+
+  it("counts cc-switch and cc-connect as companions and everything else as an agent", () => {
+    const companions = CLI_TOOLS.filter((c) => c.kind === "companion").map((c) => c.id)
+    expect(companions.sort()).toEqual(["cc-connect", "cc-switch"])
+  })
+})
+
+describe("npm-managed CLIs", () => {
+  const npmCli = CLI_TOOLS.filter((c) => c.npmPackage)
+
+  // `npmCli()` in the registry derives all twelve commands from one package
+  // name; before it, each tool spelled them out and a name that differed between
+  // install and uninstall would leave the old copy on PATH. Assert the property
+  // rather than the helper, so a hand-written entry is held to it too.
+  it("install, upgrade and uninstall all name the same package on every OS", () => {
+    for (const tool of npmCli) {
+      const pkg = tool.npmPackage!
+      for (const os of ["win", "mac", "linux"] as const) {
+        expect(tool.install[os]).toEqual({ file: "npm", args: ["install", "-g", pkg] })
+        expect(tool.upgrade?.[os]).toEqual({
+          file: "npm",
+          args: ["install", "-g", `${pkg}@latest`],
+        })
+        expect(tool.uninstall?.[os]).toEqual({ file: "npm", args: ["uninstall", "-g", pkg] })
+      }
+    }
+  })
+
+  it("offers npm first, then pnpm and bun, on every OS", () => {
+    for (const tool of npmCli) {
+      for (const os of ["win", "mac", "linux"] as const) {
+        expect(
+          installMethodsFor(tool, os)
+            .map((m) => m.id)
+            .slice(0, 3)
+        ).toEqual(["npm", "pnpm", "bun"])
+      }
+    }
+  })
+
+  // `minNodeMajor` makes the plan refuse the install up front. That is only
+  // right when npm would refuse it too — i.e. when the package really declares
+  // an `engines.node` floor — otherwise it blocks an install that would work.
+  it("only claims a Node floor for packages that publish one", () => {
+    const floors: Record<string, number> = {
+      "claude-code": 22,
+      "gemini-cli": 20,
+      "qwen-code": 22,
+      auggie: 20,
+    }
+    for (const tool of CLI_TOOLS) expect(tool.minNodeMajor).toBe(floors[tool.id])
+  })
+
+  it("ships no npm package upstream has deprecated or renamed away", () => {
+    // Each of these still resolves on npm, so nothing here fails loudly — an
+    // install just lands a stub or an abandoned build. `pnpm audit:catalog`
+    // catches the general case weekly; this pins the ones already found.
+    const retired = [
+      // Renamed; the old name now only re-points at @ampcode/cli.
+      "@sourcegraph/amp",
+      // Superseded by GitHub's own @github/copilot.
+      "@githubnext/github-copilot-cli",
+    ]
+    const inUse = CLI_TOOLS.map((c) => c.npmPackage).filter(Boolean)
+    for (const pkg of retired) expect(inUse).not.toContain(pkg)
+  })
+})
+
+describe("agents that install a native binary", () => {
+  // No npm package means no published version to compare against, so the UI
+  // shows no Upgrade action — re-running the vendor's installer is the upgrade,
+  // which is exactly what `upgradeCommandFor` falls back to.
+  it("upgrades by re-running the installer", () => {
+    for (const id of ["droid", "cursor-cli"] as const) {
+      const tool = findCli(id)!
+      expect(tool.npmPackage).toBeUndefined()
+      expect(upgradeCommandFor(tool, "mac", undefined)).toEqual(tool.install.mac)
+    }
+  })
+
+  it("pipes each installer into the shell its own shebang names", () => {
+    // app.factory.ai/cli is `#!/usr/bin/env sh`; ampcode.com/install.sh is bash.
+    expect(findCli("droid")!.install.mac?.args.at(-1)).toMatch(/\| sh$/)
+    const ampNative = findCli("amp")!.methods?.mac?.find((m) => m.id === "native")
+    expect(ampNative?.command.args.at(-1)).toMatch(/\| bash$/)
+  })
+
+  it("says what to do on Windows instead of pretending Cursor CLI installs there", () => {
+    // cursor.com/install.ps1 serves the marketing page, not a script.
+    const cursor = findCli("cursor-cli")!
+    expect(cursor.install.win).toBeNull()
+    expect(installMethodsFor(cursor, "win")).toEqual([])
+    expect(cursor.manualNote).toMatch(/WSL/)
+  })
 })
 
 it("cc-connect and opencode are npm-managed on every OS", () => {

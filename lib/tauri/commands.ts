@@ -22,6 +22,7 @@ import type {
   SkillUpdateResult,
 } from "@/lib/skills/types"
 import type { UpdateQuery } from "@/lib/skills/updates"
+import type { CleanupRoots, CleanupSpec, CleanupStat } from "@/lib/agentpack/cleanup"
 
 // Typed wrappers around the custom Rust commands (src-tauri/src/*.rs). Keep this
 // file as the SOLE caller of `invoke` for agentpack — UI/runner import these.
@@ -157,8 +158,14 @@ export const isProcessRunning = (name: string) => invoke<boolean>("is_process_ru
 /**
  * Spawn the cc-connect bridge detached; resolves once spawned, not on exit
  * (`runCommand` would block until the service exits, which it never does).
+ *
+ * Pass `configPath` so the service reads the same config.toml this app edits —
+ * cc-connect otherwise prefers a `config.toml` in its working directory. The
+ * spawn also carries `--force`, which clears cc-connect's instance lock so a
+ * restart can't lose a race with the process it just stopped.
  */
-export const startCcConnect = () => invoke<void>("start_cc_connect")
+export const startCcConnect = (configPath?: string) =>
+  invoke<void>("start_cc_connect", { configPath })
 
 /**
  * Stop every running cc-connect process (idempotent no-op when none). Also
@@ -540,3 +547,53 @@ export const historyGetSession = (source: HistorySource, path: string) =>
  */
 export const historyGetPartText = (source: HistorySource, path: string, ref: string) =>
   invoke<string>("history_get_part_text", { source, path, ref })
+
+// ── Environment cleanup (src-tauri/src/cleanup.rs) ──────────────────────────
+
+/** The directories the cleanup catalog builds its paths under. */
+export const cleanupRoots = () => invoke<CleanupRoots>("cleanup_roots")
+
+/**
+ * Measure what each spec currently matches. Read-only — nothing here renames or
+ * unlinks, so the section can rescan freely and the review panel can quote real
+ * numbers before the user commits.
+ */
+export const cleanupScan = (specs: CleanupSpec[]) =>
+  invoke<CleanupStat[]>("cleanup_scan", { specs })
+
+/** What a cleanup run did. `quarantineId` is the run's restore point. */
+export interface CleanupOutcome {
+  quarantineId: string | null
+  bytes: number
+  removed: number
+  /** Per-path failures. A locked file is reported, never allowed to abort the run. */
+  errors: string[]
+}
+
+export const cleanupApply = (specs: CleanupSpec[], mode: "quarantine" | "delete") =>
+  invoke<CleanupOutcome>("cleanup_apply", { specs, mode })
+
+/** One quarantine batch, as listed. Counts only — a batch can hold 10k files. */
+export interface QuarantineEntry {
+  id: string
+  ts: number
+  bytes: number
+  items: number
+  targetIds: string[]
+}
+
+export const cleanupQuarantineList = () => invoke<QuarantineEntry[]>("cleanup_quarantine_list")
+
+/** What a restore put back, and what it skipped (a path the CLI reoccupied). */
+export interface QuarantineRestore {
+  restored: number
+  bytes: number
+  errors: string[]
+}
+
+export const cleanupQuarantineRestore = (id: string) =>
+  invoke<QuarantineRestore>("cleanup_quarantine_restore", { id })
+
+/** Permanently delete one batch, or every batch when `id` is omitted. Returns bytes freed. */
+export const cleanupQuarantinePurge = (id?: string) =>
+  invoke<number>("cleanup_quarantine_purge", { id: id ?? null })

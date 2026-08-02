@@ -110,6 +110,10 @@ export const zhCN = {
         title: "网络",
         body: "自动发现并应用代理，或为 npm、pip 等选择更快的镜像源。",
       },
+      cleanup: {
+        title: "环境清理",
+        body: "各个 CLI 会把每一份聊天记录、缓存和日志永久留着。这里能看清它们占了多少，并把不需要的清掉——而且可以还原。",
+      },
       ccswitch: {
         title: "cc-switch",
         body: "保存多套 API 供应商/密钥，点一下就切换当前使用的那套。",
@@ -220,6 +224,15 @@ export const zhCN = {
     upgradeNote: "勾选已安装的工具可将其升级到最新版本。",
     installedSuffix: "  (已安装)",
     notTauri: "这里查不到安装状态 —— 请在桌面应用中运行，才能看到本机已有什么、以及执行安装。",
+    /** 目录两个分组的标题（见 `CliKind`）。 */
+    kinds: {
+      agent: "编码代理",
+      companion: "配套工具",
+    } as Record<string, string>,
+    kindNotes: {
+      agent: "代理本体 —— 你用几个就装几个。",
+      companion: "用来管理或连接上面这些代理的工具。",
+    } as Record<string, string>,
   },
 
   environment: {
@@ -233,6 +246,213 @@ export const zhCN = {
     recheck: "重新检测",
     notManaged: (manager: string) =>
       `它不是通过 ${manager} 安装的，无法在此更新或重装——请改从官方页面下载最新版本。`,
+  },
+
+  cleanup: {
+    title: "环境清理",
+    subtitle:
+      "各个 Agent CLI 会把每一份聊天记录、缓存和日志永久保留下来。这里可以清掉不需要的部分——凭证、配置和已安装的技能都不会被碰到。",
+    notTauri: "清理需要桌面端——在浏览器里没有可扫描的机器。",
+    scan: "重新扫描",
+    scanning: "正在统计磁盘占用…",
+    empty: "没有可清理的内容——没有找到这台机器上工具留下的缓存或记录。",
+    emptyHint: "安装 Claude Code、Codex 或 OpenCode 之后，它们的数据会出现在这里。",
+    reclaimable: (size: string) => `可清理 ${size}`,
+    selectedSummary: (size: string, files: number) => `已选 ${size} · ${files} 个文件`,
+    nothingSelected: "请先选择要清理的内容",
+    clean: "清理所选…",
+    quickClean: "清理缓存",
+    quickCleanHint: "只勾选可以自动重建的安全项——不会碰你写的东西。",
+    selectAll: "全选",
+    clearSelection: "取消选择",
+    degraded: "其中一部分读不出来，这个体积只是下限。",
+    running: (name: string) => `${name} 正在运行——请先关闭，否则它占用的文件清不掉。`,
+    spanning: (from: string, to: string) => `${from} – ${to}`,
+    fileCount: (n: number) => `${n} 个文件`,
+    pathsLabel: "路径",
+
+    apps: {
+      claude: "Claude Code",
+      codex: "Codex",
+      opencode: "OpenCode",
+      copilot: "Copilot CLI",
+      cursor: "Cursor CLI",
+      "cc-switch": "cc-switch",
+      agentpack: "agentpack",
+    } as Record<string, string>,
+
+    categories: {
+      cache: "缓存",
+      logs: "日志与遥测",
+      artifacts: "生成的文件",
+      backups: "旧备份",
+      state: "工作状态",
+      chats: "聊天记录",
+      hooks: "Hooks",
+    } as Record<string, string>,
+
+    risks: {
+      safe: "可自动重建",
+      review: "你的数据",
+      behavioural: "会改变行为",
+    } as Record<string, string>,
+
+    riskHints: {
+      safe: "下次运行时会自动重新生成。",
+      review: "是真实内容。在清空回收区之前都可以还原。",
+      behavioural: "改变的是 Agent 的行为方式，而不只是它存了什么。",
+    } as Record<string, string>,
+
+    targets: {
+      "claude-chats": {
+        title: "历史会话",
+        impact:
+          "Claude Code 的全部历史会话，含子 Agent 的运行记录。它们同时会从“聊天历史”里消失，用量统计也会随之减少。",
+      },
+      "claude-prompt-history": {
+        title: "输入历史",
+        impact: "在 Claude Code 输入框里按 ↑ 能翻出来的那份记录。",
+      },
+      "claude-plans": {
+        title: "已保存的计划",
+        impact: "计划模式下写出来的计划文档。",
+      },
+      "claude-tasks": {
+        title: "任务与会话状态",
+        impact: "待办清单和每个会话的临时状态。之后再恢复某个会话时，它的待办不会回来。",
+      },
+      "claude-file-history": {
+        title: "文件修改历史",
+        impact: "为了撤销修改而保留的文件副本。撤销将无法回溯到这个时间点之前。",
+      },
+      "claude-shell-snapshots": {
+        title: "Shell 快照",
+        impact: "每个会话一份的 shell 环境副本。下次运行会重新生成。",
+      },
+      "claude-cache": {
+        title: "插件与查询缓存",
+        impact: "下载下来的插件内容和各类查询缓存，需要时会重新获取。",
+      },
+      "claude-mcp-logs": {
+        title: "MCP 服务日志",
+        impact: "MCP 服务按项目写在系统缓存目录里的日志。",
+      },
+      "claude-telemetry": {
+        title: "未上报的遥测",
+        impact: "上传失败、之后一直排队堆积的分析事件。",
+      },
+      "claude-config-backups": {
+        title: "轮换的配置备份",
+        impact: "~/.claude.json 的历史副本。当前生效的那份文件不会被动，只清带日期的备份。",
+      },
+      "claude-hooks": {
+        title: "settings.json 里的 hooks",
+        impact:
+          "settings.json 里 Claude Code 在每次工具调用前后执行的 hook 命令。其余设置保留，并且会先备份这个文件。",
+      },
+      "claude-project-history": {
+        title: "各项目的输入历史",
+        impact:
+          "~/.claude.json 为你打开过的每个项目保留的输入记录。项目本身和它们的设置都保留，只清空输入历史。",
+      },
+      "codex-chats": {
+        title: "历史会话",
+        impact: "Codex 的全部历史会话。它们同时会从“聊天历史”里消失，用量统计也会随之减少。",
+      },
+      "codex-archived-chats": {
+        title: "已归档的会话",
+        impact: "你归档而不是删除的那些会话。",
+      },
+      "codex-prompt-history": {
+        title: "输入与语音历史",
+        impact: "键入的输入历史，以及语音转写记录。",
+      },
+      "codex-logs": {
+        title: "日志数据库",
+        impact: "Codex 的日志数据库及其预写日志文件，往往是它占地方最大的东西。请先关闭 Codex。",
+      },
+      "codex-shell-snapshots": {
+        title: "Shell 快照",
+        impact: "每个会话一份的 shell 环境副本。下次运行会重新生成。",
+      },
+      "codex-generated": {
+        title: "图片与附件",
+        impact: "会话过程中产出的图片、可视化结果和附件。想留的请先复制出去。",
+      },
+      "codex-cache": {
+        title: "模型与插件缓存",
+        impact: "模型列表、应用目录和插件下载缓存，需要时会重新获取。",
+      },
+      "codex-temp": {
+        title: "临时文件与写坏的残留",
+        impact: "临时目录，以及崩溃时留下的半截状态文件。",
+      },
+      "codex-hooks-file": {
+        title: "hooks.json",
+        impact: "hooks.json —— Codex 在工具调用前后执行的命令。删掉它等于关闭全部 hook。",
+      },
+      "opencode-chats": {
+        title: "聊天数据库",
+        impact:
+          "OpenCode 把所有会话存在一个数据库里，清掉它就等于删除全部会话，“聊天历史”里的 OpenCode 也会清空。请先关闭 OpenCode。",
+      },
+      "opencode-cache": {
+        title: "缓存与日志",
+        impact: "下次运行会重新生成。",
+      },
+      "copilot-logs": {
+        title: "会话日志",
+        impact: "Copilot CLI 每个进程一个日志文件，会一直留着。",
+      },
+      "cursor-hooks": {
+        title: "hooks.json",
+        impact: "Cursor CLI 在工具调用前后执行的命令。删掉这个文件等于关闭全部 hook。",
+      },
+      "agentpack-activity": {
+        title: "agentpack 活动日志",
+        impact: "本应用在这台机器上做过哪些改动、什么时候做的。",
+      },
+      "agentpack-history-cache": {
+        title: "聊天历史缓存",
+        impact: "agentpack 解析好的聊天记录副本。清掉只会多花一次慢扫描的时间，不会丢数据。",
+      },
+      "cc-switch-backups": {
+        title: "cc-switch 快照",
+        impact: "每次切换供应商前留下的配置还原点。清掉之后这些还原点就没有了。",
+      },
+    } as Record<string, { title: string; impact: string }>,
+
+    age: {
+      label: "保留最近",
+      all: "全部清理",
+      days: (n: number) => `${n} 天`,
+      note: "只对按日期堆积的记录生效——缓存和数据库只能整体清理。",
+    },
+
+    mode: {
+      label: "清理方式",
+      quarantine: "移入回收区",
+      quarantineHint: "瞬间完成，清空之前都能还原。清空回收区后才真正释放磁盘空间。",
+      delete: "永久删除",
+      deleteHint: "立刻释放空间，且无法还原。",
+    },
+
+    trash: {
+      title: "回收区",
+      subtitle: "清理掉的内容会先放在这里，直到你还原或清空它。在那之前仍然占着磁盘空间。",
+      empty: "这里是空的。",
+      holding: (size: string, batches: number) => `${batches} 批，共 ${size}`,
+      restore: "还原",
+      restoreAll: "全部还原",
+      purge: "清空",
+      purgeAll: "全部清空",
+      purgeConfirmTitle: "清空回收区？",
+      purgeConfirmBody: (size: string) => `${size} 将被永久删除。这是仅剩的一份副本，无法还原。`,
+      batch: (items: number, size: string) => `${items} 项 · ${size}`,
+      restored: (count: number) => `已还原 ${count} 项。`,
+      restoreSkipped: (count: number) => `有 ${count} 项留在回收区——那些路径上工具已经重新写入了。`,
+      purged: (size: string) => `已清空 —— 释放 ${size}。`,
+    },
   },
 
   skills: {
@@ -664,6 +884,42 @@ export const zhCN = {
         title: "OpenCode",
         description: "开源终端编码代理（opencode-ai）。",
       },
+      "gemini-cli": {
+        title: "Gemini CLI",
+        description: "Google 开源的终端代理，由 Gemini 驱动（@google/gemini-cli）。",
+      },
+      "qwen-code": {
+        title: "Qwen Code",
+        description: "阿里巴巴面向通义千问模型的终端编码代理（@qwen-code/qwen-code）。",
+      },
+      "copilot-cli": {
+        title: "GitHub Copilot CLI",
+        description: "把 GitHub Copilot 编码代理带进终端（@github/copilot）。",
+      },
+      crush: {
+        title: "Crush",
+        description: "Charm 出品的终端编码代理，模型自带自选（@charmland/crush）。",
+      },
+      amp: {
+        title: "Amp",
+        description: "Sourcegraph 的终端编码代理（@ampcode/cli）。",
+      },
+      cline: {
+        title: "Cline",
+        description: "开源代理 Cline 的终端命令行版（cline）。",
+      },
+      auggie: {
+        title: "Auggie",
+        description: "Augment Code 的终端代理，围绕代码库索引构建（@augmentcode/auggie）。",
+      },
+      droid: {
+        title: "Droid",
+        description: "Factory 的终端编码代理。安装原生二进制，无需 Node。",
+      },
+      "cursor-cli": {
+        title: "Cursor CLI",
+        description: "把 Cursor 的代理搬出编辑器。安装原生二进制，无需 Node。",
+      },
     } as Record<string, { title: string; description: string }>,
     runtime: {
       node: {
@@ -848,6 +1104,10 @@ export const zhCN = {
     syncCodex: "同步供应商 → Codex config.toml",
     syncOpencode: "同步供应商 → OpenCode opencode.json",
     opencodeProviderUpdated: "已更新 OpenCode 供应商",
+    cleanupQuarantine: (size: string) => `清理 ${size} 到回收区`,
+    cleanupDelete: (size: string) => `永久删除 ${size}`,
+    cleanupConfig: (title: string) => `清除${title}`,
+    cleanupConfigWritten: (title: string, path: string) => `已从 ${path} 清除${title}`,
   },
 
   coreOutput: {
@@ -875,6 +1135,16 @@ export const zhCN = {
       setCurrent: (app: string) => `将把 ${app} 切换到另一个供应商`,
     },
     wouldBackupSkill: (path: string) => `将备份 ${path}`,
+    wouldQuarantine: (path: string, size: string, files: number) =>
+      `将把 ${path} 移入回收区 —— ${size}，${files} 个文件`,
+    wouldDeleteSized: (path: string, size: string, files: number) =>
+      `将永久删除 ${path} —— ${size}，${files} 个文件`,
+    wouldQuarantineTotal: (size: string) => `共 ${size}，在清空回收区之前都可以还原`,
+    wouldDeleteTotal: (size: string) => `共 ${size}，立即释放，且无法还原`,
+    cleanupQuarantined: (size: string, count: number) => `已把 ${count} 项（${size}）移入回收区`,
+    cleanupDeleted: (size: string, count: number) => `已永久删除 ${count} 项（${size}）`,
+    cleanupSkipped: (detail: string) => `已跳过 —— ${detail}`,
+    cleanupNothingRemoved: "没有清理掉任何内容 —— 请看上面被跳过的条目。",
     skippedDependency: (label: string) => `已跳过 —— 依赖的步骤 “${label}” 失败了`,
     skippedCancelled: "已跳过 —— 运行已取消",
     notOnPathHint: (file: string) =>
@@ -927,6 +1197,7 @@ export const zhCN = {
     clis: "安装 / 升级 CLI",
     mcp: "MCP 服务",
     network: "网络 / 镜像",
+    cleanup: "环境清理",
     saveConfig: "将当前配置导出为文件",
     about: "关于与更新",
     exit: "退出",
@@ -1298,21 +1569,35 @@ export const zhCN = {
     stopped: "○ 已停止",
     start: "启动",
     stop: "停止",
-    startFailed:
-      "无法启动 cc-connect。配置为空时它会立即退出 —— 请先启用 Web 管理（或添加一个项目）后再重试。",
+    startFailed: "无法启动 cc-connect。请检查 config.toml —— 配置无法加载时它会立即退出。",
     stopFailed: "无法停止 cc-connect。请手动停止后点击刷新。",
-    daemonNote: "macOS/Linux 上装了系统守护进程？请改用 `cc-connect daemon start/stop` 管理。",
+    noProjects: "○ 未配置任何项目",
+    needsProject:
+      "config.toml 中至少要有一个带平台的 [[projects]]，cc-connect 才会启动 —— 否则它会在监听任何端口之前拒绝该配置。可用「创建配置」生成一份模板，再替换其中的占位值。",
+    daemonNote:
+      "已把 cc-connect 装成系统服务？请改用 `cc-connect daemon start/stop` 管理 —— 本应用管理的是普通后台进程。",
     dryRunBlocked: "预览（演练）模式开启中 —— 启动/停止服务已禁用。",
     webTitle: "Web 管理面板",
     webUrl: (url: string) => `启用 Web 管理并运行桥接后，可通过 ${url} 访问。`,
     openWeb: "打开面板",
     enableAndOpen: "启用并打开面板",
+    openInBrowser: "用浏览器打开",
+    embedTitle: "cc-connect 管理面板",
+    embedDescription: (url: string) => `内嵌显示 ${url} 上的 cc-connect 管理面板。`,
+    embedLoading: "正在加载管理面板…",
+    embedStalled: "面板未能加载。请重新加载，或用浏览器打开以查看页面的具体提示。",
+    embedLoginHint:
+      "如果面板要求输入 Token，说明它记住的是旧 Token；此时它已将其清除，重新加载即可。",
+    embedReload: "重新加载",
+    embedExternal: "用浏览器打开",
+    embedClose: "关闭",
     enableWebAdmin: "启用 Web 管理",
     webAdminEnabled: "已启用 Web 管理 —— 启动桥接后即可打开面板。",
     webAdminFailed: "无法打开面板。请检查 config.toml 后重试。",
     webAdminHint:
-      "管理面板默认关闭。一键即可启用管理服务、启动桥接并打开面板（已自动登录），随后即可添加项目、提供商与平台。",
-    webReadyHint: "以登录 Token 免密打开面板；若桥接未运行，会先自动启动。",
+      "管理面板默认关闭。一键即可启用管理服务与桥接、启动服务并在此处直接打开面板（已自动登录），无需离开应用即可编辑项目、提供商与平台。",
+    webReadyHint:
+      "在此处内嵌打开面板，以登录 Token 免密进入；若服务未运行，会先自动启动。也可用「用浏览器打开」把同一页面交给浏览器。",
     managementEnabled: "✔ 已启用 Web 管理",
     managementDisabled: "○ 未启用 Web 管理",
     configTitle: "配置",
@@ -1343,8 +1628,11 @@ export const zhCN = {
       tts: "文字转语音",
       display: "显示",
       streamPreview: "流式预览",
-      rateLimit: "限流",
+      instantReply: "即时回执",
+      rateLimit: "限流（接收）",
+      outgoingRateLimit: "限流（发送）",
       relay: "转发（Relay）",
+      cron: "定时任务与队列",
       timeouts: "超时（分钟）",
     },
     fields: {
@@ -1355,6 +1643,8 @@ export const zhCN = {
       attachmentSend: "附件回传",
       maxAttachmentSize: "附件大小上限（MB）",
       quiet: "静默模式",
+      bannedWords: "违禁词",
+      providerPresetsUrl: "提供商预设 URL",
       logLevel: "日志级别",
       enabled: "启用",
       port: "端口",
@@ -1369,10 +1659,12 @@ export const zhCN = {
       speechLanguage: "识别语言",
       voice: "音色",
       voiceId: "音色 ID",
+      languageType: "语言提示",
       speed: "语速",
       ttsMode: "TTS 模式",
       maxTextLen: "最大文本长度",
       displayMode: "显示模式",
+      cardMode: "卡片样式",
       thinkingMessages: "显示思考过程",
       thinkingMaxLen: "思考最大长度",
       toolMessages: "显示工具调用",
@@ -1384,15 +1676,20 @@ export const zhCN = {
       intervalMs: "更新间隔（毫秒）",
       minDeltaChars: "最小增量字符数",
       maxChars: "最大字符数",
+      disabledPlatforms: "禁用预览的平台",
+      instantReplyContent: "回执文案",
       maxMessages: "最大消息数",
       windowSecs: "时间窗口（秒）",
+      maxPerSecond: "每秒最大消息数",
+      burst: "突发上限",
       relayTimeout: "转发超时（秒）",
       visibility: "可见性",
+      cronSilent: "静默启动定时任务",
+      cronSessionMode: "定时任务会话模式",
+      queueMaxDepth: "单会话队列深度",
       idleTimeout: "空闲超时",
       maxTurnTime: "单轮最长时间",
-      resetOnIdle: "空闲后重置",
       workspaceIdleTimeout: "工作区空闲超时",
-      agentSessionIdleTimeout: "Agent 会话空闲超时",
     },
   },
 
@@ -1688,6 +1985,19 @@ export const zhCN = {
     ratePerMillion: (input: string, output: string) => `每百万 ${input} / ${output}`,
     chartByDay: "每日 Token",
     chartCostByDay: "每日费用",
+    costViewLabel: "费用图表视图",
+    costView: { heatmap: "热力图", bar: "柱状图" } as Record<string, string>,
+    heatmapHint: "每格代表一天，颜色深浅对应当天费用。",
+    heatmapStat: (total: string, days: number) => `${days} 个有用量的日子，共 ${total}`,
+    heatmapCell: (date: string, cost: string) => `${date}：${cost}`,
+    heatmapCellEmpty: (date: string) => `${date}：无用量`,
+    heatmapLabel: "每日费用热力图",
+    heatmapLegendLabel: "费用强度",
+    // 用 `{{level}}` 模板而非函数：热力图组件渲染图例色块时自行替换占位符。
+    heatmapLegendLevel: "费用强度等级 {{level}}",
+    heatmapLess: "少",
+    heatmapMore: "多",
+    heatmapPick: "将鼠标移到或用键盘聚焦某一天可查看当天费用。",
     chartBySource: "各工具 Token",
     chartByModel: "各模型 Token",
     chartByHour: "活跃时段",
@@ -1710,6 +2020,7 @@ export const zhCN = {
       today: "今天",
       "7d": "7 天",
       "30d": "30 天",
+      "90d": "90 天",
       month: "本月",
       all: "全部",
       custom: "自定义",

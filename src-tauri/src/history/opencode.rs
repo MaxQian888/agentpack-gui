@@ -22,28 +22,12 @@ use super::{
 
 /// First existing OpenCode data directory across the platform-specific
 /// candidates. OpenCode follows XDG on all platforms, but honors overrides.
+///
+/// The candidate list is shared with `cleanup`, which offers to clear this very
+/// database: two independent lists would eventually drift, and then the cleanup
+/// section would clean a directory the dashboard never read from.
 fn opencode_db() -> Option<PathBuf> {
-  let home = dirs::home_dir();
-  let mut candidates: Vec<PathBuf> = Vec::new();
-  if let Ok(p) = std::env::var("XDG_DATA_HOME") {
-    if !p.is_empty() {
-      candidates.push(PathBuf::from(p).join("opencode"));
-    }
-  }
-  if let Some(h) = &home {
-    candidates.push(h.join(".local/share/opencode"));
-    candidates.push(h.join(".opencode"));
-  }
-  if let Some(d) = dirs::data_dir() {
-    candidates.push(d.join("opencode"));
-  }
-  if let Ok(p) = std::env::var("APPDATA") {
-    candidates.push(PathBuf::from(p).join("opencode"));
-  }
-  if let Ok(p) = std::env::var("LOCALAPPDATA") {
-    candidates.push(PathBuf::from(p).join("opencode"));
-  }
-  candidates
+  crate::cleanup::opencode_data_candidates()
     .into_iter()
     .map(|d| d.join("opencode.db"))
     .find(|p| p.exists())

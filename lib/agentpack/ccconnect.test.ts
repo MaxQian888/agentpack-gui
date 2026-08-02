@@ -4,6 +4,7 @@ import {
   CC_CONNECT_WEBHOOK_PORT,
   CONFIG_SECTIONS,
   PROVIDER_TOKEN,
+  countProjects,
   dashboardUrl,
   defaultConfigToml,
   ensureWebAdmin,
@@ -72,7 +73,35 @@ describe("dashboardUrl", () => {
   it("targets localhost and appends an (encoded) token when present", () => {
     expect(dashboardUrl(9820)).toBe("http://localhost:9820")
     expect(dashboardUrl(8080)).toBe("http://localhost:8080")
-    expect(dashboardUrl(9820, "sec ret")).toBe("http://localhost:9820/?token=sec%20ret")
+    expect(dashboardUrl(9820, "sec ret")).toBe("http://localhost:9820/login?token=sec%20ret")
+  })
+
+  it("puts the token on /login — the only route that reads it", () => {
+    // The dashboard's index is behind an auth guard that redirects to /login
+    // without the query string, so `/?token=` silently loses the token and
+    // strands the user on the login form. Verified against cc-connect v1.4.1.
+    const url = new URL(dashboardUrl(9820, "abc"))
+    expect(url.pathname).toBe("/login")
+    expect(url.searchParams.get("token")).toBe("abc")
+  })
+})
+
+describe("countProjects", () => {
+  it("counts [[projects]] entries", () => {
+    expect(countProjects('[[projects]]\nname = "a"\n[[projects]]\nname = "b"\n')).toBe(2)
+    expect(countProjects('[[projects]]\nname = "a"\n')).toBe(1)
+  })
+
+  it("reads zero for empty, projectless and unparseable configs", () => {
+    // Zero is the number that matters: cc-connect refuses such a config during
+    // validation and exits before binding the management port.
+    expect(countProjects("")).toBe(0)
+    expect(countProjects("[management]\nenabled = true\n")).toBe(0)
+    expect(countProjects("broken = [")).toBe(0)
+  })
+
+  it("ignores a `projects` key that isn't an array of tables", () => {
+    expect(countProjects('projects = "one"\n')).toBe(0)
   })
 })
 
@@ -169,6 +198,32 @@ describe("editor schema", () => {
       }
     }
   })
+
+  it("offers no key that cc-connect reads per-project rather than globally", () => {
+    // These live on [[projects]] in upstream's config.go. Written at the top
+    // level they parse fine and are silently ignored, so the form would report a
+    // setting as in effect when nothing reads it.
+    const projectScoped = ["reset_on_idle_mins", "agent_session_idle_timeout_mins"]
+    const paths = CONFIG_SECTIONS.flatMap((s) => s.fields.map((f) => f.path.join(".")))
+    for (const key of projectScoped) expect(paths).not.toContain(key)
+  })
+
+  it("field keys are unique, so one flat i18n label map can serve them", () => {
+    const keys = CONFIG_SECTIONS.flatMap((s) => s.fields.map((f) => f.key))
+    // The same key may repeat across sections (`enabled`, `port`, `token`) — it
+    // is one label. What must not happen is two *different* meanings sharing one.
+    const byKey = new Map<string, Set<string>>()
+    for (const s of CONFIG_SECTIONS) {
+      for (const f of s.fields) {
+        if (!byKey.has(f.key)) byKey.set(f.key, new Set())
+        byKey.get(f.key)!.add(f.path[f.path.length - 1])
+      }
+    }
+    for (const [key, leaves] of byKey) {
+      expect([key, [...leaves]]).toEqual([key, [...leaves].slice(0, 1)])
+    }
+    expect(keys.length).toBeGreaterThan(0)
+  })
 })
 
 describe("defaultConfigToml", () => {
@@ -182,11 +237,30 @@ describe("defaultConfigToml", () => {
     expect(doc.web).toBeUndefined()
     expect(isSectionEnabled(toml, "management")).toBe(true)
   })
+
+  it("enables the bridge too, so the dashboard's bridge surfaces work", () => {
+    const toml = defaultConfigToml()
+    expect(isSectionEnabled(toml, "bridge")).toBe(true)
+    expect(getConfigValue(parseConfigDoc(toml)!, ["bridge", "port"])).toBe(CC_CONNECT_BRIDGE_PORT)
+  })
+
+  it("declares a project with a platform — without one cc-connect won't start", () => {
+    const doc = parseConfigDoc(defaultConfigToml())!
+    expect(countProjects(defaultConfigToml())).toBe(1)
+    const projects = getConfigValue(doc, ["projects"]) as Array<Record<string, unknown>>
+    expect(projects[0].name).toBeTruthy()
+    expect(getConfigValue(projects[0], ["agent", "type"])).toBeTruthy()
+    const platforms = projects[0].platforms as Array<Record<string, unknown>>
+    expect(platforms).toHaveLength(1)
+    expect(platforms[0].type).toBeTruthy()
+  })
 })
 
 describe("ensureWebAdmin", () => {
+  const TOKENS = { management: "tok123", bridge: "btok" }
+
   it("enables management with the given token + cors on an empty doc", () => {
-    const { doc, token, changed } = ensureWebAdmin({}, "tok123")
+    const { doc, token, changed } = ensureWebAdmin({}, TOKENS)
     expect(changed).toBe(true)
     expect(token).toBe("tok123")
     expect(getConfigValue(doc, ["management", "enabled"])).toBe(true)
@@ -195,29 +269,59 @@ describe("ensureWebAdmin", () => {
     expect(getConfigValue(doc, ["management", "cors_origins"])).toEqual(["*"])
   })
 
-  it("keeps an existing token (never rotates) and reports no change", () => {
+  it("enables the bridge half too, mirroring upstream EnableWebAdmin", () => {
+    const { doc } = ensureWebAdmin({}, TOKENS)
+    expect(getConfigValue(doc, ["bridge", "enabled"])).toBe(true)
+    expect(getConfigValue(doc, ["bridge", "port"])).toBe(CC_CONNECT_BRIDGE_PORT)
+    expect(getConfigValue(doc, ["bridge", "cors_origins"])).toEqual(["*"])
+  })
+
+  it("gives the bridge its own token, never the one handed to the browser", () => {
+    const { doc, token } = ensureWebAdmin({}, TOKENS)
+    expect(getConfigValue(doc, ["bridge", "token"])).toBe("btok")
+    expect(getConfigValue(doc, ["bridge", "token"])).not.toBe(token)
+  })
+
+  it("keeps existing tokens (never rotates) and reports no change", () => {
     const base = parseConfigDoc(
-      '[management]\nenabled = true\nport = 8080\ntoken = "keep"\ncors_origins = ["*"]\n'
+      '[management]\nenabled = true\nport = 8080\ntoken = "keep"\ncors_origins = ["*"]\n' +
+        '[bridge]\nenabled = true\nport = 9810\ntoken = "bkeep"\ncors_origins = ["*"]\n'
     )!
-    const { doc, token, changed } = ensureWebAdmin(base, "new")
+    const { doc, token, changed } = ensureWebAdmin(base, { management: "new", bridge: "bnew" })
     expect(token).toBe("keep")
     expect(changed).toBe(false)
     expect(getConfigValue(doc, ["management", "port"])).toBe(8080)
+    expect(getConfigValue(doc, ["bridge", "token"])).toBe("bkeep")
   })
 
   it("backfills only the missing pieces (enabled but tokenless)", () => {
     const base = parseConfigDoc("[management]\nenabled = true\nport = 9820\n")!
-    const { doc, token, changed } = ensureWebAdmin(base, "gen")
+    const { doc, token, changed } = ensureWebAdmin(base, { management: "gen", bridge: "bgen" })
     expect(changed).toBe(true)
     expect(token).toBe("gen")
     expect(getConfigValue(doc, ["management", "token"])).toBe("gen")
     expect(getConfigValue(doc, ["management", "cors_origins"])).toEqual(["*"])
   })
 
+  it("repairs an enabled-but-tokenless bridge, which cc-connect would refuse", () => {
+    // "bridge: token is required when insecure mode is not enabled" — upstream's
+    // own EnableWebAdmin skips an already-enabled section and leaves this broken.
+    const base = parseConfigDoc("[bridge]\nenabled = true\nport = 9810\n")!
+    const { doc } = ensureWebAdmin(base, { management: "m", bridge: "b" })
+    expect(getConfigValue(doc, ["bridge", "token"])).toBe("b")
+  })
+
   it("does not mutate the input doc", () => {
     const base = parseConfigDoc("[management]\nport = 1\n")!
-    ensureWebAdmin(base, "x")
+    ensureWebAdmin(base, { management: "x", bridge: "y" })
     expect(getConfigValue(base, ["management", "enabled"])).toBeUndefined()
     expect(getConfigValue(base, ["management", "token"])).toBeUndefined()
+    expect(base.bridge).toBeUndefined()
+  })
+
+  it("leaves [[projects]] alone — enabling web admin is not enough to start", () => {
+    const base = parseConfigDoc('[[projects]]\nname = "keep"\n')!
+    const { doc } = ensureWebAdmin(base, TOKENS)
+    expect(countProjects(serializeConfigDoc(doc))).toBe(1)
   })
 })

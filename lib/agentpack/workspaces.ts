@@ -22,6 +22,7 @@ export type SectionKey =
   | "skills"
   | "mcp"
   | "network"
+  | "cleanup"
   | "ccswitch"
   | "ccconnect"
   | "config"
@@ -45,7 +46,11 @@ export interface WorkspaceDefinition {
  */
 export const WORKSPACES: readonly WorkspaceDefinition[] = [
   { key: "overview", sections: ["dashboard"] },
-  { key: "install", sections: ["presets", "environment", "clis", "network"] },
+  // Cleanup sits at the end of the repair arc: presets and runtimes put things
+  // on the machine, network makes them reachable, and this takes back the disk
+  // they fill up afterwards. It is maintenance, not configuration — which is why
+  // it isn't in Settings next to profiles and config files.
+  { key: "install", sections: ["presets", "environment", "clis", "network", "cleanup"] },
   { key: "capabilities", sections: ["skills", "mcp", "ccswitch", "ccconnect"] },
   { key: "usage", sections: ["history"] },
   { key: "settings", sections: ["config", "about"] },

@@ -1025,3 +1025,83 @@ describe("mergeFile logging", () => {
     expect(reports[0].output.join("\n")).toContain("/cfg.json")
   })
 })
+
+describe("cleanup", () => {
+  const step: StepDescriptor = {
+    kind: "cleanup",
+    id: "cleanup-quarantine",
+    label: "clear 1.9 GB",
+    mode: "quarantine",
+    specs: [{ id: "codex-chats", path: "/h/.codex/sessions", olderThanDays: 30 }],
+    entries: [{ path: "/h/.codex/sessions", bytes: 1_932_735_283, files: 900 }],
+  }
+
+  it("reports the quarantine batch as the run's restore point", async () => {
+    ;(api.cleanupApply as jest.Mock).mockResolvedValue({
+      quarantineId: "trash-42",
+      bytes: 1_932_735_283,
+      removed: 900,
+      errors: [],
+    })
+    const reports = await runSteps([step], { dryRun: false, paths })
+    expect(reports[0].status).toBe("done")
+    expect(api.cleanupApply).toHaveBeenCalledWith(step.specs, "quarantine")
+    const log = reports[0].output.join("\n")
+    expect(log).toContain("1.8 GB")
+    expect(log).toContain("trash-42")
+    // The batch IS the restore point, so the activity log records it exactly
+    // like a config snapshot.
+    expect(reports[0].artifact).toBe("trash-42")
+  })
+
+  it("never claims a restore point for a permanent delete", async () => {
+    ;(api.cleanupApply as jest.Mock).mockResolvedValue({
+      quarantineId: null,
+      bytes: 1_024,
+      removed: 3,
+      errors: [],
+    })
+    const reports = await runSteps([{ ...step, mode: "delete" }], { dryRun: false, paths })
+    expect(reports[0].status).toBe("done")
+    expect(api.cleanupApply).toHaveBeenCalledWith(step.specs, "delete")
+    expect(reports[0].artifact).toBeUndefined()
+    expect(reports[0].output.join("\n")).toContain("1.0 KB")
+  })
+
+  /**
+   * A locked file must not abandon the other twelve gigabytes — but a run where
+   * every path was skipped must not read as a clean success either.
+   */
+  it("logs a partial skip as done, and a total one as a warning", async () => {
+    ;(api.cleanupApply as jest.Mock).mockResolvedValue({
+      quarantineId: "trash-43",
+      bytes: 10,
+      removed: 1,
+      errors: ["/h/.codex/logs_2.sqlite: resource busy"],
+    })
+    const partial = await runSteps([step], { dryRun: false, paths })
+    expect(partial[0].status).toBe("done")
+    expect(partial[0].output.join("\n")).toContain("resource busy")
+
+    ;(api.cleanupApply as jest.Mock).mockResolvedValue({
+      quarantineId: null,
+      bytes: 0,
+      removed: 0,
+      errors: ["/h/.codex/logs_2.sqlite: resource busy"],
+    })
+    const nothing = await runSteps([step], { dryRun: false, paths })
+    expect(nothing[0].status).toBe("warning")
+  })
+
+  it("touches nothing on a dry run, and names every path with its size", async () => {
+    const reports = await runSteps([step], { dryRun: true, paths })
+    expect(reports[0].status).toBe("done")
+    expect(api.cleanupApply).not.toHaveBeenCalled()
+    const log = reports[0].output.join("\n")
+    expect(log).toContain("/h/.codex/sessions")
+    expect(log).toContain("1.8 GB")
+    // The closing line has to say the space is not free yet, or quarantine's
+    // first impression is a promise it doesn't keep.
+    expect(log).toContain("recoverable until you empty the recycle area")
+  })
+})

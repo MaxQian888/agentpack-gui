@@ -4,7 +4,7 @@ import { Server, Terminal, Wrench } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CLI_TOOLS, MCP_SERVERS, SKILLS } from "@/lib/agentpack/registry"
+import { clisByKind, MCP_SERVERS, SKILLS } from "@/lib/agentpack/registry"
 import { matchPreset, mcpTargetsFor, PRESETS, skillTargetsFor } from "@/lib/agentpack/presets"
 import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
@@ -126,19 +126,23 @@ export function PresetsSection() {
           </TabsList>
 
           <TabsContent value="clis">
-            <Group icon={Terminal} title={d.clis}>
-              {CLI_TOOLS.map((tool) => (
-                <CheckRow
-                  key={tool.id}
-                  id={`qi-cli-${tool.id}`}
-                  label={label.cli(tool.id)}
-                  checked={selectedClis.has(tool.id)}
-                  installed={detections[tool.id]?.installed}
-                  installedLabel={t.envcheck.installed}
-                  onToggle={() => toggleCliAndRetarget(tool.id)}
-                />
-              ))}
-            </Group>
+            {/* One block per kind, so the agents aren't interleaved with the
+                tools that manage them (see `clisByKind`). */}
+            {clisByKind().map(({ kind, tools }) => (
+              <Group key={kind} icon={Terminal} title={t.tools.kinds[kind] ?? kind}>
+                {tools.map((tool) => (
+                  <CheckRow
+                    key={tool.id}
+                    id={`qi-cli-${tool.id}`}
+                    label={label.cli(tool.id)}
+                    checked={selectedClis.has(tool.id)}
+                    installed={detections[tool.id]?.installed}
+                    installedLabel={t.envcheck.installed}
+                    onToggle={() => toggleCliAndRetarget(tool.id)}
+                  />
+                ))}
+              </Group>
+            ))}
           </TabsContent>
 
           <TabsContent value="skills">

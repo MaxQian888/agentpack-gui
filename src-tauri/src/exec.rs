@@ -968,11 +968,11 @@ pub fn launch_cc_switch() -> Result<(), String> {
 /// call. `run_command` can't be reused: it blocks until exit, which a service
 /// never does. Routed through `build_command` so npm `.cmd` shims work on
 /// Windows.
-fn spawn_detached(bin: &str) -> Result<(), String> {
+fn spawn_detached(bin: &str, args: &[String]) -> Result<(), String> {
   if !on_path(bin) {
     return Err(format!("command not found: {bin}"));
   }
-  let mut cmd = build_command(bin, std::iter::empty::<&str>());
+  let mut cmd = build_command(bin, args);
   cmd
     .stdin(Stdio::null())
     .stdout(Stdio::null())
@@ -1016,13 +1016,30 @@ fn kill_by_name(name: &str) -> Result<(), String> {
   }
 }
 
-/// Start the cc-connect bridge as a detached background process. `cc-connect
-/// daemon` only exists on Linux (systemd) / macOS (launchd), so the app manages
-/// the plain foreground process the same way on every OS; while running it
-/// serves the web management UI.
+/// Start the cc-connect bridge as a detached background process; while running
+/// it serves the web management UI. `cc-connect daemon` can install it as a real
+/// system service (launchd / systemd / Task Scheduler) but that is the user's
+/// choice to make, so the app drives the plain foreground process instead — the
+/// same way on every OS.
+///
+/// Two flags, both load-bearing:
+///
+///  - `--config <path>` because cc-connect resolves its config as *flag →
+///    `./config.toml` → `~/.cc-connect/config.toml`. We spawn with whatever cwd
+///    the app was launched from, so a stray `config.toml` in that directory
+///    would silently win over the file this GUI reads and writes.
+///  - `--force` because cc-connect holds a per-config instance lock and a second
+///    process exits with "another cc-connect instance is already running". The
+///    restart paths (stop, then start so the service picks up new config) would
+///    otherwise lose a race against a still-shutting-down predecessor.
 #[tauri::command(async)]
-pub fn start_cc_connect() -> Result<(), String> {
-  spawn_detached("cc-connect")
+pub fn start_cc_connect(config_path: Option<String>) -> Result<(), String> {
+  let mut args = vec!["--force".to_string()];
+  if let Some(path) = config_path.filter(|p| !p.trim().is_empty()) {
+    args.push("--config".to_string());
+    args.push(path);
+  }
+  spawn_detached("cc-connect", &args)
 }
 
 /// Stop every running cc-connect process (idempotent). Kills by image name AND
@@ -1368,7 +1385,7 @@ mod tests {
 
   #[test]
   fn spawn_detached_rejects_missing_binary() {
-    let err = spawn_detached("definitely-not-a-real-bin-xyz").unwrap_err();
+    let err = spawn_detached("definitely-not-a-real-bin-xyz", &[]).unwrap_err();
     assert!(err.contains("command not found"), "unexpected error: {err}");
   }
 

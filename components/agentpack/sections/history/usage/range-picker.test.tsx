@@ -48,6 +48,16 @@ describe("RangePicker", () => {
     expect(range.to).toBeGreaterThan(Date.now())
   })
 
+  it("offers a 90-day window, the span the cost heatmap is drawn for", async () => {
+    const user = userEvent.setup()
+    const onChange = jest.fn()
+    render(<Harness onChange={onChange} />)
+    await user.click(screen.getByRole("button", { name: h.ranges["90d"] }))
+    const range = onChange.mock.calls[0][0] as TimeRange
+    expect(range.preset).toBe("90d")
+    expect(Math.round((range.to! - range.from!) / 86_400_000)).toBe(90)
+  })
+
   it("disables granularity for a single day, where it can change nothing", async () => {
     const user = userEvent.setup()
     render(<Harness />)

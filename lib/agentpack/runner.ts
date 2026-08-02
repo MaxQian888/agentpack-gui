@@ -1,6 +1,7 @@
 import { en } from "@/lib/i18n/en"
 import type { Messages } from "@/lib/i18n/types"
 import { previewLines, commandToString } from "./preview"
+import { formatBytes } from "./cleanup"
 import { BACKUP_SUFFIX } from "./plan"
 import { classifyFailure, remediesFor, type RecoveryContext } from "./network/recovery"
 import { pickReleaseAsset } from "./release"
@@ -477,6 +478,28 @@ async function execute(step: StepDescriptor, ctx: ExecContext): Promise<StepReco
       const entry = await api.backupSnapshot(step.reason)
       log(m.coreOutput.snapshot(entry.id))
       ctx.setArtifact(entry.id)
+      return
+    }
+    case "cleanup": {
+      const result = await api.cleanupApply(step.specs, step.mode)
+      // Report what could not be done before what could: a run that skipped a
+      // file because a CLI held it open has to say so, or the user reads the
+      // freed-bytes line as "all of it went".
+      for (const err of result.errors) log(m.coreOutput.cleanupSkipped(err))
+      if (result.quarantineId) {
+        log(m.coreOutput.cleanupQuarantined(formatBytes(result.bytes), result.removed))
+        log(m.coreOutput.restorePoint(result.quarantineId))
+        // The quarantine batch IS the restore point, so the activity log and the
+        // completion screen surface it exactly like a config snapshot.
+        ctx.setArtifact(result.quarantineId)
+      } else {
+        log(m.coreOutput.cleanupDeleted(formatBytes(result.bytes), result.removed))
+      }
+      // Errors are per-path and non-fatal, but a run where nothing moved and
+      // everything failed must not report as a clean success.
+      if (result.errors.length > 0 && result.removed === 0) {
+        throw new StepWarning(m.coreOutput.cleanupNothingRemoved)
+      }
       return
     }
     case "snapshotRestore": {

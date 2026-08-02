@@ -1,7 +1,8 @@
 import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
-import { ALL_TIME } from "@/lib/history/range"
+import { ALL_TIME, type Granularity, type TimeRange } from "@/lib/history/range"
 import type { SessionSeries, SessionSummary } from "@/lib/history/types"
 import { CostWindowsPanel } from "./cost-windows"
 import { buildView } from "./view"
@@ -16,13 +17,15 @@ function renderPanel(opts: {
   series?: SessionSeries[] | null
   subscriptionUsd?: number | null
   now?: number
+  range?: TimeRange
+  granularity?: Granularity
 }) {
   const now = opts.now ?? NOW
   const view = buildView({
     sessions: opts.sessions ?? [session({ updatedAt: day(20) })],
     series: opts.series ?? null,
-    range: ALL_TIME,
-    granularity: "day",
+    range: opts.range ?? ALL_TIME,
+    granularity: opts.granularity ?? "day",
     now,
   })
   render(
@@ -73,6 +76,51 @@ describe("CostWindowsPanel — active window", () => {
       now: start + 5 * 6 * 3_600_000 + 3_600_000,
     })
     expect(screen.getByText(h.p90Label("1K"))).toBeInTheDocument()
+  })
+})
+
+describe("CostWindowsPanel — cost over time", () => {
+  const cells = () => document.querySelectorAll("[data-slot=calendar-heatmap-block]").length
+  const toggle = (name: string) => screen.getByRole("radio", { name })
+
+  it("opens on the heatmap", () => {
+    renderPanel({})
+    expect(toggle(h.costView.heatmap)).toHaveAttribute("aria-checked", "true")
+    expect(screen.getByText(h.heatmapHint)).toBeInTheDocument()
+    expect(cells()).toBeGreaterThan(0)
+  })
+
+  it("switches to the bar chart and back", async () => {
+    const user = userEvent.setup()
+    renderPanel({})
+    await user.click(toggle(h.costView.bar))
+    expect(cells()).toBe(0)
+    expect(screen.queryByText(h.heatmapHint)).not.toBeInTheDocument()
+
+    await user.click(toggle(h.costView.heatmap))
+    expect(cells()).toBeGreaterThan(0)
+  })
+
+  it("keeps a view selected when the active one is clicked again", async () => {
+    const user = userEvent.setup()
+    renderPanel({})
+    // Radix reports this as a deselect. Honouring it would leave the card blank.
+    await user.click(toggle(h.costView.heatmap))
+    expect(toggle(h.costView.heatmap)).toHaveAttribute("aria-checked", "true")
+    expect(cells()).toBeGreaterThan(0)
+  })
+
+  it("keeps the heatmap daily even when the charts are grouped by month", () => {
+    renderPanel({
+      sessions: [
+        session({ id: "a", updatedAt: day(1), cost: 1 }),
+        session({ id: "b", updatedAt: day(3), cost: 1 }),
+      ],
+      range: { preset: "custom", from: day(1, 0), to: day(4, 0) },
+      granularity: "month",
+    })
+    // Three calendar days, not the one bar a month grouping would draw.
+    expect(cells()).toBe(3)
   })
 })
 

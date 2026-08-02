@@ -1,9 +1,11 @@
 "use client"
 
+import { useState } from "react"
 import { Bar, BarChart, CartesianGrid, XAxis } from "recharts"
 import { Flame } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   Table,
   TableBody,
@@ -26,9 +28,13 @@ import { UNKNOWN_MODEL } from "@/lib/history/stats"
 import { bucketLabel } from "@/lib/history/range"
 import { burnRate, projectBlock, type UsageBlock } from "@/lib/history/blocks"
 import { Stat, PanelTitle, EmptyPanel } from "./stat"
+import { CostHeatmap } from "./cost-heatmap"
 import type { UsageView } from "./view"
 
 const COST_COLOR = CHART_SERIES.cost
+
+/** How the cost-over-time card is drawn. Not persisted — see `CostOverTimeCard`. */
+type CostChartView = "heatmap" | "bar"
 
 /** Rows the windows table renders before it starts saying "and N more". */
 const BLOCK_ROWS = 60
@@ -43,8 +49,7 @@ export function CostWindowsPanel({
   subscriptionUsd: number | null
 }) {
   const t = useT().history
-  const { stats, buckets, blocks, activeBlock, p90Tokens, granularity, seriesReady } = view
-  const costConfig: ChartConfig = { cost: { label: t.statCost, color: COST_COLOR } }
+  const { stats, blocks, activeBlock, p90Tokens, seriesReady } = view
   // Newest first; the table renders at most `BLOCK_ROWS` of them and says so
   // rather than trailing off, so a capped list never reads as the whole history.
   const finished = blocks.filter((b) => !b.active).reverse()
@@ -58,34 +63,7 @@ export function CostWindowsPanel({
         <SubscriptionCard apiEquivalent={stats.totals.cost} paid={subscriptionUsd} />
       ) : null}
 
-      <Card className="gap-3 p-4">
-        <PanelTitle title={t.chartCostByDay} />
-        <ChartContainer config={costConfig} className="h-[220px] w-full">
-          <BarChart data={buckets} margin={{ left: 4, right: 4, top: 4 }}>
-            <CartesianGrid vertical={false} />
-            <XAxis
-              dataKey="key"
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              minTickGap={24}
-              tickFormatter={(v: string) => bucketLabel(v, granularity)}
-            />
-            <ChartTooltip
-              content={
-                <ChartTooltipContent
-                  formatter={(value) => (
-                    <span className="font-mono font-medium tabular-nums">
-                      {formatCost(Number(value))}
-                    </span>
-                  )}
-                />
-              }
-            />
-            <Bar dataKey="cost" fill={COST_COLOR} radius={[3, 3, 0, 0]} />
-          </BarChart>
-        </ChartContainer>
-      </Card>
+      <CostOverTimeCard view={view} />
 
       <Card className="gap-3 p-4">
         <PanelTitle title={t.chartByModel} hint={t.modelCostHint} />
@@ -186,6 +164,78 @@ export function CostWindowsPanel({
         <p className="text-xs text-muted-foreground">{t.blocksNoQuotaNote}</p>
       </Card>
     </div>
+  )
+}
+
+/**
+ * Cost over time, as a calendar heatmap or as the bar chart it used to be.
+ *
+ * The choice lives in component state on purpose: it is a way of looking at the
+ * same numbers, not a preference about the app, and nothing about it is worth
+ * writing to `settings.json` and carrying between machines. It resets when the
+ * user leaves the section, which is the same lifetime the tab selection has.
+ */
+function CostOverTimeCard({ view }: { view: UsageView }) {
+  const t = useT().history
+  const [chart, setChart] = useState<CostChartView>("heatmap")
+  const costConfig: ChartConfig = { cost: { label: t.statCost, color: COST_COLOR } }
+
+  return (
+    <Card className="gap-3 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <PanelTitle
+          title={t.chartCostByDay}
+          hint={chart === "heatmap" ? t.heatmapHint : undefined}
+        />
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          value={chart}
+          // Radix reports a deselect as `""`. Ignoring it keeps one view always
+          // chosen — a toggle group that can end up empty would leave the card
+          // with nothing to draw.
+          onValueChange={(v) => {
+            if (v) setChart(v as CostChartView)
+          }}
+          aria-label={t.costViewLabel}
+        >
+          <ToggleGroupItem value="heatmap">{t.costView.heatmap}</ToggleGroupItem>
+          <ToggleGroupItem value="bar">{t.costView.bar}</ToggleGroupItem>
+        </ToggleGroup>
+      </div>
+      {chart === "heatmap" ? (
+        // `dailyBuckets`, not `buckets`: a heatmap cell is a day whatever the
+        // "Group by" control says.
+        <CostHeatmap buckets={view.dailyBuckets} />
+      ) : (
+        <ChartContainer config={costConfig} className="h-[220px] w-full">
+          <BarChart data={view.buckets} margin={{ left: 4, right: 4, top: 4 }}>
+            <CartesianGrid vertical={false} />
+            <XAxis
+              dataKey="key"
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              minTickGap={24}
+              tickFormatter={(v: string) => bucketLabel(v, view.granularity)}
+            />
+            <ChartTooltip
+              content={
+                <ChartTooltipContent
+                  formatter={(value) => (
+                    <span className="font-mono font-medium tabular-nums">
+                      {formatCost(Number(value))}
+                    </span>
+                  )}
+                />
+              }
+            />
+            <Bar dataKey="cost" fill={COST_COLOR} radius={[3, 3, 0, 0]} />
+          </BarChart>
+        </ChartContainer>
+      )}
+    </Card>
   )
 }
 

@@ -51,6 +51,17 @@ export interface InstallMethod {
  */
 export type CliInstallManager = "npm" | "native"
 
+/**
+ * What a catalog tool *is*, which is how the install lists group it: an `agent`
+ * you actually code with, or a `companion` that manages, routes or bridges the
+ * agents. With a single flat list the companions read as just more agents, and
+ * the list stopped being scannable once the catalog grew past a handful.
+ */
+export type CliKind = "agent" | "companion"
+
+/** Every kind, in the order the install lists render them. */
+export const CLI_KINDS: readonly CliKind[] = ["agent", "companion"]
+
 /** A CLI tool that can be installed by the wizard. Display text lives in the i18n catalog (keyed by id). */
 export interface CliTool {
   id:
@@ -63,6 +74,20 @@ export interface CliTool {
     // both can be installed, and they share `~/.claude` / `~/.codex` config.
     | "claude-desktop"
     | "codex-app"
+    // Third-party terminal agents. Each is its own agent with its own config
+    // surface — agentpack installs and updates them, but does not write skills
+    // or MCP servers into them (`McpTarget` is what draws that line).
+    | "gemini-cli"
+    | "qwen-code"
+    | "copilot-cli"
+    | "crush"
+    | "amp"
+    | "cline"
+    | "auggie"
+    | "cursor-cli"
+    | "droid"
+  /** Which install list this tool belongs to. */
+  kind: CliKind
   /** Binary name to probe on PATH for detection. */
   bin: string
   /** GUI app: detect by PATH lookup only, never execute it (it may open a window). */
@@ -374,6 +399,7 @@ export type StepKind =
   | "ccVisibleApps"
   | "fileRestore"
   | "snapshot"
+  | "cleanup"
 
 interface StepBase {
   id: string
@@ -571,6 +597,38 @@ export interface SnapshotRestoreStep extends StepBase {
   snapshotId: string
 }
 
+/**
+ * Clear caches and records an agent CLI left on disk (`lib/agentpack/cleanup.ts`).
+ *
+ * A step rather than a direct command call for the same reason a snapshot
+ * restore is one: it is destructive, and destructive things belong in front of
+ * the review panel with their step list on screen. It carries `entries` —
+ * measured before the run, by a scan that only ever `stat`ed — so the preview
+ * can name every path and its real size without the runner touching the disk.
+ */
+export interface CleanupStep extends StepBase {
+  kind: "cleanup"
+  /**
+   * `quarantine` moves everything into `~/.agentpack/trash/<batch>/`, which is a
+   * same-volume rename: instant for gigabytes, and undoable until purged. The
+   * batch id comes back as the step's `artifact`, i.e. its restore point.
+   * `delete` unlinks and cannot be undone.
+   */
+  mode: "quarantine" | "delete"
+  /** Resolved paths + filters. Re-validated in Rust against roots it derives itself. */
+  specs: CleanupSpecDescriptor[]
+  /** Precomputed for preview: what would go, and how much of it. */
+  entries: { path: string; bytes: number; files: number }[]
+}
+
+/** One path a cleanup step covers. Mirrors `CleanupSpec` in `src-tauri/src/cleanup.rs`. */
+export interface CleanupSpecDescriptor {
+  id: string
+  path: string
+  glob?: string
+  olderThanDays?: number
+}
+
 export type StepDescriptor =
   | CommandStep
   | ReleaseInstallStep
@@ -588,6 +646,7 @@ export type StepDescriptor =
   | FileRestoreStep
   | SnapshotStep
   | SnapshotRestoreStep
+  | CleanupStep
 
 /**
  * How a step that first failed on the network was rescued. Present only when a

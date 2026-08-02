@@ -7,7 +7,7 @@
  * though ccusage buckets in UTC.
  */
 
-export type RangePreset = "today" | "7d" | "30d" | "month" | "all" | "custom"
+export type RangePreset = "today" | "7d" | "30d" | "90d" | "month" | "all" | "custom"
 export type Granularity = "day" | "week" | "month"
 
 /** A half-open interval `[from, to)` in epoch ms. `null` means unbounded. */
@@ -59,6 +59,8 @@ export function resolveRange(preset: Exclude<RangePreset, "custom">, now = Date.
       return { preset, from: addDays(today, -6), to: tomorrow }
     case "30d":
       return { preset, from: addDays(today, -29), to: tomorrow }
+    case "90d":
+      return { preset, from: addDays(today, -89), to: tomorrow }
     case "month":
       return { preset, from: startOfMonth(now), to: tomorrow }
     case "all":

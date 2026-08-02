@@ -40,6 +40,13 @@ export interface UsageView {
   /** The equally long window before this one, or null for an unbounded range. */
   previous: UsageStats | null
   buckets: PeriodBucket[]
+  /**
+   * The same aggregation forced to day granularity, for the cost heatmap — one
+   * cell is one calendar day by definition, so it can't follow the `granularity`
+   * control the way `buckets` does. Shares the array with `buckets` when the two
+   * already agree, which is the common case.
+   */
+  dailyBuckets: PeriodBucket[]
   costHistogram: CostHistogram
   topSessions: RankedSession[]
   branches: BranchStat[]
@@ -69,6 +76,7 @@ export function buildView(args: {
   const seriesList = series ?? []
   const blocks = identifyBlocks(buildTimeline(seriesList, range), now)
   const tools = aggregateTools(seriesList, range)
+  const buckets = bucketSessions(inRangeSessions, range, granularity)
 
   return {
     range,
@@ -76,7 +84,8 @@ export function buildView(args: {
     sessions: inRangeSessions,
     stats: computeUsageStats(inRangeSessions),
     previous: prev ? computeUsageStats(sessionsInRange(sessions, prev)) : null,
-    buckets: bucketSessions(inRangeSessions, range, granularity),
+    buckets,
+    dailyBuckets: granularity === "day" ? buckets : bucketSessions(inRangeSessions, range, "day"),
     costHistogram: costHistogram(inRangeSessions),
     topSessions: topSessionsByCost(inRangeSessions),
     branches: byBranch(inRangeSessions),

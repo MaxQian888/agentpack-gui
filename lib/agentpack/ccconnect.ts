@@ -98,20 +98,54 @@ export function parseManagementToken(toml: string): string | undefined {
 }
 
 /**
- * The dashboard is only ever bound locally. When a management token is set,
- * cc-connect authenticates the dashboard via a `?token=` query param (matching
- * what `cc-connect web` opens), so append it for a one-click, pre-authed load.
+ * The dashboard is only ever bound locally. A management token authenticates it
+ * via a `?token=` query param — but **only on the `/login` route**, which is the
+ * single place in the dashboard SPA that reads the param (and is exactly what
+ * `cc-connect web` opens).
+ *
+ * The path is not cosmetic. Hitting `/` with the token lands on the protected
+ * index, whose auth guard renders `<Navigate to="/login">` — a bare path that
+ * drops the query string — so the token never reaches the one component that
+ * would have consumed it and the user is asked to log in by hand.
  */
 export function dashboardUrl(port: number, token?: string): string {
   const base = `http://localhost:${port}`
-  return token ? `${base}/?token=${encodeURIComponent(token)}` : base
+  return token ? `${base}/login?token=${encodeURIComponent(token)}` : base
 }
 
 /**
- * The visual editor's schema — cc-connect's documented global settings, grouped
- * to mirror its TOML sections. Projects (`[[projects]]`), providers, hooks and
- * other array tables are edited via the raw-TOML tab or the bridge's own web UI;
- * everything the schema doesn't know round-trips untouched.
+ * How many `[[projects]]` the config declares.
+ *
+ * This is the difference between a service that serves the dashboard and one
+ * that dies a second after spawn: cc-connect's startup validation refuses a
+ * config with no projects ("at least one [[projects]] entry is required") and
+ * exits *before* it binds the management port. So "web admin is enabled" is not
+ * on its own enough to open the dashboard — there has to be a project too.
+ */
+export function projectCount(doc: CcConnectDoc | null): number {
+  const projects = doc?.projects
+  return Array.isArray(projects) ? projects.length : 0
+}
+
+/** `projectCount` over raw config text (an unparseable file counts as none). */
+export function countProjects(toml: string): number {
+  return projectCount(parseConfigDoc(toml))
+}
+
+/**
+ * The visual editor's schema — cc-connect's documented **global** settings,
+ * grouped to mirror its TOML sections. Projects (`[[projects]]`), providers,
+ * hooks and other array tables are edited via the raw-TOML tab or the bridge's
+ * own web UI; everything the schema doesn't know round-trips untouched.
+ *
+ * ⚠️ Global is the operative word. cc-connect has several settings that read as
+ * global but live on `[[projects]]` — `reset_on_idle_mins` and
+ * `agent_session_idle_timeout_mins` are the two this file used to offer at the
+ * top level. TOML decoding ignores unknown keys silently, so a field pointed at
+ * the wrong scope doesn't error: it writes a key nothing ever reads, and the
+ * form then reports the dead value back as if it were in effect. Check the scope
+ * in upstream's `config.go` (top-level `Config` vs `ProjectConfig`) before
+ * adding a path here.
  */
 export const CONFIG_SECTIONS: ConfigSection[] = [
   {
@@ -134,6 +168,8 @@ export const CONFIG_SECTIONS: ConfigSection[] = [
       },
       { path: ["max_attachment_size_mb"], key: "maxAttachmentSize", type: "number" },
       { path: ["quiet"], key: "quiet", type: "boolean" },
+      { path: ["banned_words"], key: "bannedWords", type: "string-list" },
+      { path: ["provider_presets_url"], key: "providerPresetsUrl", type: "string" },
       {
         path: ["log", "level"],
         key: "logLevel",
@@ -163,6 +199,12 @@ export const CONFIG_SECTIONS: ConfigSection[] = [
       { path: ["bridge", "port"], key: "port", type: "number" },
       { path: ["bridge", "token"], key: "token", type: "string" },
       { path: ["bridge", "path"], key: "path", type: "string", placeholder: "/bridge/ws" },
+      {
+        path: ["bridge", "cors_origins"],
+        key: "corsOrigins",
+        type: "string-list",
+        placeholder: "*",
+      },
       { path: ["bridge", "insecure"], key: "insecure", type: "boolean" },
     ],
   },
@@ -183,7 +225,7 @@ export const CONFIG_SECTIONS: ConfigSection[] = [
         path: ["speech", "provider"],
         key: "provider",
         type: "select",
-        options: ["openai", "groq", "qwen"],
+        options: ["openai", "groq", "qwen", "gemini"],
       },
       { path: ["speech", "language"], key: "speechLanguage", type: "string" },
       { path: ["speech", PROVIDER_TOKEN, "api_key"], key: "apiKey", type: "string" },
@@ -203,6 +245,7 @@ export const CONFIG_SECTIONS: ConfigSection[] = [
       },
       { path: ["tts", "voice"], key: "voice", type: "string" },
       { path: ["tts", "voice_id"], key: "voiceId", type: "string" },
+      { path: ["tts", "language_type"], key: "languageType", type: "string" },
       { path: ["tts", "speed"], key: "speed", type: "number" },
       {
         path: ["tts", "tts_mode"],
@@ -225,6 +268,12 @@ export const CONFIG_SECTIONS: ConfigSection[] = [
         type: "select",
         options: ["", "full", "compact", "quiet"],
       },
+      {
+        path: ["display", "card_mode"],
+        key: "cardMode",
+        type: "select",
+        options: ["", "legacy", "rich"],
+      },
       { path: ["display", "thinking_messages"], key: "thinkingMessages", type: "boolean" },
       { path: ["display", "thinking_max_len"], key: "thinkingMaxLen", type: "number" },
       { path: ["display", "tool_messages"], key: "toolMessages", type: "boolean" },
@@ -242,6 +291,19 @@ export const CONFIG_SECTIONS: ConfigSection[] = [
       { path: ["stream_preview", "interval_ms"], key: "intervalMs", type: "number" },
       { path: ["stream_preview", "min_delta_chars"], key: "minDeltaChars", type: "number" },
       { path: ["stream_preview", "max_chars"], key: "maxChars", type: "number" },
+      {
+        path: ["stream_preview", "disabled_platforms"],
+        key: "disabledPlatforms",
+        type: "string-list",
+        placeholder: "feishu, slack",
+      },
+    ],
+  },
+  {
+    key: "instantReply",
+    fields: [
+      { path: ["instant_reply", "enabled"], key: "enabled", type: "boolean" },
+      { path: ["instant_reply", "content"], key: "instantReplyContent", type: "string" },
     ],
   },
   {
@@ -249,6 +311,16 @@ export const CONFIG_SECTIONS: ConfigSection[] = [
     fields: [
       { path: ["rate_limit", "max_messages"], key: "maxMessages", type: "number" },
       { path: ["rate_limit", "window_secs"], key: "windowSecs", type: "number" },
+    ],
+  },
+  {
+    // Outbound throttling, the opposite direction from [rate_limit]. Its
+    // `platforms` table maps a platform name to a *table* of overrides, which no
+    // scalar widget can express — it stays raw-tab only, and round-trips.
+    key: "outgoingRateLimit",
+    fields: [
+      { path: ["outgoing_rate_limit", "max_per_second"], key: "maxPerSecond", type: "number" },
+      { path: ["outgoing_rate_limit", "burst"], key: "burst", type: "number" },
     ],
   },
   {
@@ -264,33 +336,58 @@ export const CONFIG_SECTIONS: ConfigSection[] = [
     ],
   },
   {
+    key: "cron",
+    fields: [
+      { path: ["cron", "silent"], key: "cronSilent", type: "boolean" },
+      {
+        path: ["cron", "session_mode"],
+        key: "cronSessionMode",
+        type: "select",
+        options: ["", "reuse", "new_per_run"],
+      },
+      { path: ["queue", "max_depth"], key: "queueMaxDepth", type: "number" },
+    ],
+  },
+  {
+    // Only the timeouts cc-connect really reads at the top level. The
+    // per-session ones (`reset_on_idle_mins`, `agent_session_idle_timeout_mins`)
+    // are `[[projects]]` fields — see the scope warning above.
     key: "timeouts",
     fields: [
       { path: ["idle_timeout_mins"], key: "idleTimeout", type: "number" },
       { path: ["max_turn_time_mins"], key: "maxTurnTime", type: "number" },
-      { path: ["reset_on_idle_mins"], key: "resetOnIdle", type: "number" },
       { path: ["workspace_idle_timeout_mins"], key: "workspaceIdleTimeout", type: "number" },
-      {
-        path: ["agent_session_idle_timeout_mins"],
-        key: "agentSessionIdleTimeout",
-        type: "number",
-      },
     ],
   },
 ]
 
+/** The two independent tokens `cc-connect web` generates when it turns the dashboard on. */
+export interface WebAdminTokens {
+  management: string
+  bridge: string
+}
+
 /**
- * Ensure the management dashboard is turned on with a non-empty login token,
- * returning the (possibly updated) doc, the token to open the dashboard with,
- * and whether anything changed. `newToken` is consumed only when the config has
- * no token yet, so opening never rotates a token out from under a running
- * service. Mirrors cc-connect's own `EnableWebAdmin` (enabled + port + token +
- * cors_origins) — and guaranteeing a token is what lets the dashboard open
- * pre-authenticated instead of stopping at the SPA's login form.
+ * Ensure the web admin is turned on, returning the (possibly updated) doc, the
+ * token to open the dashboard with, and whether anything changed.
+ *
+ * Mirrors cc-connect's own `EnableWebAdmin`, which enables **both halves**:
+ * `[management]` (the dashboard + REST API the browser talks to) and `[bridge]`
+ * (the WebSocket the dashboard's own Bridge/chat surfaces need), each with its
+ * own port, its own token and `cors_origins`. Enabling management alone gets you
+ * a dashboard whose bridge pages have nothing to talk to.
+ *
+ * A supplied token is consumed only where the config has none, so opening never
+ * rotates a token out from under a running service. One deliberate difference
+ * from upstream: it backfills a missing token even on a section that is
+ * *already* enabled. Upstream skips such a section wholesale, which leaves two
+ * states it can't repair — a tokenless management section (the dashboard stops
+ * at its login form) and a tokenless bridge (cc-connect logs "token is required
+ * when insecure mode is not enabled" and refuses every connection).
  */
 export function ensureWebAdmin(
   doc: CcConnectDoc,
-  newToken: string
+  tokens: WebAdminTokens
 ): { doc: CcConnectDoc; token: string; changed: boolean } {
   let next = doc
   let changed = false
@@ -298,34 +395,49 @@ export function ensureWebAdmin(
     next = setConfigValue(next, path, value)
     changed = true
   }
-  if (getConfigValue(next, ["management", "enabled"]) !== true) {
-    set(["management", "enabled"], true)
+
+  /** Enable one section and backfill whatever it is missing; returns its token. */
+  const enable = (section: string, defaultPort: number, newToken: string): string => {
+    if (getConfigValue(next, [section, "enabled"]) !== true) {
+      set([section, "enabled"], true)
+    }
+    if (!validPort(getConfigValue(next, [section, "port"]))) {
+      set([section, "port"], defaultPort)
+    }
+    const existing = getConfigValue(next, [section, "token"])
+    let token = typeof existing === "string" && existing !== "" ? existing : ""
+    if (!token) {
+      token = newToken
+      set([section, "token"], token)
+    }
+    if (getConfigValue(next, [section, "cors_origins"]) === undefined) {
+      set([section, "cors_origins"], ["*"])
+    }
+    return token
   }
-  if (!validPort(getConfigValue(next, ["management", "port"]))) {
-    set(["management", "port"], CC_CONNECT_MANAGEMENT_PORT)
-  }
-  const existing = getConfigValue(next, ["management", "token"])
-  let token = typeof existing === "string" && existing !== "" ? existing : ""
-  if (!token) {
-    token = newToken
-    set(["management", "token"], token)
-  }
-  if (getConfigValue(next, ["management", "cors_origins"]) === undefined) {
-    set(["management", "cors_origins"], ["*"])
-  }
+
+  const token = enable("management", CC_CONNECT_MANAGEMENT_PORT, tokens.management)
+  enable("bridge", CC_CONNECT_BRIDGE_PORT, tokens.bridge)
   return { doc: next, token, changed }
 }
 
 /**
- * Starter config written when the user creates config.toml from the GUI. It
- * turns the management dashboard on (the whole point of the GUI helper) so a
- * plain `Start` immediately serves the web UI on 9820; the bridge is left for
- * `cc-connect web` / the user to enable. Projects are added from the dashboard.
+ * Starter config written when the user creates config.toml from the GUI.
+ *
+ * The `[[projects]]` block is not padding: cc-connect validates the config
+ * before it binds anything and exits on a projectless one, so a config carrying
+ * only `[management]` produces a service that can never serve the dashboard it
+ * just enabled. Placeholder credentials are enough to get there — the platform
+ * connects, fails auth and retries in the background while the management API
+ * comes up — which is what lets the user fix them *from* the dashboard. This is
+ * the same shape cc-connect's own first-run bootstrap writes, plus the web admin
+ * the GUI helper exists to turn on.
  */
 export function defaultConfigToml(): string {
   return [
     "# cc-connect configuration — see https://github.com/chenhg5/cc-connect",
-    "# Add projects and platforms from the web dashboard after starting the service.",
+    "# Replace the placeholders below, or edit projects and platforms from the",
+    "# web dashboard once the service is running.",
     "",
     "[log]",
     'level = "info"',
@@ -333,9 +445,35 @@ export function defaultConfigToml(): string {
     "[management]",
     "enabled = true",
     `port = ${CC_CONNECT_MANAGEMENT_PORT}`,
-    // A login token is injected by the GUI's Open dashboard action so the
+    // Login tokens are injected by the GUI's Open dashboard action so the
     // dashboard opens pre-authenticated; cors matches `cc-connect web`.
     'cors_origins = ["*"]',
+    "",
+    "[bridge]",
+    "enabled = true",
+    `port = ${CC_CONNECT_BRIDGE_PORT}`,
+    'cors_origins = ["*"]',
+    "",
+    "# cc-connect refuses to start without at least one project, and each project",
+    "# needs at least one platform. Point work_dir at the repo you want to drive.",
+    "[[projects]]",
+    'name = "my-project"',
+    "",
+    "[projects.agent]",
+    '# "claudecode", "codex", "cursor", "gemini", "qoder", "opencode" or "iflow"',
+    'type = "claudecode"',
+    "",
+    "[projects.agent.options]",
+    'work_dir = "/path/to/your/project"',
+    "",
+    "# Feishu / Lark needs no public IP. For DingTalk, Telegram, Slack, Discord,",
+    "# LINE or WeChat Work see the upstream config.example.toml.",
+    "[[projects.platforms]]",
+    'type = "feishu"',
+    "",
+    "[projects.platforms.options]",
+    'app_id = "your-feishu-app-id"',
+    'app_secret = "your-feishu-app-secret"',
     "",
   ].join("\n")
 }

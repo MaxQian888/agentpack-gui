@@ -1,5 +1,7 @@
+import { CLI_KINDS } from "./types"
 import type {
   CliInstallManager,
+  CliKind,
   CliTool,
   Command,
   InstallMethod,
@@ -21,6 +23,68 @@ function pmMethods(pkg: string): InstallMethod[] {
     { id: "pnpm", command: { file: "pnpm", args: ["add", "-g", pkg] } },
     { id: "bun", command: { file: "bun", args: ["add", "-g", pkg] } },
   ]
+}
+
+/** The same value under every OS key, for tools that install identically everywhere. */
+function everyOs<T>(make: () => T): Record<OS, T> {
+  return { win: make(), mac: make(), linux: make() }
+}
+
+/**
+ * The whole lifecycle of a CLI published as a global npm package: install,
+ * the three package-manager channels, the `@latest` upgrade and the uninstall,
+ * on all three platforms.
+ *
+ * Every npm-based agent here installs the same way on every OS, so writing the
+ * twelve commands out per tool was pure repetition — and a place for a typo to
+ * hide, since a package name that differs between install and uninstall leaves
+ * the old copy on PATH. One name in, one consistent set out.
+ */
+function npmCli(pkg: string): Pick<CliTool, "install" | "methods" | "upgrade" | "uninstall"> {
+  return {
+    install: everyOs(() => ({ file: "npm", args: ["install", "-g", pkg] })),
+    methods: everyOs(() => pmMethods(pkg)),
+    upgrade: everyOs(() => ({ file: "npm", args: ["install", "-g", `${pkg}@latest`] })),
+    uninstall: everyOs(() => ({ file: "npm", args: ["uninstall", "-g", pkg] })),
+  }
+}
+
+/**
+ * The package-manager channels plus the vendor's own install script, which is
+ * the only route on a machine with no Node at all. `native` is deliberately
+ * last: it is the fallback, not the recommendation, and `routeOf` treats it as a
+ * different network route so a failed npm install can retry through it.
+ */
+function pmAndNativeMethods(
+  pkg: string,
+  native: Record<OS, Command>
+): Partial<Record<OS, InstallMethod[]>> {
+  return {
+    win: [...pmMethods(pkg), { id: "native", command: native.win }],
+    mac: [...pmMethods(pkg), { id: "native", command: native.mac }],
+    linux: [...pmMethods(pkg), { id: "native", command: native.linux }],
+  }
+}
+
+/**
+ * A vendor's own installer scripts: `curl … | <shell>` on macOS/Linux, `irm … |
+ * iex` on Windows. `shell` follows the script's own shebang — piping a
+ * `#!/usr/bin/env sh` script into bash mostly works, but "mostly" is not a
+ * property to rely on for the only install route a tool has.
+ */
+function scriptInstall(
+  shUrl: string,
+  ps1Url: string,
+  shell: "bash" | "sh" = "bash"
+): Record<OS, Command> {
+  // The whole pipeline is one quoted argument (it contains spaces), so the `|`
+  // stays inside the string and `cmd /c` does not treat it as a shell pipe.
+  const posix: Command = { file: "bash", args: ["-c", `curl -fsSL ${shUrl} | ${shell}`] }
+  return {
+    win: { file: "powershell", args: ["-c", `irm ${ps1Url} | iex`] },
+    mac: posix,
+    linux: posix,
+  }
 }
 
 /**
@@ -191,51 +255,19 @@ export const RUNTIMES: readonly Runtime[] = [
 export const CLI_TOOLS: readonly CliTool[] = [
   {
     id: "claude-code",
+    kind: "agent",
     bin: "claude",
     npmPackage: "@anthropic-ai/claude-code",
     // package.json engines: { node: ">=22.0.0" }
     minNodeMajor: 22,
-    install: {
-      win: { file: "npm", args: ["install", "-g", "@anthropic-ai/claude-code"] },
-      mac: { file: "npm", args: ["install", "-g", "@anthropic-ai/claude-code"] },
-      linux: { file: "npm", args: ["install", "-g", "@anthropic-ai/claude-code"] },
-    },
+    ...npmCli("@anthropic-ai/claude-code"),
     // Package-manager choice (npm default) plus Anthropic's official native
     // installer as a fallback for machines without Node. Native URLs are the
     // documented ones at code.claude.com/docs/en/setup.
-    methods: {
-      win: [
-        ...pmMethods("@anthropic-ai/claude-code"),
-        {
-          id: "native",
-          command: { file: "powershell", args: ["-c", "irm https://claude.ai/install.ps1 | iex"] },
-        },
-      ],
-      mac: [
-        ...pmMethods("@anthropic-ai/claude-code"),
-        {
-          id: "native",
-          command: { file: "bash", args: ["-c", "curl -fsSL https://claude.ai/install.sh | bash"] },
-        },
-      ],
-      linux: [
-        ...pmMethods("@anthropic-ai/claude-code"),
-        {
-          id: "native",
-          command: { file: "bash", args: ["-c", "curl -fsSL https://claude.ai/install.sh | bash"] },
-        },
-      ],
-    },
-    upgrade: {
-      win: { file: "npm", args: ["install", "-g", "@anthropic-ai/claude-code@latest"] },
-      mac: { file: "npm", args: ["install", "-g", "@anthropic-ai/claude-code@latest"] },
-      linux: { file: "npm", args: ["install", "-g", "@anthropic-ai/claude-code@latest"] },
-    },
-    uninstall: {
-      win: { file: "npm", args: ["uninstall", "-g", "@anthropic-ai/claude-code"] },
-      mac: { file: "npm", args: ["uninstall", "-g", "@anthropic-ai/claude-code"] },
-      linux: { file: "npm", args: ["uninstall", "-g", "@anthropic-ai/claude-code"] },
-    },
+    methods: pmAndNativeMethods(
+      "@anthropic-ai/claude-code",
+      scriptInstall("https://claude.ai/install.sh", "https://claude.ai/install.ps1")
+    ),
   },
   // ── Desktop apps ───────────────────────────────────────────────────────────
   //
@@ -245,6 +277,7 @@ export const CLI_TOOLS: readonly CliTool[] = [
   // written for the CLI already apply to it.
   {
     id: "claude-desktop",
+    kind: "agent",
     // Nothing lands on PATH; `appBundle` is what detection actually uses.
     bin: "claude-desktop",
     gui: true,
@@ -295,6 +328,7 @@ export const CLI_TOOLS: readonly CliTool[] = [
   },
   {
     id: "codex-app",
+    kind: "agent",
     bin: "codex-app",
     gui: true,
     appBundle: "Codex",
@@ -314,15 +348,14 @@ export const CLI_TOOLS: readonly CliTool[] = [
   },
   {
     id: "codex",
+    kind: "agent",
     bin: "codex",
     npmPackage: "@openai/codex",
-    install: {
-      win: { file: "npm", args: ["install", "-g", "@openai/codex"] },
-      mac: { file: "npm", args: ["install", "-g", "@openai/codex"] },
-      linux: { file: "npm", args: ["install", "-g", "@openai/codex"] },
-    },
+    ...npmCli("@openai/codex"),
     // Package-manager choice (npm default) plus OpenAI's official native
-    // installer (chatgpt.com/codex/install.*) for machines without Node.
+    // installer (chatgpt.com/codex/install.*) for machines without Node. Spelled
+    // out rather than built from `scriptInstall`: the Windows script needs an
+    // explicit execution policy, and the POSIX one is piped into `sh`.
     methods: {
       win: [
         ...pmMethods("@openai/codex"),
@@ -360,19 +393,120 @@ export const CLI_TOOLS: readonly CliTool[] = [
         },
       ],
     },
-    upgrade: {
-      win: { file: "npm", args: ["install", "-g", "@openai/codex@latest"] },
-      mac: { file: "npm", args: ["install", "-g", "@openai/codex@latest"] },
-      linux: { file: "npm", args: ["install", "-g", "@openai/codex@latest"] },
+  },
+  {
+    id: "opencode",
+    kind: "agent",
+    bin: "opencode",
+    npmPackage: "opencode-ai",
+    ...npmCli("opencode-ai"),
+  },
+  // ── Other terminal agents ──────────────────────────────────────────────────
+  //
+  // Every entry below is a live, vendor-published agent (checked against its
+  // publisher, and re-checked weekly by `pnpm audit:catalog`). agentpack
+  // installs, upgrades and removes them; it does NOT write skills or MCP servers
+  // into them — the three above are the ones whose config surfaces this app
+  // knows how to write, which is exactly what `McpTarget` names.
+  {
+    id: "gemini-cli",
+    kind: "agent",
+    bin: "gemini",
+    npmPackage: "@google/gemini-cli",
+    // package.json engines: { node: ">=20" }
+    minNodeMajor: 20,
+    ...npmCli("@google/gemini-cli"),
+  },
+  {
+    id: "qwen-code",
+    kind: "agent",
+    bin: "qwen",
+    npmPackage: "@qwen-code/qwen-code",
+    // package.json engines: { node: ">=22.0.0" }
+    minNodeMajor: 22,
+    ...npmCli("@qwen-code/qwen-code"),
+  },
+  {
+    id: "copilot-cli",
+    kind: "agent",
+    bin: "copilot",
+    npmPackage: "@github/copilot",
+    // No `engines` field is published, so npm won't refuse the install on an old
+    // Node and there is no floor to check — leaving `minNodeMajor` unset keeps
+    // the plan from blocking an install npm would have allowed.
+    ...npmCli("@github/copilot"),
+  },
+  {
+    id: "crush",
+    kind: "agent",
+    bin: "crush",
+    npmPackage: "@charmland/crush",
+    ...npmCli("@charmland/crush"),
+  },
+  {
+    id: "amp",
+    kind: "agent",
+    bin: "amp",
+    // `@sourcegraph/amp` is the OLD name and now only re-points at this one —
+    // installing it would pin a stub. See ampcode.com/news/npm-package-changes.
+    npmPackage: "@ampcode/cli",
+    ...npmCli("@ampcode/cli"),
+    methods: pmAndNativeMethods(
+      "@ampcode/cli",
+      scriptInstall("https://ampcode.com/install.sh", "https://ampcode.com/install.ps1")
+    ),
+  },
+  {
+    id: "cline",
+    kind: "agent",
+    bin: "cline",
+    npmPackage: "cline",
+    ...npmCli("cline"),
+  },
+  {
+    id: "auggie",
+    kind: "agent",
+    bin: "auggie",
+    npmPackage: "@augmentcode/auggie",
+    // package.json engines: { node: ">=20.0.0" }
+    minNodeMajor: 20,
+    ...npmCli("@augmentcode/auggie"),
+  },
+  {
+    id: "droid",
+    kind: "agent",
+    bin: "droid",
+    // Ships as a downloaded binary, not an npm package: the installer script is
+    // the only route, and re-running it upgrades in place (so no `upgrade` entry
+    // is needed — `upgradeCommandFor` falls back to `install`). With no
+    // `npmPackage` there's no published version to compare against either, so
+    // the UI shows no Upgrade badge for it.
+    install: scriptInstall(
+      "https://app.factory.ai/cli",
+      "https://app.factory.ai/cli/windows",
+      "sh"
+    ),
+    manualNote: "See https://docs.factory.ai/cli for manual installation instructions.",
+  },
+  {
+    id: "cursor-cli",
+    kind: "agent",
+    // The installer symlinks both `agent` and `cursor-agent`; probe the specific
+    // one, since a bare `agent` on PATH could be anything.
+    bin: "cursor-agent",
+    install: {
+      // Anysphere publish a bash installer only — cursor.com/install.ps1 serves
+      // the marketing page, not a script, so there is nothing to automate here.
+      win: null,
+      mac: { file: "bash", args: ["-c", "curl https://cursor.com/install -fsS | bash"] },
+      linux: { file: "bash", args: ["-c", "curl https://cursor.com/install -fsS | bash"] },
     },
-    uninstall: {
-      win: { file: "npm", args: ["uninstall", "-g", "@openai/codex"] },
-      mac: { file: "npm", args: ["uninstall", "-g", "@openai/codex"] },
-      linux: { file: "npm", args: ["uninstall", "-g", "@openai/codex"] },
-    },
+    manualNote:
+      "On Windows, install the Cursor CLI from within WSL — see https://cursor.com/docs/cli/installation",
   },
   {
     id: "cc-switch",
+    kind: "companion",
     bin: "cc-switch",
     gui: true,
     install: {
@@ -437,53 +571,10 @@ export const CLI_TOOLS: readonly CliTool[] = [
   // upgrade. brew / binary installs stay a user-managed path.
   {
     id: "cc-connect",
+    kind: "companion",
     bin: "cc-connect",
     npmPackage: "cc-connect",
-    install: {
-      win: { file: "npm", args: ["install", "-g", "cc-connect"] },
-      mac: { file: "npm", args: ["install", "-g", "cc-connect"] },
-      linux: { file: "npm", args: ["install", "-g", "cc-connect"] },
-    },
-    methods: {
-      win: pmMethods("cc-connect"),
-      mac: pmMethods("cc-connect"),
-      linux: pmMethods("cc-connect"),
-    },
-    upgrade: {
-      win: { file: "npm", args: ["install", "-g", "cc-connect@latest"] },
-      mac: { file: "npm", args: ["install", "-g", "cc-connect@latest"] },
-      linux: { file: "npm", args: ["install", "-g", "cc-connect@latest"] },
-    },
-    uninstall: {
-      win: { file: "npm", args: ["uninstall", "-g", "cc-connect"] },
-      mac: { file: "npm", args: ["uninstall", "-g", "cc-connect"] },
-      linux: { file: "npm", args: ["uninstall", "-g", "cc-connect"] },
-    },
-  },
-  {
-    id: "opencode",
-    bin: "opencode",
-    npmPackage: "opencode-ai",
-    install: {
-      win: { file: "npm", args: ["install", "-g", "opencode-ai"] },
-      mac: { file: "npm", args: ["install", "-g", "opencode-ai"] },
-      linux: { file: "npm", args: ["install", "-g", "opencode-ai"] },
-    },
-    methods: {
-      win: pmMethods("opencode-ai"),
-      mac: pmMethods("opencode-ai"),
-      linux: pmMethods("opencode-ai"),
-    },
-    upgrade: {
-      win: { file: "npm", args: ["install", "-g", "opencode-ai@latest"] },
-      mac: { file: "npm", args: ["install", "-g", "opencode-ai@latest"] },
-      linux: { file: "npm", args: ["install", "-g", "opencode-ai@latest"] },
-    },
-    uninstall: {
-      win: { file: "npm", args: ["uninstall", "-g", "opencode-ai"] },
-      mac: { file: "npm", args: ["uninstall", "-g", "opencode-ai"] },
-      linux: { file: "npm", args: ["uninstall", "-g", "opencode-ai"] },
-    },
+    ...npmCli("cc-connect"),
   },
 ]
 
@@ -721,6 +812,18 @@ export function runtimePkgManager(
     return id ? { manager: "brew", id } : undefined
   }
   return undefined
+}
+
+/**
+ * The catalog split into its display groups, in `CLI_KINDS` order and keeping
+ * registry order inside each. A kind with nothing in it is dropped rather than
+ * rendered as an empty heading, so the lists stay honest as the catalog changes.
+ */
+export function clisByKind(): { kind: CliKind; tools: CliTool[] }[] {
+  return CLI_KINDS.map((kind) => ({
+    kind,
+    tools: CLI_TOOLS.filter((c) => c.kind === kind),
+  })).filter((g) => g.tools.length > 0)
 }
 
 export function findCli(id: string): CliTool | undefined {

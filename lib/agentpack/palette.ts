@@ -73,6 +73,7 @@ const SECTION_LABEL: Record<SectionKey, (m: Messages) => string> = {
   skills: (m) => m.menu.skills,
   mcp: (m) => m.menu.mcp,
   network: (m) => m.menu.network,
+  cleanup: (m) => m.menu.cleanup,
   ccswitch: (m) => m.menu.ccswitch,
   ccconnect: (m) => m.menu.ccconnect,
   config: (m) => m.menu.saveConfig,

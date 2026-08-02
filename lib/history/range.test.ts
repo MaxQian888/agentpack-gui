@@ -35,6 +35,13 @@ describe("resolveRange", () => {
     expect(r.from).toBe(new Date(2026, 5, 16).getTime())
   })
 
+  it("counts 90d as ninety calendar days including today", () => {
+    const r = resolveRange("90d", NOW)
+    // 89 days back from 2026-07-15, and ending after today rather than on it.
+    expect(r.from).toBe(new Date(2026, 3, 17).getTime())
+    expect(r.to).toBe(day(16))
+  })
+
   it("starts the month range at the first of the month", () => {
     expect(resolveRange("month", NOW).from).toBe(day(1))
   })

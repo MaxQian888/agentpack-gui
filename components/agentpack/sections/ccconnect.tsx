@@ -1,7 +1,15 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { ExternalLink, FolderOpen, Loader2, Play, RefreshCw, Square } from "lucide-react"
+import {
+  ExternalLink,
+  FolderOpen,
+  Loader2,
+  PanelsTopLeft,
+  Play,
+  RefreshCw,
+  Square,
+} from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -24,6 +32,7 @@ import {
   CC_CONNECT_BRIDGE_PORT,
   CC_CONNECT_MANAGEMENT_PORT,
   CC_CONNECT_WEBHOOK_PORT,
+  countProjects,
   dashboardUrl,
   ensureWebAdmin,
   getConfigValue,
@@ -32,6 +41,7 @@ import {
   parseConfigDoc,
   parseManagementPort,
   parseWebhookPort,
+  projectCount,
   serializeConfigDoc,
 } from "@/lib/agentpack/ccconnect"
 import {
@@ -50,6 +60,7 @@ import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
 import { CcConnectConfigEditor } from "./ccconnect-config"
+import { CcConnectDashboardFrame } from "./ccconnect-dashboard"
 import { HelpTip } from "../help-tip"
 import { useRunnerCtx } from "../run/runner-context"
 import { DesktopOnlyNote } from "../desktop-only-note"
@@ -77,6 +88,15 @@ function generateToken(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")
 }
 
+/**
+ * Management and bridge get independent tokens, as they do in `cc-connect web`:
+ * the management one is handed to a browser via the URL, so it must not double
+ * as the credential external bridge adapters authenticate with.
+ */
+function generateWebAdminTokens() {
+  return { management: generateToken(), bridge: generateToken() }
+}
+
 export function CcConnectSection() {
   const t = useT()
   const c = t.ccconnect
@@ -97,10 +117,18 @@ export function CcConnectSection() {
   const [bridgePort, setBridgePort] = useState(CC_CONNECT_BRIDGE_PORT)
   const [webhookPort, setWebhookPort] = useState(CC_CONNECT_WEBHOOK_PORT)
   const [mgmtEnabled, setMgmtEnabled] = useState(false)
+  // cc-connect exits during config validation when no project is declared, so
+  // this — not "is web admin on" — is what decides whether the service can run
+  // at all. Null until the first scan lands.
+  const [projects, setProjects] = useState<number | null>(null)
   // Start/stop in flight — the buttons stay disabled until the state flip is
   // confirmed (or the poll gives up), so a double-click can't race the service.
   const [busy, setBusy] = useState(false)
   const [webBusy, setWebBusy] = useState(false)
+  // The embedded dashboard, once a prepared URL exists. Holding the URL (rather
+  // than a bare open flag) is what keeps the token out of every other render and
+  // lets the panel's own "open in browser" reuse the exact page on screen.
+  const [embed, setEmbed] = useState<{ url: string; port: number } | null>(null)
 
   const mounted = useRef(true)
   useEffect(() => {
@@ -131,6 +159,7 @@ export function CcConnectSection() {
       setBridgePort(bridge)
       setWebhookPort(parseWebhookPort(cfg))
       setMgmtEnabled(isSectionEnabled(cfg, "management"))
+      setProjects(countProjects(cfg))
     }
     const [d, proc, mUp, bUp] = await Promise.all([
       detectCli("cc-connect", false),
@@ -191,9 +220,18 @@ export function CcConnectSection() {
   // up, the state didn't change — surface that as a failure.
   const setService = async (start: boolean) => {
     if (busy) return
+    // A projectless config can't produce a running service — cc-connect rejects
+    // it before binding anything. Say that instead of spending six seconds
+    // polling for a process that already exited.
+    if (start && projects === 0) {
+      toast.error(c.needsProject)
+      return
+    }
     setBusy(true)
     try {
-      await (start ? startCcConnect() : stopCcConnect([mgmtPort, bridgePort, webhookPort]))
+      await (start
+        ? startCcConnect(paths?.ccConnectConfig)
+        : stopCcConnect([mgmtPort, bridgePort, webhookPort]))
       for (let i = 0; i < 10 && mounted.current; i++) {
         await sleep(500)
         if ((await serviceUp(mgmtPort, bridgePort)) === start) {
@@ -210,56 +248,84 @@ export function CcConnectSection() {
     }
   }
 
-  // One click, dashboard open and already logged in. Guarantee the management
-  // section is enabled with a login token (what `cc-connect web`'s
-  // EnableWebAdmin does: enabled + port + token + cors), make sure the service
-  // is actually serving that port, then open it with `?token=` so the SPA
-  // skips its login form. This folds the old enable → start → open steps into
-  // one and fixes "the dashboard still asks me to log in".
-  const openDashboard = async () => {
+  // Everything both open paths need, in the order cc-connect needs it: guarantee
+  // management and bridge are enabled with login tokens (what `cc-connect web`'s
+  // EnableWebAdmin does: enabled + port + token + cors), then make sure the
+  // service is really serving that port. Resolves to the `/login?token=` URL, or
+  // null when something stopped us — having already said what.
+  const prepareDashboard = async (): Promise<{ url: string; port: number } | null> => {
+    if (!paths) return null
+    const text = await readTextFile(paths.ccConnectConfig)
+    if (text.trim() && !parseConfigDoc(text)) {
+      toast.error(c.invalidToml)
+      return null
+    }
+    const { doc, token, changed } = ensureWebAdmin(
+      parseConfigDoc(text) ?? {},
+      generateWebAdminTokens()
+    )
+    const portVal = getConfigValue(doc, ["management", "port"])
+    const port = typeof portVal === "number" ? portVal : CC_CONNECT_MANAGEMENT_PORT
+    if (changed) {
+      await writeTextFile(paths.ccConnectConfig, `${serializeConfigDoc(doc)}\n`)
+    }
+    // If the dashboard port isn't answering, (re)start the service so it picks
+    // up the config. A stale bridge-only instance is bounced first, otherwise
+    // the fresh `cc-connect` can't bind its ports.
+    if (!(await probePort(port))) {
+      // Web admin is enabled and saved by now either way — but a projectless
+      // config makes cc-connect exit during validation, so there is nothing to
+      // start and clicking again won't help. Name the actual missing piece.
+      if (projectCount(doc) === 0) {
+        if (mounted.current) toast.error(c.needsProject)
+        return null
+      }
+      if (await serviceUp(port, bridgePort)) {
+        await stopCcConnect([port, bridgePort, webhookPort])
+        for (let i = 0; i < 10 && (await serviceUp(port, bridgePort)); i++) await sleep(400)
+      }
+      await startCcConnect(paths.ccConnectConfig)
+      let up = false
+      for (let i = 0; i < 12 && mounted.current; i++) {
+        await sleep(500)
+        if (await probePort(port)) {
+          up = true
+          break
+        }
+      }
+      if (!up) {
+        if (mounted.current) toast.error(c.startFailed)
+        return null
+      }
+    }
+    return { url: dashboardUrl(port, token), port }
+  }
+
+  // One click, dashboard open and already logged in — in a panel here, or handed
+  // to the user's browser. Both fold the old enable → start → open steps into one.
+  const openDashboard = async (target: "embed" | "browser") => {
     if (!paths || webBusy) return
     setWebBusy(true)
     try {
-      const text = await readTextFile(paths.ccConnectConfig)
-      if (text.trim() && !parseConfigDoc(text)) {
-        toast.error(c.invalidToml)
-        return
+      const ready = await prepareDashboard()
+      if (!ready || !mounted.current) return
+      if (target === "browser") {
+        await openUrl(ready.url)
+      } else {
+        setEmbed(ready)
       }
-      const { doc, token, changed } = ensureWebAdmin(parseConfigDoc(text) ?? {}, generateToken())
-      const portVal = getConfigValue(doc, ["management", "port"])
-      const port = typeof portVal === "number" ? portVal : CC_CONNECT_MANAGEMENT_PORT
-      if (changed) {
-        await writeTextFile(paths.ccConnectConfig, `${serializeConfigDoc(doc)}\n`)
-      }
-      // If the dashboard port isn't answering, (re)start the service so it picks
-      // up the config. A stale bridge-only instance is bounced first, otherwise
-      // the fresh `cc-connect` can't bind its ports.
-      if (!(await probePort(port))) {
-        if (await serviceUp(port, bridgePort)) {
-          await stopCcConnect([port, bridgePort, webhookPort])
-          for (let i = 0; i < 10 && (await serviceUp(port, bridgePort)); i++) await sleep(400)
-        }
-        await startCcConnect()
-        let up = false
-        for (let i = 0; i < 12 && mounted.current; i++) {
-          await sleep(500)
-          if (await probePort(port)) {
-            up = true
-            break
-          }
-        }
-        if (!up) {
-          if (mounted.current) toast.error(c.startFailed)
-          return
-        }
-      }
-      await openUrl(dashboardUrl(port, token))
     } catch {
       if (mounted.current) toast.error(c.webAdminFailed)
     } finally {
       if (mounted.current) setWebBusy(false)
       await reload()
     }
+  }
+
+  // Hands the page the panel is already showing to the real browser, without
+  // re-running the prepare dance (the service is up by definition here).
+  const openEmbeddedExternally = () => {
+    if (embed) void openUrl(embed.url)
   }
 
   // Shown in the hint without the token (localhost-only, but no need to leak it).
@@ -337,6 +403,11 @@ export function CcConnectSection() {
             <div className="font-medium">{c.serviceTitle}</div>
             <p className="mt-1 text-xs text-muted-foreground">{c.serviceHint}</p>
           </div>
+          {projects === 0 ? (
+            <Badge variant="outline" className="font-normal text-muted-foreground">
+              {c.noProjects}
+            </Badge>
+          ) : null}
           {running !== null ? (
             <Badge variant={running ? "secondary" : "outline"} className="font-normal">
               {running ? c.running : c.stopped}
@@ -370,7 +441,9 @@ export function CcConnectSection() {
             </Button>
           )}
         </div>
-        <p className="border-t pt-3 text-xs text-muted-foreground">{c.daemonNote}</p>
+        <p className="border-t pt-3 text-xs text-muted-foreground">
+          {projects === 0 ? c.needsProject : c.daemonNote}
+        </p>
       </Card>
 
       {/* Web dashboard */}
@@ -389,24 +462,48 @@ export function CcConnectSection() {
             ) : null}
           </div>
           <Button
-            variant="outline"
             size="sm"
             className="gap-1"
             disabled={webBusy || detected !== true || !paths}
-            onClick={() => void openDashboard()}
+            onClick={() => void openDashboard("embed")}
           >
             {webBusy ? (
               <Loader2 className="size-3.5 animate-spin" />
             ) : (
-              <ExternalLink className="size-3.5" />
+              <PanelsTopLeft className="size-3.5" />
             )}
             {mgmtEnabled ? c.openWeb : c.enableAndOpen}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1"
+            disabled={webBusy || detected !== true || !paths}
+            onClick={() => void openDashboard("browser")}
+          >
+            <ExternalLink className="size-3.5" />
+            {c.openInBrowser}
           </Button>
         </div>
         <p className="border-t pt-3 text-xs text-muted-foreground">
           {mgmtEnabled ? c.webReadyHint : c.webAdminHint}
         </p>
       </Card>
+
+      {embed ? (
+        <CcConnectDashboardFrame
+          open
+          onOpenChange={(o) => {
+            // Dropping the URL on close unmounts the frame, which is what stops
+            // the dashboard's polling instead of leaving it running behind a
+            // hidden panel.
+            if (!o) setEmbed(null)
+          }}
+          url={embed.url}
+          displayUrl={dashboardUrl(embed.port)}
+          onOpenExternal={openEmbeddedExternally}
+        />
+      ) : null}
 
       {/* Configuration */}
       <Card className="gap-3 p-4">

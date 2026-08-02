@@ -220,7 +220,14 @@ describe("command wrappers", () => {
     expect(invoke).toHaveBeenCalledWith("npm_owns", { package: "@anthropic-ai/claude-code" })
 
     await startCcConnect()
-    expect(invoke).toHaveBeenCalledWith("start_cc_connect")
+    expect(invoke).toHaveBeenCalledWith("start_cc_connect", { configPath: undefined })
+
+    // Naming the config keeps a stray ./config.toml from winning cc-connect's
+    // flag → cwd → home resolution order.
+    await startCcConnect("/h/.cc-connect/config.toml")
+    expect(invoke).toHaveBeenCalledWith("start_cc_connect", {
+      configPath: "/h/.cc-connect/config.toml",
+    })
 
     await stopCcConnect([3000, 3001])
     expect(invoke).toHaveBeenCalledWith("stop_cc_connect", { ports: [3000, 3001] })

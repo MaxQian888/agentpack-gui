@@ -1,5 +1,6 @@
 mod backup;
 mod ccswitch;
+mod cleanup;
 mod download;
 mod exec;
 mod fsops;
@@ -37,6 +38,7 @@ impl Drop for TestEnvGuard {
       "AGENTPACK_BACKUP_ROOT",
       "AGENTPACK_SKIP_RUNNING_CHECK",
       "AGENTPACK_HISTORY_CACHE",
+      "AGENTPACK_HOME",
     ] {
       std::env::remove_var(key);
     }
@@ -162,6 +164,12 @@ pub fn run() {
       backup::backup_snapshot,
       backup::backup_list,
       backup::backup_restore,
+      cleanup::cleanup_roots,
+      cleanup::cleanup_scan,
+      cleanup::cleanup_apply,
+      cleanup::cleanup_quarantine_list,
+      cleanup::cleanup_quarantine_restore,
+      cleanup::cleanup_quarantine_purge,
       history::history_list_sessions,
       history::history_usage_series,
       history::history_get_session,

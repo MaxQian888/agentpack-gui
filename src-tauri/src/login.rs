@@ -136,7 +136,37 @@ pub fn login_status() -> Result<LoginReport, String> {
 mod tests {
   use super::*;
 
-  fn tmp_home(tag: &str) -> std::path::PathBuf {
+  /// A scratch home, and the crate-wide env lock held for as long as it lives.
+  ///
+  /// `codex_login` resolves its path through `paths::codex_home`, which honours
+  /// `$CODEX_HOME` — so any sibling test that sets that variable (paths, cleanup)
+  /// silently redirects these reads to *its* directory. Holding the lock is what
+  /// keeps "the Codex home" meaning the same thing for the length of a test.
+  struct TmpHome {
+    path: std::path::PathBuf,
+    _lock: std::sync::MutexGuard<'static, ()>,
+  }
+
+  impl std::ops::Deref for TmpHome {
+    type Target = std::path::Path;
+    fn deref(&self) -> &std::path::Path {
+      &self.path
+    }
+  }
+
+  impl Drop for TmpHome {
+    fn drop(&mut self) {
+      let _ = std::fs::remove_dir_all(&self.path);
+    }
+  }
+
+  fn tmp_home(tag: &str) -> TmpHome {
+    let lock = crate::TEST_ENV_LOCK
+      .lock()
+      .unwrap_or_else(|e| e.into_inner());
+    // Cleared rather than assumed absent: a test that panicked mid-run may have
+    // left it set, and that would send every path below somewhere else.
+    std::env::remove_var("CODEX_HOME");
     let p = std::env::temp_dir().join(format!(
       "aplogin-{tag}-{}",
       std::time::SystemTime::now()
@@ -146,7 +176,10 @@ mod tests {
     ));
     std::fs::create_dir_all(p.join(".claude")).unwrap();
     std::fs::create_dir_all(p.join(".codex")).unwrap();
-    p
+    TmpHome {
+      path: p,
+      _lock: lock,
+    }
   }
 
   #[test]
@@ -162,7 +195,6 @@ mod tests {
     assert!(st.signed_in);
     assert_eq!(st.plan.as_deref(), Some("max"));
     assert_eq!(st.expires_at, Some(1785258233624));
-    let _ = std::fs::remove_dir_all(&home);
   }
 
   #[test]
@@ -177,7 +209,6 @@ mod tests {
     let st = codex_login(&home);
     assert!(st.signed_in);
     assert_eq!(st.mode.as_deref(), Some("chatgpt"));
-    let _ = std::fs::remove_dir_all(&home);
   }
 
   #[test]
@@ -193,7 +224,6 @@ mod tests {
     let st = codex_login(&home);
     assert!(!st.signed_in);
     assert!(st.source.contains("unreadable"), "source: {}", st.source);
-    let _ = std::fs::remove_dir_all(&home);
   }
 
   #[test]
@@ -218,6 +248,5 @@ mod tests {
     for secret in ["SECRET-ACCESS", "SECRET-REFRESH", "SECRET-KEY"] {
       assert!(!json.contains(secret), "{secret} leaked into {json}");
     }
-    let _ = std::fs::remove_dir_all(&home);
   }
 }

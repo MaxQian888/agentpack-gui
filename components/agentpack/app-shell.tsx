@@ -49,6 +49,7 @@ import { ClisSection } from "./sections/clis"
 import { SkillsSection } from "./sections/skills"
 import { McpSection } from "./sections/mcp"
 import { NetworkSection } from "./sections/network"
+import { CleanupSection } from "./sections/cleanup"
 import { CcSwitchSection } from "./sections/ccswitch"
 import { CcConnectSection } from "./sections/ccconnect"
 import { AboutSection } from "./sections/about"
@@ -600,6 +601,8 @@ function ShellBody() {
         )
       case "network":
         return <NetworkSection />
+      case "cleanup":
+        return <CleanupSection />
       case "ccswitch":
         return <CcSwitchSection />
       case "ccconnect":
