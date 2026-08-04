@@ -1,5 +1,5 @@
 export type ManagementView = "management-overview" | "accounts" | "quota" | "analytics" | "audit"
-export type PersonalView = "my-account" | "my-balance" | "my-usage" | "my-security"
+export type PersonalView = "my-account" | "my-balance" | "my-usage" | "my-models" | "my-security"
 export type MoreTokenPackage = "management" | "personal"
 
 export interface MoreTokenInstance {
@@ -32,6 +32,18 @@ export interface PairingResult {
   tokenId: number
   expiresAt: number
   credentialPersistent: boolean
+}
+
+export interface PersonalOAuthStartResult {
+  handle: string
+  authorizationUrl: string
+  expiresAt: number
+  intervalSeconds: number
+}
+
+export interface PersonalOAuthPollResult {
+  status: "authorization_pending" | "slow_down" | "authorized"
+  credential: PairingResult | null
 }
 
 export type ManagementOperation =
@@ -91,6 +103,7 @@ export type ManagementOperation =
   | { kind: "personalBalance" }
   | { kind: "personalLedger"; page: number; pageSize: number }
   | { kind: "personalUsage"; start: number; end: number }
+  | { kind: "personalModels" }
   | { kind: "personalSessions" }
   | { kind: "revokePersonalSession"; id: number }
   | { kind: "personalActivity"; page: number; pageSize: number }
@@ -130,6 +143,8 @@ export interface PersonalCapabilities {
     password_change_enabled: boolean
     account_close_enabled: boolean
     billing_portal_enabled: boolean
+    browser_oauth_enabled?: boolean
+    model_marketplace_enabled?: boolean
   }
   billing_portal_path: string
 }
@@ -148,6 +163,8 @@ export interface PersonalAccount {
   used_quota: number
   request_count: number
   created_at: number
+  group: string
+  last_login_at: number
 }
 
 export interface PersonalOverview {
@@ -156,6 +173,25 @@ export interface PersonalOverview {
   quota_display: QuotaDisplaySetting
   parent: { id: number; username: string; display_name: string } | null
   ledger_entries: number
+  security?: {
+    two_factor_enabled: boolean
+    active_desktop_sessions: number
+    auth_methods: string[]
+  }
+  access?: {
+    group: string
+    active_api_keys: number
+    available_models: number
+    last_login_at: number
+  }
+}
+
+export interface PersonalBalance {
+  available: number
+  used: number
+  total: number
+  request_count: number
+  quota_display: QuotaDisplaySetting
 }
 
 export interface PersonalLedgerEntry {
@@ -191,6 +227,32 @@ export interface PersonalUsage {
     completion_tokens: number
     quota: number
   }>
+  quota_display: QuotaDisplaySetting
+}
+
+export interface PersonalModel {
+  model_name: string
+  description?: string
+  tags?: string
+  vendor_id?: number
+  quota_type: number
+  model_ratio: number
+  model_price: number
+  completion_ratio: number
+  enable_groups: string[]
+  supported_endpoint_types: string[]
+  billing_mode?: string
+}
+
+export interface PersonalModelCatalog {
+  items: PersonalModel[]
+  vendors: Array<{ id: number; name: string; description?: string }>
+  group_ratio: Record<string, number>
+  usable_group: Record<string, string>
+  supported_endpoint: Record<string, unknown>
+  auto_groups: string[]
+  pricing_version: string
+  generated_at: number
 }
 
 export interface PersonalSession {

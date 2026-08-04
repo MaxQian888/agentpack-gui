@@ -4,6 +4,9 @@ import {
   moreTokenListInstances,
   moreTokenPair,
   moreTokenPersonalLogin,
+  moreTokenPersonalOAuthCancel,
+  moreTokenPersonalOAuthPoll,
+  moreTokenPersonalOAuthStart,
   moreTokenRemoveInstance,
   moreTokenRequest,
   moreTokenSaveInstance,
@@ -16,6 +19,9 @@ import type {
   MoreTokenInstance,
   MoreTokenInstanceDraft,
   PairingResult,
+  PersonalOAuthPollResult,
+  PersonalOAuthStartResult,
+  QuotaDisplaySetting,
 } from "./types"
 
 export class ManagementApiError extends Error {
@@ -54,6 +60,18 @@ export const loginPersonalInstance = (
   clientLabel = "AgentPack Desktop"
 ): Promise<PairingResult> =>
   moreTokenPersonalLogin(instanceId, username, password, twoFactorCode, clientId, clientLabel)
+export const startPersonalOAuth = (
+  instanceId: string,
+  clientId = "agentpack-personal-desktop",
+  clientLabel = "AgentPack Desktop"
+): Promise<PersonalOAuthStartResult> =>
+  moreTokenPersonalOAuthStart(instanceId, clientId, clientLabel)
+export const pollPersonalOAuth = (
+  instanceId: string,
+  handle: string
+): Promise<PersonalOAuthPollResult> => moreTokenPersonalOAuthPoll(instanceId, handle)
+export const cancelPersonalOAuth = (instanceId: string, handle: string): Promise<void> =>
+  moreTokenPersonalOAuthCancel(instanceId, handle)
 
 export async function managementRequest<T>(
   instanceId: string,
@@ -117,6 +135,37 @@ function formatUuid(bytes: Uint8Array): string {
 
 export function quotaLabel(value: number, quotaPerUnit = 500_000): string {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value / quotaPerUnit)
+}
+
+export function quotaDisplayAmount(value: number, display: QuotaDisplaySetting): number | null {
+  if (
+    !Number.isFinite(value) ||
+    display.quota_per_unit <= 0 ||
+    display.conversion_numerator <= 0 ||
+    display.conversion_denominator <= 0 ||
+    (display.rate_valid_until > 0 && display.rate_valid_until <= Math.floor(Date.now() / 1000))
+  ) {
+    return null
+  }
+  return (
+    (value / display.quota_per_unit) *
+    (display.conversion_numerator / display.conversion_denominator)
+  )
+}
+
+export function quotaCurrencyLabel(value: number, display: QuotaDisplaySetting): string {
+  const amount = quotaDisplayAmount(value, display)
+  if (amount === null) return quotaLabel(value, display.quota_per_unit)
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: display.display_currency || "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: amount > 0 && amount < 0.01 ? 4 : 2,
+    }).format(amount)
+  } catch {
+    return `${amount.toFixed(amount > 0 && amount < 0.01 ? 4 : 2)} ${display.display_currency}`
+  }
 }
 
 export function downloadCsv(filename: string, rows: Array<Array<string | number>>): void {

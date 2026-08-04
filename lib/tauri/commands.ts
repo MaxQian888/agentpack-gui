@@ -29,6 +29,8 @@ import type {
   MoreTokenInstance,
   MoreTokenInstanceDraft,
   PairingResult,
+  PersonalOAuthPollResult,
+  PersonalOAuthStartResult,
 } from "@/lib/more-token/types"
 
 // Typed wrappers around the custom Rust commands (src-tauri/src/*.rs). Keep this
@@ -63,6 +65,20 @@ export const moreTokenPersonalLogin = (
     clientId,
     clientLabel,
   })
+export const moreTokenPersonalOAuthStart = (
+  instanceId: string,
+  clientId: string,
+  clientLabel: string
+) =>
+  invoke<PersonalOAuthStartResult>("more_token_personal_oauth_start", {
+    instanceId,
+    clientId,
+    clientLabel,
+  })
+export const moreTokenPersonalOAuthPoll = (instanceId: string, handle: string) =>
+  invoke<PersonalOAuthPollResult>("more_token_personal_oauth_poll", { instanceId, handle })
+export const moreTokenPersonalOAuthCancel = (instanceId: string, handle: string) =>
+  invoke<void>("more_token_personal_oauth_cancel", { instanceId, handle })
 export const moreTokenRequest = (instanceId: string, operation: ManagementOperation) =>
   invoke<{ status: number; body: unknown }>("more_token_request", { instanceId, operation })
 

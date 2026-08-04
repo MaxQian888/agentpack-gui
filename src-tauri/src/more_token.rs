@@ -12,7 +12,7 @@ use std::fs;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_store::StoreExt;
 use url::Url;
@@ -68,6 +68,30 @@ pub struct PairingResult {
   pub token_id: u64,
   pub expires_at: i64,
   pub credential_persistent: bool,
+}
+
+#[derive(Clone, Debug)]
+struct PendingPersonalOAuth {
+  instance_id: String,
+  device_code: String,
+  client_id: String,
+  expires_at: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonalOAuthStartResult {
+  pub handle: String,
+  pub authorization_url: String,
+  pub expires_at: i64,
+  pub interval_seconds: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonalOAuthPollResult {
+  pub status: String,
+  pub credential: Option<PairingResult>,
 }
 
 fn persist_personal_credential(
@@ -247,6 +271,7 @@ pub enum ManagementOperation {
     start: i64,
     end: i64,
   },
+  PersonalModels,
   PersonalSessions,
   RevokePersonalSession {
     id: u64,
@@ -269,6 +294,7 @@ impl ManagementOperation {
       | Self::PersonalBalance
       | Self::PersonalLedger { .. }
       | Self::PersonalUsage { .. }
+      | Self::PersonalModels
       | Self::PersonalSessions
       | Self::RevokePersonalSession { .. }
       | Self::PersonalActivity { .. } => MoreTokenPackage::Personal,
@@ -296,6 +322,38 @@ struct RequestSpec {
 fn memory_tokens() -> &'static Mutex<HashMap<String, String>> {
   static TOKENS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
   TOKENS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn pending_personal_oauth() -> &'static Mutex<HashMap<String, PendingPersonalOAuth>> {
+  static AUTHORIZATIONS: OnceLock<Mutex<HashMap<String, PendingPersonalOAuth>>> = OnceLock::new();
+  AUTHORIZATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn unix_now() -> i64 {
+  SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .unwrap_or_default()
+    .as_secs() as i64
+}
+
+fn validate_personal_authorization_url(
+  instance: &MoreTokenInstance,
+  raw: &str,
+) -> Result<String, String> {
+  let base = Url::parse(&instance.base_url).map_err(|_| "INVALID_INSTANCE_URL".to_string())?;
+  let target = base
+    .join(raw)
+    .map_err(|_| "INVALID_AUTHORIZATION_URL".to_string())?;
+  if target.scheme() != base.scheme()
+    || target.host_str() != base.host_str()
+    || target.port_or_known_default() != base.port_or_known_default()
+    || !target.username().is_empty()
+    || target.password().is_some()
+    || !["/profile", "/console/personal"].contains(&target.path())
+  {
+    return Err("INVALID_AUTHORIZATION_URL".into());
+  }
+  Ok(target.to_string())
 }
 
 fn active_requests() -> &'static Mutex<usize> {
@@ -866,6 +924,13 @@ fn operation_spec(
       None,
       false,
     ),
+    ManagementOperation::PersonalModels => (
+      Method::Get,
+      "/api/personal/models".into(),
+      vec![],
+      None,
+      false,
+    ),
     ManagementOperation::PersonalSessions => (
       Method::Get,
       "/api/personal/sessions".into(),
@@ -1205,6 +1270,226 @@ pub async fn more_token_personal_login(
 }
 
 #[tauri::command]
+pub async fn more_token_personal_oauth_start(
+  app: AppHandle,
+  instance_id: String,
+  client_id: String,
+  client_label: String,
+) -> Result<PersonalOAuthStartResult, String> {
+  validate_id(&instance_id)?;
+  let instance = find_instance(&app, &instance_id)?;
+  if instance.package != MoreTokenPackage::Personal {
+    return Err("PACKAGE_OPERATION_MISMATCH".into());
+  }
+  if client_id != "agentpack-personal-desktop"
+    || client_label.trim().is_empty()
+    || client_label.len() > 128
+  {
+    return Err("INVALID_OAUTH_REQUEST".into());
+  }
+  let body = json!({
+    "client_id": client_id,
+    "client_label": client_label.trim(),
+    "scopes": [],
+  });
+  let app_for_request = app.clone();
+  let request_instance = instance.clone();
+  let response = tauri::async_runtime::spawn_blocking(move || {
+    execute(
+      &app_for_request,
+      &request_instance,
+      RequestSpec {
+        method: Method::Post,
+        path: "/api/personal/oauth/device/authorize".into(),
+        query: vec![],
+        body: Some(body),
+        write: false,
+      },
+      None,
+    )
+  })
+  .await
+  .map_err(|_| "NETWORK_ERROR".to_string())??;
+  if response.status >= 400 {
+    return Err(
+      response
+        .body
+        .get("error")
+        .and_then(Value::as_str)
+        .unwrap_or("OAUTH_START_REJECTED")
+        .to_string(),
+    );
+  }
+  let device_code = response
+    .body
+    .get("device_code")
+    .and_then(Value::as_str)
+    .filter(|value| value.len() >= 40)
+    .ok_or_else(|| "INVALID_SERVER_RESPONSE".to_string())?
+    .to_string();
+  let raw_authorization_url = response
+    .body
+    .get("verification_uri_complete_path")
+    .or_else(|| response.body.get("verification_uri_complete"))
+    .and_then(Value::as_str)
+    .ok_or_else(|| "INVALID_SERVER_RESPONSE".to_string())?;
+  let authorization_url = validate_personal_authorization_url(&instance, raw_authorization_url)?;
+  let expires_in = response
+    .body
+    .get("expires_in")
+    .and_then(Value::as_i64)
+    .unwrap_or(600)
+    .clamp(60, 600);
+  let interval_seconds = response
+    .body
+    .get("interval")
+    .and_then(Value::as_u64)
+    .unwrap_or(3)
+    .clamp(3, 15);
+  let handle = Sha256::digest(format!("{}:{}", instance_id, device_code).as_bytes())
+    .iter()
+    .take(16)
+    .map(|byte| format!("{byte:02x}"))
+    .collect::<String>();
+  let expires_at = unix_now() + expires_in;
+  pending_personal_oauth()
+    .lock()
+    .map_err(|_| "OAUTH_STATE_UNAVAILABLE".to_string())?
+    .insert(
+      handle.clone(),
+      PendingPersonalOAuth {
+        instance_id,
+        device_code,
+        client_id: "agentpack-personal-desktop".into(),
+        expires_at,
+      },
+    );
+  Ok(PersonalOAuthStartResult {
+    handle,
+    authorization_url,
+    expires_at,
+    interval_seconds,
+  })
+}
+
+#[tauri::command]
+pub async fn more_token_personal_oauth_poll(
+  app: AppHandle,
+  instance_id: String,
+  handle: String,
+) -> Result<PersonalOAuthPollResult, String> {
+  validate_id(&instance_id)?;
+  if handle.len() != 32 || !handle.chars().all(|value| value.is_ascii_hexdigit()) {
+    return Err("INVALID_OAUTH_HANDLE".into());
+  }
+  let pending = pending_personal_oauth()
+    .lock()
+    .map_err(|_| "OAUTH_STATE_UNAVAILABLE".to_string())?
+    .get(&handle)
+    .cloned()
+    .ok_or_else(|| "OAUTH_STATE_NOT_FOUND".to_string())?;
+  if pending.instance_id != instance_id {
+    return Err("OAUTH_STATE_NOT_FOUND".into());
+  }
+  if pending.expires_at <= unix_now() {
+    pending_personal_oauth()
+      .lock()
+      .ok()
+      .map(|mut values| values.remove(&handle));
+    return Err("expired_token".into());
+  }
+  let instance = find_instance(&app, &instance_id)?;
+  if instance.package != MoreTokenPackage::Personal {
+    return Err("PACKAGE_OPERATION_MISMATCH".into());
+  }
+  let body = json!({
+    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+    "device_code": pending.device_code,
+    "client_id": pending.client_id,
+  });
+  let app_for_request = app.clone();
+  let response = tauri::async_runtime::spawn_blocking(move || {
+    execute(
+      &app_for_request,
+      &instance,
+      RequestSpec {
+        method: Method::Post,
+        path: "/api/personal/oauth/token".into(),
+        query: vec![],
+        body: Some(body),
+        write: false,
+      },
+      None,
+    )
+  })
+  .await
+  .map_err(|_| "NETWORK_ERROR".to_string())??;
+  if response.status >= 400 {
+    let status = response
+      .body
+      .get("error")
+      .and_then(Value::as_str)
+      .unwrap_or("OAUTH_REJECTED");
+    if ["authorization_pending", "slow_down"].contains(&status) {
+      return Ok(PersonalOAuthPollResult {
+        status: status.to_string(),
+        credential: None,
+      });
+    }
+    pending_personal_oauth()
+      .lock()
+      .ok()
+      .map(|mut values| values.remove(&handle));
+    return Err(status.to_string());
+  }
+  let token = response
+    .body
+    .get("access_token")
+    .and_then(Value::as_str)
+    .ok_or_else(|| "INVALID_SERVER_RESPONSE".to_string())?;
+  let token_id = response
+    .body
+    .get("token_id")
+    .and_then(Value::as_u64)
+    .ok_or_else(|| "INVALID_SERVER_RESPONSE".to_string())?;
+  let expires_at = response
+    .body
+    .get("expires_at")
+    .and_then(Value::as_i64)
+    .ok_or_else(|| "INVALID_SERVER_RESPONSE".to_string())?;
+  let credential = PairingResult {
+    token_id,
+    expires_at,
+    credential_persistent: store_token(MoreTokenPackage::Personal, &instance_id, token),
+  };
+  pending_personal_oauth()
+    .lock()
+    .ok()
+    .map(|mut values| values.remove(&handle));
+  Ok(PersonalOAuthPollResult {
+    status: "authorized".into(),
+    credential: Some(credential),
+  })
+}
+
+#[tauri::command]
+pub fn more_token_personal_oauth_cancel(instance_id: String, handle: String) -> Result<(), String> {
+  validate_id(&instance_id)?;
+  let mut values = pending_personal_oauth()
+    .lock()
+    .map_err(|_| "OAUTH_STATE_UNAVAILABLE".to_string())?;
+  if values
+    .get(&handle)
+    .map(|pending| pending.instance_id.as_str())
+    != Some(instance_id.as_str())
+  {
+    return Err("OAUTH_STATE_NOT_FOUND".into());
+  }
+  values.remove(&handle);
+  Ok(())
+}
+
+#[tauri::command]
 pub async fn more_token_request(
   app: AppHandle,
   instance_id: String,
@@ -1285,6 +1570,42 @@ mod tests {
       .unwrap()
       .path,
       "/api/personal/ledger"
+    );
+    assert_eq!(
+      operation_spec(
+        MoreTokenPackage::Personal,
+        ManagementOperation::PersonalModels,
+      )
+      .unwrap()
+      .path,
+      "/api/personal/models"
+    );
+  }
+
+  #[test]
+  fn browser_authorization_url_stays_on_the_saved_instance() {
+    let instance = MoreTokenInstance {
+      id: "personal".into(),
+      name: "Personal".into(),
+      base_url: "https://more-token.example.com".into(),
+      ca_fingerprint: None,
+      read_only: false,
+      display_currency: None,
+      package: MoreTokenPackage::Personal,
+    };
+    assert!(validate_personal_authorization_url(
+      &instance,
+      "/profile?desktop_authorization=ABCDE-FGHIJ"
+    )
+    .is_ok());
+    assert!(validate_personal_authorization_url(
+      &instance,
+      "https://evil.example/profile?desktop_authorization=ABCDE-FGHIJ"
+    )
+    .is_err());
+    assert!(
+      validate_personal_authorization_url(&instance, "https://more-token.example.com/admin")
+        .is_err()
     );
   }
 
