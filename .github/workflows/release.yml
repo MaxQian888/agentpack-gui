@@ -186,22 +186,9 @@ jobs:
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS signing + notarization, opt-in and dormant until the six
-          # secrets exist and ENABLE_MACOS_SIGNING is explicitly true. The extra
-          # switch prevents stale or partially configured secrets from breaking
-          # every platform release during certificate import. Once enabled, the
-          # .dmg/.app are signed with the hardened runtime and notarized, and the
-          # Gatekeeper "is damaged" error in the release note below stops
-          # happening. Setup: MACOS_SIGNING.md.
-          #
-          # Unrelated to the updater key in UPDATER.md — that one signs in-app
-          # updates; these decide whether macOS opens the app at all.
-          APPLE_CERTIFICATE: ${{ vars.ENABLE_MACOS_SIGNING == 'true' && secrets.APPLE_CERTIFICATE || '' }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ vars.ENABLE_MACOS_SIGNING == 'true' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
-          APPLE_SIGNING_IDENTITY: ${{ vars.ENABLE_MACOS_SIGNING == 'true' && secrets.APPLE_SIGNING_IDENTITY || '' }}
-          APPLE_ID: ${{ vars.ENABLE_MACOS_SIGNING == 'true' && secrets.APPLE_ID || '' }}
-          APPLE_PASSWORD: ${{ vars.ENABLE_MACOS_SIGNING == 'true' && secrets.APPLE_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ vars.ENABLE_MACOS_SIGNING == 'true' && secrets.APPLE_TEAM_ID || '' }}
+          # Deliberately no Apple signing variables: this release is unsigned.
+          # Reintroduce all six variables together only after the certificate and
+          # notarization credentials in MACOS_SIGNING.md have been validated.
         with:
           tagName: ${{ github.ref_name }}
           releaseName: agentpack ${{ github.ref_name }}
