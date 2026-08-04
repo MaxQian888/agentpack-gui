@@ -130,8 +130,40 @@ describe("the desktop apps as registered", () => {
     for (const id of ["claude-desktop", "codex-app"] as const) {
       const tool = findCli(id)!
       expect(tool.gui).toBe(true)
-      expect(tool.appBundle).toBeTruthy()
+      expect(tool.appBundles?.length).toBeTruthy()
+      expect(tool.appBundles?.every((b) => b.name.trim())).toBe(true)
     }
+  })
+
+  it("finds the Codex app under the ChatGPT bundle it was merged into", () => {
+    // Since July 2026 the Codex app IS the ChatGPT desktop app. Looking only for
+    // `Codex.app` reported an up-to-date Mac as having no Codex app at all.
+    const tool = findCli("codex-app")!
+    const names = tool.appBundles!.map((b) => b.name)
+    expect(names).toContain("ChatGPT")
+    // The pre-merge bundle is still out there and must keep matching.
+    expect(names).toContain("Codex")
+    expect(names.indexOf("ChatGPT")).toBeLessThan(names.indexOf("Codex"))
+  })
+
+  it("only counts a ChatGPT bundle that actually carries Codex", () => {
+    // A ChatGPT install from before the merge is a chat client with no agent in
+    // it; claiming it as the Codex app would hide the install button from
+    // someone who has no Codex. The legacy Codex bundle needs no such proof.
+    const bundles = findCli("codex-app")!.appBundles!
+    const chatgpt = bundles.find((b) => b.name === "ChatGPT")!
+    expect(chatgpt.requires?.length).toBeTruthy()
+    expect(chatgpt.requires).toContain("Contents/Resources/codex")
+    expect(bundles.find((b) => b.name === "Codex")!.requires).toBeUndefined()
+  })
+
+  it("installs the Codex app from the cask that replaced the discontinued one", () => {
+    // Homebrew deprecated `codex-app` ("discontinued upstream", disabled
+    // 2027-07-12) and points at `chatgpt`. Installing the old one now fails.
+    const tool = findCli("codex-app")!
+    expect(tool.install.mac?.args).toContain("chatgpt")
+    expect(tool.install.mac?.args).not.toContain("codex-app")
+    expect(tool.uninstall?.mac?.args).toContain("chatgpt")
   })
 
   it("offers no automated Windows install for the Codex app", () => {
@@ -139,6 +171,6 @@ describe("the desktop apps as registered", () => {
     // and fall through to the manual note rather than installing the wrong thing.
     const tool = findCli("codex-app")!
     expect(tool.install.win).toBeNull()
-    expect(tool.manualNote).toContain("chatgpt.com/codex")
+    expect(tool.manualNote).toContain("chatgpt.com/download")
   })
 })

@@ -62,6 +62,26 @@ export type CliKind = "agent" | "companion"
 /** Every kind, in the order the install lists render them. */
 export const CLI_KINDS: readonly CliKind[] = ["agent", "companion"]
 
+/**
+ * One name a desktop app may be installed under, plus what proves the bundle
+ * under that name is really the tool we mean.
+ */
+export interface AppBundle {
+  /** macOS `.app` bundle stem; Windows MSIX / Store package name. */
+  name: string
+  /**
+   * macOS only: bundle-relative paths, ANY of which proves the payload is there.
+   * Omit it (the usual case) when the name settles it on its own.
+   *
+   * This is what keeps a shared name honest. Since the merge, `ChatGPT.app` IS
+   * the Codex app — but a ChatGPT install from before it is only a chat client,
+   * and calling that "Codex installed" would hide the install button from
+   * someone who has no Codex at all. Windows has no equivalent to look inside,
+   * so it matches on the package name regardless.
+   */
+  requires?: readonly string[]
+}
+
 /** A CLI tool that can be installed by the wizard. Display text lives in the i18n catalog (keyed by id). */
 export interface CliTool {
   id:
@@ -93,12 +113,16 @@ export interface CliTool {
   /** GUI app: detect by PATH lookup only, never execute it (it may open a window). */
   gui?: boolean
   /**
-   * For a `gui` tool, the name it is installed under when it puts nothing on
-   * PATH: the macOS `.app` bundle stem, and the Windows MSIX / Store package
-   * name. Both desktop apps need this — a PATH probe alone always reports them
-   * missing, which would make agentpack reinstall them on every scan.
+   * For a `gui` tool, the names it may be installed under when it puts nothing
+   * on PATH. Both desktop apps need this — a PATH probe alone always reports
+   * them missing, which would make agentpack reinstall them on every scan.
+   *
+   * A list, in the order the vendor ships them today, because a product can be
+   * folded into another one: the Codex app is now a view inside ChatGPT, so the
+   * installed base carries `ChatGPT.app` and `Codex.app` at the same time.
+   * Detection takes the first that matches; "open the app" launches it.
    */
-  appBundle?: string
+  appBundles?: readonly AppBundle[]
   /** npm package name, used to query the latest published version (npm-based CLIs only). */
   npmPackage?: string
   /**

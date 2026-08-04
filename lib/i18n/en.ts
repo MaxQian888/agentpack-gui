@@ -929,7 +929,7 @@ export const en = {
       "codex-app": {
         title: "Codex app",
         description:
-          "Codex in a window instead of the terminal. Shares your ~/.codex setup, so plugins apply to both.",
+          "Codex in a window instead of the terminal — now part of the ChatGPT desktop app. Shares your ~/.codex setup, so plugins apply to both.",
       },
       codex: {
         title: "OpenAI Codex",

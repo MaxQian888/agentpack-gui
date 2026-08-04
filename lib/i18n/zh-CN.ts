@@ -866,7 +866,7 @@ export const zhCN = {
       "codex-app": {
         title: "Codex 桌面版",
         description:
-          "在窗口里用的 Codex，不用开终端。和命令行版共用 ~/.codex 配置，插件两边都生效。",
+          "在窗口里用的 Codex，不用开终端 —— 现已并入 ChatGPT 桌面应用。和命令行版共用 ~/.codex 配置，插件两边都生效。",
       },
       codex: {
         title: "OpenAI Codex",

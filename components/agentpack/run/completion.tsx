@@ -104,11 +104,11 @@ export function Completion({
   }
 
   const openApp = async () => {
-    if (!appTool?.appBundle) return
+    if (!appTool?.appBundles?.length) return
     setOpening(true)
     setOpenError(null)
     try {
-      await launchApp(appTool.appBundle)
+      await launchApp(appTool.appBundles)
     } catch (e) {
       setOpenError(e instanceof Error ? e.message : String(e))
     } finally {

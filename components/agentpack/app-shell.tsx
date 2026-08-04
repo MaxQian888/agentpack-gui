@@ -248,7 +248,7 @@ function ShellBody() {
         async (tool) =>
           [
             tool.id,
-            await detectCli(tool.bin, !!tool.gui, tool.appBundle).catch(() => ({
+            await detectCli(tool.bin, !!tool.gui, tool.appBundles).catch(() => ({
               installed: false,
             })),
           ] as const

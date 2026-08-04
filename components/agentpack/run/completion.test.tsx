@@ -103,7 +103,18 @@ describe("the one next action", () => {
     useAppStore.getState().setClis(["claude-desktop"])
     renderCompletion()
     await userEvent.click(screen.getByRole("button", { name: /Open Claude Desktop/i }))
-    expect(launchApp).toHaveBeenCalledWith("Claude")
+    expect(launchApp).toHaveBeenCalledWith([{ name: "Claude" }])
+  })
+
+  it("hands the backend every name the app ships under, not just the current one", async () => {
+    // The Codex app is `ChatGPT.app` on an updated Mac and `Codex.app` on one
+    // that hasn't updated. Sending a single name means the button opens nothing
+    // on half the installed base.
+    useAppStore.getState().setClis(["codex-app"])
+    renderCompletion()
+    await userEvent.click(screen.getByRole("button", { name: /Open Codex/i }))
+    const [bundles] = (launchApp as jest.Mock).mock.calls.at(-1)!
+    expect(bundles.map((b: { name: string }) => b.name)).toEqual(["ChatGPT", "Codex"])
   })
 
   it("prefers Claude when both apps were installed, rather than offering two", () => {

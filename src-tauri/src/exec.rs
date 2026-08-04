@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader};
@@ -139,19 +139,189 @@ fn extra_path_dirs() -> Vec<String> {
   dirs
 }
 
+/// PATH exactly as the user's own login shell reports it.
+///
+/// A Finder/Dock-launched app inherits launchd's PATH — `/usr/bin:/bin:/usr/sbin:/sbin`
+/// and nothing else. Every guessed dir below covers a layout we happened to think
+/// of, and the ones we didn't are precisely where a node version manager puts
+/// things: `npm i -g @openai/codex` under nvm lands in
+/// `~/.nvm/versions/node/<v>/bin`, which the packaged app never sees. Detection
+/// then reported Codex as missing on a machine where `codex --version` answers
+/// fine in Terminal. Asking the shell covers whatever the user actually set up —
+/// nvm, fnm, mise, asdf, a hand-rolled export — instead of a list we maintain.
+///
+/// `-ilc`, not `-lc`: version managers are set up in `.zshrc` / `.bashrc`, which
+/// only an *interactive* shell reads. The sentinels keep an rc file's own chatter
+/// (a greeting, a version notice) out of the answer, and the probe runs on a side
+/// thread with a hard timeout so a slow or wedged rc can't stall startup
+/// detection. Cached for the process: rc files declare *directories*, and a
+/// directory that appears mid-session — a Node installed while agentpack runs —
+/// is covered by `node_manager_bins`, which re-reads the disk on every spawn.
+#[cfg(not(windows))]
+fn login_shell_path() -> &'static [String] {
+  static CACHE: OnceLock<Vec<String>> = OnceLock::new();
+  CACHE.get_or_init(|| {
+    const BEGIN: &str = "__agentpack_path_begin__";
+    const END: &str = "__agentpack_path_end__";
+
+    let shell = std::env::var("SHELL")
+      .unwrap_or_default()
+      .trim()
+      .to_string();
+    // A service/nologin account has no usable shell; probing it just burns the
+    // timeout on every launch.
+    if shell.is_empty() || shell.ends_with("/false") || shell.ends_with("/nologin") {
+      return Vec::new();
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+      // `command printf` rather than `echo`: it prints the value verbatim on
+      // every shell, with no trailing newline and no backslash mangling.
+      let script = format!("command printf '{BEGIN}%s{END}' \"$PATH\"");
+      let out = Command::new(&shell)
+        .args(["-ilc", &script])
+        // An interactive shell that reads from stdin would block forever.
+        .stdin(Stdio::null())
+        .output();
+      let _ = tx.send(out);
+    });
+
+    let Ok(Ok(out)) = rx.recv_timeout(Duration::from_secs(3)) else {
+      return Vec::new();
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let Some(rest) = text.split_once(BEGIN).map(|(_, r)| r) else {
+      return Vec::new();
+    };
+    let Some((value, _)) = rest.split_once(END) else {
+      return Vec::new();
+    };
+    value
+      .split(':')
+      .filter(|d| !d.trim().is_empty())
+      .map(str::to_string)
+      .collect()
+  })
+}
+
+/// A version directory paired with its sort key — `Reverse` so a plain `sort()`
+/// puts the newest Node first.
+#[cfg(not(windows))]
+type RankedDir = (std::cmp::Reverse<(u64, u64, u64)>, String);
+
+/// The per-version bin dirs a node version manager creates, newest first.
+///
+/// nvm and fnm both install each Node under its own versioned directory and put
+/// only the *active* one on PATH via a shell hook, so there is no fixed path to
+/// hard-code — the dirs have to be read off the disk. Newest first because these
+/// are the last resort, reached only when the shell probe came back empty, and an
+/// `npm i -g` that lands on the newest runtime is the better guess.
+#[cfg(not(windows))]
+fn node_manager_bins(home: &std::path::Path) -> Vec<String> {
+  let default_nvm = home.join(".nvm");
+  let mut roots = Vec::new();
+  if let Some(nvm) = std::env::var_os("NVM_DIR").map(std::path::PathBuf::from) {
+    if nvm != default_nvm {
+      roots.push((nvm.join("versions/node"), "bin"));
+    }
+  }
+  roots.extend([
+    (default_nvm.join("versions/node"), "bin"),
+    // fnm's default data dir, XDG on Linux and Application Support on macOS.
+    (
+      home.join(".local/share/fnm/node-versions"),
+      "installation/bin",
+    ),
+    (
+      home.join("Library/Application Support/fnm/node-versions"),
+      "installation/bin",
+    ),
+  ]);
+
+  let mut found: Vec<RankedDir> = Vec::new();
+  for (root, suffix) in roots {
+    for entry in std::fs::read_dir(&root).into_iter().flatten().flatten() {
+      let bin = entry.path().join(suffix);
+      if !bin.is_dir() {
+        continue;
+      }
+      let name = entry.file_name();
+      found.push((
+        std::cmp::Reverse(version_key(&name.to_string_lossy())),
+        bin.to_string_lossy().into_owned(),
+      ));
+    }
+  }
+  found.sort();
+  found.into_iter().map(|(_, dir)| dir).collect()
+}
+
+/// `v20.19.3` → `(20, 19, 3)`, for ordering version directories. Anything
+/// unparseable sorts last (as `(0, 0, 0)`) rather than being dropped — an
+/// unrecognized name is still a directory that might hold the binary.
+#[cfg(not(windows))]
+fn version_key(name: &str) -> (u64, u64, u64) {
+  let mut parts = name.trim_start_matches(['v', 'V']).split('.');
+  let mut next = || {
+    parts
+      .next()
+      .map(|p| p.split(|c: char| !c.is_ascii_digit()).next().unwrap_or(""))
+      .and_then(|p| p.parse().ok())
+      .unwrap_or(0)
+  };
+  (next(), next(), next())
+}
+
 /// GUI apps launched from Finder/Dock inherit a minimal PATH that usually omits
 /// the dirs Homebrew, npm, cargo and per-user installs use — add them back.
+///
+/// Ordered by how much each source knows about *this* machine: the user's own
+/// login shell first, then the layouts a tool declares in the environment, then
+/// the fixed conventions, and finally the version dirs read off the disk.
 #[cfg(not(windows))]
 fn extra_path_dirs() -> Vec<String> {
-  let mut dirs = vec![
-    "/usr/local/bin".to_string(),
-    "/opt/homebrew/bin".to_string(),
-    "/opt/homebrew/sbin".to_string(),
-  ];
+  let mut dirs: Vec<String> = login_shell_path().to_vec();
+
+  // Homes a package manager exports itself — more reliable than guessing where
+  // it was installed, and the only way to find a relocated one.
+  for (var, suffix) in [
+    ("NVM_BIN", ""),
+    ("PNPM_HOME", ""),
+    ("VOLTA_HOME", "bin"),
+    ("BUN_INSTALL", "bin"),
+    ("npm_config_prefix", "bin"),
+  ] {
+    if let Some(root) = std::env::var_os(var).filter(|v| !v.is_empty()) {
+      let p = std::path::PathBuf::from(root);
+      let p = if suffix.is_empty() { p } else { p.join(suffix) };
+      dirs.push(p.to_string_lossy().into_owned());
+    }
+  }
+
+  for dir in ["/usr/local/bin", "/opt/homebrew/bin", "/opt/homebrew/sbin"] {
+    dirs.push(dir.to_string());
+  }
   if let Some(home) = dirs::home_dir() {
-    for sub in [".local/bin", ".npm-global/bin", ".bun/bin", ".cargo/bin"] {
+    for sub in [
+      // Claude's and Codex's own installers both land here.
+      ".local/bin",
+      ".npm-global/bin",
+      ".bun/bin",
+      ".cargo/bin",
+      ".deno/bin",
+      ".yarn/bin",
+      ".volta/bin",
+      // Shim dirs: one entry per managed tool, no version in the path.
+      ".asdf/shims",
+      ".local/share/mise/shims",
+      // pnpm's global bin — XDG on Linux, ~/Library on macOS.
+      ".local/share/pnpm",
+      "Library/pnpm",
+    ] {
       dirs.push(home.join(sub).to_string_lossy().into_owned());
     }
+    dirs.extend(node_manager_bins(&home));
   }
   dirs
 }
@@ -647,26 +817,41 @@ fn cc_switch_exe() -> Option<std::path::PathBuf> {
   None
 }
 
-/// Whether a GUI app is installed, looked up by the name it ships under rather
-/// than by a binary on PATH — desktop apps generally put nothing there.
+/// One name a desktop app may be installed under, and what proves the bundle
+/// under that name is really the tool we mean.
 ///
-/// macOS: an `.app` bundle in either Applications directory. Windows: an MSIX /
-/// Store package, which is how both Claude and Codex ship there and which never
-/// appears on PATH. Linux: no convention worth guessing at, so `false` — the
-/// registry offers no automated Linux install for these anyway.
+/// A list of these rather than a single name because vendors merge products: the
+/// Codex app is now a view inside the ChatGPT desktop app, so `Codex.app` and
+/// `ChatGPT.app` are both "the Codex app" depending on when the machine last
+/// updated — while a `ChatGPT.app` from before the merge is only a chat client.
+/// `requires` is what tells those two apart.
+#[derive(Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AppBundle {
+  /// macOS `.app` bundle stem; Windows MSIX / Store package name.
+  pub name: String,
+  /// macOS only: bundle-relative paths, ANY of which proves the payload is
+  /// there. Empty (the usual case) means the name alone settles it. Windows has
+  /// no equivalent to look inside, so it matches on the package name regardless.
+  #[serde(default)]
+  pub requires: Vec<String>,
+}
+
+/// Where a `.app` bundle with this stem actually sits, if either Applications
+/// directory holds one.
 #[cfg(target_os = "macos")]
-fn app_bundle_installed(name: &str) -> bool {
+fn app_bundle_path(name: &str) -> Option<std::path::PathBuf> {
   let mut roots = vec![std::path::PathBuf::from("/Applications")];
   if let Some(home) = dirs::home_dir() {
     roots.push(home.join("Applications"));
   }
-  roots.iter().any(|root| {
+  roots.iter().find_map(|root| {
     std::fs::read_dir(root)
       .into_iter()
       .flatten()
       .flatten()
       .map(|e| e.path())
-      .any(|p| {
+      .find(|p| {
         p.extension().is_some_and(|e| e.eq_ignore_ascii_case("app"))
           && p
             .file_stem()
@@ -676,10 +861,38 @@ fn app_bundle_installed(name: &str) -> bool {
   })
 }
 
+/// Whether a bundle at `path` carries what the registry says it must.
+///
+/// Split out from the directory walk so the rule itself is testable without an
+/// app installed: no requirement means the name was enough, otherwise any one
+/// path present is enough (vendors move payloads between releases, and one
+/// surviving marker still identifies the app).
+#[cfg(target_os = "macos")]
+fn bundle_satisfies(path: &std::path::Path, requires: &[String]) -> bool {
+  requires.is_empty()
+    || requires
+      .iter()
+      .filter(|r| !r.trim().is_empty())
+      .any(|r| path.join(r).exists())
+}
+
+/// Whether a GUI app is installed, looked up by the name it ships under rather
+/// than by a binary on PATH — desktop apps generally put nothing there.
+///
+/// macOS: an `.app` bundle in either Applications directory. Windows: an MSIX /
+/// Store package, which is how both Claude and Codex ship there and which never
+/// appears on PATH. Linux: no convention worth guessing at, so `false` — the
+/// registry offers no automated Linux install for these anyway.
+#[cfg(target_os = "macos")]
+fn app_bundle_installed(bundle: &AppBundle) -> bool {
+  app_bundle_path(&bundle.name).is_some_and(|p| bundle_satisfies(&p, &bundle.requires))
+}
+
 #[cfg(windows)]
-fn app_bundle_installed(name: &str) -> bool {
+fn app_bundle_installed(bundle: &AppBundle) -> bool {
   // `Get-AppxPackage` is the only reliable probe for a Store/MSIX install.
   // -NoProfile so a slow user profile can't stall startup detection.
+  let name = bundle.name.replace('\'', "''");
   build_command(
     "powershell",
     [
@@ -694,8 +907,20 @@ fn app_bundle_installed(name: &str) -> bool {
 }
 
 #[cfg(all(not(windows), not(target_os = "macos")))]
-fn app_bundle_installed(_name: &str) -> bool {
+fn app_bundle_installed(_bundle: &AppBundle) -> bool {
   false
+}
+
+/// The first of `bundles` this machine actually has, if any.
+///
+/// Order is the registry's: the current shipping name first, older spellings
+/// after, so "open the app" lands on the one the vendor ships today when a
+/// machine somehow carries both.
+fn installed_app_bundle(bundles: &[AppBundle]) -> Option<&AppBundle> {
+  bundles
+    .iter()
+    .filter(|b| !b.name.trim().is_empty())
+    .find(|b| app_bundle_installed(b))
 }
 
 /// Whether the cc-switch desktop app is actually installed right now. It's a GUI
@@ -845,76 +1070,108 @@ pub fn quit_cc_switch() -> Result<bool, String> {
   Ok(wait_until_exited(&name, QUIT_FORCE_GRACE))
 }
 
-/// Launch a desktop app by the name it is installed under — the "open Claude"
-/// button at the end of a run.
-///
-/// Deliberately by name rather than by resolved path, because the two platforms
-/// disagree about what a path even is here: on macOS `open -a` searches both
-/// Applications directories itself, and on Windows an MSIX app has no
-/// launchable exe path at all, only a Start-menu AppID. Codex ships no Windows
-/// build, so `Get-StartApps` covers everything that can actually be launched.
+/// Run a launcher command and report whether the app actually got opened.
 ///
 /// Waits for the *launcher* — not the app. `open` and `Start-Process` both hand
 /// off to the OS and exit immediately, so their status is available right away
 /// and is the only thing that reports "no such app": `open -a` on a name that
 /// isn't installed exits 1 (verified), and spawning without waiting would turn
-/// that into a button that silently does nothing. The Linux fallback execs the
-/// binary itself, which never returns, so that one stays detached.
-#[tauri::command(async)]
-pub fn launch_app(app_bundle: String) -> Result<(), String> {
-  if app_bundle.trim().is_empty() {
-    return Err("no app name given".into());
-  }
-  #[cfg(target_os = "macos")]
-  let mut cmd = {
-    let mut c = Command::new("open");
-    // No `-n`: a second instance of an editor-like app is never what "open
-    // Claude" means — focus the window that's already there.
-    c.arg("-a").arg(&app_bundle);
-    c
-  };
-  #[cfg(windows)]
-  let mut cmd = {
-    // Single quotes are the escape inside a PowerShell single-quoted string.
-    let safe = app_bundle.replace('\'', "''");
-    build_command(
-      "powershell",
-      [
-        "-NoProfile",
-        "-Command",
-        &format!(
-          "$a = (Get-StartApps | Where-Object {{ $_.Name -eq '{safe}' }} | Select-Object -First 1).AppID; \
-           if ($a) {{ Start-Process \"shell:AppsFolder\\$a\" }} else {{ exit 1 }}"
-        ),
-      ],
-    )
-  };
-  #[cfg(all(not(windows), not(target_os = "macos")))]
-  let mut cmd = Command::new(&app_bundle);
-
+/// that into a button that silently does nothing.
+#[cfg(any(windows, target_os = "macos"))]
+fn run_launcher(mut cmd: Command, label: &str) -> Result<(), String> {
   apply_no_window(&mut cmd);
   apply_env(&mut cmd);
-  cmd
+  let status = cmd
     .stdin(Stdio::null())
     .stdout(Stdio::null())
-    .stderr(Stdio::null());
-
-  #[cfg(any(windows, target_os = "macos"))]
-  {
-    let status = cmd
-      .status()
-      .map_err(|e| format!("could not open {app_bundle}: {e}"))?;
-    if !status.success() {
-      return Err(format!("could not open {app_bundle} — is it installed?"));
-    }
+    .stderr(Stdio::null())
+    .status()
+    .map_err(|e| format!("could not open {label}: {e}"))?;
+  if status.success() {
     Ok(())
+  } else {
+    Err(format!("could not open {label} — is it installed?"))
+  }
+}
+
+/// Launch a desktop app by the name it is installed under — the "open Claude"
+/// button at the end of a run.
+///
+/// Takes the tool's whole candidate list, not one name, for the same reason
+/// detection does: an app that got folded into another ships under two names
+/// across the installed base, and picking the wrong one opens nothing (or, worse,
+/// opens the neighbouring product). macOS resolves the list against the disk
+/// first, so a `ChatGPT.app` that predates the Codex merge is never what the
+/// "open Codex" button launches.
+///
+/// Then by NAME rather than resolved path, because the two platforms disagree
+/// about what a path even is here: on macOS `open -a` searches both Applications
+/// directories itself, and on Windows an MSIX app has no launchable exe path at
+/// all, only a Start-menu AppID. The Linux fallback execs the binary itself,
+/// which never returns, so that one stays detached.
+#[tauri::command(async)]
+pub fn launch_app(app_bundles: Vec<AppBundle>) -> Result<(), String> {
+  let bundles: Vec<AppBundle> = app_bundles
+    .into_iter()
+    .filter(|b| !b.name.trim().is_empty())
+    .collect();
+  if bundles.is_empty() {
+    return Err("no app name given".into());
+  }
+  let label = bundles
+    .iter()
+    .map(|b| b.name.as_str())
+    .collect::<Vec<_>>()
+    .join(" / ");
+
+  #[cfg(target_os = "macos")]
+  {
+    let bundle = installed_app_bundle(&bundles)
+      .ok_or_else(|| format!("could not open {label} — is it installed?"))?;
+    let mut cmd = Command::new("open");
+    // No `-n`: a second instance of an editor-like app is never what "open
+    // Claude" means — focus the window that's already there.
+    cmd.arg("-a").arg(&bundle.name);
+    run_launcher(cmd, &label)
+  }
+  #[cfg(windows)]
+  {
+    // `Get-AppxPackage` names and Start-menu entries don't always agree, so this
+    // asks the launcher itself about each candidate rather than pre-filtering.
+    let mut last = Err(format!("could not open {label} — is it installed?"));
+    for bundle in &bundles {
+      // Single quotes are the escape inside a PowerShell single-quoted string.
+      let safe = bundle.name.replace('\'', "''");
+      let cmd = build_command(
+        "powershell",
+        [
+          "-NoProfile",
+          "-Command",
+          &format!(
+            "$a = (Get-StartApps | Where-Object {{ $_.Name -eq '{safe}' }} | Select-Object -First 1).AppID; \
+             if ($a) {{ Start-Process \"shell:AppsFolder\\$a\" }} else {{ exit 1 }}"
+          ),
+        ],
+      );
+      last = run_launcher(cmd, &label);
+      if last.is_ok() {
+        return Ok(());
+      }
+    }
+    last
   }
   #[cfg(all(not(windows), not(target_os = "macos")))]
   {
+    let mut cmd = Command::new(&bundles[0].name);
+    apply_no_window(&mut cmd);
+    apply_env(&mut cmd);
     cmd
+      .stdin(Stdio::null())
+      .stdout(Stdio::null())
+      .stderr(Stdio::null())
       .spawn()
       .map(|_| ())
-      .map_err(|e| format!("could not open {app_bundle}: {e}"))
+      .map_err(|e| format!("could not open {label}: {e}"))
   }
 }
 
@@ -1190,16 +1447,20 @@ pub fn command_on_path(command: String) -> bool {
 /// detected before its first launch, and a removed one stops being detected even
 /// if its ~/.cc-switch config dir lingers.
 #[tauri::command(async)]
-pub fn detect_cli(bin: String, gui: bool, app_bundle: Option<String>) -> DetectionResult {
+pub fn detect_cli(bin: String, gui: bool, app_bundles: Option<Vec<AppBundle>>) -> DetectionResult {
   if gui {
     let installed = if bin == "cc-switch" {
       cc_switch_installed()
     } else {
       // A desktop app is normally off PATH entirely, so the PATH probe is only
-      // the cheap first guess — `app_bundle` is what actually finds Claude.app
-      // or Codex.app. Kept as data on the tool rather than another `bin == …`
-      // branch, so adding an app is a registry edit and not a Rust one.
-      on_path(&bin) || app_bundle.as_deref().is_some_and(app_bundle_installed)
+      // the cheap first guess — `app_bundles` is what actually finds Claude.app,
+      // or Codex.app under whichever of its names this machine has. Kept as data
+      // on the tool rather than another `bin == …` branch, so following a vendor
+      // rename is a registry edit and not a Rust one.
+      on_path(&bin)
+        || app_bundles
+          .as_deref()
+          .is_some_and(|b| installed_app_bundle(b).is_some())
     };
     return DetectionResult {
       installed,
@@ -1350,10 +1611,121 @@ mod tests {
     assert_eq!(out[2], "last");
   }
 
+  /// A scratch directory unique to this run — the repo carries no `tempfile`
+  /// dependency, and the nanos suffix keeps two concurrent runs apart.
+  fn scratch(name: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .map(|d| d.as_nanos())
+      .unwrap_or(0);
+    let dir = std::env::temp_dir().join(format!("agentpack-{name}-{nanos}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+  }
+
   #[test]
   fn detects_a_real_binary() {
     let bin = if cfg!(windows) { "cmd" } else { "sh" };
     assert!(on_path(bin));
+  }
+
+  #[cfg(not(windows))]
+  #[test]
+  fn version_key_orders_node_directories_numerically() {
+    // Plain string order puts v9 after v26 — which is how a "newest first" list
+    // ends up handing an install to a Node three majors old.
+    assert!(version_key("v26.5.0") > version_key("v9.11.2"));
+    assert!(version_key("v20.19.3") > version_key("v20.9.0"));
+    assert_eq!(version_key("22.1.0"), (22, 1, 0));
+    // An unparseable name still sorts (last), because it is still a directory
+    // that might hold the binary.
+    assert_eq!(version_key("iojs-x"), (0, 0, 0));
+  }
+
+  #[cfg(not(windows))]
+  #[test]
+  fn node_manager_bins_lists_every_version_newest_first() {
+    // The reason this exists: nvm and fnm put only the ACTIVE version on PATH,
+    // via a shell hook a Finder-launched app never runs. `npm i -g @openai/codex`
+    // lands in one of these and was invisible to detection.
+    let home = scratch("nodemgr");
+    for v in ["v18.20.4", "v20.19.3", "v26.5.0"] {
+      std::fs::create_dir_all(home.join(".nvm/versions/node").join(v).join("bin")).unwrap();
+    }
+    let fnm = home.join("Library/Application Support/fnm/node-versions/v22.1.0/installation/bin");
+    std::fs::create_dir_all(&fnm).unwrap();
+    // A version dir that never finished installing has no bin/ — skip it rather
+    // than put a non-existent directory on PATH.
+    std::fs::create_dir_all(home.join(".nvm/versions/node/v24.0.0")).unwrap();
+
+    let prefix = home.to_string_lossy().into_owned();
+    let found: Vec<String> = node_manager_bins(&home)
+      .into_iter()
+      // A developer machine may have a real $NVM_DIR outside this temp home.
+      .filter(|d| d.starts_with(&prefix))
+      .collect();
+
+    assert_eq!(
+      found,
+      vec![
+        home
+          .join(".nvm/versions/node/v26.5.0/bin")
+          .to_string_lossy()
+          .into_owned(),
+        fnm.to_string_lossy().into_owned(),
+        home
+          .join(".nvm/versions/node/v20.19.3/bin")
+          .to_string_lossy()
+          .into_owned(),
+        home
+          .join(".nvm/versions/node/v18.20.4/bin")
+          .to_string_lossy()
+          .into_owned(),
+      ],
+      "expected newest-first across both managers"
+    );
+
+    std::fs::remove_dir_all(&home).unwrap();
+  }
+
+  #[cfg(not(windows))]
+  #[test]
+  fn node_manager_bins_is_empty_when_no_manager_is_installed() {
+    let home = scratch("nodemgr-empty");
+    let prefix = home.to_string_lossy().into_owned();
+    assert!(node_manager_bins(&home)
+      .iter()
+      .all(|d| !d.starts_with(&prefix)));
+    std::fs::remove_dir_all(&home).unwrap();
+  }
+
+  #[cfg(not(windows))]
+  #[test]
+  fn login_shell_path_is_infallible_and_probed_once() {
+    // Whether the test machine's shell answers at all is not the point — a
+    // missing SHELL, an exotic shell or an rc file that hangs must all come back
+    // as "nothing to add" rather than panicking or blocking forever.
+    let first = login_shell_path();
+    // Memoized: the probe spawns an interactive login shell, which is far too
+    // expensive to repeat on every command spawn.
+    assert!(std::ptr::eq(first, login_shell_path()));
+    assert!(first.iter().all(|d| !d.is_empty()));
+  }
+
+  #[cfg(not(windows))]
+  #[test]
+  fn augmented_path_keeps_the_process_entries_and_adds_the_known_dirs() {
+    let path = augmented_path().to_string_lossy().into_owned();
+    let dirs: Vec<&str> = path.split(':').collect();
+    assert!(dirs.contains(&"/opt/homebrew/bin"));
+    if let Some(home) = dirs::home_dir() {
+      // Where both Claude's and Codex's own installers put their binary.
+      assert!(dirs.contains(&home.join(".local/bin").to_string_lossy().as_ref()));
+    }
+    // No duplicates: this string is rebuilt on every spawn and grows with every
+    // source we consult.
+    let mut seen = HashSet::new();
+    assert!(dirs.iter().all(|d| seen.insert(*d)), "duplicate PATH entry");
   }
 
   #[test]
@@ -1402,28 +1774,38 @@ mod tests {
     let _ = detect_cli("cc-switch".into(), true, None).installed;
   }
 
+  /// An `AppBundle` with no in-bundle requirement — the common registry shape.
+  fn bundle(name: &str) -> AppBundle {
+    AppBundle {
+      name: name.into(),
+      requires: Vec::new(),
+    }
+  }
+
   #[test]
   fn detect_by_app_bundle_is_infallible_and_needs_no_path_entry() {
     // A desktop app puts nothing on PATH, so this walks the Applications dirs
     // (or the Store package list on Windows). Whether it's installed on the test
     // machine is not the point — it must answer without panicking.
-    let _ = detect_cli("claude-desktop".into(), true, Some("Claude".into())).installed;
+    let _ = detect_cli("claude-desktop".into(), true, Some(vec![bundle("Claude")])).installed;
     // A bundle nobody ships must come back false rather than matching loosely.
     assert!(
       !detect_cli(
         "definitely-not-installed-xyz".into(),
         true,
-        Some("DefinitelyNotInstalledXyz".into())
+        Some(vec![bundle("DefinitelyNotInstalledXyz")])
       )
       .installed
     );
+    // An empty list is "this tool names no app", not "match anything".
+    assert!(!detect_cli("definitely-not-installed-xyz".into(), true, Some(vec![])).installed);
   }
 
   #[test]
   fn launch_app_rejects_an_empty_name() {
-    // An empty `appBundle` would make `open -a ""` open something arbitrary.
-    assert!(launch_app(String::new()).is_err());
-    assert!(launch_app("   ".into()).is_err());
+    // An empty `appBundles` would make `open -a ""` open something arbitrary.
+    assert!(launch_app(vec![]).is_err());
+    assert!(launch_app(vec![bundle(""), bundle("   ")]).is_err());
   }
 
   #[cfg(any(windows, target_os = "macos"))]
@@ -1431,8 +1813,14 @@ mod tests {
   fn launch_app_reports_a_missing_app_instead_of_pretending() {
     // The whole reason this waits on the launcher: `open -a` exits 1 for a name
     // that isn't installed, and a bare spawn() would have discarded that and
-    // left the caller showing a button that does nothing.
-    assert!(launch_app("DefinitelyNotAnInstalledAppXyz".into()).is_err());
+    // left the caller showing a button that does nothing. With a candidate list,
+    // every one of them missing must still be an error and not a silent Ok.
+    assert!(launch_app(vec![bundle("DefinitelyNotAnInstalledAppXyz")]).is_err());
+    assert!(launch_app(vec![
+      bundle("DefinitelyNotAnInstalledAppXyz"),
+      bundle("AlsoNotInstalledXyz")
+    ])
+    .is_err());
   }
 
   #[cfg(target_os = "macos")]
@@ -1441,8 +1829,56 @@ mod tests {
     // `Claude Code URL Handler.app` is a real bundle the Claude Code CLI
     // installs, and it is NOT the desktop app. A prefix or contains match would
     // report Claude Desktop as installed on any machine with the CLI.
-    assert!(!app_bundle_installed("Claude Code"));
-    assert!(!app_bundle_installed("Cla"));
+    assert!(!app_bundle_installed(&bundle("Claude Code")));
+    assert!(!app_bundle_installed(&bundle("Cla")));
+  }
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn bundle_requirements_tell_a_merged_app_from_its_namesake() {
+    // The one case that made this necessary: since the merge, `ChatGPT.app` IS
+    // the Codex app — but a ChatGPT install that predates it is only a chat
+    // client, and reporting that as "Codex installed" hides the install button
+    // from someone who has no Codex at all.
+    let dir = scratch("bundle");
+    let merged = dir.join("Merged.app");
+    let plain = dir.join("Plain.app");
+    std::fs::create_dir_all(merged.join("Contents/Resources")).unwrap();
+    std::fs::write(merged.join("Contents/Resources/codex"), "binary").unwrap();
+    std::fs::create_dir_all(plain.join("Contents/Resources")).unwrap();
+
+    let requires = vec![
+      "Contents/Resources/codex".to_string(),
+      "Contents/Frameworks/Codex Framework.framework".to_string(),
+    ];
+    // Any ONE marker is enough — the second is absent here and must not matter.
+    assert!(bundle_satisfies(&merged, &requires));
+    assert!(!bundle_satisfies(&plain, &requires));
+    // No requirement means the name was the whole rule, as for Claude.
+    assert!(bundle_satisfies(&plain, &[]));
+    // A blank entry is not a requirement satisfied by the bundle root existing.
+    assert!(!bundle_satisfies(&plain, &["".to_string()]));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+  }
+
+  #[test]
+  fn app_bundle_deserializes_without_a_requires_field() {
+    // The registry omits `requires` for every app but Codex; a missing field must
+    // mean "no requirement", not a deserialization error that fails detection.
+    let b: AppBundle = serde_json::from_str(r#"{"name":"Claude"}"#).unwrap();
+    assert_eq!(b.name, "Claude");
+    assert!(b.requires.is_empty());
+    let b: AppBundle =
+      serde_json::from_str(r#"{"name":"ChatGPT","requires":["Contents/Resources/codex"]}"#)
+        .unwrap();
+    assert_eq!(b.requires, vec!["Contents/Resources/codex".to_string()]);
+    // Exactly what Tauri hands this command for a CLI that names no app: the
+    // frontend passes `undefined`, which arrives as JSON null. A stricter shape
+    // here would make every non-GUI detection fail to deserialize — and a failed
+    // detection reads as "not installed", the bug this whole path exists to fix.
+    let none: Option<Vec<AppBundle>> = serde_json::from_str("null").unwrap();
+    assert!(none.is_none());
   }
 
   #[cfg(any(windows, target_os = "macos"))]

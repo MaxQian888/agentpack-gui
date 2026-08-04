@@ -278,10 +278,10 @@ export const CLI_TOOLS: readonly CliTool[] = [
   {
     id: "claude-desktop",
     kind: "agent",
-    // Nothing lands on PATH; `appBundle` is what detection actually uses.
+    // Nothing lands on PATH; `appBundles` is what detection actually uses.
     bin: "claude-desktop",
     gui: true,
-    appBundle: "Claude",
+    appBundles: [{ name: "Claude" }],
     install: {
       // winget ships with Windows 10+, so unlike brew this needs no prerequisite.
       win: {
@@ -331,20 +331,41 @@ export const CLI_TOOLS: readonly CliTool[] = [
     kind: "agent",
     bin: "codex-app",
     gui: true,
-    appBundle: "Codex",
+    // OpenAI merged the Codex app into the ChatGPT desktop app in July 2026:
+    // Codex is now a view inside it, the standalone `codex-app` cask is
+    // deprecated ("discontinued upstream", disabled 2027-07-12) in favour of
+    // `chatgpt`, and a machine that took the update has `ChatGPT.app` where
+    // `Codex.app` used to be. Detection looked only for `Codex.app`, so on an
+    // up-to-date Mac the app it was standing in front of read as not installed.
+    //
+    // Both names, then — but the ChatGPT one only counts when the bundle really
+    // carries Codex. A ChatGPT install from before the merge is a chat client
+    // with no agent in it, and reporting THAT as the Codex app would take the
+    // install button away from the person who most needs it. Two markers because
+    // a vendor moves payloads around between releases; either one identifies it.
+    appBundles: [
+      {
+        name: "ChatGPT",
+        requires: ["Contents/Resources/codex", "Contents/Frameworks/Codex Framework.framework"],
+      },
+      // Machines that haven't taken the update still carry the standalone app.
+      { name: "Codex" },
+    ],
     install: {
-      // No winget package exists for the Codex APP — `OpenAI.Codex` there is the
-      // CLI. Nothing to automate on Windows, so the plan surfaces a manual note.
+      // No winget package exists for the APP — `OpenAI.Codex` there is the CLI,
+      // and the merged desktop app ships through the Microsoft Store. Nothing to
+      // automate on Windows, so the plan surfaces a manual note.
       win: null,
-      mac: { file: "brew", args: ["install", "--cask", "codex-app"] },
+      mac: { file: "brew", args: ["install", "--cask", "chatgpt"] },
       linux: null,
     },
     uninstall: {
-      mac: { file: "brew", args: ["uninstall", "--cask", "codex-app"] },
+      mac: { file: "brew", args: ["uninstall", "--cask", "chatgpt"] },
     },
     // No manifest endpoint to resolve (probed: 404), so brew is the only
     // automated route and there is no proxy-resilient fallback below it.
-    manualNote: "Download the Codex app from https://chatgpt.com/codex",
+    manualNote:
+      "Codex now ships inside the ChatGPT desktop app — download it from https://chatgpt.com/download",
   },
   {
     id: "codex",

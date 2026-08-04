@@ -1,5 +1,5 @@
 import { invoke, Channel } from "@tauri-apps/api/core"
-import type { Command, Paths } from "@/lib/agentpack/types"
+import type { AppBundle, Command, Paths } from "@/lib/agentpack/types"
 import type {
   ProxyEnvSnapshot,
   SystemProxySnapshot,
@@ -95,12 +95,16 @@ export const TIMEOUT_ERR = "agentpack:timeout"
 export const launchCcSwitch = () => invoke<void>("launch_cc_switch")
 
 /**
- * Open a desktop app by the name it is installed under — `CliTool.appBundle`.
- * Detached, so it resolves once spawned rather than when the window appears.
- * Rejects when the app isn't there, which is the signal the caller wants: the
- * "open Claude" button should say so rather than appear to do nothing.
+ * Open a desktop app, given every name it may be installed under —
+ * `CliTool.appBundles`. The backend picks the one this machine actually has, so
+ * a tool whose app got folded into another product (Codex into ChatGPT) opens
+ * the right window instead of the neighbouring one. Detached, so it resolves
+ * once spawned rather than when the window appears. Rejects when the app isn't
+ * there, which is the signal the caller wants: the "open Claude" button should
+ * say so rather than appear to do nothing.
  */
-export const launchApp = (appBundle: string) => invoke<void>("launch_app", { appBundle })
+export const launchApp = (appBundles: readonly AppBundle[]) =>
+  invoke<void>("launch_app", { appBundles })
 
 /**
  * Ask cc-switch to quit (gracefully first, forced only if it won't), and wait
@@ -120,8 +124,8 @@ export const quitCcSwitch = () => invoke<boolean>("quit_cc_switch")
  */
 export const ccSwitchRunning = () => invoke<boolean>("cc_switch_running")
 
-export const detectCli = (bin: string, gui: boolean, appBundle?: string) =>
-  invoke<{ installed: boolean; version?: string }>("detect_cli", { bin, gui, appBundle })
+export const detectCli = (bin: string, gui: boolean, appBundles?: readonly AppBundle[]) =>
+  invoke<{ installed: boolean; version?: string }>("detect_cli", { bin, gui, appBundles })
 
 /** Detect a runtime, falling back to its alternate binary name (python → python3). */
 export async function detectRuntime(rt: {
