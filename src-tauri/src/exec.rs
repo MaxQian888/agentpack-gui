@@ -834,6 +834,7 @@ pub struct AppBundle {
   /// there. Empty (the usual case) means the name alone settles it. Windows has
   /// no equivalent to look inside, so it matches on the package name regardless.
   #[serde(default)]
+  #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
   pub requires: Vec<String>,
 }
 

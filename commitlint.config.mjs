@@ -1,3 +1,5 @@
 import conventional from "@commitlint/config-conventional"
 
-export default { rules: conventional.rules }
+const config = { rules: conventional.rules }
+
+export default config
