@@ -26,6 +26,7 @@ const ALL: readonly SectionKey[] = [
   "my-account",
   "my-balance",
   "my-usage",
+  "my-models",
   "my-security",
   "presets",
   "environment",

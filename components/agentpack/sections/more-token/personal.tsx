@@ -1,14 +1,17 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   AlertTriangle,
   Check,
   ExternalLink,
   KeyRound,
+  MonitorCheck,
+  Orbit,
   Plus,
   RefreshCw,
+  Search,
   ShieldCheck,
   Unplug,
 } from "lucide-react"
@@ -40,6 +43,7 @@ import { useT } from "@/lib/i18n/provider"
 import { isTauri } from "@/lib/tauri"
 import { openUrl } from "@/lib/tauri/system"
 import {
+  cancelPersonalOAuth,
   credentialState,
   forgetCredential,
   listInstances,
@@ -48,15 +52,20 @@ import {
   ManagementApiError,
   operationId,
   pairInstance,
+  pollPersonalOAuth,
+  quotaCurrencyLabel,
   saveInstance,
+  startPersonalOAuth,
 } from "@/lib/more-token/client"
 import type {
   CredentialState,
   MoreTokenInstance,
   Page,
   PersonalAccount,
+  PersonalBalance,
   PersonalCapabilities,
   PersonalLedgerEntry,
+  PersonalModelCatalog,
   PersonalOverview,
   PersonalSession,
   PersonalUsage,
@@ -66,6 +75,10 @@ import { DesktopOnlyNote } from "../../desktop-only-note"
 import { SectionShell } from "../section-shell"
 
 const PERSONAL_CLIENT_ID = "agentpack-personal-desktop"
+
+/* Hallmark · pre-emit critique: P5 H4 E4 S5 R4 V4
+ * component: personal-workspace · genre: modern-minimal · theme: existing Cobalt/Geist
+ */
 
 function request<T>(instanceId: string, operation: Parameters<typeof managementRequest>[1]) {
   return managementRequest<T>(instanceId, operation).then((response) => response.data)
@@ -198,6 +211,8 @@ export function PersonalMoreTokenSection({ view }: { view: PersonalView }) {
             <PersonalBalanceView instance={instance!} />
           ) : view === "my-usage" ? (
             <PersonalUsageView instance={instance!} />
+          ) : view === "my-models" ? (
+            <PersonalModelsView instance={instance!} />
           ) : (
             <PersonalSecurityView instance={instance!} capabilities={capabilities.data} />
           )}
@@ -263,8 +278,9 @@ function PersonalPairPanel({
   const m = t.management
   const personal = t.personal
   const codeRef = useRef<HTMLInputElement>(null)
-  const [mode, setMode] = useState<"password" | "pairing">("password")
+  const [mode, setMode] = useState<"browser" | "password" | "pairing">("browser")
   const [needsTwoFactor, setNeedsTwoFactor] = useState(false)
+  const [oauth, setOauth] = useState<Awaited<ReturnType<typeof startPersonalOAuth>> | null>(null)
   const mutation = useMutation({
     mutationFn: () => pairInstance(instance.id, codeRef.current?.value ?? "", PERSONAL_CLIENT_ID),
     onSuccess: (result) => {
@@ -296,18 +312,72 @@ function PersonalPairPanel({
       toast.error(message)
     },
   })
+  const browser = useMutation({
+    mutationFn: () => startPersonalOAuth(instance.id, PERSONAL_CLIENT_ID, "AgentPack Desktop"),
+    onSuccess: async (result) => {
+      setOauth(result)
+      await openUrl(result.authorizationUrl)
+    },
+    onError: (error) => toast.error(errorText(error)),
+  })
+  useEffect(() => {
+    if (!oauth) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const poll = async () => {
+      try {
+        const result = await pollPersonalOAuth(instance.id, oauth.handle)
+        if (cancelled) return
+        if (result.status === "authorized" && result.credential) {
+          toast.success(
+            result.credential.credentialPersistent ? m.persistentCredential : m.memoryCredential
+          )
+          onPaired()
+          return
+        }
+        timer = setTimeout(poll, (result.status === "slow_down" ? 6 : oauth.intervalSeconds) * 1000)
+      } catch (error) {
+        if (!cancelled) {
+          setOauth(null)
+          toast.error(errorText(error))
+        }
+      }
+    }
+    timer = setTimeout(poll, oauth.intervalSeconds * 1000)
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+      void cancelPersonalOAuth(instance.id, oauth.handle).catch(() => undefined)
+    }
+  }, [instance.id, m.memoryCredential, m.persistentCredential, oauth, onPaired])
   return (
     <div className="mx-auto max-w-xl space-y-4 border-y py-8">
       <div>
         <h3 className="flex items-center gap-2 font-medium">
           <KeyRound className="size-4" />
-          {mode === "password" ? personal.signInTitle : m.pairTitle}
+          {mode === "browser"
+            ? personal.browserSignIn
+            : mode === "password"
+              ? personal.signInTitle
+              : m.pairTitle}
         </h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          {mode === "password" ? personal.signInHint : m.pairHint}
+          {mode === "browser"
+            ? personal.browserSignInHint
+            : mode === "password"
+              ? personal.signInHint
+              : m.pairHint}
         </p>
       </div>
-      <div className="grid grid-cols-2 rounded-md border p-1">
+      <div className="grid grid-cols-3 rounded-md border p-1">
+        <Button
+          type="button"
+          variant={mode === "browser" ? "secondary" : "ghost"}
+          size="sm"
+          onClick={() => setMode("browser")}
+        >
+          {personal.browserOption}
+        </Button>
         <Button
           type="button"
           variant={mode === "password" ? "secondary" : "ghost"}
@@ -325,7 +395,24 @@ function PersonalPairPanel({
           {personal.pairingOption}
         </Button>
       </div>
-      {mode === "password" ? (
+      {mode === "browser" ? (
+        <div className="space-y-3 rounded-lg bg-muted/45 p-4">
+          <div className="flex items-start gap-3">
+            <MonitorCheck className="mt-0.5 size-5 shrink-0" />
+            <p className="text-sm text-muted-foreground">
+              {oauth ? personal.waitingForBrowser : personal.otherLoginHint}
+            </p>
+          </div>
+          <Button
+            className="min-h-11 w-full"
+            disabled={browser.isPending || Boolean(oauth)}
+            onClick={() => browser.mutate()}
+          >
+            <ExternalLink className="size-4" />
+            {oauth ? personal.waitingForBrowser : personal.browserSignIn}
+          </Button>
+        </div>
+      ) : mode === "password" ? (
         <form
           className="space-y-3"
           onSubmit={(event) => {
@@ -383,20 +470,6 @@ function PersonalPairPanel({
           </Button>
         </>
       )}
-      <div className="border-t pt-4">
-        <Button
-          type="button"
-          variant="link"
-          className="h-auto min-h-11 whitespace-normal px-0 text-left"
-          onClick={() =>
-            void openUrl(new URL("/api/personal/browser-login", instance.baseUrl).toString())
-          }
-        >
-          <ExternalLink className="size-4" />
-          {personal.otherLoginMethods}
-        </Button>
-        <p className="text-xs text-muted-foreground">{personal.otherLoginHint}</p>
-      </div>
     </div>
   )
 }
@@ -444,7 +517,7 @@ function PersonalInstanceBar({
   )
 }
 
-function MetricStrip({ items }: { items: Array<{ label: string; value: string }> }) {
+function MetricStrip({ items }: { items: Array<{ label: string; value: string; hint?: string }> }) {
   return (
     <dl className="grid overflow-hidden rounded-md border sm:grid-cols-2 lg:grid-cols-4">
       {items.map((item, index) => (
@@ -454,6 +527,9 @@ function MetricStrip({ items }: { items: Array<{ label: string; value: string }>
         >
           <dt className="text-xs text-muted-foreground">{item.label}</dt>
           <dd className="mt-1 truncate text-xl font-semibold tabular-nums">{item.value}</dd>
+          {item.hint ? (
+            <dd className="mt-1 truncate text-xs text-muted-foreground">{item.hint}</dd>
+          ) : null}
         </div>
       ))}
     </dl>
@@ -489,14 +565,45 @@ function PersonalAccountView({
     return <PersonalError error={overview.error} retry={() => void overview.refetch()} />
   if (!overview.data) return <PersonalLoading />
   const info = overview.data
+  const access = info.access ?? {
+    group: info.account.group || "—",
+    active_api_keys: 0,
+    available_models: 0,
+    last_login_at: info.account.last_login_at || 0,
+  }
+  const security = info.security ?? {
+    two_factor_enabled: false,
+    active_desktop_sessions: 0,
+    auth_methods: ["password"],
+  }
   return (
     <div className="space-y-5">
       <MetricStrip
         items={[
-          { label: m.available, value: formatNumber(info.balance.available) },
-          { label: m.used, value: formatNumber(info.balance.used) },
-          { label: m.total, value: formatNumber(info.balance.total) },
+          {
+            label: m.available,
+            value: quotaCurrencyLabel(info.balance.available, info.quota_display),
+            hint: `${m.rawQuota}: ${formatNumber(info.balance.available)}`,
+          },
+          {
+            label: m.used,
+            value: quotaCurrencyLabel(info.balance.used, info.quota_display),
+            hint: `${m.rawQuota}: ${formatNumber(info.balance.used)}`,
+          },
+          {
+            label: m.total,
+            value: quotaCurrencyLabel(info.balance.total, info.quota_display),
+            hint: `${m.rawQuota}: ${formatNumber(info.balance.total)}`,
+          },
           { label: m.requests, value: formatNumber(info.account.request_count) },
+        ]}
+      />
+      <MetricStrip
+        items={[
+          { label: m.accountGroup, value: access.group || "—" },
+          { label: m.activeApiKeys, value: formatNumber(access.active_api_keys) },
+          { label: m.desktopSessions, value: formatNumber(security.active_desktop_sessions) },
+          { label: m.lastLogin, value: formatTime(access.last_login_at) },
         ]}
       />
       <div className="grid border-y lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.7fr)]">
@@ -535,6 +642,16 @@ function PersonalAccountView({
               {info.parent ? info.parent.display_name || info.parent.username : m.independent}
             </p>
           </div>
+          <div>
+            <p className="text-xs text-muted-foreground">{m.signInMethods}</p>
+            <div className="mt-2 flex flex-wrap gap-1">
+              {security.auth_methods.map((method) => (
+                <Badge key={method} variant="outline">
+                  {method}
+                </Badge>
+              ))}
+            </div>
+          </div>
           {capabilities.features.billing_portal_enabled ? (
             <Button
               variant="outline"
@@ -558,11 +675,7 @@ function PersonalBalanceView({ instance }: { instance: MoreTokenInstance }) {
   const management = useT().management
   const balance = useQuery({
     queryKey: ["more-token", instance.id, "personal-balance"],
-    queryFn: () =>
-      request<{ available: number; used: number; total: number; request_count: number }>(
-        instance.id,
-        { kind: "personalBalance" }
-      ),
+    queryFn: () => request<PersonalBalance>(instance.id, { kind: "personalBalance" }),
   })
   const ledger = useQuery({
     queryKey: ["more-token", instance.id, "personal-ledger"],
@@ -588,9 +701,21 @@ function PersonalBalanceView({ instance }: { instance: MoreTokenInstance }) {
       {balance.data ? (
         <MetricStrip
           items={[
-            { label: m.available, value: formatNumber(balance.data.available) },
-            { label: m.used, value: formatNumber(balance.data.used) },
-            { label: m.total, value: formatNumber(balance.data.total) },
+            {
+              label: m.available,
+              value: quotaCurrencyLabel(balance.data.available, balance.data.quota_display),
+              hint: `${m.rawQuota}: ${formatNumber(balance.data.available)}`,
+            },
+            {
+              label: m.used,
+              value: quotaCurrencyLabel(balance.data.used, balance.data.quota_display),
+              hint: `${m.rawQuota}: ${formatNumber(balance.data.used)}`,
+            },
+            {
+              label: m.total,
+              value: quotaCurrencyLabel(balance.data.total, balance.data.quota_display),
+              hint: `${m.rawQuota}: ${formatNumber(balance.data.total)}`,
+            },
             { label: m.requests, value: formatNumber(balance.data.request_count) },
           ]}
         />
@@ -621,10 +746,14 @@ function PersonalBalanceView({ instance }: { instance: MoreTokenInstance }) {
                     className={`font-mono tabular-nums ${entry.delta >= 0 ? "text-[var(--hm-ok)]" : "text-destructive"}`}
                   >
                     {entry.delta >= 0 ? "+" : ""}
-                    {formatNumber(entry.delta)}
+                    {balance.data
+                      ? quotaCurrencyLabel(entry.delta, balance.data.quota_display)
+                      : formatNumber(entry.delta)}
                   </TableCell>
                   <TableCell className="font-mono tabular-nums">
-                    {formatNumber(entry.balance_after)}
+                    {balance.data
+                      ? quotaCurrencyLabel(entry.balance_after, balance.data.quota_display)
+                      : formatNumber(entry.balance_after)}
                   </TableCell>
                   <TableCell>{entry.counterparty || "—"}</TableCell>
                   <TableCell>{formatTime(entry.created_at)}</TableCell>
@@ -681,7 +810,11 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
           { label: m.requests, value: formatNumber(usage.data.metrics.requests) },
           { label: m.promptTokens, value: formatNumber(usage.data.metrics.prompt_tokens) },
           { label: m.completionTokens, value: formatNumber(usage.data.metrics.completion_tokens) },
-          { label: m.used, value: formatNumber(usage.data.metrics.quota) },
+          {
+            label: m.used,
+            value: quotaCurrencyLabel(usage.data.metrics.quota, usage.data.quota_display),
+            hint: `${m.rawQuota}: ${formatNumber(usage.data.metrics.quota)}`,
+          },
         ]}
       />
       <section className="border-y py-5">
@@ -698,6 +831,112 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
         <p className="mt-3 text-xs text-muted-foreground">
           {m.generatedAt}: {formatTime(usage.data.generated_at)}
         </p>
+      </section>
+    </div>
+  )
+}
+
+function PersonalModelsView({ instance }: { instance: MoreTokenInstance }) {
+  const m = useT().personal
+  const [search, setSearch] = useState("")
+  const catalog = useQuery({
+    queryKey: ["more-token", instance.id, "personal-models"],
+    queryFn: () => request<PersonalModelCatalog>(instance.id, { kind: "personalModels" }),
+  })
+  const vendors = useMemo(
+    () => new Map((catalog.data?.vendors ?? []).map((vendor) => [vendor.id, vendor.name])),
+    [catalog.data?.vendors]
+  )
+  const items = useMemo(() => {
+    const needle = search.trim().toLowerCase()
+    if (!needle) return catalog.data?.items ?? []
+    return (catalog.data?.items ?? []).filter((model) =>
+      [model.model_name, model.description, model.tags, vendors.get(model.vendor_id ?? 0)]
+        .filter(Boolean)
+        .some((value) => value!.toLowerCase().includes(needle))
+    )
+  }, [catalog.data?.items, search, vendors])
+  if (catalog.isError)
+    return <PersonalError error={catalog.error} retry={() => void catalog.refetch()} />
+  if (!catalog.data) return <PersonalLoading />
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h3 className="flex items-center gap-2 font-medium">
+            <Orbit className="size-4" />
+            {m.modelMarketplace}
+          </h3>
+          <p className="mt-1 text-sm text-muted-foreground">{m.modelMarketplaceHint}</p>
+        </div>
+        <div className="relative w-full sm:max-w-sm">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={m.searchModels}
+            className="pl-9"
+          />
+        </div>
+      </div>
+      <MetricStrip
+        items={[
+          { label: m.modelMarketplace, value: formatNumber(catalog.data.items.length) },
+          { label: m.vendor, value: formatNumber(catalog.data.vendors.length) },
+          {
+            label: m.accountGroup,
+            value: Object.values(catalog.data.usable_group).join(", ") || "—",
+          },
+          { label: m.generatedAt, value: formatTime(catalog.data.generated_at) },
+        ]}
+      />
+      <section className="overflow-hidden border-y">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{m.model}</TableHead>
+                <TableHead>{m.vendor}</TableHead>
+                <TableHead>{m.billing}</TableHead>
+                <TableHead>{m.endpoints}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map((model) => (
+                <TableRow key={model.model_name}>
+                  <TableCell className="min-w-64">
+                    <p className="font-medium">{model.model_name}</p>
+                    <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">
+                      {model.description || model.tags || "—"}
+                    </p>
+                  </TableCell>
+                  <TableCell>{vendors.get(model.vendor_id ?? 0) || "—"}</TableCell>
+                  <TableCell className="whitespace-nowrap text-sm tabular-nums">
+                    {model.quota_type === 1
+                      ? `${m.fixedPrice} · ${model.model_price}`
+                      : `${m.ratioBilling} · ${model.model_ratio}× / ${model.completion_ratio}×`}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex max-w-72 flex-wrap gap-1">
+                      {(model.supported_endpoint_types ?? []).map((endpoint) => (
+                        <Badge key={endpoint} variant="outline">
+                          {endpoint}
+                        </Badge>
+                      ))}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {items.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={4} className="h-28 text-center text-muted-foreground">
+                    {m.noModels}
+                  </TableCell>
+                </TableRow>
+              ) : null}
+            </TableBody>
+          </Table>
+        </div>
       </section>
     </div>
   )

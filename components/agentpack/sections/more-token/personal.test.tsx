@@ -6,10 +6,12 @@ import { en } from "@/lib/i18n/en"
 import { isTauri } from "@/lib/tauri"
 import {
   credentialState,
+  cancelPersonalOAuth,
   listInstances,
   loginPersonalInstance,
   managementRequest,
   pairInstance,
+  startPersonalOAuth,
 } from "@/lib/more-token/client"
 import type { ManagementOperation, MoreTokenInstance, PersonalView } from "@/lib/more-token/types"
 import { PersonalMoreTokenSection } from "./personal"
@@ -24,6 +26,9 @@ jest.mock("@/lib/more-token/client", () => ({
   loginPersonalInstance: jest.fn(),
   managementRequest: jest.fn(),
   pairInstance: jest.fn(),
+  startPersonalOAuth: jest.fn(),
+  pollPersonalOAuth: jest.fn(),
+  cancelPersonalOAuth: jest.fn(),
   removeInstance: jest.fn(),
   saveInstance: jest.fn(),
 }))
@@ -80,6 +85,8 @@ function mockOperation(operation: ManagementOperation) {
           used_quota: 600,
           request_count: 18,
           created_at: 1_700_000_000,
+          group: "default",
+          last_login_at: 1_700_000_000,
         },
         balance: { available: 2400, used: 600, total: 3000 },
         quota_display: {
@@ -91,11 +98,57 @@ function mockOperation(operation: ManagementOperation) {
         },
         parent: { id: 1, username: "atlas-master", display_name: "Atlas Team" },
         ledger_entries: 3,
+        security: {
+          two_factor_enabled: false,
+          active_desktop_sessions: 1,
+          auth_methods: ["password", "github"],
+        },
+        access: {
+          group: "default",
+          active_api_keys: 2,
+          available_models: 12,
+          last_login_at: 1_700_000_000,
+        },
       })
     case "personalBalance":
-      return response({ available: 2400, used: 600, total: 3000, request_count: 18 })
+      return response({
+        available: 2400,
+        used: 600,
+        total: 3000,
+        request_count: 18,
+        quota_display: {
+          quota_per_unit: 500_000,
+          display_currency: "CNY",
+          conversion_numerator: 1,
+          conversion_denominator: 1,
+          rate_valid_until: 2_000_000_000,
+        },
+      })
     case "personalLedger":
       return response({ items: [], page: 1, page_size: 50, total: 0 })
+    case "personalModels":
+      return response({
+        items: [
+          {
+            model_name: "gpt-5.2",
+            description: "Reasoning model",
+            vendor_id: 1,
+            quota_type: 0,
+            model_ratio: 1,
+            model_price: 0,
+            completion_ratio: 4,
+            enable_groups: ["default"],
+            supported_endpoint_types: ["openai"],
+          },
+        ],
+        vendors: [{ id: 1, name: "OpenAI" }],
+        group_ratio: { default: 1 },
+        usable_group: { default: "Default" },
+        supported_endpoint: {},
+        auto_groups: [],
+        pricing_version: "test",
+        generated_at: 1_700_000_000,
+      })
     default:
       return response({})
   }
@@ -119,6 +172,7 @@ beforeEach(() => {
   ;(isTauri as jest.Mock).mockReturnValue(true)
   ;(listInstances as jest.Mock).mockResolvedValue([managementInstance, personalInstance])
   ;(credentialState as jest.Mock).mockResolvedValue({ connected: true, persistent: true })
+  ;(cancelPersonalOAuth as jest.Mock).mockResolvedValue(undefined)
   ;(managementRequest as jest.Mock).mockImplementation(
     (_instanceId: string, operation: ManagementOperation) => mockOperation(operation)
   )
@@ -136,7 +190,7 @@ it("renders only the paired user's balance and parent relationship", async () =>
   renderSection("my-account")
   expect(await screen.findByDisplayValue("Atlas User")).toBeInTheDocument()
   expect(screen.getByText("Atlas Team")).toBeInTheDocument()
-  expect(screen.getByText("2,400")).toBeInTheDocument()
+  expect(screen.getByText("Raw quota: 2,400")).toBeInTheDocument()
   expect(screen.queryByText("Operations")).not.toBeInTheDocument()
   await waitFor(() => {
     const operations = (managementRequest as jest.Mock).mock.calls.map(
@@ -176,6 +230,7 @@ it("supports direct username and password login without persisting password stat
     credentialPersistent: true,
   })
   renderSection("my-account")
+  await userEvent.click(await screen.findByRole("button", { name: en.personal.passwordOption }))
   await userEvent.type(await screen.findByLabelText(en.personal.usernameOrEmail), "atlas-sandbox")
   await userEvent.type(screen.getByLabelText(en.management.password), "DemoPassword123")
   await userEvent.click(screen.getByRole("button", { name: en.personal.signIn }))
@@ -189,4 +244,33 @@ it("supports direct username and password login without persisting password stat
       "AgentPack Desktop"
     )
   )
+})
+
+it("starts browser authorization without exposing a device secret to the UI", async () => {
+  ;(credentialState as jest.Mock).mockResolvedValue({ connected: false, persistent: false })
+  ;(startPersonalOAuth as jest.Mock).mockResolvedValue({
+    handle: "safe-rust-handle",
+    authorizationUrl: "http://127.0.0.1:3001/profile?desktop_authorization=ABCDE-FGHIJ",
+    expiresAt: 1_800_000_000,
+    intervalSeconds: 60,
+  })
+  const view = renderSection("my-account")
+  const buttons = await screen.findAllByRole("button", { name: en.personal.browserSignIn })
+  await userEvent.click(buttons.at(-1)!)
+  await waitFor(() =>
+    expect(startPersonalOAuth).toHaveBeenCalledWith(
+      personalInstance.id,
+      "agentpack-personal-desktop",
+      "AgentPack Desktop"
+    )
+  )
+  expect(screen.queryByText(/device_code/i)).not.toBeInTheDocument()
+  view.unmount()
+})
+
+it("renders the personal model marketplace from the isolated models operation", async () => {
+  renderSection("my-models")
+  expect(await screen.findByText("gpt-5.2")).toBeInTheDocument()
+  expect(screen.getByText("OpenAI")).toBeInTheDocument()
+  expect(managementRequest).toHaveBeenCalledWith(personalInstance.id, { kind: "personalModels" })
 })

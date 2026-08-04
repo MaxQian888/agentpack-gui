@@ -79,6 +79,7 @@ const SECTION_LABEL: Record<SectionKey, (m: Messages) => string> = {
   "my-account": (m) => m.personal.tabs.account,
   "my-balance": (m) => m.personal.tabs.balance,
   "my-usage": (m) => m.personal.tabs.usage,
+  "my-models": (m) => m.personal.tabs.models,
   "my-security": (m) => m.personal.tabs.security,
   presets: (m) => m.menu.presets,
   environment: (m) => m.menu.environment,

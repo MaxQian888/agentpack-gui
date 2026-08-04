@@ -587,6 +587,7 @@ function ShellBody() {
       case "my-account":
       case "my-balance":
       case "my-usage":
+      case "my-models":
       case "my-security":
         return <PersonalMoreTokenSection view={section} />
       case "management-overview":

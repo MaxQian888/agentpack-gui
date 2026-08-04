@@ -24,6 +24,7 @@ export type SectionKey =
   | "my-account"
   | "my-balance"
   | "my-usage"
+  | "my-models"
   | "my-security"
   | "presets"
   | "environment"
@@ -64,7 +65,7 @@ export const WORKSPACES: readonly WorkspaceDefinition[] = [
   { key: "capabilities", sections: ["skills", "mcp", "ccswitch", "ccconnect"] },
   {
     key: "account",
-    sections: ["my-account", "my-balance", "my-usage", "my-security"],
+    sections: ["my-account", "my-balance", "my-usage", "my-models", "my-security"],
   },
   {
     key: "management",
