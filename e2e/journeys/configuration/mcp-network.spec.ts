@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test"
-import { openApp, navTo } from "./helpers"
+import { openApp, navTo } from "../../helpers"
 
 test.beforeEach(async ({ page }) => openApp(page))
 

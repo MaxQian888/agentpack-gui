@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test"
-import { openApp, navTo, reviewChanges, NOT_IN_TAURI } from "./helpers"
+import { openApp, navTo, reviewChanges, NOT_IN_TAURI } from "../../helpers"
 
 test.beforeEach(async ({ page }) => openApp(page))
 

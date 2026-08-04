@@ -27,17 +27,33 @@ export default defineConfig({
 
   projects: [
     {
-      name: "chromium",
+      name: "main-app",
+      testIgnore: /e2e\/docs\//,
       use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "docs-site",
+      testMatch: /e2e\/docs\/.*\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], baseURL: "http://localhost:3001" },
     },
   ],
 
-  webServer: {
-    command: "pnpm dev",
-    url: "http://localhost:3000",
-    reuseExistingServer: !process.env.CI,
-    timeout: 180_000,
-    stdout: "ignore",
-    stderr: "pipe",
-  },
+  webServer: [
+    {
+      command: "pnpm dev",
+      url: "http://localhost:3000",
+      reuseExistingServer: !process.env.CI,
+      timeout: 180_000,
+      stdout: "ignore",
+      stderr: "pipe",
+    },
+    {
+      command: "pnpm docs:dev",
+      url: "http://localhost:3001/docs",
+      reuseExistingServer: !process.env.CI,
+      timeout: 180_000,
+      stdout: "ignore",
+      stderr: "pipe",
+    },
+  ],
 })
