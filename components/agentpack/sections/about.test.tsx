@@ -64,6 +64,7 @@ beforeEach(() => {
       proxy: null,
       summonShortcut: null,
       monthlySubscriptionUsd: null,
+      providerBackend: "native",
     },
     paths: null,
   })

@@ -28,9 +28,10 @@ it("captures the current provider of every app", () => {
     row("c", "codex", true),
     row("d", "opencode"),
   ]
-  expect(captureAccount("p1", "Work", providers)).toEqual({
+  expect(captureAccount("p1", "Work", "native", providers)).toEqual({
     id: "p1",
     name: "Work",
+    backend: "native",
     // opencode has no current row, so the profile simply doesn't speak for it.
     picks: { claude: "a", codex: "c" },
   })
@@ -38,10 +39,23 @@ it("captures the current provider of every app", () => {
 
 it("serialize → parse round-trips", () => {
   const store = {
-    version: 1 as const,
-    profiles: [captureAccount("p1", "Work", [row("a", "claude", true)])],
+    version: 2 as const,
+    profiles: [captureAccount("p1", "Work", "native", [row("a", "claude", true)])],
   }
   expect(parseAccounts(serializeAccounts(store))).toEqual(store)
+})
+
+it("migrates legacy profiles to the cc-switch backend", () => {
+  const legacy = JSON.stringify({
+    version: 1,
+    profiles: [{ id: "p1", name: "Legacy", picks: { claude: "a" } }],
+  })
+  expect(parseAccounts(legacy).profiles[0]).toEqual({
+    id: "p1",
+    name: "Legacy",
+    backend: "ccswitch",
+    picks: { claude: "a" },
+  })
 })
 
 it("degrades to an empty store on invalid input", () => {
@@ -65,7 +79,12 @@ it("drops entries missing an id or name, and non-string picks", () => {
 
 it("resolves only the rows that actually need switching", () => {
   const providers = [row("a", "claude", true), row("b", "codex")]
-  const profile = { id: "p1", name: "Work", picks: { claude: "a", codex: "b" } }
+  const profile = {
+    id: "p1",
+    name: "Work",
+    backend: "native" as const,
+    picks: { claude: "a", codex: "b" },
+  }
   // claude is already current — applying twice must not queue redundant writes,
   // each of which would take its own backup snapshot.
   expect(resolveAccount(profile, providers).map((p) => p.id)).toEqual(["b"])
@@ -73,7 +92,12 @@ it("resolves only the rows that actually need switching", () => {
 
 it("still applies the apps it can when a picked provider was deleted", () => {
   const providers = [row("b", "codex")]
-  const profile = { id: "p1", name: "Work", picks: { claude: "gone", codex: "b" } }
+  const profile = {
+    id: "p1",
+    name: "Work",
+    backend: "native" as const,
+    picks: { claude: "gone", codex: "b" },
+  }
   expect(resolveAccount(profile, providers).map((p) => p.id)).toEqual(["b"])
   expect(missingPicks(profile, providers)).toEqual(["claude"])
 })
@@ -81,6 +105,14 @@ it("still applies the apps it can when a picked provider was deleted", () => {
 it("reports no missing picks for a fully resolvable profile", () => {
   const providers = [row("a", "claude"), row("b", "codex")]
   expect(
-    missingPicks({ id: "p", name: "n", picks: { claude: "a", codex: "b" } }, providers)
+    missingPicks(
+      {
+        id: "p",
+        name: "n",
+        backend: "native",
+        picks: { claude: "a", codex: "b" },
+      },
+      providers
+    )
   ).toEqual([])
 })

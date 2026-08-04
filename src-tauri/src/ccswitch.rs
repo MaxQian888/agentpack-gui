@@ -44,34 +44,34 @@ const PROVIDERS_DDL: &str = "CREATE TABLE IF NOT EXISTS providers (
 
 // NOTE: snake_case fields (no rename) to match the ported TS `Provider` type
 // (app_type, settings_config, website_url, is_current).
-#[derive(Serialize)]
-pub struct Provider {
-  id: String,
-  app_type: String,
-  name: String,
-  settings_config: String,
-  website_url: Option<String>,
-  notes: Option<String>,
-  is_current: bool,
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub(crate) struct Provider {
+  pub(crate) id: String,
+  pub(crate) app_type: String,
+  pub(crate) name: String,
+  pub(crate) settings_config: String,
+  pub(crate) website_url: Option<String>,
+  pub(crate) notes: Option<String>,
+  pub(crate) is_current: bool,
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProviderForm {
+  pub(crate) name: String,
+  pub(crate) website_url: Option<String>,
+  pub(crate) notes: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ProviderForm {
-  name: String,
-  website_url: Option<String>,
-  notes: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WriteReq {
-  op: String,
-  dry_run: bool,
-  id: Option<String>,
-  app: String,
-  form: Option<ProviderForm>,
-  settings_config: Option<String>,
+pub(crate) struct WriteReq {
+  pub(crate) op: String,
+  pub(crate) dry_run: bool,
+  pub(crate) id: Option<String>,
+  pub(crate) app: String,
+  pub(crate) form: Option<ProviderForm>,
+  pub(crate) settings_config: Option<String>,
 }
 
 /// Location of the cc-switch SQLite DB. `pub(crate)` so the backup module
@@ -215,7 +215,7 @@ fn is_running() -> bool {
   crate::exec::is_process_running("cc-switch".into())
 }
 
-fn unique_id() -> String {
+pub(crate) fn unique_id() -> String {
   let n = SystemTime::now()
     .duration_since(UNIX_EPOCH)
     .unwrap_or_default()

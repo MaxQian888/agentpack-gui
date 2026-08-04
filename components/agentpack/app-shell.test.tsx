@@ -93,6 +93,7 @@ it("shows the header update badge when an update is available and opens About", 
       proxy: null,
       summonShortcut: null,
       monthlySubscriptionUsd: null,
+      providerBackend: "native",
     },
   })
   renderShell()

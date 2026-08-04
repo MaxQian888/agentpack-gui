@@ -52,6 +52,7 @@ const SETTINGS: AppSettings = {
   },
   summonShortcut: null,
   monthlySubscriptionUsd: 20,
+  providerBackend: "native",
 }
 
 const FILES = {

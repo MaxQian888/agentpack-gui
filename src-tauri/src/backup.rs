@@ -23,15 +23,35 @@ pub struct BackupEntry {
   files: Vec<BackupFile>,
 }
 
-/// Root under which every snapshot folder lives. `AGENTPACK_BACKUP_ROOT` overrides
-/// it (used by tests) else `~/.cc-switch/backups/agentpack`.
+/// Root under which every snapshot folder lives. Backups are Agentpack-owned
+/// even when the selected provider store is CC Switch, so native mode never
+/// creates a surprising `~/.cc-switch` directory.
 fn backup_root() -> PathBuf {
   if let Ok(p) = std::env::var("AGENTPACK_BACKUP_ROOT") {
     return PathBuf::from(p);
   }
   dirs::home_dir()
     .unwrap_or_default()
+    .join(".agentpack/backups/providers")
+}
+
+fn legacy_backup_root() -> PathBuf {
+  dirs::home_dir()
+    .unwrap_or_default()
     .join(".cc-switch/backups/agentpack")
+}
+
+fn backup_roots() -> Vec<PathBuf> {
+  let current = backup_root();
+  if std::env::var("AGENTPACK_BACKUP_ROOT").is_ok() {
+    return vec![current];
+  }
+  let legacy = legacy_backup_root();
+  if legacy == current {
+    vec![current]
+  } else {
+    vec![current, legacy]
+  }
 }
 
 /// How many snapshots to keep. Every provider write takes one, so without a cap the
@@ -45,14 +65,36 @@ const MAX_SNAPSHOTS: usize = 20;
 /// (OAuth refresh token in plaintext) and agentpack never writes it, so copying it on
 /// every provider write would scatter credentials for no rollback value — and
 /// restoring a stale refresh token can log the user out.
-fn tracked_files() -> Vec<PathBuf> {
+fn live_config_files() -> Vec<PathBuf> {
   let home = dirs::home_dir().unwrap_or_default();
   let codex = crate::paths::codex_home(&home);
   vec![
-    crate::ccswitch::db_path(),
     home.join(".claude/settings.json"),
     codex.join("config.toml"),
+    home.join(".config/opencode/opencode.json"),
   ]
+}
+
+fn tracked_files() -> Vec<PathBuf> {
+  let mut files = vec![crate::ccswitch::db_path()];
+  files.extend(live_config_files());
+  files
+}
+
+fn native_tracked_files() -> Vec<PathBuf> {
+  let mut files = vec![crate::providers::native_store_path()];
+  files.extend(live_config_files());
+  files
+}
+
+fn restorable_files() -> Vec<PathBuf> {
+  let mut files = tracked_files();
+  for path in native_tracked_files() {
+    if !files.contains(&path) {
+      files.push(path);
+    }
+  }
+  files
 }
 
 /// Drop all but the newest `MAX_SNAPSHOTS` snapshots. Best-effort: a folder that
@@ -87,6 +129,10 @@ fn now_nanos() -> u128 {
 /// `cc_write_provider` and the sync flow can snapshot before mutating.
 pub(crate) fn snapshot(reason: &str) -> Result<BackupEntry, String> {
   snapshot_files(reason, &tracked_files())
+}
+
+pub(crate) fn snapshot_native(reason: &str) -> Result<BackupEntry, String> {
+  snapshot_files(reason, &native_tracked_files())
 }
 
 fn snapshot_files(reason: &str, files: &[PathBuf]) -> Result<BackupEntry, String> {
@@ -128,25 +174,30 @@ fn snapshot_files(reason: &str, files: &[PathBuf]) -> Result<BackupEntry, String
 
 /// Take a snapshot on demand (e.g. before a manual live-config sync).
 #[tauri::command(async)]
-pub fn backup_snapshot(reason: String) -> Result<BackupEntry, String> {
-  snapshot(&reason)
+pub fn backup_snapshot(reason: String, backend: Option<String>) -> Result<BackupEntry, String> {
+  if backend.as_deref() == Some("native") {
+    snapshot_native(&reason)
+  } else {
+    snapshot(&reason)
+  }
 }
 
 /// List every snapshot, newest first. Folders without a readable manifest are
 /// skipped rather than failing the whole listing.
 #[tauri::command(async)]
 pub fn backup_list() -> Result<Vec<BackupEntry>, String> {
-  let root = backup_root();
-  if !root.is_dir() {
-    return Ok(Vec::new());
-  }
   let mut out = Vec::new();
-  for entry in fs::read_dir(&root).map_err(|e| e.to_string())? {
-    let entry = entry.map_err(|e| e.to_string())?;
-    let manifest = entry.path().join("manifest.json");
-    if let Ok(text) = fs::read_to_string(&manifest) {
-      if let Ok(be) = serde_json::from_str::<BackupEntry>(&text) {
-        out.push(be);
+  for root in backup_roots() {
+    if !root.is_dir() {
+      continue;
+    }
+    for entry in fs::read_dir(&root).map_err(|e| e.to_string())? {
+      let entry = entry.map_err(|e| e.to_string())?;
+      let manifest = entry.path().join("manifest.json");
+      if let Ok(text) = fs::read_to_string(&manifest) {
+        if let Ok(be) = serde_json::from_str::<BackupEntry>(&text) {
+          out.push(be);
+        }
       }
     }
   }
@@ -181,24 +232,40 @@ pub struct RestoreResult {
 /// Refuses while cc-switch is running to avoid corrupting the DB underneath it.
 #[tauri::command(async)]
 pub fn backup_restore(id: String) -> Result<RestoreResult, String> {
-  if cc_switch_running() {
-    return Err("cc-switch is running — close it before restoring.".into());
-  }
-  let safety = snapshot("before restore")?;
-
-  let dir = backup_root().join(&id);
+  let dir = backup_roots()
+    .into_iter()
+    .map(|root| root.join(&id))
+    .find(|candidate| candidate.join("manifest.json").is_file())
+    .ok_or_else(|| "backup not found".to_string())?;
   let text =
     fs::read_to_string(dir.join("manifest.json")).map_err(|_| "backup not found".to_string())?;
   let entry: BackupEntry = serde_json::from_str(&text).map_err(|e| e.to_string())?;
 
-  let tracked = tracked_files();
+  if cc_switch_running()
+    && entry
+      .files
+      .iter()
+      .any(|file| PathBuf::from(&file.original_path) == crate::ccswitch::db_path())
+  {
+    return Err("cc-switch is running — close it before restoring its database.".into());
+  }
+
+  let allowed = restorable_files();
+  let destinations: Vec<PathBuf> = entry
+    .files
+    .iter()
+    .map(|file| PathBuf::from(&file.original_path))
+    .filter(|path| allowed.contains(path))
+    .collect();
+  let safety = snapshot_files("before restore", &destinations)?;
+
   let mut restored = Vec::new();
   for f in &entry.files {
     let dest = PathBuf::from(&f.original_path);
     // Snapshots taken by an older agentpack also captured ~/.codex/auth.json. Putting
     // that back would roll the official login to an older refresh token and can sign
     // the user out, so a restore only ever rewrites what agentpack currently manages.
-    if !tracked.contains(&dest) {
+    if !allowed.contains(&dest) {
       restored.push(format!("skipped (not managed): {}", f.original_path));
       continue;
     }

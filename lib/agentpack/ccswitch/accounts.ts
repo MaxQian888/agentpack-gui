@@ -1,4 +1,4 @@
-import type { Provider, ProviderApp } from "./types"
+import type { Provider, ProviderApp, ProviderBackend } from "./types"
 import { readStoreRecords } from "../store-json"
 
 /**
@@ -15,16 +15,18 @@ import { readStoreRecords } from "../store-json"
 export interface AccountProfile {
   id: string
   name: string
+  /** Provider ids are backend-local and must never be resolved across stores. */
+  backend: ProviderBackend
   /** Provider row id per app. An app that's absent is left untouched. */
   picks: Partial<Record<ProviderApp, string>>
 }
 
 export interface AccountStore {
-  version: 1
+  version: 2
   profiles: AccountProfile[]
 }
 
-export const ACCOUNTS_VERSION = 1 as const
+export const ACCOUNTS_VERSION = 2 as const
 
 /** Path to the on-disk store, beside the existing setup profiles. */
 export function accountsPath(home: string): string {
@@ -53,16 +55,33 @@ export function parseAccounts(json: string): AccountStore {
     for (const [app, id] of Object.entries(rawPicks)) {
       if (typeof id === "string" && id) picks[app as ProviderApp] = id
     }
-    profiles.push({ id: rec["id"], name: rec["name"], picks })
+    // Version 1 predated the native store, so every legacy id necessarily
+    // points into cc-switch. Treat unknown values the same way instead of ever
+    // resolving them against the native store by accident.
+    const backend = rec["backend"] === "native" ? "native" : "ccswitch"
+    profiles.push({ id: rec["id"], name: rec["name"], backend, picks })
   }
   return { version: ACCOUNTS_VERSION, profiles }
 }
 
 /** Snapshot which provider is current for each app right now. */
-export function captureAccount(id: string, name: string, providers: Provider[]): AccountProfile {
+export function captureAccount(
+  id: string,
+  name: string,
+  backend: ProviderBackend,
+  providers: Provider[]
+): AccountProfile {
   const picks: AccountProfile["picks"] = {}
   for (const p of providers) if (p.is_current) picks[p.app_type] = p.id
-  return { id, name, picks }
+  return { id, name, backend, picks }
+}
+
+/** Profiles whose ids belong to the active provider store. */
+export function accountsForBackend(
+  profiles: AccountProfile[],
+  backend: ProviderBackend
+): AccountProfile[] {
+  return profiles.filter((profile) => profile.backend === backend)
 }
 
 /**

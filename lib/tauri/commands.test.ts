@@ -64,6 +64,8 @@ import {
   createSkill,
   loginStatus,
   httpGet,
+  providerLoad,
+  providerWrite,
 } from "./commands"
 import { Channel, invoke } from "@tauri-apps/api/core"
 
@@ -111,6 +113,28 @@ it("ccWriteProvider wraps the request under `req`", async () => {
   await ccWriteProvider({ op: "delete", dryRun: false, app: "claude", id: "1" })
   expect(invoke).toHaveBeenCalledWith("cc_write_provider", {
     req: { op: "delete", dryRun: false, app: "claude", id: "1" },
+  })
+})
+
+it("provider commands select the requested storage backend", async () => {
+  await providerLoad("native")
+  expect(invoke).toHaveBeenCalledWith("provider_load", { backend: "native" })
+
+  await providerWrite({
+    backend: "ccswitch",
+    op: "setCurrent",
+    dryRun: false,
+    app: "codex",
+    id: "provider-1",
+  })
+  expect(invoke).toHaveBeenCalledWith("provider_write", {
+    req: {
+      backend: "ccswitch",
+      op: "setCurrent",
+      dryRun: false,
+      app: "codex",
+      id: "provider-1",
+    },
   })
 })
 

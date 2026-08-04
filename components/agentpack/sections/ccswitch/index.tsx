@@ -18,7 +18,8 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
-import { Card } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   Table,
   TableBody,
@@ -55,6 +56,7 @@ import { appsMissingOfficial, isOfficial, officialForm } from "@/lib/agentpack/c
 import {
   ACCOUNTS_VERSION,
   accountsPath,
+  accountsForBackend,
   captureAccount,
   parseAccounts,
   resolveAccount,
@@ -70,6 +72,7 @@ import {
 import { buildSettingsConfig, parseSettingsConfig } from "@/lib/agentpack/ccswitch/provider"
 import type {
   Provider,
+  ProviderBackend,
   ProviderForm as ProviderFormData,
   VisibleApps,
 } from "@/lib/agentpack/ccswitch/types"
@@ -83,11 +86,13 @@ import {
   launchCcSwitch,
   quitCcSwitch,
   loginStatus,
+  providerLoad,
   readTextFile,
   writeTextFile,
   type BackupEntry,
   type LoginReport,
 } from "@/lib/tauri/commands"
+import { saveSettings } from "@/lib/tauri/settings"
 
 import { isTauri } from "@/lib/tauri"
 import { pickFile, pickSavePath } from "@/lib/tauri/dialog"
@@ -112,6 +117,8 @@ export function CcSwitchSection() {
   const paths = useAppStore((s) => s.paths)
   const effectiveOS = useAppStore((s) => s.effectiveOS)
   const storeDetected = useAppStore((s) => s.detections["cc-switch"])
+  const backend = useAppStore((s) => s.settings.providerBackend)
+  const setSettings = useAppStore((s) => s.setSettings)
   const { run } = useRunnerCtx()
 
   const [detected, setDetected] = useState<boolean | null>(
@@ -160,10 +167,15 @@ export function CcSwitchSection() {
   const scan = useCallback(async () => {
     if (!isTauri()) return
     try {
-      const [d, list] = await Promise.all([detectCli("cc-switch", true), ccLoadProviders()])
+      const [d, list] = await Promise.all([
+        backend === "ccswitch" ? detectCli("cc-switch", true) : Promise.resolve(null),
+        backend === "native" ? providerLoad("native") : ccLoadProviders(),
+      ])
       if (!mounted.current) return
-      setDetected(d.installed)
-      useAppStore.getState().setDetection("cc-switch", d)
+      if (d) {
+        setDetected(d.installed)
+        useAppStore.getState().setDetection("cc-switch", d)
+      }
       setProviders(list)
       if (paths) {
         const [
@@ -177,12 +189,14 @@ export function CcSwitchSection() {
           opencodeJson,
           accountsJson,
         ] = await Promise.all([
-          ccSchemaStatus(),
-          readTextFile(paths.ccSwitchSettings),
+          backend === "ccswitch"
+            ? ccSchemaStatus()
+            : Promise.resolve({ exists: false, userVersion: 0, missingColumns: [] }),
+          backend === "ccswitch" ? readTextFile(paths.ccSwitchSettings) : Promise.resolve(""),
           backupList(),
           // Not `isProcessRunning("cc-switch")`: on macOS the process name is the
           // binary inside the .app bundle, which the backend resolves for us.
-          ccSwitchRunning(),
+          backend === "ccswitch" ? ccSwitchRunning() : Promise.resolve(false),
           readTextFile(paths.claudeSettings),
           readTextFile(paths.codexConfig),
           loginStatus(),
@@ -192,11 +206,11 @@ export function CcSwitchSection() {
         if (!mounted.current) return
         setLogin(who)
         setAccounts(parseAccounts(accountsJson).profiles)
-        setDbReady(schema.exists && schema.missingColumns.length === 0)
-        setStaleColumns(schema.exists ? schema.missingColumns : [])
+        setDbReady(backend === "native" || (schema.exists && schema.missingColumns.length === 0))
+        setStaleColumns(backend === "ccswitch" && schema.exists ? schema.missingColumns : [])
         setVisible(readVisibleApps(settingsJson))
         setBackups(bks)
-        setCcRunning(running)
+        setCcRunning(backend === "ccswitch" ? running : false)
         setUnmanaged(
           detectUnmanagedProviders({
             claudeSettings: claudeJson,
@@ -211,7 +225,7 @@ export function CcSwitchSection() {
       // user can retry via Refresh.
       if (mounted.current) setLoading(false)
     }
-  }, [paths])
+  }, [backend, paths])
 
   // Surface a failed scan instead of leaving an unhandled rejection — the user
   // retries via Refresh. (Handled here rather than a catch inside `scan`: a
@@ -232,6 +246,15 @@ export function CcSwitchSection() {
     const reports = await run(steps)
     await reload()
     return reports
+  }
+
+  const selectBackend = (value: string) => {
+    if (value !== "native" && value !== "ccswitch") return
+    const next = value as ProviderBackend
+    setSettings({ providerBackend: next })
+    void saveSettings({ providerBackend: next })
+    setProviders(null)
+    setLoading(true)
   }
 
   // ── Launch / quit the cc-switch app ──────────────────────────────────────
@@ -321,11 +344,16 @@ export function CcSwitchSection() {
   // in a loop; the button below stays available for an explicit retry.
   const autoInitAttempted = useRef(false)
   useEffect(() => {
-    if (dbReady === false && staleColumns.length === 0 && !autoInitAttempted.current) {
+    if (
+      backend === "ccswitch" &&
+      dbReady === false &&
+      staleColumns.length === 0 &&
+      !autoInitAttempted.current
+    ) {
       autoInitAttempted.current = true
       void initDb()
     }
-  }, [dbReady, staleColumns, initDb])
+  }, [backend, dbReady, staleColumns, initDb])
 
   const applyVisible = () => {
     if (!paths) return
@@ -342,8 +370,8 @@ export function CcSwitchSection() {
    * drifting apart would mean a profile switch that skips the sync.
    */
   const setCurrentSteps = (p: Provider, ps: NonNullable<typeof paths>) => [
-    providerStep("setCurrent", p.app_type, p.name, undefined, p.id, t),
-    ...syncLiveConfigSteps(p, ps, t, [providerStepId("setCurrent", p.app_type)]),
+    providerStep("setCurrent", p.app_type, p.name, undefined, p.id, t, backend),
+    ...syncLiveConfigSteps(p, ps, t, [providerStepId("setCurrent", p.app_type, backend)]),
   ]
 
   const setCurrent = (p: Provider) => {
@@ -357,7 +385,7 @@ export function CcSwitchSection() {
     const current = providers.filter((p) => p.is_current)
     if (!current.length) return
     void runThen([
-      snapshotStep("manual sync", t),
+      snapshotStep("manual sync", t, backend),
       ...current.flatMap((p) => syncLiveConfigSteps(p, paths, t)),
     ])
   }
@@ -391,7 +419,7 @@ export function CcSwitchSection() {
     const landsOnCurrent = id
       ? !!providers?.some((p) => p.id === id && p.is_current)
       : !providers?.some((p) => p.app_type === form.app && p.is_current)
-    const steps = [providerStep(op, form.app, form.name, form, id, t)]
+    const steps = [providerStep(op, form.app, form.name, form, id, t, backend)]
     if (landsOnCurrent && paths) {
       const saved: Provider = {
         id: id ?? "",
@@ -401,7 +429,7 @@ export function CcSwitchSection() {
         is_current: true,
       }
       // dependsOn the DB write: a failed save must not rewrite live configs.
-      steps.push(...syncLiveConfigSteps(saved, paths, t, [providerStepId(op, form.app)]))
+      steps.push(...syncLiveConfigSteps(saved, paths, t, [providerStepId(op, form.app, backend)]))
     }
     const reports = await runThen(steps)
     if (reports.some((r) => r.status === "error")) {
@@ -430,7 +458,7 @@ export function CcSwitchSection() {
     // Stamped here rather than in the pure module so it stays free of clock reads.
     const id = `acct-${Date.now().toString(36)}`
     setNewAccount("")
-    void writeAccounts([...accounts, captureAccount(id, name, providers)])
+    void writeAccounts([...accounts, captureAccount(id, name, backend, providers)])
   }
 
   // Applying a profile is a batch of the same setCurrent the list does, so the
@@ -456,9 +484,9 @@ export function CcSwitchSection() {
     // `providerImportStep`, which takes it directly rather than making the
     // caller smuggle it through a form shape it doesn't fit.
     const steps = [
-      ...plan.fresh.map((e) => providerImportStep(e, undefined, t)),
+      ...plan.fresh.map((e) => providerImportStep(e, undefined, t, backend)),
       ...(overwrite
-        ? plan.conflicts.map((c) => providerImportStep(c.entry, c.existing.id, t))
+        ? plan.conflicts.map((c) => providerImportStep(c.entry, c.existing.id, t, backend))
         : []),
     ]
     if (steps.length) void runThen(steps)
@@ -506,148 +534,181 @@ export function CcSwitchSection() {
   // Providers can only be managed once the DB exists. An out-of-date DB is a
   // different problem: agentpack must not migrate someone else's schema, so it
   // points at cc-switch instead of offering to create anything.
-  const needsDb = dbReady === false && staleColumns.length === 0
-  const needsMigration = staleColumns.length > 0
+  const needsDb = backend === "ccswitch" && dbReady === false && staleColumns.length === 0
+  const needsMigration = backend === "ccswitch" && staleColumns.length > 0
   // Apps with no "official login" row yet: without one there's no way back from a
   // relay to the CLI's own account.
   const missingOfficial = appsMissingOfficial(providers ?? [], PROVIDER_APPS)
   // cc-switch locks its SQLite DB while open, so every write would fail; block the
   // editing controls and guide the user to close it first.
-  const editingBlocked = ccRunning === true
+  const editingBlocked = backend === "ccswitch" && ccRunning === true
+  const activeAccounts = accountsForBackend(accounts, backend)
 
   return (
     <SectionShell title={c.menuTitle} help={<HelpTip text={t.help.ccswitch} />}>
-      {/* Install / check / initialize */}
-      <Card className="gap-3 p-4">
-        <div className="flex flex-row items-center gap-3">
-          <div className="flex-1">
-            <div className="font-medium">{c.install}</div>
-            {detected !== null ? (
-              <Badge
-                variant={detected ? "secondary" : "outline"}
-                className="mt-1 font-normal text-muted-foreground"
-              >
-                {detected ? c.detected : c.notDetected}
-              </Badge>
-            ) : (
-              <Badge variant="outline" className="mt-1 gap-1 font-normal text-muted-foreground">
-                <Loader2 className="size-3 animate-spin" />
-                {c.checking}
-              </Badge>
-            )}
-          </div>
-          {isTauri() ? (
-            <Button variant="ghost" size="sm" className="gap-1" onClick={() => void reload()}>
-              <RefreshCw className="size-3.5" />
-              {c.refresh}
-            </Button>
-          ) : null}
-          {!detected && canInstall ? (
-            <Button variant="outline" onClick={installCcSwitch}>
-              {c.install}
-            </Button>
-          ) : null}
-          {!canInstall ? (
-            <span className="text-xs text-muted-foreground">{tool.manualNote}</span>
-          ) : null}
-        </div>
-
-        {/* App control. Only once it's installed — there's nothing to open or
-            quit otherwise, and the buttons would just be dead weight. */}
-        {isTauri() && detected ? (
-          <div className="flex flex-row flex-wrap items-center gap-3 border-t pt-3">
-            <div className="flex-1">
-              <div className="font-medium">{c.appTitle}</div>
-              <div className="mt-1 flex items-center gap-2">
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    "size-2 rounded-full",
-                    ccRunning === null
-                      ? "bg-muted-foreground/40"
-                      : ccRunning
-                        ? "bg-emerald-500"
-                        : "bg-muted-foreground/40"
-                  )}
-                />
-                <span className="text-xs text-muted-foreground">
-                  {ccRunning === null ? c.checking : ccRunning ? c.appRunning : c.appStopped}
-                </span>
-              </div>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1"
-              onClick={() => void openApp()}
-              disabled={appBusy !== null}
-            >
-              {appBusy === "open" ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <ExternalLink className="size-3.5" />
-              )}
-              {c.appOpen}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1"
-              onClick={() => void quitApp()}
-              disabled={appBusy !== null || ccRunning === false}
-            >
-              {appBusy === "quit" ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Power className="size-3.5" />
-              )}
-              {c.appQuit}
-            </Button>
-          </div>
-        ) : null}
-
-        {needsMigration ? (
-          <Alert className="mt-3">
-            <AlertTriangle />
-            <AlertTitle>{c.initDb}</AlertTitle>
-            <AlertDescription>
-              <span>{c.schemaStale(staleColumns.join(", "))}</span>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-1"
-                onClick={() => void launchCcSwitch().catch(() => toast.error(c.initFailed))}
-              >
-                {c.launchCcSwitch}
-              </Button>
-            </AlertDescription>
-          </Alert>
-        ) : needsDb ? (
-          <div className="flex flex-row items-center gap-3 border-t pt-3">
-            <div className="flex-1">
-              <div className="flex items-center gap-1.5 font-medium">
-                <Database className="size-4" />
-                {c.initDb}
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {initializing ? c.initializing : c.initDbHint}
-              </p>
-            </div>
-            <Button variant="outline" onClick={() => void initDb()} disabled={initializing}>
-              {c.initDb}
-            </Button>
-          </div>
-        ) : dbReady === true ? (
-          <p className="border-t pt-3 text-xs text-muted-foreground">{c.dbReady}</p>
-        ) : null}
+      <Card>
+        <CardHeader>
+          <CardTitle>{c.backendTitle}</CardTitle>
+          <CardDescription>{c.backendHint}</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            value={backend}
+            onValueChange={selectBackend}
+            aria-label={c.backendTitle}
+          >
+            <ToggleGroupItem value="native">{c.backendNative}</ToggleGroupItem>
+            <ToggleGroupItem value="ccswitch">{c.backendCcSwitch}</ToggleGroupItem>
+          </ToggleGroup>
+          <p className="text-xs text-muted-foreground">
+            {backend === "native" ? c.backendNativeHint : c.backendCcSwitchHint}
+          </p>
+        </CardContent>
       </Card>
 
-      <VisibleAppsCard
-        visible={visible}
-        disabled={editingBlocked}
-        onChange={setVisible}
-        onApply={applyVisible}
-      />
+      {/* Install / check / initialize */}
+      {backend === "ccswitch" ? (
+        <>
+          <Card className="gap-3 p-4">
+            <div className="flex flex-row items-center gap-3">
+              <div className="flex-1">
+                <div className="font-medium">{c.install}</div>
+                {detected !== null ? (
+                  <Badge
+                    variant={detected ? "secondary" : "outline"}
+                    className="mt-1 font-normal text-muted-foreground"
+                  >
+                    {detected ? c.detected : c.notDetected}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="mt-1 gap-1 font-normal text-muted-foreground">
+                    <Loader2 className="size-3 animate-spin" />
+                    {c.checking}
+                  </Badge>
+                )}
+              </div>
+              {isTauri() ? (
+                <Button variant="ghost" size="sm" className="gap-1" onClick={() => void reload()}>
+                  <RefreshCw className="size-3.5" />
+                  {c.refresh}
+                </Button>
+              ) : null}
+              {!detected && canInstall ? (
+                <Button variant="outline" onClick={installCcSwitch}>
+                  {c.install}
+                </Button>
+              ) : null}
+              {!canInstall ? (
+                <span className="text-xs text-muted-foreground">{tool.manualNote}</span>
+              ) : null}
+            </div>
+
+            {/* App control. Only once it's installed — there's nothing to open or
+            quit otherwise, and the buttons would just be dead weight. */}
+            {isTauri() && detected ? (
+              <div className="flex flex-row flex-wrap items-center gap-3 border-t pt-3">
+                <div className="flex-1">
+                  <div className="font-medium">{c.appTitle}</div>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "size-2 rounded-full",
+                        ccRunning === null
+                          ? "bg-muted-foreground/40"
+                          : ccRunning
+                            ? "bg-emerald-500"
+                            : "bg-muted-foreground/40"
+                      )}
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      {ccRunning === null ? c.checking : ccRunning ? c.appRunning : c.appStopped}
+                    </span>
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1"
+                  onClick={() => void openApp()}
+                  disabled={appBusy !== null}
+                >
+                  {appBusy === "open" ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <ExternalLink className="size-3.5" />
+                  )}
+                  {c.appOpen}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1"
+                  onClick={() => void quitApp()}
+                  disabled={appBusy !== null || ccRunning === false}
+                >
+                  {appBusy === "quit" ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Power className="size-3.5" />
+                  )}
+                  {c.appQuit}
+                </Button>
+              </div>
+            ) : null}
+
+            {needsMigration ? (
+              <Alert className="mt-3">
+                <AlertTriangle />
+                <AlertTitle>{c.initDb}</AlertTitle>
+                <AlertDescription>
+                  <span>{c.schemaStale(staleColumns.join(", "))}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-1"
+                    onClick={() => void launchCcSwitch().catch(() => toast.error(c.initFailed))}
+                  >
+                    {c.launchCcSwitch}
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            ) : needsDb ? (
+              <div className="flex flex-row items-center gap-3 border-t pt-3">
+                <div className="flex-1">
+                  <div className="flex items-center gap-1.5 font-medium">
+                    <Database className="size-4" />
+                    {c.initDb}
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {initializing ? c.initializing : c.initDbHint}
+                  </p>
+                </div>
+                <Button variant="outline" onClick={() => void initDb()} disabled={initializing}>
+                  {c.initDb}
+                </Button>
+              </div>
+            ) : dbReady === true ? (
+              <p className="border-t pt-3 text-xs text-muted-foreground">{c.dbReady}</p>
+            ) : null}
+          </Card>
+
+          <VisibleAppsCard
+            visible={visible}
+            disabled={editingBlocked}
+            onChange={setVisible}
+            onApply={applyVisible}
+          />
+        </>
+      ) : (
+        <Alert>
+          <Database />
+          <AlertTitle>{c.nativeReady}</AlertTitle>
+          <AlertDescription>{c.nativeReadyHint}</AlertDescription>
+        </Alert>
+      )}
 
       <LoginsCard login={login} loading={loading} />
 
@@ -884,7 +945,15 @@ export function CcSwitchSection() {
                           <AlertDialogAction
                             onClick={() =>
                               void runThen([
-                                providerStep("delete", p.app_type, p.name, undefined, p.id, t),
+                                providerStep(
+                                  "delete",
+                                  p.app_type,
+                                  p.name,
+                                  undefined,
+                                  p.id,
+                                  t,
+                                  backend
+                                ),
                               ])
                             }
                           >
@@ -908,13 +977,18 @@ export function CcSwitchSection() {
       </Card>
 
       <AccountsCard
-        accounts={accounts}
+        accounts={activeAccounts}
         providers={providers}
         newAccount={newAccount}
         hasCurrent={hasCurrent}
         editingBlocked={editingBlocked}
         onNewAccountChange={setNewAccount}
         onSave={saveAccount}
+        onUpdate={(profile) =>
+          void writeAccounts(
+            accounts.map((account) => (account.id === profile.id ? profile : account))
+          )
+        }
         onApply={applyAccount}
         onDelete={(a) => void writeAccounts(accounts.filter((x) => x.id !== a.id))}
       />

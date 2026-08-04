@@ -475,7 +475,9 @@ async function execute(step: StepDescriptor, ctx: ExecContext): Promise<StepReco
       return
     }
     case "snapshot": {
-      const entry = await api.backupSnapshot(step.reason)
+      const entry = step.backend
+        ? await api.backupSnapshot(step.reason, step.backend)
+        : await api.backupSnapshot(step.reason)
       log(m.coreOutput.snapshot(entry.id))
       ctx.setArtifact(entry.id)
       return
@@ -514,19 +516,24 @@ async function execute(step: StepDescriptor, ctx: ExecContext): Promise<StepReco
     }
     case "ccProvider": {
       const p = step.payload as {
-        app: "claude" | "codex"
+        backend?: "native" | "ccswitch"
+        app: "claude" | "codex" | "opencode"
         id?: string
         settingsConfig?: string
         form?: { name: string; websiteUrl?: string; notes?: string }
       }
-      const lines = await api.ccWriteProvider({
+      const base = {
         op: step.op,
         dryRun: false,
         app: p.app,
         id: p.id,
         settingsConfig: p.settingsConfig,
         form: p.form,
-      })
+      }
+      const lines =
+        p.backend === "native"
+          ? await api.providerWrite({ ...base, backend: "native" })
+          : await api.ccWriteProvider(base)
       for (const line of lines) log(line)
       return
     }

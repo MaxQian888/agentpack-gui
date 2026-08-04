@@ -88,7 +88,13 @@ import type {
   Runtime,
   StepDescriptor,
 } from "./types"
-import type { Provider, ProviderApp, ProviderForm, VisibleApps } from "./ccswitch/types"
+import type {
+  Provider,
+  ProviderApp,
+  ProviderBackend,
+  ProviderForm,
+  VisibleApps,
+} from "./ccswitch/types"
 
 /**
  * What's already present on the machine, so a batch run skips redundant work
@@ -1388,8 +1394,12 @@ export function fileRestoreStep(path: string, messages: Messages = en): StepDesc
 }
 
 /** Step id of a provider write, so callers can depend on exactly that one. */
-export function providerStepId(op: string, app: ProviderApp): string {
-  return `cc-provider-${op}-${app}`
+export function providerStepId(
+  op: string,
+  app: ProviderApp,
+  backend: ProviderBackend = "ccswitch"
+): string {
+  return backend === "ccswitch" ? `cc-provider-${op}-${app}` : `provider-native-${op}-${app}`
 }
 
 /**
@@ -1415,7 +1425,8 @@ function ccProviderStep(
   id: string | undefined,
   settingsConfig: string | undefined,
   meta: ProviderMeta | undefined,
-  messages: Messages
+  messages: Messages,
+  backend: ProviderBackend
 ): StepDescriptor {
   const s = messages.steps
   const label =
@@ -1432,10 +1443,10 @@ function ccProviderStep(
     // account profile) has one id per step: the runner tracks failed
     // dependencies by id, and a shared one would let a single app's failed
     // write skip the live-config sync of every other app in the same run.
-    id: providerStepId(op, app),
+    id: providerStepId(op, app, backend),
     label,
     op,
-    payload: { app, id, settingsConfig, form: meta },
+    payload: { backend, app, id, settingsConfig, form: meta },
   }
 }
 
@@ -1445,7 +1456,8 @@ export function providerStep(
   name: string,
   form: ProviderForm | undefined,
   id: string | undefined,
-  messages: Messages = en
+  messages: Messages = en,
+  backend: ProviderBackend = "ccswitch"
 ): StepDescriptor {
   return ccProviderStep(
     op,
@@ -1454,7 +1466,8 @@ export function providerStep(
     id,
     form ? buildSettingsConfig(form) : undefined,
     form ? { name: form.name, websiteUrl: form.websiteUrl, notes: form.notes } : undefined,
-    messages
+    messages,
+    backend
   )
 }
 
@@ -1480,7 +1493,8 @@ export interface ImportedProvider {
 export function providerImportStep(
   entry: ImportedProvider,
   existingId: string | undefined,
-  messages: Messages = en
+  messages: Messages = en,
+  backend: ProviderBackend = "ccswitch"
 ): StepDescriptor {
   return ccProviderStep(
     existingId ? "update" : "add",
@@ -1489,17 +1503,23 @@ export function providerImportStep(
     existingId,
     entry.settingsConfig,
     { name: entry.name, websiteUrl: entry.websiteUrl, notes: entry.notes },
-    messages
+    messages,
+    backend
   )
 }
 
 /** Snapshot the cc-switch DB + live configs into the listable backup history. */
-export function snapshotStep(reason: string, messages: Messages = en): StepDescriptor {
+export function snapshotStep(
+  reason: string,
+  messages: Messages = en,
+  backend?: ProviderBackend
+): StepDescriptor {
   return {
     kind: "snapshot",
     id: "backup-snapshot",
     label: messages.steps.snapshot,
     reason,
+    backend,
   }
 }
 

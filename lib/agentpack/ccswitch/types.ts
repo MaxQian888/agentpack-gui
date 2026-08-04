@@ -7,6 +7,9 @@
 /** Provider app types agentpack can manage. cc-switch also has gemini/hermes/… */
 export type ProviderApp = "claude" | "codex" | "opencode"
 
+/** Where provider records are persisted. Live CLI config sync is identical. */
+export type ProviderBackend = "native" | "ccswitch"
+
 /** Which auth env var a Claude provider uses (relays usually want AUTH_TOKEN). */
 export type ClaudeAuthKind = "auth_token" | "api_key"
 

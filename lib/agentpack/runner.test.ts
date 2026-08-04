@@ -206,6 +206,31 @@ it("ccProvider forwards the payload and logs returned lines", async () => {
   expect(reports[0].output).toContain("added Mine")
 })
 
+it("routes native provider writes to Agentpack's independent store", async () => {
+  ;(api.ccWriteProvider as jest.Mock).mockClear()
+  ;(api.providerWrite as jest.Mock).mockResolvedValue(["added Native"])
+  const steps: StepDescriptor[] = [
+    {
+      kind: "ccProvider",
+      id: "p-native",
+      label: "p-native",
+      op: "add",
+      payload: {
+        backend: "native",
+        app: "opencode",
+        settingsConfig: "{}",
+        form: { name: "Native" },
+      },
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(api.providerWrite).toHaveBeenCalledWith(
+    expect.objectContaining({ backend: "native", app: "opencode", op: "add" })
+  )
+  expect(api.ccWriteProvider).not.toHaveBeenCalled()
+  expect(reports[0].output).toContain("added Native")
+})
+
 it("a non-verify command throwing is recorded as error", async () => {
   ;(api.runCommand as jest.Mock).mockRejectedValue("network down")
   const steps: StepDescriptor[] = [

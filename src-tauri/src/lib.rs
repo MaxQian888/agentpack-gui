@@ -11,6 +11,7 @@ mod mcp;
 mod more_token;
 mod net;
 mod paths;
+mod providers;
 mod skills;
 
 /// One process-wide lock shared by every test that mutates the global env vars
@@ -40,6 +41,7 @@ impl Drop for TestEnvGuard {
       "AGENTPACK_SKIP_RUNNING_CHECK",
       "AGENTPACK_HISTORY_CACHE",
       "AGENTPACK_HOME",
+      "AGENTPACK_NATIVE_PROVIDERS",
     ] {
       std::env::remove_var(key);
     }
@@ -172,6 +174,8 @@ pub fn run() {
       ccswitch::cc_write_provider,
       ccswitch::cc_schema_status,
       ccswitch::cc_init_db,
+      providers::provider_load,
+      providers::provider_write,
       login::login_status,
       backup::backup_snapshot,
       backup::backup_list,

@@ -605,6 +605,7 @@ export interface FileRestoreStep extends StepBase {
 export interface SnapshotStep extends StepBase {
   kind: "snapshot"
   reason: string
+  backend?: "native" | "ccswitch"
 }
 
 /**

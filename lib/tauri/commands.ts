@@ -5,7 +5,7 @@ import type {
   SystemProxySnapshot,
   ToolProxySnapshot,
 } from "@/lib/agentpack/network/discovery"
-import type { Provider, ProviderApp } from "@/lib/agentpack/ccswitch/types"
+import type { Provider, ProviderApp, ProviderBackend } from "@/lib/agentpack/ccswitch/types"
 import type { ReleaseInfo } from "@/lib/agentpack/release"
 import type {
   HistorySource,
@@ -464,6 +464,9 @@ export const createSkill = (name: string, targets: string[], content: string, ov
 
 export const ccLoadProviders = () => invoke<Provider[]>("cc_load_providers")
 
+export const providerLoad = (backend: ProviderBackend) =>
+  invoke<Provider[]>("provider_load", { backend })
+
 export interface CcWriteReq {
   op: "add" | "update" | "delete" | "setCurrent"
   dryRun: boolean
@@ -473,7 +476,13 @@ export interface CcWriteReq {
   settingsConfig?: string
 }
 
+export interface ProviderWriteReq extends CcWriteReq {
+  backend: ProviderBackend
+}
+
 export const ccWriteProvider = (req: CcWriteReq) => invoke<string[]>("cc_write_provider", { req })
+
+export const providerWrite = (req: ProviderWriteReq) => invoke<string[]>("provider_write", { req })
 
 /** State of the cc-switch database (mirrors Rust `SchemaStatus`). */
 export interface CcSchemaStatus {
@@ -551,7 +560,8 @@ export interface BackupEntry {
   files: BackupFile[]
 }
 
-export const backupSnapshot = (reason: string) => invoke<BackupEntry>("backup_snapshot", { reason })
+export const backupSnapshot = (reason: string, backend?: ProviderBackend) =>
+  invoke<BackupEntry>("backup_snapshot", { reason, ...(backend ? { backend } : {}) })
 
 export const backupList = () => invoke<BackupEntry[]>("backup_list")
 

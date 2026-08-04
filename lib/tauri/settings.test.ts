@@ -40,7 +40,13 @@ describe("loadSettings", () => {
       proxy: null,
       summonShortcut: null,
       monthlySubscriptionUsd: null,
+      providerBackend: "ccswitch",
     })
+  })
+
+  it("uses native storage on a fresh install", async () => {
+    mockedLoad.mockResolvedValue(storeMock(undefined))
+    expect((await loadSettings()).providerBackend).toBe("native")
   })
 
   it("round-trips saved skill repo sources", async () => {

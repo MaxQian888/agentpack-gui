@@ -6,11 +6,13 @@ jest.mock("@tauri-apps/plugin-dialog", () => ({
 jest.mock("sonner", () => ({
   toast: { success: jest.fn(), error: jest.fn(), message: jest.fn() },
 }))
+jest.mock("@/lib/tauri/settings", () => ({ saveSettings: jest.fn(async () => undefined) }))
 jest.mock("@/lib/tauri/commands", () => ({
   detectCli: jest.fn(async () => ({ installed: false })),
   ccLoadProviders: jest.fn(async () => [
     { id: "1", app_type: "claude", name: "Mine", settings_config: "{}", is_current: false },
   ]),
+  providerLoad: jest.fn(async () => []),
   runCommand: jest.fn(async (_cmd: unknown, onLine: (l: string) => void) => {
     onLine("installing")
     return 0
@@ -63,6 +65,7 @@ import {
 import { open as openDialog } from "@tauri-apps/plugin-dialog"
 import { CcSwitchSection } from "./index"
 import { en } from "@/lib/i18n/en"
+import { saveSettings } from "@/lib/tauri/settings"
 
 const CC_SETTINGS = "/h/.cc-switch/settings.json"
 const paths = {
@@ -99,7 +102,12 @@ beforeEach(() => {
   ])
   // The import tests point this at a bundle; left set, a later test would open it.
   ;(openDialog as jest.Mock).mockResolvedValue(null)
-  useAppStore.setState({ paths, panelOpen: false, osOverride: null })
+  useAppStore.setState((state) => ({
+    paths,
+    panelOpen: false,
+    osOverride: null,
+    settings: { ...state.settings, providerBackend: "ccswitch" },
+  }))
 })
 
 function renderCc() {
@@ -115,6 +123,15 @@ function renderCc() {
 it("lists providers from the DB", async () => {
   renderCc()
   expect(await screen.findByText("Mine")).toBeInTheDocument()
+})
+
+it("switches to the independent native provider store and persists the choice", async () => {
+  renderCc()
+  await screen.findByText("Mine")
+  await userEvent.click(screen.getByRole("radio", { name: en.ccswitch.backendNative }))
+  await waitFor(() => expect(saveSettings).toHaveBeenCalledWith({ providerBackend: "native" }))
+  expect(await screen.findByText(en.ccswitch.nativeReady)).toBeInTheDocument()
+  expect(screen.queryByText(en.ccswitch.install)).not.toBeInTheDocument()
 })
 
 it("installs cc-switch via the runner when not detected", async () => {
@@ -435,6 +452,73 @@ it("applying a profile switches every app through the same setCurrent path", asy
     ["setCurrent", "claude", "a"],
     ["setCurrent", "codex", "b"],
   ])
+})
+
+it("edits an account profile name and persists the updated mapping", async () => {
+  ;(ccLoadProviders as jest.Mock).mockResolvedValue([
+    { id: "a", app_type: "claude", name: "Gateway", settings_config: "{}", is_current: false },
+  ])
+  ;(readTextFile as jest.Mock).mockImplementation(async (path: string) =>
+    path.endsWith("accounts.json")
+      ? JSON.stringify({
+          version: 2,
+          profiles: [
+            {
+              id: "p1",
+              name: "Work",
+              backend: "ccswitch",
+              picks: { claude: "a" },
+            },
+          ],
+        })
+      : "{}"
+  )
+  renderCc()
+  const accountRow = (await screen.findByText("Work")).closest("tr")!
+
+  await userEvent.click(within(accountRow).getByRole("button", { name: en.ccswitch.rowActionEdit }))
+  const dialog = await screen.findByRole("dialog")
+  const name = within(dialog).getByLabelText(en.ccswitch.accountNewLabel)
+  await userEvent.clear(name)
+  await userEvent.type(name, "Personal")
+  await userEvent.click(within(dialog).getByRole("button", { name: en.ccswitch.accountUpdate }))
+
+  await waitFor(() => expect(writeTextFile).toHaveBeenCalled())
+  const [, body] = (writeTextFile as jest.Mock).mock.calls.find(([path]: [string]) =>
+    path.endsWith("accounts.json")
+  )!
+  expect(JSON.parse(body).profiles[0]).toEqual({
+    id: "p1",
+    name: "Personal",
+    backend: "ccswitch",
+    picks: { claude: "a" },
+  })
+})
+
+it("requires confirmation before deleting an account profile", async () => {
+  ;(readTextFile as jest.Mock).mockImplementation(async (path: string) =>
+    path.endsWith("accounts.json")
+      ? JSON.stringify({
+          version: 2,
+          profiles: [{ id: "p1", name: "Work", backend: "ccswitch", picks: { claude: "1" } }],
+        })
+      : "{}"
+  )
+  renderCc()
+  const accountRow = (await screen.findByText("Work")).closest("tr")!
+
+  await userEvent.click(
+    within(accountRow).getByRole("button", { name: en.ccswitch.rowActionDelete })
+  )
+  const dialog = await screen.findByRole("alertdialog")
+  expect(writeTextFile).not.toHaveBeenCalled()
+  await userEvent.click(within(dialog).getByRole("button", { name: en.ccswitch.rowActionDelete }))
+
+  await waitFor(() => expect(writeTextFile).toHaveBeenCalled())
+  const [, body] = (writeTextFile as jest.Mock).mock.calls.find(([path]: [string]) =>
+    path.endsWith("accounts.json")
+  )!
+  expect(JSON.parse(body).profiles).toEqual([])
 })
 
 it("syncs the live config when setting a provider as current", async () => {

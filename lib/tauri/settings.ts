@@ -2,6 +2,7 @@ import { isTauri } from "@/lib/tauri"
 import type { RepoSource } from "@/lib/skills/types"
 import type { Surface } from "@/lib/agentpack/presets"
 import type { ProxyConfig } from "@/lib/agentpack/types"
+import type { ProviderBackend } from "@/lib/agentpack/ccswitch/types"
 
 /**
  * Where a half-finished first run got to. Written when the wizard is closed
@@ -81,6 +82,8 @@ export interface AppSettings {
    * since local transcripts carry no evidence of which one is in force.
    */
   monthlySubscriptionUsd: number | null
+  /** Provider record store selected in Accounts & relays. */
+  providerBackend: ProviderBackend
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -95,6 +98,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   proxy: null,
   summonShortcut: null,
   monthlySubscriptionUsd: null,
+  providerBackend: "native",
 }
 
 const STORE_FILE = "settings.json"
@@ -113,7 +117,15 @@ export async function loadSettings(): Promise<AppSettings> {
   try {
     const store = await openStore()
     const saved = await store.get<Partial<AppSettings>>(SETTINGS_KEY)
-    return { ...DEFAULT_SETTINGS, ...(saved ?? {}) }
+    // A persisted object without this field comes from an Agentpack release
+    // where provider management always used CC Switch. Preserve that choice on
+    // upgrade; a genuinely fresh install (no object) starts in native mode.
+    const migratedBackend = saved && !("providerBackend" in saved) ? "ccswitch" : undefined
+    return {
+      ...DEFAULT_SETTINGS,
+      ...(migratedBackend ? { providerBackend: migratedBackend } : {}),
+      ...(saved ?? {}),
+    }
   } catch {
     return { ...DEFAULT_SETTINGS }
   }
