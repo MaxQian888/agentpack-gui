@@ -11,12 +11,12 @@ const label = (i: number) => sectionMeta(SECTIONS[i]).label(en)
 
 function renderTabs(activeIndex = 0) {
   const onSelect = jest.fn()
-  render(
+  const view = render(
     <I18nProvider>
       <WorkspaceTabs workspace="install" active={SECTIONS[activeIndex]} onSelect={onSelect} />
     </I18nProvider>
   )
-  return { onSelect }
+  return { onSelect, view }
 }
 
 it("renders one tab per destination, in workspace order", () => {
@@ -87,4 +87,21 @@ it("never wraps a label onto a second line", () => {
     // and again when the labels switch language.
     expect(tab.className).toContain("whitespace-nowrap")
   }
+})
+
+it("keeps a newly selected tab visible in a narrow scroll strip", () => {
+  const scrollIntoView = jest.spyOn(Element.prototype, "scrollIntoView")
+  const { onSelect, view } = renderTabs(0)
+  scrollIntoView.mockClear()
+  view.rerender(
+    <I18nProvider>
+      <WorkspaceTabs
+        workspace="install"
+        active={SECTIONS[SECTIONS.length - 1]}
+        onSelect={onSelect}
+      />
+    </I18nProvider>
+  )
+  expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest", inline: "nearest" })
+  scrollIntoView.mockRestore()
 })

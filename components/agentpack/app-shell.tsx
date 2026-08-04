@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { toast } from "sonner"
 import type { ListResult, ScanProgress, UsageSeriesResult } from "@/lib/history/types"
 import type { SkillsScanResult } from "@/lib/skills/types"
@@ -53,6 +54,7 @@ import { CleanupSection } from "./sections/cleanup"
 import { CcSwitchSection } from "./sections/ccswitch"
 import { CcConnectSection } from "./sections/ccconnect"
 import { AboutSection } from "./sections/about"
+import { MoreTokenSection } from "./sections/more-token"
 import { ConfigIO } from "./config-io"
 import { OnboardingDialog } from "./onboarding-dialog"
 import { GuidedTour } from "./guided-tour"
@@ -581,6 +583,21 @@ function ShellBody() {
             refresh={() => void loadHistory()}
           />
         )
+      case "management-overview":
+      case "accounts":
+      case "quota":
+      case "analytics":
+      case "audit":
+        return (
+          <MoreTokenSection
+            view={section}
+            localUsage={{
+              data: seriesResult,
+              loading: seriesLoading,
+              request: () => void loadSeries(),
+            }}
+          />
+        )
       case "presets":
         return <PresetsSection />
       case "environment":
@@ -677,9 +694,20 @@ function ShellBody() {
 }
 
 export function AppShell() {
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: { staleTime: 15_000, retry: 1, refetchOnWindowFocus: false },
+          mutations: { retry: false },
+        },
+      })
+  )
   return (
-    <RunnerProvider>
-      <ShellBody />
-    </RunnerProvider>
+    <QueryClientProvider client={queryClient}>
+      <RunnerProvider>
+        <ShellBody />
+      </RunnerProvider>
+    </QueryClientProvider>
   )
 }

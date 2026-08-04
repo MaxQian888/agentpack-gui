@@ -1,0 +1,311 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { render, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { I18nProvider } from "@/lib/i18n/provider"
+import { en } from "@/lib/i18n/en"
+import { isTauri } from "@/lib/tauri"
+import {
+  credentialState,
+  listInstances,
+  managementRequest,
+  pairInstance,
+} from "@/lib/more-token/client"
+import type { ManagementOperation, MoreTokenInstance } from "@/lib/more-token/types"
+import { MoreTokenSection, type MoreTokenSectionProps } from "."
+
+jest.mock("@/lib/tauri", () => ({ isTauri: jest.fn(() => true) }))
+jest.mock("@/lib/tauri/system", () => ({ notify: jest.fn() }))
+jest.mock("@/lib/more-token/client", () => ({
+  ...jest.requireActual("@/lib/more-token/client"),
+  credentialState: jest.fn(),
+  forgetCredential: jest.fn(),
+  listInstances: jest.fn(),
+  managementRequest: jest.fn(),
+  pairInstance: jest.fn(),
+  removeInstance: jest.fn(),
+  saveInstance: jest.fn(),
+}))
+
+const instance: MoreTokenInstance = {
+  id: "primary",
+  name: "Primary",
+  baseUrl: "https://more-token.example",
+  caFingerprint: null,
+  readOnly: false,
+  displayCurrency: "CNY",
+}
+
+const capabilities = {
+  management_api_version: 1,
+  minimum_desktop_version: "0.14.5",
+  role: "admin" as const,
+  scopes: ["accounts:read", "accounts:write", "quota:read", "quota:transfer", "audit:read"],
+  features: {
+    management_api_enabled: true,
+    quota_transfer_enabled: true,
+    quota_policy_automation_enabled: true,
+    distribution_detail_enabled: true,
+  },
+  quota_display: {
+    quota_per_unit: 500_000,
+    display_currency: "CNY",
+    conversion_numerator: 1,
+    conversion_denominator: 1,
+    rate_valid_until: 2_000_000_000,
+  },
+}
+
+const accounts = [
+  {
+    id: 1,
+    username: "master-a",
+    display_name: "Master A",
+    role: 1,
+    status: 1,
+    quota: 1000,
+    used_quota: 200,
+    is_master: true,
+    master_id: 0,
+    lifecycle_state: "active" as const,
+    quota_version: 3,
+    management_version: 2,
+    created_time: 1_700_000_000,
+  },
+  {
+    id: 2,
+    username: "child-a",
+    display_name: "Child A",
+    role: 1,
+    status: 1,
+    quota: 80,
+    used_quota: 20,
+    is_master: false,
+    master_id: 1,
+    lifecycle_state: "active" as const,
+    quota_version: 2,
+    management_version: 1,
+    created_time: 1_700_000_100,
+  },
+]
+
+function response<T>(data: T) {
+  return Promise.resolve({ success: true as const, data, request_id: "request-1", server_time: 1 })
+}
+
+function mockOperation(operation: ManagementOperation) {
+  switch (operation.kind) {
+    case "capabilities":
+      return response(capabilities)
+    case "notifications":
+      return response([])
+    case "overview":
+      return response({
+        summary: {
+          accounts: 2,
+          masters: 1,
+          children: 1,
+          disabled: 0,
+          archived: 0,
+          total_quota: 1080,
+        },
+        open_alerts: 1,
+        partial: false,
+      })
+    case "accounts":
+      return response({ items: accounts, page: 1, page_size: 200, total: 2 })
+    case "alertEvents":
+      return response({
+        items: [
+          {
+            id: 8,
+            rule_id: 1,
+            owner_id: 1,
+            account_id: 2,
+            kind: "balance_below",
+            message: "Child A is nearly depleted",
+            observed_value: 80,
+            acknowledged_at: 0,
+            created_at: 1_700_000_200,
+          },
+        ],
+        page: 1,
+        page_size: 100,
+        total: 1,
+      })
+    case "quotaSummary":
+      return response({ total: 1300, available: 1080, used: 220, accounts: 2 })
+    case "quotaTransactions":
+      return response({ items: [], page: 1, page_size: 50, total: 0 })
+    case "quotaPolicy":
+      return response({
+        master_id: 1,
+        minimum_reserve: 100,
+        child_balance_cap: 500,
+        single_transfer_limit: 200,
+        daily_transfer_limit: 1000,
+        auto_refill_enabled: true,
+        auto_refill_threshold: 50,
+        auto_refill_amount: 100,
+        auto_refill_daily_cap: 300,
+        auto_refill_cooldown_sec: 3600,
+        monthly_soft_budget: 5000,
+        disable_on_exhaustion: true,
+        version: 1,
+      })
+    case "analytics":
+      return response({
+        metrics: {
+          requests: 12,
+          prompt_tokens: 100,
+          completion_tokens: 50,
+          quota: 150,
+          peak_rpm: 4,
+          peak_tpm: 80,
+        },
+        series: [{ bucket: 1_700_000_000, rpm: 4, tpm: 80, quota: 150 }],
+        start: 1_699_000_000,
+        end: 1_700_000_000,
+        timezone: "Asia/Shanghai",
+        generated_at: 1_700_000_100,
+        partial: false,
+        definition: "billing logs",
+      })
+    case "auditEvents":
+      return response({
+        items: [
+          {
+            id: 9,
+            actor_id: 1,
+            action: "account.disable",
+            resource_type: "user",
+            resource_id: "2",
+            before: '{"status":1}',
+            after: '{"status":2}',
+            reason: "security review",
+            request_id: "request-9",
+            created_at: 1_700_000_300,
+          },
+        ],
+        page: 1,
+        page_size: 100,
+        total: 1,
+      })
+    case "alertRules":
+      return response([
+        {
+          id: 1,
+          owner_id: 1,
+          name: "Low child balance",
+          kind: "balance_below",
+          threshold: 100,
+          enabled: true,
+          cooldown_sec: 3600,
+          version: 1,
+        },
+      ])
+    default:
+      return response({})
+  }
+}
+
+function renderSection(view: MoreTokenSectionProps["view"]) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <I18nProvider>
+        <MoreTokenSection
+          view={view}
+          localUsage={{ data: null, loading: false, request: jest.fn() }}
+        />
+      </I18nProvider>
+    </QueryClientProvider>
+  )
+}
+
+beforeEach(() => {
+  ;(isTauri as jest.Mock).mockReturnValue(true)
+  ;(listInstances as jest.Mock).mockResolvedValue([instance])
+  ;(credentialState as jest.Mock).mockResolvedValue({ connected: true, persistent: true })
+  ;(managementRequest as jest.Mock).mockImplementation(
+    (_instanceId: string, operation: ManagementOperation) => mockOperation(operation)
+  )
+})
+
+it("keeps the management workspace desktop-only", () => {
+  ;(isTauri as jest.Mock).mockReturnValue(false)
+  renderSection("management-overview")
+  expect(screen.getByText(en.management.desktopOnly)).toBeInTheDocument()
+  expect(listInstances).not.toHaveBeenCalled()
+})
+
+it("shows the empty instance state without attempting management requests", async () => {
+  ;(listInstances as jest.Mock).mockResolvedValue([])
+  renderSection("management-overview")
+  expect(await screen.findByText(en.management.noInstances)).toBeInTheDocument()
+  expect(managementRequest).not.toHaveBeenCalled()
+})
+
+it("pairs an unconnected instance without exposing the returned token", async () => {
+  ;(credentialState as jest.Mock).mockResolvedValue({ connected: false, persistent: false })
+  ;(pairInstance as jest.Mock).mockResolvedValue({
+    tokenId: 7,
+    expiresAt: 1_800_000_000,
+    credentialPersistent: false,
+  })
+  renderSection("management-overview")
+  const input = await screen.findByPlaceholderText("ABCDE-FGHIJ")
+  await userEvent.type(input, "ABCDEFGHJK")
+  await userEvent.click(screen.getByRole("button", { name: en.management.pair }))
+  await waitFor(() =>
+    expect(pairInstance).toHaveBeenCalledWith("primary", "ABCDEFGHJK", "agentpack-desktop")
+  )
+  expect(screen.queryByText(/management token/i)).not.toBeInTheDocument()
+})
+
+it("renders account topology, quota risk and open alerts", async () => {
+  renderSection("management-overview")
+  expect(await screen.findByText("master-a")).toBeInTheDocument()
+  expect(screen.getByText("child-a")).toBeInTheDocument()
+  expect(screen.getByText("Child A is nearly depleted")).toBeInTheDocument()
+  expect(screen.getByText(en.management.balanceRisk)).toBeInTheDocument()
+})
+
+it("renders the account center and clearly marks a read-only instance", async () => {
+  ;(listInstances as jest.Mock).mockResolvedValue([{ ...instance, readOnly: true }])
+  renderSection("accounts")
+  expect(await screen.findByText(en.management.readonlyBanner)).toBeInTheDocument()
+  expect(await screen.findByText("master-a")).toBeInTheDocument()
+  expect(screen.getByRole("button", { name: en.management.createAccount })).toBeDisabled()
+})
+
+it("renders ledger policy and disables writes when the server closes the quota gate", async () => {
+  ;(managementRequest as jest.Mock).mockImplementation(
+    (_instanceId: string, operation: ManagementOperation) =>
+      operation.kind === "capabilities"
+        ? response({
+            ...capabilities,
+            features: { ...capabilities.features, quota_transfer_enabled: false },
+          })
+        : mockOperation(operation)
+  )
+  renderSection("quota")
+  expect(await screen.findByText(en.management.featureDisabled)).toBeInTheDocument()
+  expect(screen.getByRole("button", { name: en.management.transfer })).toBeDisabled()
+  expect(screen.getByText(en.management.ledger)).toBeInTheDocument()
+})
+
+it("labels authoritative analytics and local CLI estimates as different scopes", async () => {
+  renderSection("analytics")
+  expect(await screen.findByText(en.management.serverBilling)).toBeInTheDocument()
+  expect(screen.getAllByText(en.management.localEstimate)).toHaveLength(2)
+})
+
+it("shows immutable audit details, alert rules and acknowledgement controls", async () => {
+  renderSection("audit")
+  expect(await screen.findByText("account.disable")).toBeInTheDocument()
+  expect(screen.getByText("security review")).toBeInTheDocument()
+  expect(screen.getByText("Low child balance")).toBeInTheDocument()
+  expect(screen.getByRole("button", { name: en.management.acknowledge })).toBeEnabled()
+})

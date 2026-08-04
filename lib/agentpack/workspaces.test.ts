@@ -18,6 +18,11 @@ import {
 const ALL: readonly SectionKey[] = [
   "dashboard",
   "history",
+  "management-overview",
+  "accounts",
+  "quota",
+  "analytics",
+  "audit",
   "presets",
   "environment",
   "clis",
@@ -53,6 +58,7 @@ describe("workspaces", () => {
     expect(workspaceOf("dashboard")).toBe("overview")
     expect(workspaceOf("network")).toBe("install")
     expect(workspaceOf("ccconnect")).toBe("capabilities")
+    expect(workspaceOf("quota")).toBe("management")
     expect(workspaceOf("history")).toBe("usage")
     expect(workspaceOf("about")).toBe("settings")
   })
@@ -75,6 +81,7 @@ describe("workspaces", () => {
     expect(hasTabs("usage")).toBe(false)
     expect(hasTabs("install")).toBe(true)
     expect(hasTabs("capabilities")).toBe(true)
+    expect(hasTabs("management")).toBe(true)
     expect(hasTabs("settings")).toBe(true)
   })
 
@@ -83,13 +90,14 @@ describe("workspaces", () => {
     expect(workspaceOf("nope" as never)).toBe("overview")
   })
 
-  it("keeps the rail at five domains", () => {
-    // The whole point of the restructure. If this grows back past five, the
+  it("keeps the rail at six domains", () => {
+    // The whole point of the restructure. If this grows back past six, the
     // rail has drifted into being a section list again.
     expect(WORKSPACES.map((w) => w.key)).toEqual([
       "overview",
       "install",
       "capabilities",
+      "management",
       "usage",
       "settings",
     ])

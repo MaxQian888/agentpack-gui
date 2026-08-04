@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useRef } from "react"
+import { useCallback, useEffect, useRef } from "react"
 import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import { sectionsOf, type SectionKey, type WorkspaceKey } from "@/lib/agentpack/workspaces"
@@ -30,6 +30,10 @@ export function WorkspaceTabs({
   const t = useT()
   const sections = sectionsOf(workspace)
   const refs = useRef(new Map<SectionKey, HTMLButtonElement>())
+
+  useEffect(() => {
+    refs.current.get(active)?.scrollIntoView({ block: "nearest", inline: "nearest" })
+  }, [active, workspace])
 
   const move = useCallback(
     (delta: number | "first" | "last") => {

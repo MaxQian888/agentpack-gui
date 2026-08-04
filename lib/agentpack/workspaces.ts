@@ -16,6 +16,11 @@
 export type SectionKey =
   | "dashboard"
   | "history"
+  | "management-overview"
+  | "accounts"
+  | "quota"
+  | "analytics"
+  | "audit"
   | "presets"
   | "environment"
   | "clis"
@@ -28,7 +33,8 @@ export type SectionKey =
   | "config"
   | "about"
 
-export type WorkspaceKey = "overview" | "install" | "capabilities" | "usage" | "settings"
+export type WorkspaceKey =
+  "overview" | "install" | "capabilities" | "management" | "usage" | "settings"
 
 export interface WorkspaceDefinition {
   key: WorkspaceKey
@@ -52,6 +58,10 @@ export const WORKSPACES: readonly WorkspaceDefinition[] = [
   // it isn't in Settings next to profiles and config files.
   { key: "install", sections: ["presets", "environment", "clis", "network", "cleanup"] },
   { key: "capabilities", sections: ["skills", "mcp", "ccswitch", "ccconnect"] },
+  {
+    key: "management",
+    sections: ["management-overview", "accounts", "quota", "analytics", "audit"],
+  },
   { key: "usage", sections: ["history"] },
   { key: "settings", sections: ["config", "about"] },
 ]

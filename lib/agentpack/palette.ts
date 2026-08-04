@@ -52,6 +52,7 @@ const WORKSPACE_LABEL: Record<WorkspaceKey, (m: Messages) => string> = {
   overview: (m) => m.workspaces.overview,
   install: (m) => m.workspaces.install,
   capabilities: (m) => m.workspaces.capabilities,
+  management: (m) => m.workspaces.management,
   usage: (m) => m.workspaces.usage,
   settings: (m) => m.workspaces.settings,
 }
@@ -60,6 +61,7 @@ const WORKSPACE_HINT: Record<WorkspaceKey, (m: Messages) => string> = {
   overview: (m) => m.workspaces.overviewHint,
   install: (m) => m.workspaces.installHint,
   capabilities: (m) => m.workspaces.capabilitiesHint,
+  management: (m) => m.workspaces.managementHint,
   usage: (m) => m.workspaces.usageHint,
   settings: (m) => m.workspaces.settingsHint,
 }
@@ -67,6 +69,11 @@ const WORKSPACE_HINT: Record<WorkspaceKey, (m: Messages) => string> = {
 const SECTION_LABEL: Record<SectionKey, (m: Messages) => string> = {
   dashboard: (m) => m.menu.dashboard,
   history: (m) => m.menu.history,
+  "management-overview": (m) => m.management.tabs.overview,
+  accounts: (m) => m.management.tabs.accounts,
+  quota: (m) => m.management.tabs.quota,
+  analytics: (m) => m.management.tabs.analytics,
+  audit: (m) => m.management.tabs.audit,
   presets: (m) => m.menu.presets,
   environment: (m) => m.menu.environment,
   clis: (m) => m.menu.clis,

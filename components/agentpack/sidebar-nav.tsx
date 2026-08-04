@@ -10,12 +10,14 @@ import {
   Globe,
   Info,
   LayoutDashboard,
+  Landmark,
   type LucideIcon,
   Menu,
   MessagesSquare,
   Package,
   Server,
   Settings,
+  ShieldCheck,
   SlidersHorizontal,
   Terminal,
   Wrench,
@@ -67,6 +69,11 @@ export const SECTIONS: SectionDef[] = [
   { key: "ccswitch", icon: ArrowLeftRight, label: (m) => m.menu.ccswitch },
   { key: "ccconnect", icon: Cable, label: (m) => m.menu.ccconnect },
   { key: "history", icon: MessagesSquare, label: (m) => m.menu.history },
+  { key: "management-overview", icon: LayoutDashboard, label: (m) => m.management.tabs.overview },
+  { key: "accounts", icon: Boxes, label: (m) => m.management.tabs.accounts },
+  { key: "quota", icon: ArrowLeftRight, label: (m) => m.management.tabs.quota },
+  { key: "analytics", icon: ChartNoAxesColumn, label: (m) => m.management.tabs.analytics },
+  { key: "audit", icon: ShieldCheck, label: (m) => m.management.tabs.audit },
   { key: "config", icon: FileJson, label: (m) => m.menu.saveConfig },
   { key: "about", icon: Info, label: (m) => m.menu.about },
 ]
@@ -83,6 +90,12 @@ interface WorkspaceMeta {
 }
 
 export const WORKSPACE_META: WorkspaceMeta[] = [
+  {
+    key: "management",
+    icon: Landmark,
+    label: (m) => m.workspaces.management,
+    hint: (m) => m.workspaces.managementHint,
+  },
   {
     key: "overview",
     icon: LayoutDashboard,

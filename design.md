@@ -132,7 +132,7 @@ smell — if content needs a box inside a box, it needs a section rule instead.
 │            │  context · ⌘K · theme · window controls      │  header
 │  task      ├──────────────────────────────────────────────┤
 │  rail      │  [ sub-tab  sub-tab  sub-tab ]               │  workspace tabs
-│  (5)       │                                              │
+│  (6)       │                                              │
 │            │  workspace                                   │
 │            │                                              │
 │            ├──────────────────────────────────────────────┤
@@ -140,9 +140,9 @@ smell — if content needs a box inside a box, it needs a section rule instead.
 └────────────┴──────────────────────────────────────────────┘
 ```
 
-Five task domains, not twelve destinations: **Overview · Install & repair ·
-Capabilities · Usage · Settings**. Each maps onto the existing section keys as
-sub-tabs; no route or capability is removed, only regrouped. The rail is
+Six task domains: **Overview · Install & repair · Capabilities · Accounts &
+quota · Usage · Settings**. Each maps onto the existing section keys as sub-tabs;
+no route or capability is removed, only regrouped. The rail is
 `--hm-rail-width` from 900px and `--hm-rail-width-wide` from 1200px; below
 desktop it collapses into a navigation Sheet with the same order and labels.
 
@@ -219,7 +219,9 @@ The app reads a developer's machine, so what it _records_ is part of the design.
   command output, config file bodies, environment variables, or API keys.
 - The command palette indexes destinations and global actions. It does **not**
   index chat transcripts, config contents, or keys.
-- Nothing leaves the machine.
+- Operational account data leaves the machine only for explicitly saved
+  more-token instances through the fixed-path Rust adapter; credentials remain
+  in the OS credential store or process memory and never enter React state.
 
 ## 11. Exports
 
