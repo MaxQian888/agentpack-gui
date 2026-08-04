@@ -5,6 +5,36 @@ description: Welcome to the agentpack-gui documentation.
 
 # Getting Started
 
-This is the documentation skeleton for `agentpack-gui`.
+AgentPack keeps local AI coding tools, provider profiles, and optional more-token
+accounts in one desktop workspace.
 
-Add your content here.
+## Provider storage
+
+Accounts & relays supports two isolated storage backends:
+
+- **AgentPack native** stores provider records in `~/.agentpack/providers.json`.
+- **CC Switch compatible** reads and writes the existing cc-switch database.
+
+Account-profile IDs are scoped to the backend that created them. Switching the
+backend never resolves an ID against the other store. Both backends update the
+same live Claude Code, Codex, and OpenCode configuration files and create
+rollback snapshots under `~/.agentpack/backups/providers` before writes.
+
+## more-token personal workspace
+
+My account uses a personal desktop credential and cannot invoke management or
+sub-account operations. It provides balance and ledger history, billing-log
+analytics, model and status filters, per-model breakdowns, paginated redacted
+records, CSV export, and a model marketplace with pricing and endpoint details.
+
+The personal API v1.1 adds optional `model`, `group`, `token_name`, and `status`
+filters. Older v1.0 servers remain readable; detail sections stay empty until a
+compatible server is connected.
+
+For a repeatable local catalog and usage history, run this from the more-token
+repository after registering a test user:
+
+```bash
+SQLITE_PATH=/path/to/new-api.db DEMO_USERNAME=test-user \
+  ./scripts/seed-agentpack-demo.sh
+```
