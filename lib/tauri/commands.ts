@@ -23,11 +23,32 @@ import type {
 } from "@/lib/skills/types"
 import type { UpdateQuery } from "@/lib/skills/updates"
 import type { CleanupRoots, CleanupSpec, CleanupStat } from "@/lib/agentpack/cleanup"
+import type {
+  CredentialState,
+  ManagementOperation,
+  MoreTokenInstance,
+  MoreTokenInstanceDraft,
+  PairingResult,
+} from "@/lib/more-token/types"
 
 // Typed wrappers around the custom Rust commands (src-tauri/src/*.rs). Keep this
 // file as the SOLE caller of `invoke` for agentpack — UI/runner import these.
 
 export const getPaths = () => invoke<Paths>("get_paths")
+
+export const moreTokenListInstances = () => invoke<MoreTokenInstance[]>("more_token_list_instances")
+export const moreTokenSaveInstance = (draft: MoreTokenInstanceDraft) =>
+  invoke<MoreTokenInstance>("more_token_save_instance", { draft })
+export const moreTokenRemoveInstance = (instanceId: string) =>
+  invoke<void>("more_token_remove_instance", { instanceId })
+export const moreTokenCredentialState = (instanceId: string) =>
+  invoke<CredentialState>("more_token_credential_state", { instanceId })
+export const moreTokenForgetCredential = (instanceId: string) =>
+  invoke<void>("more_token_forget_credential", { instanceId })
+export const moreTokenPair = (instanceId: string, pairingCode: string, clientId: string) =>
+  invoke<PairingResult>("more_token_pair", { instanceId, pairingCode, clientId })
+export const moreTokenRequest = (instanceId: string, operation: ManagementOperation) =>
+  invoke<{ status: number; body: unknown }>("more_token_request", { instanceId, operation })
 
 export interface RunCommandOpts {
   /** Operation id so this run can be cancelled mid-flight via `cancelCommand`. */

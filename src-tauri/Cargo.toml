@@ -48,6 +48,12 @@ flate2 = "1"
 tar = "0.4"
 # Content hashing for skill update detection (see skills::hash_skill_dir).
 sha2 = "0.11"
+url = "2"
+rustls-pemfile = "2"
+webpki-roots = "0.26"
+# Management credentials are isolated from model keys and files. 3.6.3 has
+# MSRV 1.75, which stays below this crate's pinned Rust 1.77.2 toolchain.
+keyring = { version = "3.6.3", default-features = false, features = ["apple-native", "windows-native", "linux-native-sync-persistent", "crypto-rust"] }
 
 # Desktop-only plugins. `single-instance` keeps a second launch from racing the
 # first one's writes to ~/.claude, ~/.codex & the cc-switch DB; `global-shortcut`

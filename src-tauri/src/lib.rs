@@ -8,6 +8,7 @@ mod history;
 mod history_cache;
 mod login;
 mod mcp;
+mod more_token;
 mod net;
 mod paths;
 mod skills;
@@ -146,6 +147,13 @@ pub fn run() {
       mcp::registry_fetch,
       mcp::mcp_probe_remote,
       mcp::mcp_probe_stdio,
+      more_token::more_token_list_instances,
+      more_token::more_token_save_instance,
+      more_token::more_token_remove_instance,
+      more_token::more_token_credential_state,
+      more_token::more_token_forget_credential,
+      more_token::more_token_pair,
+      more_token::more_token_request,
       net::proxy_env_snapshot,
       net::system_proxy_snapshot,
       net::tool_proxy_snapshot,
