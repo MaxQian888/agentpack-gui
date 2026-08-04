@@ -102,7 +102,15 @@ export type ManagementOperation =
   | { kind: "closePersonalAccount"; body: unknown }
   | { kind: "personalBalance" }
   | { kind: "personalLedger"; page: number; pageSize: number }
-  | { kind: "personalUsage"; start: number; end: number }
+  | {
+      kind: "personalUsage"
+      start: number
+      end: number
+      page: number
+      pageSize: number
+      model?: string | null
+      status?: "billable" | "success" | "refund" | "error" | "all" | null
+    }
   | { kind: "personalModels" }
   | { kind: "personalSessions" }
   | { kind: "revokePersonalSession"; id: number }
@@ -145,6 +153,7 @@ export interface PersonalCapabilities {
     billing_portal_enabled: boolean
     browser_oauth_enabled?: boolean
     model_marketplace_enabled?: boolean
+    usage_details_enabled?: boolean
   }
   billing_portal_path: string
 }
@@ -227,18 +236,46 @@ export interface PersonalUsage {
     completion_tokens: number
     quota: number
   }>
+  model_breakdown?: Array<{
+    model_name: string
+    requests: number
+    prompt_tokens: number
+    completion_tokens: number
+    quota: number
+  }>
+  records?: Array<{
+    request_id: string
+    status: "success" | "refund" | "error" | "unknown"
+    created_at: number
+    model_name: string
+    token_name: string
+    prompt_tokens: number
+    completion_tokens: number
+    quota: number
+    use_time: number
+    is_stream: boolean
+  }>
+  page?: number
+  page_size?: number
+  total?: number
   quota_display: QuotaDisplaySetting
 }
 
 export interface PersonalModel {
   model_name: string
   description?: string
+  icon?: string
   tags?: string
   vendor_id?: number
   quota_type: number
   model_ratio: number
   model_price: number
   completion_ratio: number
+  cache_ratio?: number
+  create_cache_ratio?: number
+  image_ratio?: number
+  audio_ratio?: number
+  audio_completion_ratio?: number
   enable_groups: string[]
   supported_endpoint_types: string[]
   billing_mode?: string
@@ -249,7 +286,7 @@ export interface PersonalModelCatalog {
   vendors: Array<{ id: number; name: string; description?: string }>
   group_ratio: Record<string, number>
   usable_group: Record<string, string>
-  supported_endpoint: Record<string, unknown>
+  supported_endpoint: Record<string, { path: string; method: string }>
   auto_groups: string[]
   pricing_version: string
   generated_at: number

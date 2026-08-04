@@ -270,6 +270,10 @@ pub enum ManagementOperation {
   PersonalUsage {
     start: i64,
     end: i64,
+    page: Option<u32>,
+    page_size: Option<u32>,
+    model: Option<String>,
+    status: Option<String>,
   },
   PersonalModels,
   PersonalSessions,
@@ -914,16 +918,41 @@ fn operation_spec(
       None,
       false,
     ),
-    ManagementOperation::PersonalUsage { start, end } => (
-      Method::Get,
-      "/api/personal/usage".into(),
-      vec![
-        ("start".into(), start.to_string()),
-        ("end".into(), end.to_string()),
-      ],
-      None,
-      false,
-    ),
+    ManagementOperation::PersonalUsage {
+      start,
+      end,
+      page,
+      page_size,
+      model,
+      status,
+    } => {
+      let mut query = bounded_page(page.unwrap_or(1), page_size.unwrap_or(25));
+      query.push(("start".into(), start.to_string()));
+      query.push(("end".into(), end.to_string()));
+      if let Some(model) = model.map(|value| value.trim().to_string()) {
+        if model.len() > 255 {
+          return Err("INVALID_MODEL".into());
+        }
+        if !model.is_empty() {
+          query.push(("model".into(), model));
+        }
+      }
+      if let Some(status) = status.map(|value| value.trim().to_string()) {
+        if !["billable", "success", "refund", "error", "all"].contains(&status.as_str()) {
+          return Err("INVALID_STATUS".into());
+        }
+        if !status.is_empty() {
+          query.push(("status".into(), status));
+        }
+      }
+      (
+        Method::Get,
+        "/api/personal/usage".into(),
+        query,
+        None,
+        false,
+      )
+    }
     ManagementOperation::PersonalModels => (
       Method::Get,
       "/api/personal/models".into(),
@@ -1579,6 +1608,37 @@ mod tests {
       .unwrap()
       .path,
       "/api/personal/models"
+    );
+  }
+
+  #[test]
+  fn personal_usage_mapping_keeps_filters_on_the_allowlisted_path() {
+    let operation: ManagementOperation = serde_json::from_value(json!({
+      "kind": "personalUsage",
+      "start": 1_700_000_000,
+      "end": 1_700_086_400,
+      "model": "gpt-5",
+      "status": "success",
+      "page": 2,
+      "pageSize": 25
+    }))
+    .unwrap();
+
+    let spec = operation_spec(MoreTokenPackage::Personal, operation).unwrap();
+
+    assert_eq!(spec.path, "/api/personal/usage");
+    assert_eq!(spec.method, Method::Get);
+    assert!(!spec.write);
+    assert_eq!(
+      spec.query,
+      vec![
+        ("page".into(), "2".into()),
+        ("page_size".into(), "25".into()),
+        ("start".into(), "1700000000".into()),
+        ("end".into(), "1700086400".into()),
+        ("model".into(), "gpt-5".into()),
+        ("status".into(), "success".into()),
+      ]
     );
   }
 

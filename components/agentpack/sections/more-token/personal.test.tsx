@@ -7,6 +7,7 @@ import { isTauri } from "@/lib/tauri"
 import {
   credentialState,
   cancelPersonalOAuth,
+  downloadCsv,
   listInstances,
   loginPersonalInstance,
   managementRequest,
@@ -21,6 +22,7 @@ jest.mock("@/lib/tauri/system", () => ({ openUrl: jest.fn() }))
 jest.mock("@/lib/more-token/client", () => ({
   ...jest.requireActual("@/lib/more-token/client"),
   credentialState: jest.fn(),
+  downloadCsv: jest.fn(),
   forgetCredential: jest.fn(),
   listInstances: jest.fn(),
   loginPersonalInstance: jest.fn(),
@@ -140,6 +142,17 @@ function mockOperation(operation: ManagementOperation) {
             enable_groups: ["default"],
             supported_endpoint_types: ["openai"],
           },
+          {
+            model_name: "dall-e-3",
+            description: "Image generation model",
+            vendor_id: 1,
+            quota_type: 1,
+            model_ratio: 0,
+            model_price: 0.04,
+            completion_ratio: 0,
+            enable_groups: ["default"],
+            supported_endpoint_types: ["image-generation"],
+          },
         ],
         vendors: [{ id: 1, name: "OpenAI" }],
         group_ratio: { default: 1 },
@@ -148,6 +161,64 @@ function mockOperation(operation: ManagementOperation) {
         auto_groups: [],
         pricing_version: "test",
         generated_at: 1_700_000_000,
+      })
+    case "personalUsage":
+      return response({
+        definition: "Persisted billing logs for the paired user only",
+        start: 1_699_000_000,
+        end: 1_700_000_000,
+        bucket_seconds: 86400,
+        generated_at: 1_700_000_000,
+        metrics: { requests: 2, prompt_tokens: 180, completion_tokens: 60, quota: 1600 },
+        series: [
+          {
+            bucket: 1_699_920_000,
+            requests: 2,
+            prompt_tokens: 180,
+            completion_tokens: 60,
+            quota: 1600,
+          },
+        ],
+        model_breakdown: [
+          {
+            model_name: "gpt-5.2",
+            requests: 1,
+            prompt_tokens: 100,
+            completion_tokens: 40,
+            quota: 1200,
+          },
+          {
+            model_name: "dall-e-3",
+            requests: 1,
+            prompt_tokens: 80,
+            completion_tokens: 20,
+            quota: 400,
+          },
+        ],
+        records: [
+          {
+            request_id: "req-personal-1",
+            status: "success",
+            created_at: 1_699_999_900,
+            model_name: "gpt-5.2",
+            token_name: "Desktop Key",
+            prompt_tokens: 100,
+            completion_tokens: 40,
+            quota: 1200,
+            use_time: 850,
+            is_stream: true,
+          },
+        ],
+        page: 1,
+        page_size: 25,
+        total: 1,
+        quota_display: {
+          quota_per_unit: 500_000,
+          display_currency: "CNY",
+          conversion_numerator: 1,
+          conversion_denominator: 1,
+          rate_valid_until: 2_000_000_000,
+        },
       })
     default:
       return response({})
@@ -271,6 +342,44 @@ it("starts browser authorization without exposing a device secret to the UI", as
 it("renders the personal model marketplace from the isolated models operation", async () => {
   renderSection("my-models")
   expect(await screen.findByText("gpt-5.2")).toBeInTheDocument()
-  expect(screen.getByText("OpenAI")).toBeInTheDocument()
+  expect(screen.getAllByText("OpenAI").length).toBeGreaterThan(0)
   expect(managementRequest).toHaveBeenCalledWith(personalInstance.id, { kind: "personalModels" })
+})
+
+it("filters personal usage and exports the visible billing records", async () => {
+  renderSection("my-usage")
+  expect(await screen.findByText("req-personal-1")).toBeInTheDocument()
+  expect(screen.getAllByText("gpt-5.2").length).toBeGreaterThan(0)
+
+  await userEvent.selectOptions(screen.getByLabelText("Usage model"), "gpt-5.2")
+  await userEvent.selectOptions(screen.getByLabelText("Usage status"), "success")
+  await waitFor(() =>
+    expect(managementRequest).toHaveBeenCalledWith(
+      personalInstance.id,
+      expect.objectContaining({
+        kind: "personalUsage",
+        model: "gpt-5.2",
+        status: "success",
+        page: 1,
+        pageSize: 25,
+      })
+    )
+  )
+
+  await userEvent.click(screen.getByRole("button", { name: "Export CSV" }))
+  await waitFor(() => expect(downloadCsv).toHaveBeenCalled())
+})
+
+it("filters the model marketplace and opens complete model details", async () => {
+  renderSection("my-models")
+  await screen.findByText("gpt-5.2")
+
+  await userEvent.selectOptions(screen.getByLabelText("Model vendor"), "1")
+  await userEvent.selectOptions(screen.getByLabelText("Billing type"), "fixed")
+  expect(screen.getByText("dall-e-3")).toBeInTheDocument()
+  expect(screen.queryByText("gpt-5.2")).not.toBeInTheDocument()
+
+  await userEvent.click(screen.getByRole("button", { name: "dall-e-3" }))
+  expect(await screen.findByRole("dialog")).toHaveTextContent("Image generation model")
+  expect(screen.getByRole("dialog")).toHaveTextContent("image-generation")
 })

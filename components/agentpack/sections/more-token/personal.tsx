@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   AlertTriangle,
   Check,
+  Download,
   ExternalLink,
   KeyRound,
   MonitorCheck,
@@ -45,6 +46,7 @@ import { openUrl } from "@/lib/tauri/system"
 import {
   cancelPersonalOAuth,
   credentialState,
+  downloadCsv,
   forgetCredential,
   listInstances,
   loginPersonalInstance,
@@ -65,6 +67,7 @@ import type {
   PersonalBalance,
   PersonalCapabilities,
   PersonalLedgerEntry,
+  PersonalModel,
   PersonalModelCatalog,
   PersonalOverview,
   PersonalSession,
@@ -778,32 +781,161 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
   const m = useT().personal
   const [now] = useState(() => Math.floor(Date.now() / 1000))
   const [days, setDays] = useState(30)
+  const [model, setModel] = useState("")
+  const [status, setStatus] = useState<"billable" | "success" | "refund" | "error" | "all">(
+    "billable"
+  )
+  const [page, setPage] = useState(1)
+  const pageSize = 25
+  const catalog = useQuery({
+    queryKey: ["more-token", instance.id, "personal-models"],
+    queryFn: () => request<PersonalModelCatalog>(instance.id, { kind: "personalModels" }),
+  })
   const usage = useQuery({
-    queryKey: ["more-token", instance.id, "personal-usage", days],
+    queryKey: ["more-token", instance.id, "personal-usage", days, model, status, page],
     queryFn: () =>
       request<PersonalUsage>(instance.id, {
         kind: "personalUsage",
         start: now - days * 86400,
         end: now,
+        model: model || null,
+        status,
+        page,
+        pageSize,
       }),
+  })
+  const exportUsage = useMutation({
+    mutationFn: async () => {
+      const first = await request<PersonalUsage>(instance.id, {
+        kind: "personalUsage",
+        start: now - days * 86400,
+        end: now,
+        model: model || null,
+        status,
+        page: 1,
+        pageSize: 200,
+      })
+      const records = [...(first.records ?? [])]
+      const pages = Math.ceil((first.total ?? 0) / 200)
+      for (let exportPage = 2; exportPage <= pages; exportPage += 1) {
+        const next = await request<PersonalUsage>(instance.id, {
+          kind: "personalUsage",
+          start: now - days * 86400,
+          end: now,
+          model: model || null,
+          status,
+          page: exportPage,
+          pageSize: 200,
+        })
+        records.push(...(next.records ?? []))
+      }
+      return records
+    },
+    onSuccess: (records) => {
+      if (!usage.data) return
+      downloadCsv(`more-token-usage-${new Date().toISOString().slice(0, 10)}.csv`, [
+        [m.usageDefinition, usage.data.definition],
+        [
+          m.usageRange,
+          `${new Date(usage.data.start * 1000).toISOString()} – ${new Date(usage.data.end * 1000).toISOString()}`,
+        ],
+        [m.timezone, Intl.DateTimeFormat().resolvedOptions().timeZone],
+        [m.generatedAt, new Date(usage.data.generated_at * 1000).toISOString()],
+        [],
+        [
+          m.generatedAt,
+          m.model,
+          m.usageStatus,
+          m.apiKey,
+          m.promptTokens,
+          m.completionTokens,
+          m.rawQuota,
+          m.duration,
+          m.requestId,
+        ],
+        ...records.map((record) => [
+          new Date(record.created_at * 1000).toISOString(),
+          record.model_name,
+          record.status,
+          record.token_name,
+          record.prompt_tokens,
+          record.completion_tokens,
+          record.quota,
+          record.use_time,
+          record.request_id,
+        ]),
+      ])
+    },
+    onError: (error) => toast.error(errorText(error)),
   })
   if (usage.isError) return <PersonalError error={usage.error} retry={() => void usage.refetch()} />
   if (!usage.data) return <PersonalLoading />
-  const max = Math.max(1, ...usage.data.series.map((point) => point.quota))
+  const max = Math.max(1, ...usage.data.series.map((point) => Math.abs(point.quota)))
+  const records = usage.data.records ?? []
+  const modelBreakdown = usage.data.model_breakdown ?? []
+  const currentPage = usage.data.page ?? page
+  const currentPageSize = usage.data.page_size ?? pageSize
+  const total = usage.data.total ?? records.length
+  const pages = Math.max(1, Math.ceil(total / currentPageSize))
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
         <p className="text-sm text-muted-foreground">{m.usageDefinition}</p>
-        <select
-          aria-label="Usage range"
-          value={days}
-          onChange={(event) => setDays(Number(event.target.value))}
-          className="h-9 rounded-md border bg-background px-2 text-sm"
-        >
-          <option value={7}>7 days</option>
-          <option value={30}>30 days</option>
-          <option value={90}>90 days</option>
-        </select>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-[auto_auto_auto_auto]">
+          <select
+            aria-label={m.usageRange}
+            value={days}
+            onChange={(event) => {
+              setDays(Number(event.target.value))
+              setPage(1)
+            }}
+            className="h-11 rounded-md border bg-background px-3 text-sm"
+          >
+            <option value={7}>7 days</option>
+            <option value={30}>30 days</option>
+            <option value={90}>90 days</option>
+          </select>
+          <select
+            aria-label={m.usageModelFilter}
+            value={model}
+            onChange={(event) => {
+              setModel(event.target.value)
+              setPage(1)
+            }}
+            className="h-11 min-w-40 rounded-md border bg-background px-3 text-sm"
+          >
+            <option value="">{m.allModels}</option>
+            {(catalog.data?.items ?? []).map((item) => (
+              <option key={item.model_name} value={item.model_name}>
+                {item.model_name}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label={m.usageStatus}
+            value={status}
+            onChange={(event) => {
+              setStatus(event.target.value as typeof status)
+              setPage(1)
+            }}
+            className="h-11 rounded-md border bg-background px-3 text-sm"
+          >
+            <option value="billable">{m.statusBillable}</option>
+            <option value="all">{m.statusAll}</option>
+            <option value="success">{m.statusSuccess}</option>
+            <option value="refund">{m.statusRefund}</option>
+            <option value="error">{m.statusError}</option>
+          </select>
+          <Button
+            variant="outline"
+            className="h-11"
+            disabled={exportUsage.isPending || total === 0}
+            onClick={() => exportUsage.mutate()}
+          >
+            <Download className="size-4" />
+            {exportUsage.isPending ? m.exportingCsv : m.exportCsv}
+          </Button>
+        </div>
       </div>
       <MetricStrip
         items={[
@@ -822,8 +954,8 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
           {usage.data.series.map((point) => (
             <div
               key={point.bucket}
-              className="min-w-1 flex-1 bg-primary/75"
-              style={{ height: `${Math.max(2, (point.quota / max) * 100)}%` }}
+              className={`min-w-1 flex-1 ${point.quota < 0 ? "bg-destructive/70" : "bg-primary/75"}`}
+              style={{ height: `${Math.max(2, (Math.abs(point.quota) / max) * 100)}%` }}
               title={`${formatTime(point.bucket)} · ${formatNumber(point.quota)}`}
             />
           ))}
@@ -832,6 +964,136 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
           {m.generatedAt}: {formatTime(usage.data.generated_at)}
         </p>
       </section>
+      <section className="border-y py-5">
+        <h3 className="font-medium">{m.modelBreakdown}</h3>
+        <div className="mt-3 overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{m.model}</TableHead>
+                <TableHead>{m.requests}</TableHead>
+                <TableHead>{m.promptTokens}</TableHead>
+                <TableHead>{m.completionTokens}</TableHead>
+                <TableHead>{m.used}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {modelBreakdown.map((item) => (
+                <TableRow key={item.model_name}>
+                  <TableCell className="font-medium">{item.model_name || "—"}</TableCell>
+                  <TableCell className="tabular-nums">{formatNumber(item.requests)}</TableCell>
+                  <TableCell className="tabular-nums">{formatNumber(item.prompt_tokens)}</TableCell>
+                  <TableCell className="tabular-nums">
+                    {formatNumber(item.completion_tokens)}
+                  </TableCell>
+                  <TableCell className="tabular-nums">
+                    {quotaCurrencyLabel(item.quota, usage.data.quota_display)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </section>
+      <section className="border-y py-5">
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <h3 className="font-medium">{m.usageRecords}</h3>
+            <p className="mt-1 text-sm text-muted-foreground">{m.usageRecordsHint}</p>
+          </div>
+          <span className="text-xs tabular-nums text-muted-foreground">{formatNumber(total)}</span>
+        </div>
+        <div className="mt-3 overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{m.recordedAt}</TableHead>
+                <TableHead>{m.model}</TableHead>
+                <TableHead>{m.usageStatus}</TableHead>
+                <TableHead>{m.apiKey}</TableHead>
+                <TableHead>{m.promptTokens}</TableHead>
+                <TableHead>{m.completionTokens}</TableHead>
+                <TableHead>{m.used}</TableHead>
+                <TableHead>{m.duration}</TableHead>
+                <TableHead>{m.requestId}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {records.map((record) => (
+                <TableRow key={`${record.request_id}-${record.created_at}`}>
+                  <TableCell className="whitespace-nowrap">
+                    {formatTime(record.created_at)}
+                  </TableCell>
+                  <TableCell className="font-medium">{record.model_name || "—"}</TableCell>
+                  <TableCell>
+                    <Badge
+                      variant={
+                        record.status === "error"
+                          ? "destructive"
+                          : record.status === "refund"
+                            ? "outline"
+                            : "secondary"
+                      }
+                    >
+                      {record.status === "success"
+                        ? m.statusSuccess
+                        : record.status === "refund"
+                          ? m.statusRefund
+                          : record.status === "error"
+                            ? m.statusError
+                            : record.status}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{record.token_name || "—"}</TableCell>
+                  <TableCell className="tabular-nums">
+                    {formatNumber(record.prompt_tokens)}
+                  </TableCell>
+                  <TableCell className="tabular-nums">
+                    {formatNumber(record.completion_tokens)}
+                  </TableCell>
+                  <TableCell className="tabular-nums">
+                    {quotaCurrencyLabel(record.quota, usage.data.quota_display)}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap tabular-nums">
+                    {formatNumber(record.use_time)} ms
+                  </TableCell>
+                  <TableCell className="max-w-48 truncate font-mono text-xs">
+                    {record.request_id || "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {records.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={9} className="h-28 text-center text-muted-foreground">
+                    {m.noUsageRecords}
+                  </TableCell>
+                </TableRow>
+              ) : null}
+            </TableBody>
+          </Table>
+        </div>
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <span className="mr-2 text-xs tabular-nums text-muted-foreground">
+            {m.pageSummary(currentPage, pages)}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={currentPage <= 1}
+            onClick={() => setPage((current) => Math.max(1, current - 1))}
+          >
+            {m.previousPage}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={currentPage >= pages}
+            onClick={() => setPage((current) => current + 1)}
+          >
+            {m.nextPage}
+          </Button>
+        </div>
+      </section>
     </div>
   )
 }
@@ -839,6 +1101,9 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
 function PersonalModelsView({ instance }: { instance: MoreTokenInstance }) {
   const m = useT().personal
   const [search, setSearch] = useState("")
+  const [vendor, setVendor] = useState("all")
+  const [billing, setBilling] = useState<"all" | "ratio" | "fixed">("all")
+  const [selectedModel, setSelectedModel] = useState<PersonalModel | null>(null)
   const catalog = useQuery({
     queryKey: ["more-token", instance.id, "personal-models"],
     queryFn: () => request<PersonalModelCatalog>(instance.id, { kind: "personalModels" }),
@@ -849,13 +1114,18 @@ function PersonalModelsView({ instance }: { instance: MoreTokenInstance }) {
   )
   const items = useMemo(() => {
     const needle = search.trim().toLowerCase()
-    if (!needle) return catalog.data?.items ?? []
-    return (catalog.data?.items ?? []).filter((model) =>
-      [model.model_name, model.description, model.tags, vendors.get(model.vendor_id ?? 0)]
-        .filter(Boolean)
-        .some((value) => value!.toLowerCase().includes(needle))
-    )
-  }, [catalog.data?.items, search, vendors])
+    return (catalog.data?.items ?? []).filter((model) => {
+      const matchesSearch =
+        !needle ||
+        [model.model_name, model.description, model.tags, vendors.get(model.vendor_id ?? 0)]
+          .filter(Boolean)
+          .some((value) => value!.toLowerCase().includes(needle))
+      const matchesVendor = vendor === "all" || String(model.vendor_id ?? 0) === vendor
+      const matchesBilling =
+        billing === "all" || (billing === "fixed" ? model.quota_type === 1 : model.quota_type !== 1)
+      return matchesSearch && matchesVendor && matchesBilling
+    })
+  }, [billing, catalog.data?.items, search, vendor, vendors])
   if (catalog.isError)
     return <PersonalError error={catalog.error} retry={() => void catalog.refetch()} />
   if (!catalog.data) return <PersonalLoading />
@@ -869,14 +1139,39 @@ function PersonalModelsView({ instance }: { instance: MoreTokenInstance }) {
           </h3>
           <p className="mt-1 text-sm text-muted-foreground">{m.modelMarketplaceHint}</p>
         </div>
-        <div className="relative w-full sm:max-w-sm">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder={m.searchModels}
-            className="pl-9"
-          />
+        <div className="grid w-full gap-2 sm:max-w-2xl sm:grid-cols-[minmax(12rem,1fr)_auto_auto]">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={m.searchModels}
+              className="h-11 pl-9"
+            />
+          </div>
+          <select
+            aria-label={m.modelVendorFilter}
+            value={vendor}
+            onChange={(event) => setVendor(event.target.value)}
+            className="h-11 rounded-md border bg-background px-3 text-sm"
+          >
+            <option value="all">{m.allVendors}</option>
+            {catalog.data.vendors.map((item) => (
+              <option key={item.id} value={String(item.id)}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label={m.billingTypeFilter}
+            value={billing}
+            onChange={(event) => setBilling(event.target.value as typeof billing)}
+            className="h-11 rounded-md border bg-background px-3 text-sm"
+          >
+            <option value="all">{m.allBillingTypes}</option>
+            <option value="ratio">{m.ratioBilling}</option>
+            <option value="fixed">{m.fixedPrice}</option>
+          </select>
         </div>
       </div>
       <MetricStrip
@@ -905,7 +1200,13 @@ function PersonalModelsView({ instance }: { instance: MoreTokenInstance }) {
               {items.map((model) => (
                 <TableRow key={model.model_name}>
                   <TableCell className="min-w-64">
-                    <p className="font-medium">{model.model_name}</p>
+                    <Button
+                      variant="link"
+                      className="h-auto min-h-11 p-0 text-left font-medium"
+                      onClick={() => setSelectedModel(model)}
+                    >
+                      {model.model_name}
+                    </Button>
                     <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">
                       {model.description || model.tags || "—"}
                     </p>
@@ -938,6 +1239,92 @@ function PersonalModelsView({ instance }: { instance: MoreTokenInstance }) {
           </Table>
         </div>
       </section>
+      <Dialog
+        open={selectedModel !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedModel(null)
+        }}
+      >
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{selectedModel?.model_name ?? m.modelDetails}</DialogTitle>
+            <DialogDescription>
+              {selectedModel?.description || selectedModel?.tags || m.modelMarketplaceHint}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedModel ? (
+            <div className="divide-y border-y text-sm">
+              <div className="grid gap-2 py-4 sm:grid-cols-[10rem_1fr]">
+                <span className="text-muted-foreground">{m.vendor}</span>
+                <span className="font-medium">
+                  {vendors.get(selectedModel.vendor_id ?? 0) || "—"}
+                </span>
+              </div>
+              <div className="grid gap-3 py-4 sm:grid-cols-[10rem_1fr]">
+                <span className="text-muted-foreground">{m.pricingDetails}</span>
+                <div className="grid gap-2 tabular-nums sm:grid-cols-2">
+                  {selectedModel.quota_type === 1 ? (
+                    <span>
+                      {m.fixedPrice}: {selectedModel.model_price}
+                    </span>
+                  ) : (
+                    <>
+                      <span>
+                        {m.inputRatio}: {selectedModel.model_ratio}×
+                      </span>
+                      <span>
+                        {m.outputRatio}: {selectedModel.completion_ratio}×
+                      </span>
+                      {selectedModel.cache_ratio !== undefined ? (
+                        <span>
+                          {m.cacheRatio}: {selectedModel.cache_ratio}×
+                        </span>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="grid gap-3 py-4 sm:grid-cols-[10rem_1fr]">
+                <span className="text-muted-foreground">{m.groups}</span>
+                <div className="flex flex-wrap gap-1">
+                  {selectedModel.enable_groups.map((group) => (
+                    <Badge key={group} variant="secondary">
+                      {catalog.data.usable_group[group] || group}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+              <div className="grid gap-3 py-4 sm:grid-cols-[10rem_1fr]">
+                <span className="text-muted-foreground">{m.endpointDetails}</span>
+                <div className="space-y-2">
+                  {selectedModel.supported_endpoint_types.map((endpoint) => {
+                    const detail = catalog.data.supported_endpoint[endpoint]
+                    return (
+                      <div key={endpoint} className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline">{endpoint}</Badge>
+                        {detail ? (
+                          <code className="text-xs text-muted-foreground">
+                            {detail.method} {detail.path}
+                          </code>
+                        ) : null}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+              {selectedModel.tags ? (
+                <div className="flex flex-wrap gap-1 py-4">
+                  {selectedModel.tags.split(",").map((tag) => (
+                    <Badge key={tag} variant="outline">
+                      {tag.trim()}
+                    </Badge>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
