@@ -37,7 +37,7 @@ jest.mock("@/lib/tauri/commands", () => ({
     p.includes(".claude.json") ? JSON.stringify({ mcpServers: { memory: {} } }) : ""
   ),
   listSkills: jest.fn(async () => [] as string[]),
-  ccLoadProviders: jest.fn(async () => []),
+  providerLoad: jest.fn(async () => []),
   pathExists: jest.fn(async () => false),
   historyListSessions: jest.fn(async () => ({ sessions: [], errors: [] })),
 }))

@@ -65,6 +65,7 @@ import { ExecutionPanel } from "./run/execution-panel"
 function ShellBody() {
   const t = useT()
   const paths = useAppStore((s) => s.paths)
+  const providerBackend = useAppStore((s) => s.settings.providerBackend)
   const setPaths = useAppStore((s) => s.setPaths)
   const setActivity = useAppStore((s) => s.setActivity)
   const setDetections = useAppStore((s) => s.setDetections)
@@ -216,11 +217,11 @@ function ShellBody() {
     if (!isTauri() || !paths) return
     setDashboardScanning(true)
     try {
-      rememberScan(await scanEnvironment(paths))
+      rememberScan(await scanEnvironment(paths, providerBackend))
     } finally {
       setDashboardScanning(false)
     }
-  }, [paths, rememberScan])
+  }, [paths, providerBackend, rememberScan])
 
   // Initial scan once paths are known. Fire-and-forget so the UI renders
   // immediately; the (now async) Rust commands run off the main thread, and
@@ -228,7 +229,7 @@ function ShellBody() {
   useEffect(() => {
     if (!isTauri() || !paths) return
     let cancelled = false
-    scanEnvironment(paths)
+    scanEnvironment(paths, providerBackend)
       .then((result) => {
         if (!cancelled) rememberScan(result)
       })
@@ -236,7 +237,7 @@ function ShellBody() {
     return () => {
       cancelled = true
     }
-  }, [paths, rememberScan])
+  }, [paths, providerBackend, rememberScan])
 
   // Detect every CLI + runtime and refresh latest-version info. Reused both on
   // startup and after every real run, so install/upgrade/uninstall are reflected
@@ -458,7 +459,10 @@ function ShellBody() {
       if (Object.keys(useAppStore.getState().detections).length === 0) {
         await refreshDetections()
       }
-      const scan = await scanEnvironment(paths).catch(() => null)
+      const scan = await scanEnvironment(
+        paths,
+        useAppStore.getState().settings.providerBackend
+      ).catch(() => null)
       // Keep the dashboard in sync with the state this run deduped against (but
       // don't clobber a good cached scan if this fresh one failed).
       if (scan) rememberScan(scan)

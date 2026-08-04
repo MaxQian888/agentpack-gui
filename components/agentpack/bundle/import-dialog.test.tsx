@@ -11,7 +11,7 @@ jest.mock("@/lib/tauri", () => ({ isTauri: jest.fn(() => true) }))
 jest.mock("@/lib/tauri/commands", () => ({
   readTextFile: jest.fn(async () => ""),
   writeTextFile: jest.fn(async () => undefined),
-  ccLoadProviders: jest.fn(async () => []),
+  providerLoad: jest.fn(async () => []),
   isProcessRunning: jest.fn(async () => false),
 }))
 jest.mock("@/lib/tauri/dialog", () => ({ pickFile: jest.fn(async () => null) }))
@@ -21,22 +21,18 @@ jest.mock("@/lib/tauri/settings", () => ({
   saveSettings: jest.fn(async () => undefined),
 }))
 
-import { render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { toast } from "sonner"
 import { buildBundle, serializeBundle } from "@/lib/agentpack/bundle/format"
+import type { Provider } from "@/lib/agentpack/ccswitch/types"
 import { serializePlan } from "@/lib/agentpack/config"
 import { BACKUP_SUFFIX } from "@/lib/agentpack/plan"
 import type { Plan, Paths, StepDescriptor } from "@/lib/agentpack/types"
 import { en } from "@/lib/i18n/en"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { readTextFromClipboard } from "@/lib/tauri/clipboard"
-import {
-  ccLoadProviders,
-  isProcessRunning,
-  readTextFile,
-  writeTextFile,
-} from "@/lib/tauri/commands"
+import { isProcessRunning, providerLoad, readTextFile, writeTextFile } from "@/lib/tauri/commands"
 import { pickFile } from "@/lib/tauri/dialog"
 import { DEFAULT_SETTINGS, saveSettings } from "@/lib/tauri/settings"
 import { useAppStore } from "@/store/app-store"
@@ -86,6 +82,7 @@ beforeEach(() => {
     plan: LOCAL,
     paths: PATHS,
     profiles: [],
+    settings: { ...DEFAULT_SETTINGS, providerBackend: "native" },
   })
   run.mockResolvedValue(applied)
 })
@@ -251,9 +248,17 @@ const PROVIDER_BUNDLE = JSON.stringify({
 })
 
 function withExistingProvider() {
-  ;(ccLoadProviders as jest.Mock).mockResolvedValue([
+  ;(providerLoad as jest.Mock).mockResolvedValue([
     { id: "e1", app_type: "claude", name: "Existing", settings_config: "{}", is_current: false },
   ])
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
 }
 
 it("writes only the fresh providers by default", async () => {
@@ -262,7 +267,10 @@ it("writes only the fresh providers by default", async () => {
   await screen.findByText(b.diffProviders(1, 1))
   await clickImport()
   await waitFor(() => expect(run).toHaveBeenCalled())
-  expect(steps().filter((s) => s.kind === "ccProvider")).toHaveLength(1)
+  const providerSteps = steps().filter((s) => s.kind === "ccProvider")
+  expect(providerSteps).toHaveLength(1)
+  expect(providerSteps[0].payload).toEqual(expect.objectContaining({ backend: "native" }))
+  expect(providerLoad).toHaveBeenCalledWith("native")
 })
 
 it("also replaces a conflicting provider once asked to", async () => {
@@ -273,6 +281,43 @@ it("also replaces a conflicting provider once asked to", async () => {
   await clickImport()
   await waitFor(() => expect(run).toHaveBeenCalled())
   expect(steps().filter((s) => s.kind === "ccProvider")).toHaveLength(2)
+})
+
+it("ignores a stale provider load after the imported backend changes", async () => {
+  useAppStore.setState((state) => ({
+    settings: { ...state.settings, providerBackend: "native" },
+  }))
+  const stale = deferred<Provider[]>()
+  let nativeLoads = 0
+  ;(providerLoad as jest.Mock).mockImplementation((backend: string) => {
+    if (backend === "ccswitch") return stale.promise
+    nativeLoads += 1
+    return Promise.resolve(
+      nativeLoads === 1
+        ? []
+        : [
+            {
+              id: "native-existing",
+              app_type: "claude",
+              name: "Existing",
+              settings_config: "{}",
+              is_current: false,
+            },
+          ]
+    )
+  })
+  const ccswitchBundle = JSON.parse(PROVIDER_BUNDLE)
+  ccswitchBundle.settings = { ...DEFAULT_SETTINGS, providerBackend: "ccswitch" }
+  const nativeBundle = JSON.parse(PROVIDER_BUNDLE)
+  nativeBundle.settings = { ...DEFAULT_SETTINGS, providerBackend: "native" }
+
+  const area = await openWith(PROVIDER_BUNDLE)
+  fireEvent.change(area, { target: { value: JSON.stringify(ccswitchBundle) } })
+  await waitFor(() => expect(providerLoad).toHaveBeenCalledWith("ccswitch"))
+  fireEvent.change(area, { target: { value: JSON.stringify(nativeBundle) } })
+  stale.resolve([])
+  await waitFor(() => expect(providerLoad).toHaveBeenLastCalledWith("native"))
+  expect(await screen.findByText(b.diffProviders(1, 1))).toBeInTheDocument()
 })
 
 it("loads a bundle from a chosen file and from the clipboard", async () => {
@@ -324,6 +369,9 @@ it("warns when the bundle carries live credentials", async () => {
 })
 
 it("disables provider import while cc-switch holds the database", async () => {
+  useAppStore.setState((state) => ({
+    settings: { ...state.settings, providerBackend: "ccswitch" },
+  }))
   ;(isProcessRunning as jest.Mock).mockResolvedValue(true)
   await openWith(bundleText({ providers: [] }))
   expect(await screen.findByText(b.ccSwitchRunning)).toBeInTheDocument()

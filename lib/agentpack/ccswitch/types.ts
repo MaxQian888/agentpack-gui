@@ -1,11 +1,12 @@
 /**
  * cc-switch domain types. cc-switch stores provider configs in a SQLite DB
  * (~/.cc-switch/cc-switch.db) and device UI prefs in settings.json. We only
- * touch the two agent CLIs we support.
+ * touch the three agent CLIs we support.
  */
 
 /** Provider app types agentpack can manage. cc-switch also has gemini/hermes/… */
-export type ProviderApp = "claude" | "codex" | "opencode"
+export const PROVIDER_APPS = ["claude", "codex", "opencode"] as const
+export type ProviderApp = (typeof PROVIDER_APPS)[number]
 
 /** Where provider records are persisted. Live CLI config sync is identical. */
 export type ProviderBackend = "native" | "ccswitch"

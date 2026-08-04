@@ -5,11 +5,9 @@ import { Card } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import { isTauri } from "@/lib/tauri"
 import { useT } from "@/lib/i18n/provider"
+import { PROVIDER_APPS } from "@/lib/agentpack/ccswitch/types"
 import type { LoginReport } from "@/lib/tauri/commands"
 import { LoadingLine } from "./loading-line"
-
-/** The two CLIs that have an official login of their own. */
-const LOGIN_APPS = ["claude", "codex"] as const
 
 /**
  * Each CLI's own signed-in state — strictly read-only.
@@ -30,8 +28,8 @@ export function LoginsCard({ login, loading }: { login: LoginReport | null; load
       </div>
       <p className="text-xs text-muted-foreground">{c.loginHint}</p>
       {login ? (
-        <div className="grid gap-2 sm:grid-cols-2">
-          {LOGIN_APPS.map((app) => {
+        <div className="grid gap-2 sm:grid-cols-3">
+          {PROVIDER_APPS.map((app) => {
             const st = login[app]
             return (
               <div key={app} className="flex items-center gap-2 rounded-md border px-3 py-2">

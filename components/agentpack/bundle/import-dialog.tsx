@@ -48,12 +48,7 @@ import type { StepDescriptor } from "@/lib/agentpack/types"
 import { useT } from "@/lib/i18n/provider"
 import { isTauri } from "@/lib/tauri"
 import { readTextFromClipboard } from "@/lib/tauri/clipboard"
-import {
-  ccLoadProviders,
-  isProcessRunning,
-  readTextFile,
-  writeTextFile,
-} from "@/lib/tauri/commands"
+import { isProcessRunning, providerLoad, readTextFile, writeTextFile } from "@/lib/tauri/commands"
 import { pickFile } from "@/lib/tauri/dialog"
 import { saveSettings } from "@/lib/tauri/settings"
 import { useAppStore } from "@/store/app-store"
@@ -154,18 +149,40 @@ export function ImportBundleDialog({ onImported }: { onImported?: () => void }) 
 
   const parsed = useMemo(() => (text.trim() ? parseBundle(text, t) : null), [text, t])
   const bundle = parsed?.ok ? parsed.bundle : null
+  // Provider rows and the persisted backend choice form one portable unit. If
+  // settings are not being imported, keep the machine's current store instead.
+  const targetBackend =
+    want.settings && bundle?.settings?.providerBackend
+      ? bundle.settings.providerBackend
+      : settings.providerBackend
 
   // Local state the preview diffs against, loaded once the dialog opens.
   useEffect(() => {
     if (!open || !isTauri() || !paths) return
-    void readBundleFiles(paths).then(setLocalFiles)
-    void ccLoadProviders()
-      .then(setProviders)
-      .catch(() => setProviders([]))
-    void isProcessRunning("cc-switch")
-      .then(setCcRunning)
-      .catch(() => setCcRunning(false))
-  }, [open, paths])
+    let cancelled = false
+    void readBundleFiles(paths).then((files) => {
+      if (!cancelled) setLocalFiles(files)
+    })
+    void providerLoad(targetBackend)
+      .then((nextProviders) => {
+        if (!cancelled) setProviders(nextProviders)
+      })
+      .catch(() => {
+        if (!cancelled) setProviders([])
+      })
+    const running =
+      targetBackend === "ccswitch" ? isProcessRunning("cc-switch") : Promise.resolve(false)
+    void running
+      .then((isRunning) => {
+        if (!cancelled) setCcRunning(isRunning)
+      })
+      .catch(() => {
+        if (!cancelled) setCcRunning(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, paths, targetBackend])
 
   const planDiff = bundle?.plan ? diffPlan(plan, bundle.plan, planMode) : null
   const profilesDiff = bundle?.profiles ? diffProfiles(profiles, bundle.profiles) : null
@@ -202,12 +219,13 @@ export function ImportBundleDialog({ onImported }: { onImported?: () => void }) 
     try {
       // A snapshot always goes first: everything after this point overwrites a
       // file or a DB row the user didn't author.
-      const steps: StepDescriptor[] = [snapshotStep("import", t)]
+      const steps: StepDescriptor[] = [snapshotStep("import", t, targetBackend)]
       if (bundle.providers && want.providers && providerPlan) {
-        for (const entry of providerPlan.fresh) steps.push(providerImportStep(entry, undefined, t))
+        for (const entry of providerPlan.fresh)
+          steps.push(providerImportStep(entry, undefined, t, targetBackend))
         if (overwriteProviders) {
           for (const c of providerPlan.conflicts)
-            steps.push(providerImportStep(c.entry, c.existing.id, t))
+            steps.push(providerImportStep(c.entry, c.existing.id, t, targetBackend))
         }
       }
       for (const d of selectedFiles) {

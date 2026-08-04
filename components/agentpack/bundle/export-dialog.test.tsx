@@ -5,7 +5,7 @@ jest.mock("@/lib/tauri", () => ({ isTauri: jest.fn(() => true) }))
 jest.mock("@/lib/tauri/commands", () => ({
   writeTextFile: jest.fn(async () => undefined),
   readTextFile: jest.fn(async () => ""),
-  ccLoadProviders: jest.fn(async () => []),
+  providerLoad: jest.fn(async () => []),
 }))
 jest.mock("@/lib/tauri/dialog", () => ({ pickSavePath: jest.fn(async () => "/tmp/b.json") }))
 jest.mock("@/lib/tauri/clipboard", () => ({ copyText: jest.fn(async () => true) }))
@@ -17,7 +17,7 @@ import type { Plan, Paths } from "@/lib/agentpack/types"
 import { en } from "@/lib/i18n/en"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { copyText } from "@/lib/tauri/clipboard"
-import { ccLoadProviders, readTextFile, writeTextFile } from "@/lib/tauri/commands"
+import { providerLoad, readTextFile, writeTextFile } from "@/lib/tauri/commands"
 import { pickSavePath } from "@/lib/tauri/dialog"
 import { useAppStore } from "@/store/app-store"
 import { ExportBundleDialog } from "./export-dialog"
@@ -60,7 +60,7 @@ const PROVIDERS: Provider[] = [
 beforeEach(() => {
   jest.clearAllMocks()
   ;(pickSavePath as jest.Mock).mockResolvedValue("/tmp/b.json")
-  ;(ccLoadProviders as jest.Mock).mockResolvedValue(PROVIDERS)
+  ;(providerLoad as jest.Mock).mockResolvedValue(PROVIDERS)
   ;(readTextFile as jest.Mock).mockImplementation(async (p: string) =>
     p.endsWith("settings.json") ? JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: FILE_TOKEN } }) : ""
   )
@@ -85,6 +85,7 @@ it("writes a bundle carrying every selected part to the chosen path", async () =
   await openDialog()
   await userEvent.click(await screen.findByRole("button", { name: b.saveFile }))
   await waitFor(() => expect(writeTextFile).toHaveBeenCalled())
+  expect(providerLoad).toHaveBeenCalledWith("native")
   expect((writeTextFile as jest.Mock).mock.calls.at(-1)![0]).toBe("/tmp/b.json")
   const bundle = written()
   expect(bundle.version).toBe(2)
@@ -121,7 +122,7 @@ it("omits a part that was unchecked", async () => {
   await userEvent.click(screen.getByRole("button", { name: b.saveFile }))
   await waitFor(() => expect(writeTextFile).toHaveBeenCalled())
   expect(written()).not.toHaveProperty("providers")
-  expect(ccLoadProviders).not.toHaveBeenCalled()
+  expect(providerLoad).not.toHaveBeenCalled()
 })
 
 it("never puts credentials on the clipboard, even with the switch on", async () => {

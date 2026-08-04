@@ -28,6 +28,7 @@ jest.mock("@/lib/tauri/commands", () => ({
   loginStatus: jest.fn(async () => ({
     claude: { signedIn: false, mode: null, plan: null, expiresAt: null, source: "not signed in" },
     codex: { signedIn: false, mode: null, plan: null, expiresAt: null, source: "not signed in" },
+    opencode: { signedIn: false, mode: null, plan: null, expiresAt: null, source: "not signed in" },
   })),
   isProcessRunning: jest.fn(async () => false),
   pathExists: jest.fn(async () => true),
@@ -39,7 +40,7 @@ jest.mock("@/lib/tauri/commands", () => ({
   })),
 }))
 
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { act, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { RunnerHarness } from "../../run/__testing__/harness"
@@ -56,6 +57,7 @@ import {
   launchCcSwitch,
   detectCli,
   pathExists,
+  providerLoad,
   ccSchemaStatus,
   ccInitDb,
   loginStatus,
@@ -132,6 +134,41 @@ it("switches to the independent native provider store and persists the choice", 
   await waitFor(() => expect(saveSettings).toHaveBeenCalledWith({ providerBackend: "native" }))
   expect(await screen.findByText(en.ccswitch.nativeReady)).toBeInTheDocument()
   expect(screen.queryByText(en.ccswitch.install)).not.toBeInTheDocument()
+})
+
+it("ignores a stale CC Switch scan that finishes after switching to native", async () => {
+  let resolveCc!: (providers: unknown[]) => void
+  ;(ccLoadProviders as jest.Mock).mockReturnValueOnce(
+    new Promise((resolve) => {
+      resolveCc = resolve
+    })
+  )
+  ;(providerLoad as jest.Mock).mockResolvedValueOnce([
+    {
+      id: "native-1",
+      app_type: "opencode",
+      name: "Native relay",
+      settings_config: "{}",
+      is_current: true,
+    },
+  ])
+  renderCc()
+  await userEvent.click(screen.getByRole("radio", { name: en.ccswitch.backendNative }))
+  expect(await screen.findByText("Native relay")).toBeInTheDocument()
+
+  await act(async () => {
+    resolveCc([
+      {
+        id: "cc-1",
+        app_type: "claude",
+        name: "Stale relay",
+        settings_config: "{}",
+        is_current: true,
+      },
+    ])
+  })
+  expect(screen.queryByText("Stale relay")).not.toBeInTheDocument()
+  expect(screen.getByText("Native relay")).toBeInTheDocument()
 })
 
 it("installs cc-switch via the runner when not detected", async () => {
@@ -333,11 +370,19 @@ it("shows each CLI's own login without ever reading a credential", async () => {
       source: "macOS Keychain",
     },
     codex: { signedIn: true, mode: "chatgpt", plan: null, expiresAt: null, source: "auth.json" },
+    opencode: {
+      signedIn: true,
+      mode: "2 providers",
+      plan: null,
+      expiresAt: null,
+      source: "OpenCode auth.json",
+    },
   })
   renderCc()
   expect(await screen.findByText(/max/)).toBeInTheDocument()
   // `auth_mode` is the field that decides whether a codex relay applies at all.
   expect(screen.getByText(/chatgpt/)).toBeInTheDocument()
+  expect(screen.getByText(/2 providers/)).toBeInTheDocument()
 })
 
 it("offers an official-login row for an app that has none, and it overrides nothing", async () => {
@@ -428,6 +473,22 @@ it("saves the current selection as an account profile", async () => {
   // A profile records which row each app points at — no config copy, no secret.
   expect(saved.picks).toEqual({ claude: "a", codex: "b" })
   expect(body).not.toContain("settings_config")
+})
+
+it("rolls back an account profile and keeps its name when saving fails", async () => {
+  ;(ccLoadProviders as jest.Mock).mockResolvedValue([
+    { id: "a", app_type: "claude", name: "Gateway", settings_config: "{}", is_current: true },
+  ])
+  ;(writeTextFile as jest.Mock).mockRejectedValueOnce(new Error("read-only filesystem"))
+  renderCc()
+  await screen.findByText("Gateway")
+  const name = screen.getByLabelText(en.ccswitch.accountNewLabel)
+  await userEvent.type(name, "Work")
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.accountSave }))
+
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith(en.ccswitch.accountWriteFailed))
+  expect(name).toHaveValue("Work")
+  expect(screen.queryByText("Work")).not.toBeInTheDocument()
 })
 
 it("applying a profile switches every app through the same setCurrent path", async () => {

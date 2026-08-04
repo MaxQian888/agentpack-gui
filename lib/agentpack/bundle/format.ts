@@ -61,6 +61,7 @@ export const EXPORTED_SETTINGS_KEYS = [
   "proxy",
   "summonShortcut",
   "monthlySubscriptionUsd",
+  "providerBackend",
 ] as const satisfies readonly (keyof AppSettings)[]
 
 function buildSettings(settings: AppSettings, includeSecrets: boolean): Partial<AppSettings> {
@@ -165,6 +166,10 @@ function parseSettings(raw: unknown): Partial<AppSettings> {
         (s): s is AppSettings["skillRepoSources"][number] =>
           !!s && typeof s === "object" && typeof (s as { url?: unknown }).url === "string"
       )
+      continue
+    }
+    if (key === "providerBackend") {
+      if (v === "native" || v === "ccswitch") out.providerBackend = v
       continue
     }
     ;(out as Record<string, unknown>)[key] = v

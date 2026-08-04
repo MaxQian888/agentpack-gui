@@ -30,9 +30,9 @@ import {
   type ClassifiedIds,
   type ClaudeRelayState,
 } from "@/lib/agentpack/scan"
-import { ccLoadProviders, listSkills, pathExists, readTextFile } from "@/lib/tauri/commands"
+import { listSkills, pathExists, providerLoad, readTextFile } from "@/lib/tauri/commands"
 import type { Paths } from "@/lib/agentpack/types"
-import type { Provider } from "@/lib/agentpack/ccswitch/types"
+import type { Provider, ProviderBackend } from "@/lib/agentpack/ccswitch/types"
 import { isTauri } from "@/lib/tauri"
 import { saveSettings } from "@/lib/tauri/settings"
 import { useMounted } from "@/hooks/use-mounted"
@@ -110,7 +110,10 @@ function jsonHealth(text: string): FileStatus {
   }
 }
 
-export async function scanEnvironment(paths: Paths): Promise<DashboardScan> {
+export async function scanEnvironment(
+  paths: Paths,
+  providerBackend: ProviderBackend = "ccswitch"
+): Promise<DashboardScan> {
   // Each read still falls back to a benign default so one bad file can't blank
   // the dashboard — but the failure is recorded rather than forgotten. Only the
   // sources the dedup relies on count: a missing cc-switch DB or backup file
@@ -140,7 +143,7 @@ export async function scanEnvironment(paths: Paths): Promise<DashboardScan> {
     soft(readTextFile(paths.opencodeConfig), ""),
     soft(listSkills(paths.claudeSkillsDir), [] as string[]),
     soft(listSkills(paths.codexSkillsDir), [] as string[]),
-    soft(ccLoadProviders(), [] as Provider[], false),
+    soft(providerLoad(providerBackend), [] as Provider[], false),
     soft(pathExists(`${paths.codexConfig}${BACKUP_SUFFIX}`), false, false),
   ])
 

@@ -120,7 +120,6 @@ fn required_settings(req: &ProviderWriteReq) -> Result<&String, String> {
 }
 
 fn run_native_op(store: &mut NativeStore, req: &ProviderWriteReq) -> Result<Vec<String>, String> {
-  validate_app(&req.app)?;
   match req.op.as_str() {
     "add" => {
       let form = required_form(req)?;

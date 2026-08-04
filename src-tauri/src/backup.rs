@@ -9,6 +9,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct BackupFile {
   original_path: String,
   stored_name: String,
+  #[serde(default = "backup_file_existed_by_default")]
+  existed: bool,
+}
+
+// Manifests created before absence tracking only contain copied files, so every
+// legacy entry necessarily represents a file that existed at snapshot time.
+fn backup_file_existed_by_default() -> bool {
+  true
 }
 
 /// A single timestamped snapshot of the cc-switch DB + live agent configs.
@@ -144,6 +152,11 @@ fn snapshot_files(reason: &str, files: &[PathBuf]) -> Result<BackupEntry, String
   let mut entry_files = Vec::new();
   for (i, src) in files.iter().enumerate() {
     if !src.exists() {
+      entry_files.push(BackupFile {
+        original_path: src.to_string_lossy().into_owned(),
+        stored_name: String::new(),
+        existed: false,
+      });
       continue;
     }
     let base = src
@@ -157,6 +170,7 @@ fn snapshot_files(reason: &str, files: &[PathBuf]) -> Result<BackupEntry, String
     entry_files.push(BackupFile {
       original_path: src.to_string_lossy().into_owned(),
       stored_name: stored,
+      existed: true,
     });
   }
 
@@ -269,6 +283,15 @@ pub fn backup_restore(id: String) -> Result<RestoreResult, String> {
       restored.push(format!("skipped (not managed): {}", f.original_path));
       continue;
     }
+    if !f.existed {
+      if dest.exists() {
+        fs::remove_file(&dest).map_err(|e| e.to_string())?;
+        restored.push(format!("removed: {}", f.original_path));
+      } else {
+        restored.push(format!("already absent: {}", f.original_path));
+      }
+      continue;
+    }
     if let Some(parent) = dest.parent() {
       fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -342,6 +365,45 @@ mod tests {
     // "restore point" promise depends on.
     backup_restore(result.safety_snapshot_id.clone()).unwrap();
     assert_eq!(fs::read(&db).unwrap(), b"CHANGED");
+
+    let _ = fs::remove_dir_all(&tmp);
+  }
+
+  #[test]
+  fn restore_removes_a_file_that_was_absent_at_snapshot_time() {
+    let _g = crate::TEST_ENV_LOCK
+      .lock()
+      .unwrap_or_else(|e| e.into_inner());
+    let _env = crate::TestEnvGuard;
+
+    let tmp = std::env::temp_dir().join(format!("apbk-absent-{}", now_nanos()));
+    let root = tmp.join("backups");
+    let db = tmp.join("cc-switch.db");
+    fs::create_dir_all(&tmp).unwrap();
+    std::env::set_var("AGENTPACK_BACKUP_ROOT", &root);
+    std::env::set_var("AGENTPACK_CCSWITCH_DB", &db);
+    std::env::set_var("AGENTPACK_SKIP_RUNNING_CHECK", "1");
+
+    let entry = snapshot_files("before first write", std::slice::from_ref(&db)).unwrap();
+    let recorded = entry
+      .files
+      .iter()
+      .find(|file| file.original_path == db.to_string_lossy())
+      .expect("absent destination is recorded");
+    assert!(!recorded.existed);
+
+    fs::write(&db, b"FIRST WRITE").unwrap();
+    let result = backup_restore(entry.id).unwrap();
+    assert!(!db.exists());
+    assert!(result
+      .restored_paths
+      .iter()
+      .any(|line| line.starts_with("removed:")));
+
+    // The safety snapshot keeps the restore reversible even when the target
+    // action was deleting a file that did not exist originally.
+    backup_restore(result.safety_snapshot_id).unwrap();
+    assert_eq!(fs::read(&db).unwrap(), b"FIRST WRITE");
 
     let _ = fs::remove_dir_all(&tmp);
   }

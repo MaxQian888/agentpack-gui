@@ -521,6 +521,7 @@ export interface LoginStatus {
 export interface LoginReport {
   claude: LoginStatus
   codex: LoginStatus
+  opencode: LoginStatus
 }
 
 /**

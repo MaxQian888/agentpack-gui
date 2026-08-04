@@ -70,11 +70,12 @@ import {
   type ImportPlan,
 } from "@/lib/agentpack/ccswitch/transfer"
 import { buildSettingsConfig, parseSettingsConfig } from "@/lib/agentpack/ccswitch/provider"
-import type {
-  Provider,
-  ProviderBackend,
-  ProviderForm as ProviderFormData,
-  VisibleApps,
+import {
+  PROVIDER_APPS,
+  type Provider,
+  type ProviderBackend,
+  type ProviderForm as ProviderFormData,
+  type VisibleApps,
 } from "@/lib/agentpack/ccswitch/types"
 import {
   backupList,
@@ -107,9 +108,6 @@ import { BackupsCard } from "./backups-card"
 import { LoadingLine } from "./loading-line"
 import { LoginsCard } from "./logins-card"
 import { VisibleAppsCard } from "./visible-apps-card"
-
-/** Apps agentpack manages providers for; cc-switch itself supports more. */
-const PROVIDER_APPS = ["claude", "codex", "opencode"] as const
 
 export function CcSwitchSection() {
   const t = useT()
@@ -155,6 +153,9 @@ export function CcSwitchSection() {
 
   // Guards the DB-init polling loop from setting state after unmount.
   const mounted = useRef(true)
+  // Invalidates an older backend scan as soon as the user switches stores. A
+  // slow SQLite read must never overwrite a newer native result (or vice versa).
+  const scanEpoch = useRef(0)
   useEffect(() => {
     mounted.current = true
     return () => {
@@ -166,12 +167,13 @@ export function CcSwitchSection() {
   // the dashboard agrees), providers, DB presence, visible apps, and backup list.
   const scan = useCallback(async () => {
     if (!isTauri()) return
+    const epoch = ++scanEpoch.current
     try {
       const [d, list] = await Promise.all([
         backend === "ccswitch" ? detectCli("cc-switch", true) : Promise.resolve(null),
         backend === "native" ? providerLoad("native") : ccLoadProviders(),
       ])
-      if (!mounted.current) return
+      if (!mounted.current || epoch !== scanEpoch.current) return
       if (d) {
         setDetected(d.installed)
         useAppStore.getState().setDetection("cc-switch", d)
@@ -203,7 +205,7 @@ export function CcSwitchSection() {
           readTextFile(paths.opencodeConfig),
           readTextFile(accountsPath(paths.home)),
         ])
-        if (!mounted.current) return
+        if (!mounted.current || epoch !== scanEpoch.current) return
         setLogin(who)
         setAccounts(parseAccounts(accountsJson).profiles)
         setDbReady(backend === "native" || (schema.exists && schema.missingColumns.length === 0))
@@ -223,7 +225,7 @@ export function CcSwitchSection() {
     } finally {
       // A failed scan must never wedge the UI in a permanent loading state; the
       // user can retry via Refresh.
-      if (mounted.current) setLoading(false)
+      if (mounted.current && epoch === scanEpoch.current) setLoading(false)
     }
   }, [backend, paths])
 
@@ -251,6 +253,7 @@ export function CcSwitchSection() {
   const selectBackend = (value: string) => {
     if (value !== "native" && value !== "ccswitch") return
     const next = value as ProviderBackend
+    scanEpoch.current += 1
     setSettings({ providerBackend: next })
     void saveSettings({ providerBackend: next })
     setProviders(null)
@@ -443,22 +446,30 @@ export function CcSwitchSection() {
     }
   }
 
-  const writeAccounts = async (profiles: AccountProfile[]) => {
-    if (!paths) return
+  const writeAccounts = async (profiles: AccountProfile[]): Promise<boolean> => {
+    if (!paths) return false
+    const previous = accounts
     setAccounts(profiles)
-    await writeTextFile(
-      accountsPath(paths.home),
-      serializeAccounts({ version: ACCOUNTS_VERSION, profiles })
-    )
+    try {
+      await writeTextFile(
+        accountsPath(paths.home),
+        serializeAccounts({ version: ACCOUNTS_VERSION, profiles })
+      )
+      return true
+    } catch {
+      setAccounts(previous)
+      toast.error(c.accountWriteFailed)
+      return false
+    }
   }
 
-  const saveAccount = () => {
+  const saveAccount = async () => {
     const name = newAccount.trim()
     if (!name || !providers) return
     // Stamped here rather than in the pure module so it stays free of clock reads.
     const id = `acct-${Date.now().toString(36)}`
-    setNewAccount("")
-    void writeAccounts([...accounts, captureAccount(id, name, backend, providers)])
+    const saved = await writeAccounts([...accounts, captureAccount(id, name, backend, providers)])
+    if (saved) setNewAccount("")
   }
 
   // Applying a profile is a batch of the same setCurrent the list does, so the

@@ -85,6 +85,7 @@ describe("buildBundle / parseBundle round-trip", () => {
     expect(parsed.bundle.providers?.map((p) => p.name)).toEqual(["Gateway"])
     expect(Object.keys(parsed.bundle.files ?? {})).toEqual(["claudeSettings", "codexConfig"])
     expect(parsed.bundle.settings?.ghMirrorPrefix).toBe("https://mirror/")
+    expect(parsed.bundle.settings?.providerBackend).toBe("native")
     expect(parsed.bundle.app).toEqual({ version: "1.2.3", os: "mac" })
     expect(parsed.bundle.createdAt).toBe(1700000000000)
   })
@@ -196,6 +197,17 @@ describe("settings allowlist", () => {
       mode: "off",
       targets: ["claude"],
     })
+  })
+
+  it("drops an invalid provider backend arriving in a bundle", () => {
+    const raw = JSON.stringify({
+      version: 2,
+      createdAt: 0,
+      app: { version: "1", os: "mac" },
+      settings: { providerBackend: "unknown" },
+    })
+    const parsed = parseBundle(raw)
+    expect(parsed.ok && parsed.bundle.settings).toEqual({})
   })
 })
 

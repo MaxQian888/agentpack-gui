@@ -19,6 +19,8 @@ use std::path::Path;
 /// - **Codex** records an explicit `auth_mode` in `~/.codex/auth.json`, which is
 ///   the field that actually decides whether a relay takes effect at all. Only
 ///   that field and the presence of the token bundle are read.
+/// - **OpenCode** stores a provider-keyed credential map in its XDG data
+///   directory. We report only whether that map has entries and their count.
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginStatus {
@@ -39,6 +41,7 @@ pub struct LoginStatus {
 pub struct LoginReport {
   claude: LoginStatus,
   codex: LoginStatus,
+  opencode: LoginStatus,
 }
 
 /// Keychain service name Claude Code writes its OAuth bundle under.
@@ -123,12 +126,44 @@ fn codex_login(home: &Path) -> LoginStatus {
   }
 }
 
+fn opencode_login_from(path: &Path) -> LoginStatus {
+  let Ok(text) = std::fs::read_to_string(path) else {
+    return LoginStatus {
+      source: "not signed in".into(),
+      ..Default::default()
+    };
+  };
+  let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+    return LoginStatus {
+      source: "auth.json unreadable".into(),
+      ..Default::default()
+    };
+  };
+  let count = value.as_object().map_or(0, serde_json::Map::len);
+  LoginStatus {
+    signed_in: count > 0,
+    mode: (count > 0).then(|| format!("{count} provider{}", if count == 1 { "" } else { "s" })),
+    plan: None,
+    expires_at: None,
+    source: "OpenCode auth.json".into(),
+  }
+}
+
+fn opencode_login(home: &Path) -> LoginStatus {
+  let data_home = std::env::var_os("XDG_DATA_HOME")
+    .filter(|value| !value.is_empty())
+    .map(std::path::PathBuf::from)
+    .unwrap_or_else(|| home.join(".local/share"));
+  opencode_login_from(&data_home.join("opencode/auth.json"))
+}
+
 #[tauri::command(async)]
 pub fn login_status() -> Result<LoginReport, String> {
   let home = dirs::home_dir().unwrap_or_default();
   Ok(LoginReport {
     claude: claude_login(&home),
     codex: codex_login(&home),
+    opencode: opencode_login(&home),
   })
 }
 
@@ -227,6 +262,21 @@ mod tests {
   }
 
   #[test]
+  fn opencode_reports_credential_count_without_returning_values() {
+    let home = tmp_home("opencode");
+    let auth = home.join("opencode-auth.json");
+    std::fs::write(
+      &auth,
+      r#"{"anthropic":{"type":"oauth","access":"SECRET"},"openai":{"type":"api","key":"SECRET-KEY"}}"#,
+    )
+    .unwrap();
+    let status = opencode_login_from(&auth);
+    assert!(status.signed_in);
+    assert_eq!(status.mode.as_deref(), Some("2 providers"));
+    assert!(!serde_json::to_string(&status).unwrap().contains("SECRET"));
+  }
+
+  #[test]
   fn no_credential_value_is_ever_returned() {
     let home = tmp_home("secrets");
     std::fs::write(
@@ -243,6 +293,7 @@ mod tests {
     let report = LoginReport {
       claude: claude_login(&home),
       codex: codex_login(&home),
+      opencode: opencode_login_from(&home.join("missing-opencode-auth.json")),
     };
     let json = serde_json::to_string(&report).unwrap();
     for secret in ["SECRET-ACCESS", "SECRET-REFRESH", "SECRET-KEY"] {

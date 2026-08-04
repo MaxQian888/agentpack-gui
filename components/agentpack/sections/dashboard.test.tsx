@@ -64,7 +64,7 @@ beforeEach(() => {
     p === paths.claudeConfig ? JSON.stringify({ mcpServers: { "my-custom": {} } }) : ""
   )
   ;(api.listSkills as jest.Mock).mockResolvedValue([])
-  ;(api.ccLoadProviders as jest.Mock).mockResolvedValue([])
+  ;(api.providerLoad as jest.Mock).mockResolvedValue([])
   ;(api.pathExists as jest.Mock).mockResolvedValue(false)
 })
 
@@ -154,7 +154,7 @@ it("renders rich scan state without any management actions", async () => {
   ;(api.listSkills as jest.Mock).mockImplementation(async (p: string) =>
     p === paths.claudeSkillsDir ? ["rust"] : []
   )
-  ;(api.ccLoadProviders as jest.Mock).mockResolvedValue([
+  ;(api.providerLoad as jest.Mock).mockResolvedValue([
     { id: "x", app_type: "claude", name: "Prov", settings_config: "{}", is_current: false },
   ] as Provider[])
 

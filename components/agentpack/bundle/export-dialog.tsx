@@ -24,7 +24,7 @@ import { BUNDLE_FILE_KEYS, type BundleFileKey } from "@/lib/agentpack/bundle/sec
 import { useT } from "@/lib/i18n/provider"
 import { isTauri } from "@/lib/tauri"
 import { copyText } from "@/lib/tauri/clipboard"
-import { ccLoadProviders, writeTextFile } from "@/lib/tauri/commands"
+import { providerLoad, writeTextFile } from "@/lib/tauri/commands"
 import { pickSavePath } from "@/lib/tauri/dialog"
 import { useAppStore } from "@/store/app-store"
 import { readBundleFiles } from "./files"
@@ -62,7 +62,9 @@ export function ExportBundleDialog() {
   /** Assemble the bundle text. `secrets` is forced off for the clipboard path. */
   const compose = async (secrets: boolean) => {
     const providers =
-      parts.providers && isTauri() ? await ccLoadProviders().catch(() => []) : undefined
+      parts.providers && isTauri()
+        ? await providerLoad(settings.providerBackend).catch(() => [])
+        : undefined
     const files = parts.files && paths ? await readBundleFiles(paths, selectedFileKeys) : undefined
     return serializeBundle(
       buildBundle(

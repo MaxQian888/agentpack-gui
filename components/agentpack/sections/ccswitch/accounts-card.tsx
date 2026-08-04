@@ -42,9 +42,8 @@ import {
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
 import { useT } from "@/lib/i18n/provider"
 import { missingPicks, type AccountProfile } from "@/lib/agentpack/ccswitch/accounts"
-import type { Provider, ProviderApp } from "@/lib/agentpack/ccswitch/types"
+import { PROVIDER_APPS, type Provider, type ProviderApp } from "@/lib/agentpack/ccswitch/types"
 
-const APPS = ["claude", "codex", "opencode"] as const
 const UNCHANGED = "__unchanged__"
 
 export function AccountsCard({
@@ -205,7 +204,7 @@ export function AccountsCard({
                 onChange={(event) => setEditName(event.target.value)}
               />
             </Field>
-            {APPS.map((app) => (
+            {PROVIDER_APPS.map((app) => (
               <Field key={app}>
                 <FieldLabel htmlFor={`account-${app}`}>{c.accountPick(app)}</FieldLabel>
                 <Select
