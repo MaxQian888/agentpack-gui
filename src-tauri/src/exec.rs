@@ -1139,7 +1139,6 @@ pub fn launch_app(app_bundles: Vec<AppBundle>) -> Result<(), String> {
   {
     // `Get-AppxPackage` names and Start-menu entries don't always agree, so this
     // asks the launcher itself about each candidate rather than pre-filtering.
-    let mut last = Err(format!("could not open {label} — is it installed?"));
     for bundle in &bundles {
       // Single quotes are the escape inside a PowerShell single-quoted string.
       let safe = bundle.name.replace('\'', "''");
@@ -1154,12 +1153,11 @@ pub fn launch_app(app_bundles: Vec<AppBundle>) -> Result<(), String> {
           ),
         ],
       );
-      last = run_launcher(cmd, &label);
-      if last.is_ok() {
+      if run_launcher(cmd, &label).is_ok() {
         return Ok(());
       }
     }
-    last
+    Err(format!("could not open {label} — is it installed?"))
   }
   #[cfg(all(not(windows), not(target_os = "macos")))]
   {
