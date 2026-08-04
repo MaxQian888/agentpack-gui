@@ -109,6 +109,8 @@ export type ManagementOperation =
       page: number
       pageSize: number
       model?: string | null
+      group?: string | null
+      tokenName?: string | null
       status?: "billable" | "success" | "refund" | "error" | "all" | null
     }
   | { kind: "personalModels" }
@@ -249,12 +251,17 @@ export interface PersonalUsage {
     created_at: number
     model_name: string
     token_name: string
+    group: string
     prompt_tokens: number
     completion_tokens: number
     quota: number
     use_time: number
     is_stream: boolean
   }>
+  filter_options?: {
+    groups: string[]
+    token_names: string[]
+  }
   page?: number
   page_size?: number
   total?: number
@@ -270,6 +277,7 @@ export interface PersonalModel {
   quota_type: number
   model_ratio: number
   model_price: number
+  owner_by?: string
   completion_ratio: number
   cache_ratio?: number
   create_cache_ratio?: number

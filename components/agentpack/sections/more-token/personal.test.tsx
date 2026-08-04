@@ -138,7 +138,14 @@ function mockOperation(operation: ManagementOperation) {
             quota_type: 0,
             model_ratio: 1,
             model_price: 0,
+            owner_by: "OpenAI",
             completion_ratio: 4,
+            cache_ratio: 0.5,
+            create_cache_ratio: 1.25,
+            image_ratio: 2,
+            audio_ratio: 1.5,
+            audio_completion_ratio: 2.5,
+            billing_mode: "tiered-ratio",
             enable_groups: ["default"],
             supported_endpoint_types: ["openai"],
           },
@@ -202,6 +209,7 @@ function mockOperation(operation: ManagementOperation) {
             created_at: 1_699_999_900,
             model_name: "gpt-5.2",
             token_name: "Desktop Key",
+            group: "default",
             prompt_tokens: 100,
             completion_tokens: 40,
             quota: 1200,
@@ -209,6 +217,7 @@ function mockOperation(operation: ManagementOperation) {
             is_stream: true,
           },
         ],
+        filter_options: { groups: ["default"], token_names: ["Desktop Key"] },
         page: 1,
         page_size: 25,
         total: 1,
@@ -352,6 +361,8 @@ it("filters personal usage and exports the visible billing records", async () =>
   expect(screen.getAllByText("gpt-5.2").length).toBeGreaterThan(0)
 
   await userEvent.selectOptions(screen.getByLabelText("Usage model"), "gpt-5.2")
+  await userEvent.selectOptions(screen.getByLabelText("Usage group"), "default")
+  await userEvent.selectOptions(screen.getByLabelText("Usage API key"), "Desktop Key")
   await userEvent.selectOptions(screen.getByLabelText("Usage status"), "success")
   await waitFor(() =>
     expect(managementRequest).toHaveBeenCalledWith(
@@ -359,6 +370,8 @@ it("filters personal usage and exports the visible billing records", async () =>
       expect.objectContaining({
         kind: "personalUsage",
         model: "gpt-5.2",
+        group: "default",
+        tokenName: "Desktop Key",
         status: "success",
         page: 1,
         pageSize: 25,
@@ -382,4 +395,14 @@ it("filters the model marketplace and opens complete model details", async () =>
   await userEvent.click(screen.getByRole("button", { name: "dall-e-3" }))
   expect(await screen.findByRole("dialog")).toHaveTextContent("Image generation model")
   expect(screen.getByRole("dialog")).toHaveTextContent("image-generation")
+})
+
+it("shows extended ratio and ownership metadata in model details", async () => {
+  renderSection("my-models")
+  await userEvent.click(await screen.findByRole("button", { name: "gpt-5.2" }))
+  const dialog = await screen.findByRole("dialog")
+  expect(dialog).toHaveTextContent("Model owner: OpenAI")
+  expect(dialog).toHaveTextContent("Billing mode: tiered-ratio")
+  expect(dialog).toHaveTextContent("Cache write ratio: 1.25×")
+  expect(dialog).toHaveTextContent("Audio output ratio: 2.5×")
 })

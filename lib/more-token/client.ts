@@ -156,15 +156,16 @@ export function quotaDisplayAmount(value: number, display: QuotaDisplaySetting):
 export function quotaCurrencyLabel(value: number, display: QuotaDisplaySetting): string {
   const amount = quotaDisplayAmount(value, display)
   if (amount === null) return quotaLabel(value, display.quota_per_unit)
+  const isSmallNonZeroAmount = Math.abs(amount) > 0 && Math.abs(amount) < 0.01
   try {
     return new Intl.NumberFormat(undefined, {
       style: "currency",
       currency: display.display_currency || "USD",
       minimumFractionDigits: 2,
-      maximumFractionDigits: amount > 0 && amount < 0.01 ? 4 : 2,
+      maximumFractionDigits: isSmallNonZeroAmount ? 4 : 2,
     }).format(amount)
   } catch {
-    return `${amount.toFixed(amount > 0 && amount < 0.01 ? 4 : 2)} ${display.display_currency}`
+    return `${amount.toFixed(isSmallNonZeroAmount ? 4 : 2)} ${display.display_currency}`
   }
 }
 

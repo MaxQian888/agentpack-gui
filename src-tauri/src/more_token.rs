@@ -273,6 +273,8 @@ pub enum ManagementOperation {
     page: Option<u32>,
     page_size: Option<u32>,
     model: Option<String>,
+    group: Option<String>,
+    token_name: Option<String>,
     status: Option<String>,
   },
   PersonalModels,
@@ -924,6 +926,8 @@ fn operation_spec(
       page,
       page_size,
       model,
+      group,
+      token_name,
       status,
     } => {
       let mut query = bounded_page(page.unwrap_or(1), page_size.unwrap_or(25));
@@ -935,6 +939,22 @@ fn operation_spec(
         }
         if !model.is_empty() {
           query.push(("model".into(), model));
+        }
+      }
+      if let Some(group) = group.map(|value| value.trim().to_string()) {
+        if group.len() > 64 {
+          return Err("INVALID_GROUP".into());
+        }
+        if !group.is_empty() {
+          query.push(("group".into(), group));
+        }
+      }
+      if let Some(token_name) = token_name.map(|value| value.trim().to_string()) {
+        if token_name.len() > 255 {
+          return Err("INVALID_TOKEN_NAME".into());
+        }
+        if !token_name.is_empty() {
+          query.push(("token_name".into(), token_name));
         }
       }
       if let Some(status) = status.map(|value| value.trim().to_string()) {
@@ -1618,6 +1638,8 @@ mod tests {
       "start": 1_700_000_000,
       "end": 1_700_086_400,
       "model": "gpt-5",
+      "group": "premium",
+      "tokenName": "Desktop Key",
       "status": "success",
       "page": 2,
       "pageSize": 25
@@ -1637,6 +1659,8 @@ mod tests {
         ("start".into(), "1700000000".into()),
         ("end".into(), "1700086400".into()),
         ("model".into(), "gpt-5".into()),
+        ("group".into(), "premium".into()),
+        ("token_name".into(), "Desktop Key".into()),
         ("status".into(), "success".into()),
       ]
     );

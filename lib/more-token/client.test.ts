@@ -39,6 +39,19 @@ it("converts raw quota into the configured display currency", () => {
   expect(quotaCurrencyLabel(500_000, display)).toContain("7.00")
 })
 
+it("keeps small refunds visible instead of rounding them to negative zero", () => {
+  const display = {
+    quota_per_unit: 1_000,
+    display_currency: "USD",
+    conversion_numerator: 1,
+    conversion_denominator: 1,
+    rate_valid_until: Math.floor(Date.now() / 1000) + 60,
+  }
+  const label = quotaCurrencyLabel(-4, display)
+  expect(label).toMatch(/0[.,]004/)
+  expect(label).not.toMatch(/-\D*0[.,]00(?!4)/)
+})
+
 it("refuses an expired monetary conversion and falls back to quota units", () => {
   const display = {
     quota_per_unit: 500_000,

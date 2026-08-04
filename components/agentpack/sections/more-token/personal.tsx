@@ -782,51 +782,49 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
   const [now] = useState(() => Math.floor(Date.now() / 1000))
   const [days, setDays] = useState(30)
   const [model, setModel] = useState("")
+  const [group, setGroup] = useState("")
+  const [tokenName, setTokenName] = useState("")
   const [status, setStatus] = useState<"billable" | "success" | "refund" | "error" | "all">(
     "billable"
   )
   const [page, setPage] = useState(1)
   const pageSize = 25
+  const buildUsageOperation = (targetPage: number, targetPageSize: number) => ({
+    kind: "personalUsage" as const,
+    start: now - days * 86400,
+    end: now,
+    model: model || null,
+    group: group || null,
+    tokenName: tokenName || null,
+    status,
+    page: targetPage,
+    pageSize: targetPageSize,
+  })
   const catalog = useQuery({
     queryKey: ["more-token", instance.id, "personal-models"],
     queryFn: () => request<PersonalModelCatalog>(instance.id, { kind: "personalModels" }),
   })
   const usage = useQuery({
-    queryKey: ["more-token", instance.id, "personal-usage", days, model, status, page],
-    queryFn: () =>
-      request<PersonalUsage>(instance.id, {
-        kind: "personalUsage",
-        start: now - days * 86400,
-        end: now,
-        model: model || null,
-        status,
-        page,
-        pageSize,
-      }),
+    queryKey: [
+      "more-token",
+      instance.id,
+      "personal-usage",
+      days,
+      model,
+      group,
+      tokenName,
+      status,
+      page,
+    ],
+    queryFn: () => request<PersonalUsage>(instance.id, buildUsageOperation(page, pageSize)),
   })
   const exportUsage = useMutation({
     mutationFn: async () => {
-      const first = await request<PersonalUsage>(instance.id, {
-        kind: "personalUsage",
-        start: now - days * 86400,
-        end: now,
-        model: model || null,
-        status,
-        page: 1,
-        pageSize: 200,
-      })
+      const first = await request<PersonalUsage>(instance.id, buildUsageOperation(1, 200))
       const records = [...(first.records ?? [])]
       const pages = Math.ceil((first.total ?? 0) / 200)
       for (let exportPage = 2; exportPage <= pages; exportPage += 1) {
-        const next = await request<PersonalUsage>(instance.id, {
-          kind: "personalUsage",
-          start: now - days * 86400,
-          end: now,
-          model: model || null,
-          status,
-          page: exportPage,
-          pageSize: 200,
-        })
+        const next = await request<PersonalUsage>(instance.id, buildUsageOperation(exportPage, 200))
         records.push(...(next.records ?? []))
       }
       return records
@@ -847,6 +845,7 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
           m.model,
           m.usageStatus,
           m.apiKey,
+          m.accountGroup,
           m.promptTokens,
           m.completionTokens,
           m.rawQuota,
@@ -858,6 +857,7 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
           record.model_name,
           record.status,
           record.token_name,
+          record.group,
           record.prompt_tokens,
           record.completion_tokens,
           record.quota,
@@ -881,7 +881,7 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
     <div className="space-y-5">
       <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
         <p className="text-sm text-muted-foreground">{m.usageDefinition}</p>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-[auto_auto_auto_auto]">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
           <select
             aria-label={m.usageRange}
             value={days}
@@ -891,9 +891,41 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
             }}
             className="h-11 rounded-md border bg-background px-3 text-sm"
           >
-            <option value={7}>7 days</option>
-            <option value={30}>30 days</option>
-            <option value={90}>90 days</option>
+            <option value={7}>{m.usageDays(7)}</option>
+            <option value={30}>{m.usageDays(30)}</option>
+            <option value={90}>{m.usageDays(90)}</option>
+          </select>
+          <select
+            aria-label={m.usageGroupFilter}
+            value={group}
+            onChange={(event) => {
+              setGroup(event.target.value)
+              setPage(1)
+            }}
+            className="h-11 rounded-md border bg-background px-3 text-sm"
+          >
+            <option value="">{m.allGroups}</option>
+            {(usage.data?.filter_options?.groups ?? []).map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label={m.usageApiKeyFilter}
+            value={tokenName}
+            onChange={(event) => {
+              setTokenName(event.target.value)
+              setPage(1)
+            }}
+            className="h-11 rounded-md border bg-background px-3 text-sm"
+          >
+            <option value="">{m.allApiKeys}</option>
+            {(usage.data?.filter_options?.token_names ?? []).map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
           </select>
           <select
             aria-label={m.usageModelFilter}
@@ -1011,6 +1043,7 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
                 <TableHead>{m.model}</TableHead>
                 <TableHead>{m.usageStatus}</TableHead>
                 <TableHead>{m.apiKey}</TableHead>
+                <TableHead>{m.accountGroup}</TableHead>
                 <TableHead>{m.promptTokens}</TableHead>
                 <TableHead>{m.completionTokens}</TableHead>
                 <TableHead>{m.used}</TableHead>
@@ -1045,6 +1078,7 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
                     </Badge>
                   </TableCell>
                   <TableCell>{record.token_name || "—"}</TableCell>
+                  <TableCell>{record.group || "—"}</TableCell>
                   <TableCell className="tabular-nums">
                     {formatNumber(record.prompt_tokens)}
                   </TableCell>
@@ -1064,7 +1098,7 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
               ))}
               {records.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="h-28 text-center text-muted-foreground">
+                  <TableCell colSpan={10} className="h-28 text-center text-muted-foreground">
                     {m.noUsageRecords}
                   </TableCell>
                 </TableRow>
@@ -1260,6 +1294,23 @@ function PersonalModelsView({ instance }: { instance: MoreTokenInstance }) {
                   {vendors.get(selectedModel.vendor_id ?? 0) || "—"}
                 </span>
               </div>
+              {selectedModel.owner_by || selectedModel.billing_mode ? (
+                <div className="grid gap-3 py-4 sm:grid-cols-[10rem_1fr]">
+                  <span className="text-muted-foreground">{m.billing}</span>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {selectedModel.owner_by ? (
+                      <span>
+                        {m.modelOwner}: {selectedModel.owner_by}
+                      </span>
+                    ) : null}
+                    {selectedModel.billing_mode ? (
+                      <span>
+                        {m.billingMode}: {selectedModel.billing_mode}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
               <div className="grid gap-3 py-4 sm:grid-cols-[10rem_1fr]">
                 <span className="text-muted-foreground">{m.pricingDetails}</span>
                 <div className="grid gap-2 tabular-nums sm:grid-cols-2">
@@ -1278,6 +1329,26 @@ function PersonalModelsView({ instance }: { instance: MoreTokenInstance }) {
                       {selectedModel.cache_ratio !== undefined ? (
                         <span>
                           {m.cacheRatio}: {selectedModel.cache_ratio}×
+                        </span>
+                      ) : null}
+                      {selectedModel.create_cache_ratio !== undefined ? (
+                        <span>
+                          {m.cacheWriteRatio}: {selectedModel.create_cache_ratio}×
+                        </span>
+                      ) : null}
+                      {selectedModel.image_ratio !== undefined ? (
+                        <span>
+                          {m.imageRatio}: {selectedModel.image_ratio}×
+                        </span>
+                      ) : null}
+                      {selectedModel.audio_ratio !== undefined ? (
+                        <span>
+                          {m.audioRatio}: {selectedModel.audio_ratio}×
+                        </span>
+                      ) : null}
+                      {selectedModel.audio_completion_ratio !== undefined ? (
+                        <span>
+                          {m.audioCompletionRatio}: {selectedModel.audio_completion_ratio}×
                         </span>
                       ) : null}
                     </>
