@@ -47,6 +47,22 @@ export const moreTokenForgetCredential = (instanceId: string) =>
   invoke<void>("more_token_forget_credential", { instanceId })
 export const moreTokenPair = (instanceId: string, pairingCode: string, clientId: string) =>
   invoke<PairingResult>("more_token_pair", { instanceId, pairingCode, clientId })
+export const moreTokenPersonalLogin = (
+  instanceId: string,
+  username: string,
+  password: string,
+  twoFactorCode: string | null,
+  clientId: string,
+  clientLabel: string
+) =>
+  invoke<PairingResult>("more_token_personal_login", {
+    instanceId,
+    username,
+    password,
+    twoFactorCode,
+    clientId,
+    clientLabel,
+  })
 export const moreTokenRequest = (instanceId: string, operation: ManagementOperation) =>
   invoke<{ status: number; body: unknown }>("more_token_request", { instanceId, operation })
 

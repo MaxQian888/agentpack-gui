@@ -153,6 +153,7 @@ pub fn run() {
       more_token::more_token_credential_state,
       more_token::more_token_forget_credential,
       more_token::more_token_pair,
+      more_token::more_token_personal_login,
       more_token::more_token_request,
       net::proxy_env_snapshot,
       net::system_proxy_snapshot,

@@ -1,6 +1,6 @@
-//! Hardened more-token management transport.
+//! Hardened more-token management and personal-account transport.
 //!
-//! The webview never receives a management credential and cannot choose an
+//! The webview never receives either credential and cannot choose an
 //! arbitrary URL, method, header, or proxy. It names a saved instance plus one
 //! typed operation; this module owns every network decision.
 
@@ -19,11 +19,20 @@ use url::Url;
 
 const STORE_FILE: &str = "more-token-instances.json";
 const STORE_KEY: &str = "instances";
-const KEYRING_SERVICE: &str = "app.agentpack.more-token.management";
+const MANAGEMENT_KEYRING_SERVICE: &str = "app.agentpack.more-token.management";
+const PERSONAL_KEYRING_SERVICE: &str = "app.agentpack.more-token.personal";
 const MAX_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_CA_BYTES: u64 = 1024 * 1024;
 const MAX_CONCURRENCY: usize = 6;
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum MoreTokenPackage {
+  #[default]
+  Management,
+  Personal,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -34,6 +43,8 @@ pub struct MoreTokenInstance {
   pub ca_fingerprint: Option<String>,
   pub read_only: bool,
   pub display_currency: Option<String>,
+  #[serde(default)]
+  pub package: MoreTokenPackage,
 }
 
 #[derive(Debug, Deserialize)]
@@ -47,6 +58,8 @@ pub struct MoreTokenInstanceDraft {
   pub custom_ca_path: Option<String>,
   #[serde(default)]
   pub clear_custom_ca: bool,
+  #[serde(default)]
+  pub package: MoreTokenPackage,
 }
 
 #[derive(Debug, Serialize)]
@@ -55,6 +68,43 @@ pub struct PairingResult {
   pub token_id: u64,
   pub expires_at: i64,
   pub credential_persistent: bool,
+}
+
+fn persist_personal_credential(
+  instance_id: &str,
+  response: ManagementHttpResponse,
+) -> Result<PairingResult, String> {
+  if response.status >= 400 {
+    return Err(
+      response
+        .body
+        .pointer("/error/code")
+        .and_then(Value::as_str)
+        .unwrap_or("LOGIN_REJECTED")
+        .to_string(),
+    );
+  }
+  let data = response
+    .body
+    .get("data")
+    .ok_or_else(|| "INVALID_SERVER_RESPONSE".to_string())?;
+  let token = data
+    .get("personal_token")
+    .and_then(Value::as_str)
+    .ok_or_else(|| "INVALID_SERVER_RESPONSE".to_string())?;
+  let token_id = data
+    .get("token_id")
+    .and_then(Value::as_u64)
+    .ok_or_else(|| "INVALID_SERVER_RESPONSE".to_string())?;
+  let expires_at = data
+    .get("expires_at")
+    .and_then(Value::as_i64)
+    .ok_or_else(|| "INVALID_SERVER_RESPONSE".to_string())?;
+  Ok(PairingResult {
+    token_id,
+    expires_at,
+    credential_persistent: store_token(MoreTokenPackage::Personal, instance_id, token),
+  })
 }
 
 #[derive(Debug, Serialize)]
@@ -176,6 +226,55 @@ pub enum ManagementOperation {
   AcknowledgeNotification {
     id: u64,
   },
+  PersonalCapabilities,
+  PersonalOverview,
+  PersonalProfile,
+  UpdatePersonalProfile {
+    body: Value,
+  },
+  ChangePersonalPassword {
+    body: Value,
+  },
+  ClosePersonalAccount {
+    body: Value,
+  },
+  PersonalBalance,
+  PersonalLedger {
+    page: u32,
+    page_size: u32,
+  },
+  PersonalUsage {
+    start: i64,
+    end: i64,
+  },
+  PersonalSessions,
+  RevokePersonalSession {
+    id: u64,
+  },
+  PersonalActivity {
+    page: u32,
+    page_size: u32,
+  },
+}
+
+impl ManagementOperation {
+  fn package(&self) -> MoreTokenPackage {
+    match self {
+      Self::PersonalCapabilities
+      | Self::PersonalOverview
+      | Self::PersonalProfile
+      | Self::UpdatePersonalProfile { .. }
+      | Self::ChangePersonalPassword { .. }
+      | Self::ClosePersonalAccount { .. }
+      | Self::PersonalBalance
+      | Self::PersonalLedger { .. }
+      | Self::PersonalUsage { .. }
+      | Self::PersonalSessions
+      | Self::RevokePersonalSession { .. }
+      | Self::PersonalActivity { .. } => MoreTokenPackage::Personal,
+      _ => MoreTokenPackage::Management,
+    }
+  }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -326,27 +425,39 @@ fn import_ca(app: &AppHandle, instance_id: &str, source: &str) -> Result<String,
   Ok(fingerprint)
 }
 
-fn keyring_entry(instance_id: &str) -> Result<keyring::Entry, keyring::Error> {
-  keyring::Entry::new(KEYRING_SERVICE, instance_id)
+fn credential_key(package: MoreTokenPackage, instance_id: &str) -> String {
+  format!("{:?}:{instance_id}", package).to_lowercase()
 }
 
-fn store_token(instance_id: &str, token: &str) -> bool {
-  if let Ok(entry) = keyring_entry(instance_id) {
+fn keyring_entry(
+  package: MoreTokenPackage,
+  instance_id: &str,
+) -> Result<keyring::Entry, keyring::Error> {
+  let service = match package {
+    MoreTokenPackage::Management => MANAGEMENT_KEYRING_SERVICE,
+    MoreTokenPackage::Personal => PERSONAL_KEYRING_SERVICE,
+  };
+  keyring::Entry::new(service, instance_id)
+}
+
+fn store_token(package: MoreTokenPackage, instance_id: &str, token: &str) -> bool {
+  let memory_key = credential_key(package, instance_id);
+  if let Ok(entry) = keyring_entry(package, instance_id) {
     if entry.set_password(token).is_ok() {
       if let Ok(mut tokens) = memory_tokens().lock() {
-        tokens.remove(instance_id);
+        tokens.remove(&memory_key);
       }
       return true;
     }
   }
   if let Ok(mut tokens) = memory_tokens().lock() {
-    tokens.insert(instance_id.to_string(), token.to_string());
+    tokens.insert(memory_key, token.to_string());
   }
   false
 }
 
-fn load_token(instance_id: &str) -> Option<(String, bool)> {
-  if let Ok(entry) = keyring_entry(instance_id) {
+fn load_token(package: MoreTokenPackage, instance_id: &str) -> Option<(String, bool)> {
+  if let Ok(entry) = keyring_entry(package, instance_id) {
     if let Ok(token) = entry.get_password() {
       if !token.is_empty() {
         return Some((token, true));
@@ -356,16 +467,16 @@ fn load_token(instance_id: &str) -> Option<(String, bool)> {
   memory_tokens()
     .lock()
     .ok()
-    .and_then(|tokens| tokens.get(instance_id).cloned())
+    .and_then(|tokens| tokens.get(&credential_key(package, instance_id)).cloned())
     .map(|token| (token, false))
 }
 
-fn delete_token(instance_id: &str) {
-  if let Ok(entry) = keyring_entry(instance_id) {
+fn delete_token(package: MoreTokenPackage, instance_id: &str) {
+  if let Ok(entry) = keyring_entry(package, instance_id) {
     let _ = entry.delete_credential();
   }
   if let Ok(mut tokens) = memory_tokens().lock() {
-    tokens.remove(instance_id);
+    tokens.remove(&credential_key(package, instance_id));
   }
 }
 
@@ -384,7 +495,13 @@ fn require_id(id: u64) -> Result<u64, String> {
   }
 }
 
-fn operation_spec(operation: ManagementOperation) -> Result<RequestSpec, String> {
+fn operation_spec(
+  package: MoreTokenPackage,
+  operation: ManagementOperation,
+) -> Result<RequestSpec, String> {
+  if operation.package() != package {
+    return Err("PACKAGE_OPERATION_MISMATCH".into());
+  }
   let spec = match operation {
     ManagementOperation::Capabilities => (
       Method::Get,
@@ -683,6 +800,93 @@ fn operation_spec(operation: ManagementOperation) -> Result<RequestSpec, String>
       None,
       true,
     ),
+    ManagementOperation::PersonalCapabilities => (
+      Method::Get,
+      "/api/personal/capabilities".into(),
+      vec![],
+      None,
+      false,
+    ),
+    ManagementOperation::PersonalOverview => (
+      Method::Get,
+      "/api/personal/overview".into(),
+      vec![],
+      None,
+      false,
+    ),
+    ManagementOperation::PersonalProfile => (
+      Method::Get,
+      "/api/personal/profile".into(),
+      vec![],
+      None,
+      false,
+    ),
+    ManagementOperation::UpdatePersonalProfile { body } => (
+      Method::Put,
+      "/api/personal/profile".into(),
+      vec![],
+      Some(body),
+      true,
+    ),
+    ManagementOperation::ChangePersonalPassword { body } => (
+      Method::Post,
+      "/api/personal/password".into(),
+      vec![],
+      Some(body),
+      true,
+    ),
+    ManagementOperation::ClosePersonalAccount { body } => (
+      Method::Post,
+      "/api/personal/account/close".into(),
+      vec![],
+      Some(body),
+      true,
+    ),
+    ManagementOperation::PersonalBalance => (
+      Method::Get,
+      "/api/personal/balance".into(),
+      vec![],
+      None,
+      false,
+    ),
+    ManagementOperation::PersonalLedger { page, page_size } => (
+      Method::Get,
+      "/api/personal/ledger".into(),
+      bounded_page(page, page_size),
+      None,
+      false,
+    ),
+    ManagementOperation::PersonalUsage { start, end } => (
+      Method::Get,
+      "/api/personal/usage".into(),
+      vec![
+        ("start".into(), start.to_string()),
+        ("end".into(), end.to_string()),
+      ],
+      None,
+      false,
+    ),
+    ManagementOperation::PersonalSessions => (
+      Method::Get,
+      "/api/personal/sessions".into(),
+      vec![],
+      None,
+      false,
+    ),
+    ManagementOperation::RevokePersonalSession { id } => (
+      Method::Delete,
+      format!("/api/personal/sessions/{}", require_id(id)?),
+      vec![],
+      None,
+      true,
+    ),
+    ManagementOperation::PersonalActivity { page, page_size } => (
+      Method::Get,
+      "/api/personal/activity".into(),
+      bounded_page(page, page_size),
+      None,
+      false,
+    ),
   };
   Ok(RequestSpec {
     method: spec.0,
@@ -804,6 +1008,12 @@ pub fn more_token_save_instance(
   }
   let mut instances = load_instances(&app)?;
   let existing = instances.iter().find(|item| item.id == draft.id).cloned();
+  if existing
+    .as_ref()
+    .is_some_and(|current| current.package != draft.package)
+  {
+    return Err("INSTANCE_PACKAGE_IMMUTABLE".into());
+  }
   let ca_fingerprint = if draft.clear_custom_ca {
     let _ = fs::remove_file(ca_file(&app, &draft.id)?);
     None
@@ -826,6 +1036,7 @@ pub fn more_token_save_instance(
       .display_currency
       .map(|value| value.trim().to_uppercase())
       .filter(|value| !value.is_empty()),
+    package: draft.package,
   };
   instances.retain(|item| item.id != instance.id);
   instances.push(instance.clone());
@@ -838,17 +1049,26 @@ pub fn more_token_save_instance(
 pub fn more_token_remove_instance(app: AppHandle, instance_id: String) -> Result<(), String> {
   validate_id(&instance_id)?;
   let mut instances = load_instances(&app)?;
+  let package = instances
+    .iter()
+    .find(|item| item.id == instance_id)
+    .map(|item| item.package)
+    .ok_or_else(|| "INSTANCE_NOT_FOUND".to_string())?;
   instances.retain(|item| item.id != instance_id);
   save_instances(&app, &instances)?;
-  delete_token(&instance_id);
+  delete_token(package, &instance_id);
   let _ = fs::remove_file(ca_file(&app, &instance_id)?);
   Ok(())
 }
 
 #[tauri::command]
-pub fn more_token_credential_state(instance_id: String) -> Result<CredentialState, String> {
+pub fn more_token_credential_state(
+  app: AppHandle,
+  instance_id: String,
+) -> Result<CredentialState, String> {
   validate_id(&instance_id)?;
-  let state = load_token(&instance_id);
+  let instance = find_instance(&app, &instance_id)?;
+  let state = load_token(instance.package, &instance_id);
   Ok(CredentialState {
     connected: state.is_some(),
     persistent: state.map(|(_, persistent)| persistent).unwrap_or(false),
@@ -856,9 +1076,10 @@ pub fn more_token_credential_state(instance_id: String) -> Result<CredentialStat
 }
 
 #[tauri::command]
-pub fn more_token_forget_credential(instance_id: String) -> Result<(), String> {
+pub fn more_token_forget_credential(app: AppHandle, instance_id: String) -> Result<(), String> {
   validate_id(&instance_id)?;
-  delete_token(&instance_id);
+  let instance = find_instance(&app, &instance_id)?;
+  delete_token(instance.package, &instance_id);
   Ok(())
 }
 
@@ -883,6 +1104,11 @@ pub async fn more_token_pair(
     return Err("INVALID_PAIRING_CODE".into());
   }
   let body = json!({"pairing_code": code, "client_id": client_id.trim()});
+  let (pair_path, token_field) = match instance.package {
+    MoreTokenPackage::Management => ("/api/management/pair", "management_token"),
+    MoreTokenPackage::Personal => ("/api/personal/pair", "personal_token"),
+  };
+  let package = instance.package;
   let app_for_request = app.clone();
   let response = tauri::async_runtime::spawn_blocking(move || {
     execute(
@@ -890,7 +1116,7 @@ pub async fn more_token_pair(
       &instance,
       RequestSpec {
         method: Method::Post,
-        path: "/api/management/pair".into(),
+        path: pair_path.into(),
         query: vec![],
         body: Some(body),
         write: false,
@@ -908,7 +1134,7 @@ pub async fn more_token_pair(
     .get("data")
     .ok_or_else(|| "INVALID_SERVER_RESPONSE".to_string())?;
   let token = data
-    .get("management_token")
+    .get(token_field)
     .and_then(Value::as_str)
     .ok_or_else(|| "INVALID_SERVER_RESPONSE".to_string())?;
   let token_id = data
@@ -919,12 +1145,63 @@ pub async fn more_token_pair(
     .get("expires_at")
     .and_then(Value::as_i64)
     .ok_or_else(|| "INVALID_SERVER_RESPONSE".to_string())?;
-  let credential_persistent = store_token(&instance_id, token);
+  let credential_persistent = store_token(package, &instance_id, token);
   Ok(PairingResult {
     token_id,
     expires_at,
     credential_persistent,
   })
+}
+
+#[tauri::command]
+pub async fn more_token_personal_login(
+  app: AppHandle,
+  instance_id: String,
+  username: String,
+  password: String,
+  two_factor_code: Option<String>,
+  client_id: String,
+  client_label: String,
+) -> Result<PairingResult, String> {
+  validate_id(&instance_id)?;
+  let instance = find_instance(&app, &instance_id)?;
+  if instance.package != MoreTokenPackage::Personal {
+    return Err("PACKAGE_OPERATION_MISMATCH".into());
+  }
+  if username.trim().is_empty()
+    || password.is_empty()
+    || client_id.trim().is_empty()
+    || client_id.len() > 128
+    || client_label.trim().is_empty()
+    || client_label.len() > 128
+  {
+    return Err("INVALID_LOGIN_REQUEST".into());
+  }
+  let body = json!({
+    "username": username.trim(),
+    "password": password,
+    "two_factor_code": two_factor_code.unwrap_or_default().trim(),
+    "client_id": client_id.trim(),
+    "client_label": client_label.trim(),
+  });
+  let app_for_request = app.clone();
+  let response = tauri::async_runtime::spawn_blocking(move || {
+    execute(
+      &app_for_request,
+      &instance,
+      RequestSpec {
+        method: Method::Post,
+        path: "/api/personal/login".into(),
+        query: vec![],
+        body: Some(body),
+        write: false,
+      },
+      None,
+    )
+  })
+  .await
+  .map_err(|_| "NETWORK_ERROR".to_string())??;
+  persist_personal_credential(&instance_id, response)
 }
 
 #[tauri::command]
@@ -935,9 +1212,9 @@ pub async fn more_token_request(
 ) -> Result<ManagementHttpResponse, String> {
   validate_id(&instance_id)?;
   let instance = find_instance(&app, &instance_id)?;
-  let spec = operation_spec(operation)?;
-  let (token, _) =
-    load_token(&instance_id).ok_or_else(|| "MANAGEMENT_CREDENTIAL_REQUIRED".to_string())?;
+  let spec = operation_spec(instance.package, operation)?;
+  let (token, _) = load_token(instance.package, &instance_id)
+    .ok_or_else(|| "PACKAGE_CREDENTIAL_REQUIRED".to_string())?;
   let app_for_request = app.clone();
   tauri::async_runtime::spawn_blocking(move || {
     execute(&app_for_request, &instance, spec, Some(&token))
@@ -965,32 +1242,64 @@ mod tests {
 
   #[test]
   fn operation_mapping_cannot_escape_allowlist() {
-    let valid = operation_spec(ManagementOperation::AccountAction {
-      id: 7,
-      action: "archive".into(),
-      body: json!({}),
-    })
+    let valid = operation_spec(
+      MoreTokenPackage::Management,
+      ManagementOperation::AccountAction {
+        id: 7,
+        action: "archive".into(),
+        body: json!({}),
+      },
+    )
     .unwrap();
     assert_eq!(valid.path, "/api/distribution/accounts/7/archive");
     assert_eq!(valid.method, Method::Post);
     assert!(valid.write);
-    assert!(operation_spec(ManagementOperation::AccountAction {
-      id: 7,
-      action: "../../tokens".into(),
-      body: json!({})
-    })
+    assert!(operation_spec(
+      MoreTokenPackage::Management,
+      ManagementOperation::AccountAction {
+        id: 7,
+        action: "../../tokens".into(),
+        body: json!({})
+      }
+    )
     .is_err());
+    assert!(operation_spec(
+      MoreTokenPackage::Personal,
+      ManagementOperation::Accounts {
+        page: 1,
+        page_size: 20,
+        search: None,
+        lifecycle_state: None,
+        master_id: None,
+      },
+    )
+    .is_err());
+    assert_eq!(
+      operation_spec(
+        MoreTokenPackage::Personal,
+        ManagementOperation::PersonalLedger {
+          page: 1,
+          page_size: 20,
+        },
+      )
+      .unwrap()
+      .path,
+      "/api/personal/ledger"
+    );
   }
 
   #[test]
   fn query_values_are_encoded_not_interpolated() {
-    let spec = operation_spec(ManagementOperation::Accounts {
-      page: 0,
-      page_size: 999,
-      search: Some("a&role=root".into()),
-      lifecycle_state: None,
-      master_id: None,
-    })
+    let spec = operation_spec(
+      MoreTokenPackage::Management,
+      ManagementOperation::Accounts {
+        page: 0,
+        page_size: 999,
+        search: Some("a&role=root".into()),
+        lifecycle_state: None,
+        master_id: None,
+      },
+    )
     .unwrap();
     let mut url = Url::parse("https://example.com/api/distribution/accounts").unwrap();
     url.query_pairs_mut().extend_pairs(spec.query);

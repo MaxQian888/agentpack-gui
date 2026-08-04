@@ -1,4 +1,6 @@
 export type ManagementView = "management-overview" | "accounts" | "quota" | "analytics" | "audit"
+export type PersonalView = "my-account" | "my-balance" | "my-usage" | "my-security"
+export type MoreTokenPackage = "management" | "personal"
 
 export interface MoreTokenInstance {
   id: string
@@ -7,6 +9,7 @@ export interface MoreTokenInstance {
   caFingerprint: string | null
   readOnly: boolean
   displayCurrency: string | null
+  package: MoreTokenPackage
 }
 
 export interface MoreTokenInstanceDraft {
@@ -17,6 +20,7 @@ export interface MoreTokenInstanceDraft {
   displayCurrency: string | null
   customCaPath: string | null
   clearCustomCa: boolean
+  package: MoreTokenPackage
 }
 
 export interface CredentialState {
@@ -78,6 +82,18 @@ export type ManagementOperation =
   | { kind: "acknowledgeAlert"; id: number }
   | { kind: "notifications" }
   | { kind: "acknowledgeNotification"; id: number }
+  | { kind: "personalCapabilities" }
+  | { kind: "personalOverview" }
+  | { kind: "personalProfile" }
+  | { kind: "updatePersonalProfile"; body: unknown }
+  | { kind: "changePersonalPassword"; body: unknown }
+  | { kind: "closePersonalAccount"; body: unknown }
+  | { kind: "personalBalance" }
+  | { kind: "personalLedger"; page: number; pageSize: number }
+  | { kind: "personalUsage"; start: number; end: number }
+  | { kind: "personalSessions" }
+  | { kind: "revokePersonalSession"; id: number }
+  | { kind: "personalActivity"; page: number; pageSize: number }
 
 export type AccountAction =
   | "enable"
@@ -97,11 +113,97 @@ export interface ManagementCapabilities {
   scopes: string[]
   features: {
     management_api_enabled: boolean
+    personal_api_enabled: boolean
     quota_transfer_enabled: boolean
     quota_policy_automation_enabled: boolean
     distribution_detail_enabled: boolean
   }
   quota_display: QuotaDisplaySetting
+}
+
+export interface PersonalCapabilities {
+  personal_api_version: string
+  role: "user"
+  scopes: string[]
+  features: {
+    profile_edit_enabled: boolean
+    password_change_enabled: boolean
+    account_close_enabled: boolean
+    billing_portal_enabled: boolean
+  }
+  billing_portal_path: string
+}
+
+export interface PersonalAccount {
+  id: number
+  username: string
+  display_name: string
+  email: string
+  role: number
+  status: number
+  lifecycle_state: "active" | "closing" | "archived" | ""
+  master_id: number
+  is_master: boolean
+  quota: number
+  used_quota: number
+  request_count: number
+  created_at: number
+}
+
+export interface PersonalOverview {
+  account: PersonalAccount
+  balance: { available: number; used: number; total: number }
+  quota_display: QuotaDisplaySetting
+  parent: { id: number; username: string; display_name: string } | null
+  ledger_entries: number
+}
+
+export interface PersonalLedgerEntry {
+  id: number
+  operation_id: string
+  type: string
+  amount: number
+  delta: number
+  balance_before: number
+  balance_after: number
+  counterparty: string
+  reason: string
+  status: string
+  created_at: number
+}
+
+export interface PersonalUsage {
+  definition: string
+  start: number
+  end: number
+  bucket_seconds: number
+  generated_at: number
+  metrics: {
+    requests: number
+    prompt_tokens: number
+    completion_tokens: number
+    quota: number
+  }
+  series: Array<{
+    bucket: number
+    requests: number
+    prompt_tokens: number
+    completion_tokens: number
+    quota: number
+  }>
+}
+
+export interface PersonalSession {
+  id: number
+  public_id: string
+  user_id: number
+  client_id: string
+  client_label: string
+  scopes: string
+  expires_at: number
+  last_used_at: number
+  revoked_at: number
+  created_at: number
 }
 
 export interface QuotaDisplaySetting {

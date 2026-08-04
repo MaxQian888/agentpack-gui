@@ -3,6 +3,7 @@ jest.mock("@/lib/tauri/commands", () => ({
   moreTokenForgetCredential: jest.fn(),
   moreTokenListInstances: jest.fn(),
   moreTokenPair: jest.fn(),
+  moreTokenPersonalLogin: jest.fn(),
   moreTokenRemoveInstance: jest.fn(),
   moreTokenRequest: jest.fn(),
   moreTokenSaveInstance: jest.fn(),

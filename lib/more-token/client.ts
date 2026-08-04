@@ -3,6 +3,7 @@ import {
   moreTokenForgetCredential,
   moreTokenListInstances,
   moreTokenPair,
+  moreTokenPersonalLogin,
   moreTokenRemoveInstance,
   moreTokenRequest,
   moreTokenSaveInstance,
@@ -44,6 +45,15 @@ export const pairInstance = (
   pairingCode: string,
   clientId = "agentpack-desktop"
 ): Promise<PairingResult> => moreTokenPair(instanceId, pairingCode, clientId)
+export const loginPersonalInstance = (
+  instanceId: string,
+  username: string,
+  password: string,
+  twoFactorCode: string | null,
+  clientId = "agentpack-personal-desktop",
+  clientLabel = "AgentPack Desktop"
+): Promise<PairingResult> =>
+  moreTokenPersonalLogin(instanceId, username, password, twoFactorCode, clientId, clientLabel)
 
 export async function managementRequest<T>(
   instanceId: string,
