@@ -78,8 +78,8 @@ export const en = {
     progress: (i: number, n: number) => `${i} / ${n}`,
     steps: {
       nav: {
-        title: "Six focused workspaces",
-        body: "The rail groups machine health, installation, capabilities, account operations, usage, and settings by the job you are doing.",
+        title: "Seven focused workspaces",
+        body: "The rail separates your own account from administrator operations, alongside machine health, installation, capabilities, usage, and settings.",
       },
       dashboard: {
         title: "Dashboard",
@@ -108,6 +108,22 @@ export const en = {
       audit: {
         title: "Audit & alerts",
         body: "Trace immutable before-and-after events, manage alert rules and acknowledge delivery outcomes.",
+      },
+      "my-account": {
+        title: "My account",
+        body: "Sign in to a personal more-token package and manage only your own profile and account state.",
+      },
+      "my-balance": {
+        title: "My balance",
+        body: "Review your available balance and personal ledger without exposing administrator controls.",
+      },
+      "my-usage": {
+        title: "My usage",
+        body: "Inspect the authoritative billing records associated with your own account and selected period.",
+      },
+      "my-security": {
+        title: "My security",
+        body: "Change your password, review paired desktop sessions, revoke access, or request account closure.",
       },
       presets: {
         title: "Presets",
@@ -1983,6 +1999,71 @@ export const en = {
     submitBatch: "Start batch",
   },
 
+  personal: {
+    title: "My more-token account",
+    subtitle: "Manage your own profile, balance, usage, and signed-in desktop sessions.",
+    tabs: {
+      account: "My account",
+      balance: "Balance",
+      usage: "My usage",
+      security: "Security",
+    },
+    packageLabel: "Personal package",
+    isolationNote:
+      "This connection can access only the paired user. It cannot call administrator or child-account operations.",
+    signInTitle: "Sign in to more-token",
+    signInHint:
+      "Use the same username or email and password as the more-token website. Your password is sent by the Rust transport and is never saved.",
+    usernameOrEmail: "Username or email",
+    signIn: "Sign in",
+    signingIn: "Signing in…",
+    twoFactorCode: "Two-factor or backup code",
+    twoFactorHint: "This account requires its current authenticator or backup code.",
+    pairingOption: "Use pairing code",
+    passwordOption: "Use password",
+    otherLoginMethods: "OAuth, Passkey, WeChat, or another login method",
+    otherLoginHint:
+      "Open more-token in your browser, sign in with any enabled method, then generate a live personal pairing code from Profile.",
+    available: "Available",
+    used: "Used",
+    total: "Total",
+    requests: "Requests",
+    memberOf: "Member of",
+    independent: "Independent account",
+    billingPortal: "Billing portal",
+    openBillingPortal: "Open billing portal",
+    profile: "Profile",
+    displayName: "Display name",
+    saveProfile: "Save profile",
+    ledger: "Balance ledger",
+    ledgerHint: "Only transactions involving your account are shown.",
+    noTransactions: "No balance transactions yet.",
+    delta: "Change",
+    balanceAfter: "Balance after",
+    counterparty: "Counterparty",
+    usageDefinition: "Persisted more-token billing records for this account only.",
+    promptTokens: "Prompt tokens",
+    completionTokens: "Completion tokens",
+    generatedAt: "Generated",
+    sessions: "Desktop sessions",
+    sessionsHint: "Each personal desktop connection is isolated from management access.",
+    revokeSession: "Revoke",
+    revoked: "Revoked",
+    password: "Password",
+    currentPassword: "Current password",
+    newPassword: "New password",
+    changePassword: "Change password",
+    reauthentication:
+      "Changing your password revokes all personal and management desktop sessions for this user.",
+    closeAccount: "Close account",
+    closeHint:
+      "Closing blocks new access immediately. Child-account balance returns to its parent after active billing sessions finish.",
+    confirmUsername: "Type your username to confirm",
+    closeReason: "Reason for closing",
+    closeBlockedBalance:
+      "Independent accounts must use or transfer their remaining balance before closing.",
+  },
+
   /** GUI shell strings (header controls, dialogs) — GUI-only, not in the TUI. */
   /**
    * The five task domains in the rail. Named after what someone is trying to
@@ -1997,6 +2078,8 @@ export const en = {
     installHint: "Put the agents, runtimes and network route in place.",
     capabilities: "Capabilities",
     capabilitiesHint: "Skills, MCP servers and providers the agents can reach.",
+    account: "My account",
+    accountHint: "Your own more-token profile, balance, usage, and security.",
     management: "Accounts & quota",
     managementHint: "Accounts, balances, policy automation, audit, and alerts.",
     usage: "Usage",

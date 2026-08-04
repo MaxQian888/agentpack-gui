@@ -132,7 +132,7 @@ smell — if content needs a box inside a box, it needs a section rule instead.
 │            │  context · ⌘K · theme · window controls      │  header
 │  task      ├──────────────────────────────────────────────┤
 │  rail      │  [ sub-tab  sub-tab  sub-tab ]               │  workspace tabs
-│  (6)       │                                              │
+│  (7)       │                                              │
 │            │  workspace                                   │
 │            │                                              │
 │            ├──────────────────────────────────────────────┤
@@ -140,9 +140,11 @@ smell — if content needs a box inside a box, it needs a section rule instead.
 └────────────┴──────────────────────────────────────────────┘
 ```
 
-Six task domains: **Overview · Install & repair · Capabilities · Accounts &
-quota · Usage · Settings**. Each maps onto the existing section keys as sub-tabs;
-no route or capability is removed, only regrouped. The rail is
+Seven task domains: **Overview · Install & repair · Capabilities · My account ·
+Accounts & quota · Usage · Settings**. Personal self-service and administrator
+operations are separate workspaces backed by separate instance packages and
+credentials. Each maps onto section keys as sub-tabs; no route or capability is
+removed, only regrouped. The rail is
 `--hm-rail-width` from 900px and `--hm-rail-width-wide` from 1200px; below
 desktop it collapses into a navigation Sheet with the same order and labels.
 
@@ -222,6 +224,10 @@ The app reads a developer's machine, so what it _records_ is part of the design.
 - Operational account data leaves the machine only for explicitly saved
   more-token instances through the fixed-path Rust adapter; credentials remain
   in the OS credential store or process memory and never enter React state.
+- A personal package is bound to the paired user and exposes only that user's
+  profile, balance, ledger, usage, and security. A management package owns
+  account relationships, quota operations, policy, audit, and alerts. The two
+  packages use different route maps, token prefixes, and credential namespaces.
 
 ## 11. Exports
 

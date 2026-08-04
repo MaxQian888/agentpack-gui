@@ -33,6 +33,7 @@ const instance: MoreTokenInstance = {
   caFingerprint: null,
   readOnly: false,
   displayCurrency: "CNY",
+  package: "management",
 }
 
 const capabilities = {

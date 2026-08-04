@@ -1,8 +1,8 @@
 /**
- * The app's information architecture: five task domains over the twelve
- * destinations that already exist.
+ * The app's information architecture: seven task domains, with personal and
+ * administrator more-token access kept in separate workspaces.
  *
- * The twelve `SectionKey`s are unchanged and remain the internal target of every
+ * `SectionKey`s remain the internal target of every
  * navigation — the guided tour, the dashboard's "open MCP" links, the command
  * palette and the diagnostics list all still address a section directly. What
  * changes is what the user is asked to hold in their head: five domains named
@@ -21,6 +21,10 @@ export type SectionKey =
   | "quota"
   | "analytics"
   | "audit"
+  | "my-account"
+  | "my-balance"
+  | "my-usage"
+  | "my-security"
   | "presets"
   | "environment"
   | "clis"
@@ -34,7 +38,7 @@ export type SectionKey =
   | "about"
 
 export type WorkspaceKey =
-  "overview" | "install" | "capabilities" | "management" | "usage" | "settings"
+  "overview" | "install" | "capabilities" | "account" | "management" | "usage" | "settings"
 
 export interface WorkspaceDefinition {
   key: WorkspaceKey
@@ -58,6 +62,10 @@ export const WORKSPACES: readonly WorkspaceDefinition[] = [
   // it isn't in Settings next to profiles and config files.
   { key: "install", sections: ["presets", "environment", "clis", "network", "cleanup"] },
   { key: "capabilities", sections: ["skills", "mcp", "ccswitch", "ccconnect"] },
+  {
+    key: "account",
+    sections: ["my-account", "my-balance", "my-usage", "my-security"],
+  },
   {
     key: "management",
     sections: ["management-overview", "accounts", "quota", "analytics", "audit"],

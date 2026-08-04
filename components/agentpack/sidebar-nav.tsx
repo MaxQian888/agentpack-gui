@@ -20,6 +20,8 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Terminal,
+  UserRound,
+  WalletCards,
   Wrench,
 } from "lucide-react"
 import { useState } from "react"
@@ -74,6 +76,10 @@ export const SECTIONS: SectionDef[] = [
   { key: "quota", icon: ArrowLeftRight, label: (m) => m.management.tabs.quota },
   { key: "analytics", icon: ChartNoAxesColumn, label: (m) => m.management.tabs.analytics },
   { key: "audit", icon: ShieldCheck, label: (m) => m.management.tabs.audit },
+  { key: "my-account", icon: UserRound, label: (m) => m.personal.tabs.account },
+  { key: "my-balance", icon: WalletCards, label: (m) => m.personal.tabs.balance },
+  { key: "my-usage", icon: ChartNoAxesColumn, label: (m) => m.personal.tabs.usage },
+  { key: "my-security", icon: ShieldCheck, label: (m) => m.personal.tabs.security },
   { key: "config", icon: FileJson, label: (m) => m.menu.saveConfig },
   { key: "about", icon: Info, label: (m) => m.menu.about },
 ]
@@ -90,6 +96,12 @@ interface WorkspaceMeta {
 }
 
 export const WORKSPACE_META: WorkspaceMeta[] = [
+  {
+    key: "account",
+    icon: UserRound,
+    label: (m) => m.workspaces.account,
+    hint: (m) => m.workspaces.accountHint,
+  },
   {
     key: "management",
     icon: Landmark,

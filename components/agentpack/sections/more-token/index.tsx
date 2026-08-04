@@ -146,7 +146,9 @@ export function MoreTokenSection({ view, localUsage }: MoreTokenSectionProps) {
   })
   const [selectedId, setSelectedId] = useState("")
   const [instanceOpen, setInstanceOpen] = useState(false)
-  const instances = instancesQuery.data ?? []
+  // Legacy records predate the package discriminator and remain management
+  // connections. Explicit personal records never enter this surface.
+  const instances = (instancesQuery.data ?? []).filter((item) => item.package !== "personal")
   const activeId = selectedId || instances[0]?.id || ""
   const instance = instances.find((item) => item.id === activeId) ?? null
   const credentialQuery = useQuery({
@@ -475,68 +477,63 @@ function OverviewView({
           </AlertDescription>
         </Alert>
       ) : null}
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="overflow-hidden rounded-md border divide-y">
         {overviewQueries.map((query, index) => {
           const item = instances[index]
           return (
-            <Card key={item.id}>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center justify-between text-sm">
-                  <span>{item.name}</span>
-                  <Badge variant={query.isError ? "destructive" : "outline"}>
-                    {query.isError ? m.unavailable : m.healthy}
-                  </Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {query.data ? (
-                  <div className="grid grid-cols-3 gap-3 text-sm">
-                    <Metric label={m.accounts} value={number(query.data.summary.accounts)} />
-                    <Metric label={m.totalQuota} value={number(query.data.summary.total_quota)} />
-                    <Metric label={m.openAlerts} value={number(query.data.open_alerts)} />
-                  </div>
-                ) : (
-                  <Skeleton className="h-14" />
-                )}
-              </CardContent>
-            </Card>
+            <div
+              key={item.id}
+              className="grid gap-3 p-4 lg:grid-cols-[minmax(160px,0.8fr)_repeat(3,minmax(100px,0.55fr))] lg:items-center"
+            >
+              <div className="flex min-w-0 items-center justify-between gap-3 lg:justify-start">
+                <span className="truncate text-sm font-medium">{item.name}</span>
+                <Badge variant={query.isError ? "destructive" : "outline"}>
+                  {query.isError ? m.unavailable : m.healthy}
+                </Badge>
+              </div>
+              {query.data ? (
+                <>
+                  <Metric label={m.accounts} value={number(query.data.summary.accounts)} />
+                  <Metric label={m.totalQuota} value={number(query.data.summary.total_quota)} />
+                  <Metric label={m.openAlerts} value={number(query.data.open_alerts)} />
+                </>
+              ) : (
+                <Skeleton className="h-12 lg:col-span-3" />
+              )}
+            </div>
           )
         })}
       </div>
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.6fr)]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
+        <section className="border-y py-5">
+          <div>
+            <h3 className="flex items-center gap-2 font-medium">
               <ListTree className="size-4" />
               {m.topology}
-            </CardTitle>
+            </h3>
             <p className="text-xs text-muted-foreground">{m.topologyHint}</p>
-          </CardHeader>
-          <CardContent>
+          </div>
+          <div className="mt-4">
             {accounts.isLoading ? (
               <Skeleton className="h-52" />
             ) : (
               <Topology accounts={accounts.data?.items ?? []} />
             )}
-          </CardContent>
-        </Card>
-        <div className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">{m.balanceRisk}</CardTitle>
-            </CardHeader>
-            <CardContent>
+          </div>
+        </section>
+        <div className="divide-y border-y">
+          <section className="py-5">
+            <h3 className="font-medium">{m.balanceRisk}</h3>
+            <div className="mt-4">
               <RiskDistribution accounts={accounts.data?.items ?? []} />
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Bell className="size-4" />
-                {m.pendingAlerts}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
+            </div>
+          </section>
+          <section className="py-5">
+            <h3 className="flex items-center gap-2 font-medium">
+              <Bell className="size-4" />
+              {m.pendingAlerts}
+            </h3>
+            <div className="mt-4 space-y-2">
               {alerts.data?.items.length ? (
                 alerts.data.items.map((event) => (
                   <div key={event.id} className="border-l-2 border-[var(--hm-warn)] pl-3 text-sm">
@@ -547,8 +544,8 @@ function OverviewView({
               ) : (
                 <p className="text-sm text-muted-foreground">{m.noData}</p>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </section>
         </div>
       </div>
     </div>
@@ -2189,6 +2186,7 @@ function InstanceDialog({
               baseUrl: String(form.get("base_url")),
               readOnly: form.get("read_only") === "on",
               displayCurrency: String(form.get("display_currency") || "") || null,
+              package: instance?.package ?? "management",
               customCaPath: String(form.get("custom_ca_path") || "") || null,
               clearCustomCa: form.get("clear_custom_ca") === "on",
             })

@@ -55,6 +55,7 @@ import { CcSwitchSection } from "./sections/ccswitch"
 import { CcConnectSection } from "./sections/ccconnect"
 import { AboutSection } from "./sections/about"
 import { MoreTokenSection } from "./sections/more-token"
+import { PersonalMoreTokenSection } from "./sections/more-token/personal"
 import { ConfigIO } from "./config-io"
 import { OnboardingDialog } from "./onboarding-dialog"
 import { GuidedTour } from "./guided-tour"
@@ -583,6 +584,11 @@ function ShellBody() {
             refresh={() => void loadHistory()}
           />
         )
+      case "my-account":
+      case "my-balance":
+      case "my-usage":
+      case "my-security":
+        return <PersonalMoreTokenSection view={section} />
       case "management-overview":
       case "accounts":
       case "quota":
