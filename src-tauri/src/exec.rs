@@ -1612,6 +1612,7 @@ mod tests {
 
   /// A scratch directory unique to this run — the repo carries no `tempfile`
   /// dependency, and the nanos suffix keeps two concurrent runs apart.
+  #[cfg(not(windows))]
   fn scratch(name: &str) -> std::path::PathBuf {
     let nanos = std::time::SystemTime::now()
       .duration_since(std::time::UNIX_EPOCH)
