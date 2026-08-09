@@ -83,6 +83,16 @@ it("shows the app version resolved on mount", async () => {
   expect(await screen.findByText(en.about.currentVersion("1.0.0"))).toBeInTheDocument()
 })
 
+it("organizes application status, preferences, and locations as one workbench", async () => {
+  renderAbout()
+  await screen.findByText(en.about.currentVersion("1.0.0"))
+
+  expect(screen.getByRole("region", { name: en.about.summaryLabel })).toBeInTheDocument()
+  expect(screen.getByRole("region", { name: en.about.settingsPanel })).toBeInTheDocument()
+  expect(screen.getByRole("complementary", { name: en.about.actionsLabel })).toBeInTheDocument()
+  expect(screen.getByText(en.about.locationsTitle)).toBeInTheDocument()
+})
+
 it("reports up to date when no update is found", async () => {
   mockedCheck.mockResolvedValueOnce(null)
   renderAbout()
@@ -126,6 +136,7 @@ it("toasts when the update check fails", async () => {
   renderAbout()
   await userEvent.click(screen.getByRole("button", { name: en.about.checkNow }))
   await waitFor(() => expect(toast.error).toHaveBeenCalledWith(en.about.checkFailed))
+  expect(screen.getByRole("alert")).toHaveTextContent(en.about.updateError("offline"))
 })
 
 it("persists the auto-check preference on toggle", async () => {

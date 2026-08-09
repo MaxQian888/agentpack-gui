@@ -1,7 +1,7 @@
 jest.mock("@/lib/tauri", () => ({ isTauri: () => false }))
 jest.mock("@/lib/tauri/system", () => ({ openUrl: jest.fn() }))
 
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
@@ -144,6 +144,43 @@ it("shows a re-detect button that calls refresh, and hides it without a handler"
 it("renders no re-detect button when no refresh handler is passed", () => {
   renderEnv()
   expect(screen.queryByRole("button", { name: en.environment.recheck })).not.toBeInTheDocument()
+})
+
+it("shows unmeasured runtime totals until detection has completed", () => {
+  renderEnv()
+
+  const summary = screen.getByRole("region", { name: en.environment.summaryLabel })
+  expect(within(summary).getAllByText("—")).toHaveLength(3)
+})
+
+it("replaces the re-detect label while detection is running", async () => {
+  const refresh = jest.fn(() => new Promise<void>(() => {}))
+  render(
+    <I18nProvider>
+      <RunnerHarness autoApply>
+        <EnvironmentSection refresh={refresh} />
+      </RunnerHarness>
+    </I18nProvider>
+  )
+
+  await userEvent.click(screen.getByRole("button", { name: en.environment.recheck }))
+  expect(screen.getByRole("button", { name: en.environment.detecting })).toBeDisabled()
+})
+
+it("organizes runtime status, catalog, and detection controls as one workbench", () => {
+  useAppStore.setState({
+    detections: {
+      node: { installed: true, version: "v20.11.0" },
+      bun: { installed: false },
+    },
+  })
+  renderEnv()
+
+  expect(screen.getByRole("region", { name: en.environment.summaryLabel })).toBeInTheDocument()
+  expect(screen.getByRole("region", { name: en.environment.catalogPanel })).toBeInTheDocument()
+  expect(
+    screen.getByRole("complementary", { name: en.environment.actionsLabel })
+  ).toBeInTheDocument()
 })
 
 it("hides Update + Reinstall where a runtime has no automated path (Linux node)", () => {

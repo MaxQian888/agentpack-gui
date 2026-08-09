@@ -1,5 +1,5 @@
-/* Hallmark · pre-emit critique: P5 H5 E4 S5 R4 V4 */
-/* Hallmark · macrostructure: asymmetric capability workbench · theme: inherited Cobalt Workbench · slop: pass within existing application chrome */
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
+/* Hallmark · genre: modern-minimal · macrostructure: asymmetric settings workbench · theme: inherited Cobalt · contrast: pass (40–41) · slop: pass (42–49) · mobile: pass (34, 49, 50–57) */
 import { cn } from "@/lib/utils"
 import { SectionShell } from "./section-shell"
 
@@ -15,8 +15,12 @@ export function CapabilityMetric({
   return (
     <div className="min-w-0 px-4 py-3">
       <dt className="truncate text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-1 text-xl font-semibold tracking-tight tabular-nums">{value}</dd>
-      {detail ? <div className="mt-1 truncate text-xs text-muted-foreground">{detail}</div> : null}
+      <dd className="mt-1 min-w-0 font-mono text-xl font-semibold tracking-tight tabular-nums [overflow-wrap:anywhere]">
+        {value}
+      </dd>
+      {detail ? (
+        <div className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">{detail}</div>
+      ) : null}
     </div>
   )
 }
@@ -89,7 +93,7 @@ export function CapabilityWorkbench({
         <dl
           role="region"
           aria-label={summaryLabel}
-          className="grid min-w-0 grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-3 lg:grid-cols-6 [&>div]:bg-background"
+          className="grid min-w-0 grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border sm:flex sm:flex-wrap [&>div]:bg-background sm:[&>div]:flex-[1_1_8rem]"
         >
           {metrics}
         </dl>

@@ -37,9 +37,13 @@ import {
  */
 export function TrashCard({
   entries,
+  status,
+  error,
   onChanged,
 }: {
   entries: QuarantineEntry[]
+  status: "loading" | "ready" | "error" | "unavailable"
+  error: string | null
   onChanged: () => void | Promise<void>
 }) {
   const t = useT()
@@ -90,7 +94,7 @@ export function TrashCard({
           </div>
           <p className="mt-1 text-xs text-muted-foreground">{c.subtitle}</p>
         </div>
-        {entries.length > 0 ? (
+        {status === "ready" && entries.length > 0 ? (
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button variant="outline" size="sm" className="shrink-0 gap-1.5" disabled={busy}>
@@ -114,7 +118,20 @@ export function TrashCard({
         ) : null}
       </div>
 
-      {entries.length === 0 ? (
+      {status === "loading" ? (
+        <p className="text-xs text-muted-foreground">{c.loading}</p>
+      ) : status === "unavailable" ? (
+        <p className="text-xs text-muted-foreground">{c.unavailable}</p>
+      ) : status === "error" ? (
+        <div className="flex flex-col items-start gap-2">
+          <p role="alert" className="text-xs text-[var(--hm-danger)]">
+            {c.loadFailed(error ?? c.unknownError)}
+          </p>
+          <Button variant="outline" size="sm" onClick={() => void onChanged()}>
+            {c.retry}
+          </Button>
+        </div>
+      ) : entries.length === 0 ? (
         <p className="text-xs text-muted-foreground">{c.empty}</p>
       ) : (
         <div className="flex flex-col gap-2">

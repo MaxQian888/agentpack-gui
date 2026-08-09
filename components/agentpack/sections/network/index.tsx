@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback } from "react"
+import { useCallback, useState } from "react"
 import { isTauri } from "@/lib/tauri"
 import { normalizeProxyUrl } from "@/lib/agentpack/network/proxy"
 import type { ProxyCandidate } from "@/lib/agentpack/network/discovery"
@@ -8,7 +8,7 @@ import { scanNetwork } from "@/lib/agentpack/network/scan"
 import type { ProxyMode } from "@/lib/agentpack/types"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-import { SectionShell } from "../section-shell"
+import { CapabilityMetric, CapabilityWorkbench } from "../capability-workbench"
 import { HelpTip } from "../../help-tip"
 import { DiscoveryCard } from "./discovery-card"
 import { ProxyCard } from "./proxy-card"
@@ -34,18 +34,34 @@ export function NetworkSection() {
   const scanning = useAppStore((s) => s.networkProbing)
   const setNetworkProbe = useAppStore((s) => s.setNetworkProbe)
   const setNetworkProbing = useAppStore((s) => s.setNetworkProbing)
+  const [scanError, setScanError] = useState<string | null>(null)
+  const proxyMode = useAppStore((s) => s.plan.network.proxy?.mode ?? "off")
+  const reachableMirrors = probe
+    ? [...probe.npm, ...probe.gh, ...probe.pypi, ...probe.brew].filter((item) => item.result?.ok)
+        .length
+    : null
 
   const rescan = useCallback(async () => {
     if (!isTauri()) return
+    setScanError(null)
     setNetworkProbing(true)
     try {
       setNetworkProbe(await scanNetwork())
-    } catch {
+    } catch (error) {
       setNetworkProbe(null)
+      setScanError(error instanceof Error ? error.message : String(error))
     } finally {
       setNetworkProbing(false)
     }
   }, [setNetworkProbe, setNetworkProbing])
+
+  const scanStatus = scanning
+    ? t.network.discovery.scanning
+    : scanError
+      ? t.network.scanFailed
+      : probe
+        ? t.network.scanReady
+        : t.network.scanPending
 
   // Adopt a discovered proxy. A SOCKS candidate goes to ALL_PROXY; anything else
   // fills both HTTP and HTTPS, which is what a single-endpoint proxy wants.
@@ -67,14 +83,45 @@ export function NetworkSection() {
   )
 
   return (
-    <SectionShell
+    <CapabilityWorkbench
       title={t.network.title}
       subtitle={t.network.ask}
       help={<HelpTip text={t.help.network} />}
-    >
-      <DiscoveryCard probe={probe} scanning={scanning} onScan={() => void rescan()} onUse={adopt} />
-      <ProxyCard discovered={probe?.bestProxy ?? probe?.proxies[0] ?? null} onAdopt={adopt} />
-      <MirrorsCard />
-    </SectionShell>
+      summaryLabel={t.network.summaryLabel}
+      actionsLabel={t.network.actionsLabel}
+      metrics={
+        <>
+          <CapabilityMetric label={t.network.metricMode} value={t.network.proxy.mode[proxyMode]} />
+          <CapabilityMetric
+            label={t.network.metricCandidates}
+            value={probe?.proxies.length ?? "—"}
+          />
+          <CapabilityMetric label={t.network.metricReachable} value={reachableMirrors ?? "—"} />
+          <CapabilityMetric
+            label={t.network.metricScan}
+            value={scanStatus}
+            detail={scanError ? t.network.scanError(scanError) : undefined}
+          />
+        </>
+      }
+      primary={
+        <section aria-label={t.network.proxyPanel} className="min-w-0">
+          <ProxyCard discovered={probe?.bestProxy ?? probe?.proxies[0] ?? null} onAdopt={adopt} />
+        </section>
+      }
+      aside={
+        <DiscoveryCard
+          probe={probe}
+          scanning={scanning}
+          onScan={() => void rescan()}
+          onUse={adopt}
+        />
+      }
+      detail={
+        <section aria-label={t.network.mirrorsPanel} className="min-w-0">
+          <MirrorsCard />
+        </section>
+      }
+    />
   )
 }

@@ -26,6 +26,10 @@ jest.mock("@/lib/tauri/commands", () => ({
 jest.mock("@/lib/tauri/settings", () => ({
   saveSettings: jest.fn(async (patch) => ({ ghMirrorPrefix: null, proxy: null, ...patch })),
 }))
+jest.mock("@/lib/agentpack/network/scan", () => {
+  const actual = jest.requireActual("@/lib/agentpack/network/scan")
+  return { ...actual, scanNetwork: jest.fn(actual.scanNetwork) }
+})
 
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -42,6 +46,7 @@ import {
   writeTextFile,
 } from "@/lib/tauri/commands"
 import { saveSettings } from "@/lib/tauri/settings"
+import { scanNetwork } from "@/lib/agentpack/network/scan"
 import { RunnerHarness } from "../../run/__testing__/harness"
 import { NetworkSection } from "./index"
 
@@ -100,6 +105,34 @@ function renderSection() {
     </I18nProvider>
   )
 }
+
+it("organizes proxy configuration, discovery, and mirrors as one workbench", () => {
+  seedProbe(["http://127.0.0.1:7890"], { directOk: true })
+  renderSection()
+
+  expect(screen.getByRole("region", { name: en.network.summaryLabel })).toBeInTheDocument()
+  expect(screen.getByRole("region", { name: en.network.proxyPanel })).toBeInTheDocument()
+  expect(screen.getByRole("complementary", { name: en.network.actionsLabel })).toBeInTheDocument()
+  expect(screen.getByRole("region", { name: en.network.mirrorsPanel })).toBeInTheDocument()
+})
+
+it("reports an in-progress network measurement in the summary", () => {
+  useAppStore.getState().setNetworkProbing(true)
+  renderSection()
+
+  const summary = screen.getByRole("region", { name: en.network.summaryLabel })
+  expect(within(summary).getByText(en.network.discovery.scanning)).toBeInTheDocument()
+})
+
+it("keeps a failed network measurement visible in the summary", async () => {
+  ;(scanNetwork as jest.Mock).mockRejectedValueOnce(new Error("offline"))
+  renderSection()
+
+  await userEvent.click(screen.getByRole("button", { name: en.network.discovery.scan }))
+  const summary = screen.getByRole("region", { name: en.network.summaryLabel })
+  expect(await within(summary).findByText(en.network.scanFailed)).toBeInTheDocument()
+  expect(within(summary).getByText(en.network.scanError("offline"))).toBeInTheDocument()
+})
 
 it("reports when the startup scan found nothing", async () => {
   seedProbe([])

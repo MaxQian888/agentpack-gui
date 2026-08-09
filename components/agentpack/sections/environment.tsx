@@ -4,7 +4,6 @@ import { useState } from "react"
 import { ExternalLink, RefreshCw } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import {
   Select,
@@ -24,7 +23,7 @@ import { extractSemver } from "@/lib/agentpack/version"
 import { openUrl } from "@/lib/tauri/system"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-import { SectionShell } from "./section-shell"
+import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "./capability-workbench"
 import { HelpTip } from "../help-tip"
 import { useRunnerCtx } from "../run/runner-context"
 import { DesktopOnlyNote } from "../desktop-only-note"
@@ -47,6 +46,12 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
   // re-detect too — a freshly installed runtime that isn't yet on this process's
   // PATH, or an install done outside agentpack, only shows up after a fresh scan.
   const [refreshing, setRefreshing] = useState(false)
+  const detectionsMeasured = RUNTIMES.every((runtime) => detections[runtime.id] !== undefined)
+  const detectedCount = RUNTIMES.filter((runtime) => detections[runtime.id]).length
+  const installedCount = RUNTIMES.filter((runtime) => detections[runtime.id]?.installed).length
+  const missingCount = RUNTIMES.filter(
+    (runtime) => detections[runtime.id] && !detections[runtime.id]?.installed
+  ).length
   const recheck = async () => {
     if (!refresh || refreshing) return
     setRefreshing(true)
@@ -74,148 +79,205 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
   }
 
   return (
-    <SectionShell
+    <CapabilityWorkbench
       title={t.environment.title}
       subtitle={t.environment.subtitle}
       help={<HelpTip text={t.help.runtime} />}
-    >
-      {/* Same as the CLIs section: without detections every version below is
-          blank, which looks like a broken page rather than a web-mode limit. */}
-      {!isTauri() && mounted ? <DesktopOnlyNote>{t.environment.notTauri}</DesktopOnlyNote> : null}
-      <div className="-mt-2 flex items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">{t.environment.installHint}</p>
-        {refresh ? (
-          <Button
-            variant="outline"
-            size="sm"
-            className="shrink-0 gap-2"
-            onClick={() => void recheck()}
-            disabled={refreshing}
-          >
-            <RefreshCw className={cn("size-4", refreshing && "animate-spin")} />
-            {t.environment.recheck}
-          </Button>
-        ) : null}
-      </div>
-      <div className="flex flex-col gap-3">
-        {RUNTIMES.map((rt) => {
-          const meta = t.catalog.runtime[rt.id]
-          const d = detections[rt.id]
-          const methods = installMethodsFor(rt, effectiveOS())
-          const installable = methods.length > 0
-          const updatable = !!runtimeUpgradeCommandFor(rt, effectiveOS())
-          const selectedMethodId = methodChoice[rt.id] ?? methods[0]?.id
-          const selectedMethod = methods.find((m) => m.id === selectedMethodId)
-          // Offer a chooser only for missing runtimes that have >1 channel.
-          const showMethodPicker = !!d && !d.installed && methods.length > 1
-          // A winget/brew-managed runtime the manager DOESN'T own can't be updated
-          // or reinstalled in place — offer its official download page instead.
-          // Only once ownership is a confirmed `false` (unknown/pending keeps the
-          // normal actions; the runner still warns if winget can't update).
-          const pm = runtimePkgManager(rt, effectiveOS())
-          const notManaged = !!pm && runtimeOwned[rt.id] === false && !!rt.downloadUrl
-          return (
-            <Card key={rt.id} className="flex-col items-stretch gap-2 p-4">
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <span className="font-medium">{meta?.title ?? rt.id}</span>
-                  <p className="text-sm text-muted-foreground">{meta?.description}</p>
-                </div>
-                {d ? (
-                  d.installed ? (
-                    <>
-                      <Badge
-                        variant="secondary"
-                        className="min-w-0 shrink font-normal text-ellipsis"
-                      >
-                        {t.envcheck.installed}
-                        {d.version ? ` · ${extractSemver(d.version) ?? d.version}` : ""}
-                      </Badge>
-                      {notManaged ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="gap-1.5"
-                          onClick={() => void openUrl(rt.downloadUrl!)}
-                        >
-                          {t.shell.downloadLatest}
-                          <ExternalLink className="size-3.5" />
-                        </Button>
+      summaryLabel={t.environment.summaryLabel}
+      actionsLabel={t.environment.actionsLabel}
+      metrics={
+        <>
+          <CapabilityMetric label={t.environment.metricCatalog} value={RUNTIMES.length} />
+          <CapabilityMetric
+            label={t.environment.metricDetected}
+            value={detectionsMeasured ? detectedCount : "—"}
+            detail={detectionsMeasured ? undefined : t.environment.metricPending}
+          />
+          <CapabilityMetric
+            label={t.environment.metricInstalled}
+            value={detectionsMeasured ? installedCount : "—"}
+            detail={detectionsMeasured ? undefined : t.environment.metricPending}
+          />
+          <CapabilityMetric
+            label={t.environment.metricMissing}
+            value={detectionsMeasured ? missingCount : "—"}
+            detail={detectionsMeasured ? undefined : t.environment.metricPending}
+          />
+        </>
+      }
+      primary={
+        <section aria-label={t.environment.catalogPanel} className="min-w-0 rounded-lg border">
+          {/* Same as the CLIs section: without detections every version below is
+              blank, which looks like a broken page rather than a web-mode limit. */}
+          {!isTauri() && mounted ? (
+            <div className="border-b p-4">
+              <DesktopOnlyNote>{t.environment.notTauri}</DesktopOnlyNote>
+            </div>
+          ) : null}
+          <div className="divide-y">
+            {RUNTIMES.map((rt) => {
+              const meta = t.catalog.runtime[rt.id]
+              const d = detections[rt.id]
+              const methods = installMethodsFor(rt, effectiveOS())
+              const installable = methods.length > 0
+              const updatable = !!runtimeUpgradeCommandFor(rt, effectiveOS())
+              const selectedMethodId = methodChoice[rt.id] ?? methods[0]?.id
+              const selectedMethod = methods.find((m) => m.id === selectedMethodId)
+              // Offer a chooser only for missing runtimes that have >1 channel.
+              const showMethodPicker = !!d && !d.installed && methods.length > 1
+              // A winget/brew-managed runtime the manager DOESN'T own can't be updated
+              // or reinstalled in place — offer its official download page instead.
+              // Only once ownership is a confirmed `false` (unknown/pending keeps the
+              // normal actions; the runner still warns if winget can't update).
+              const pm = runtimePkgManager(rt, effectiveOS())
+              const notManaged = !!pm && runtimeOwned[rt.id] === false && !!rt.downloadUrl
+              return (
+                <div key={rt.id} className="min-w-0 p-4">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="min-w-48 flex-1">
+                      <span className="font-medium">{meta?.title ?? rt.id}</span>
+                      <p className="text-sm text-muted-foreground">{meta?.description}</p>
+                    </div>
+                    {d ? (
+                      d.installed ? (
+                        <>
+                          <Badge
+                            variant="secondary"
+                            className="min-w-0 shrink font-normal text-ellipsis"
+                          >
+                            {t.envcheck.installed}
+                            {d.version ? ` · ${extractSemver(d.version) ?? d.version}` : ""}
+                          </Badge>
+                          {notManaged ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="gap-1.5"
+                              onClick={() => void openUrl(rt.downloadUrl!)}
+                            >
+                              {t.shell.downloadLatest}
+                              <ExternalLink className="size-3.5" />
+                            </Button>
+                          ) : (
+                            <>
+                              {updatable ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => void updateNow(rt)}
+                                >
+                                  {t.shell.update}
+                                </Button>
+                              ) : null}
+                              {installable ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => void installNow(rt)}
+                                >
+                                  {t.shell.reinstall}
+                                </Button>
+                              ) : null}
+                            </>
+                          )}
+                        </>
                       ) : (
                         <>
-                          {updatable ? (
-                            <Button variant="outline" size="sm" onClick={() => void updateNow(rt)}>
-                              {t.shell.update}
-                            </Button>
-                          ) : null}
+                          <Badge
+                            variant="outline"
+                            className="shrink-0 font-normal text-muted-foreground"
+                          >
+                            {t.envcheck.notFound}
+                          </Badge>
                           {installable ? (
-                            <Button variant="ghost" size="sm" onClick={() => void installNow(rt)}>
-                              {t.shell.reinstall}
+                            <Button variant="outline" size="sm" onClick={() => void installNow(rt)}>
+                              {t.shell.installNow}
                             </Button>
                           ) : null}
                         </>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <Badge
-                        variant="outline"
-                        className="shrink-0 font-normal text-muted-foreground"
-                      >
-                        {t.envcheck.notFound}
-                      </Badge>
-                      {installable ? (
-                        <Button variant="outline" size="sm" onClick={() => void installNow(rt)}>
-                          {t.shell.installNow}
-                        </Button>
-                      ) : null}
-                    </>
-                  )
-                ) : null}
-              </div>
-              {showMethodPicker ? (
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      {t.shell.installMethod}
-                    </span>
-                    <Select
-                      value={selectedMethodId}
-                      onValueChange={(v) => setMethodChoice((prev) => ({ ...prev, [rt.id]: v }))}
-                    >
-                      <SelectTrigger className="h-8 w-[220px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {methods.map((m) => (
-                          <SelectItem key={m.id} value={m.id}>
-                            {t.catalog.methods[m.id]?.title ?? m.id}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      )
+                    ) : null}
                   </div>
-                  {selectedMethod ? (
+                  {showMethodPicker ? (
+                    <div className="flex flex-col gap-1">
+                      <div className="flex min-w-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+                        <span className="text-xs font-medium text-muted-foreground">
+                          {t.shell.installMethod}
+                        </span>
+                        <Select
+                          value={selectedMethodId}
+                          onValueChange={(v) =>
+                            setMethodChoice((prev) => ({ ...prev, [rt.id]: v }))
+                          }
+                        >
+                          <SelectTrigger className="h-8 w-full min-w-0 sm:w-[220px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {methods.map((m) => (
+                              <SelectItem key={m.id} value={m.id}>
+                                {t.catalog.methods[m.id]?.title ?? m.id}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {selectedMethod ? (
+                        <p className="text-xs text-muted-foreground">
+                          {t.catalog.methods[selectedMethod.id]?.description}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {d && !d.installed && !installable ? (
                     <p className="text-xs text-muted-foreground">
-                      {t.catalog.methods[selectedMethod.id]?.description}
+                      {rt.manualNote ?? t.environment.noInstaller}
+                    </p>
+                  ) : null}
+                  {notManaged && pm ? (
+                    <p className="text-xs text-muted-foreground">
+                      {t.environment.notManaged(pm.manager)}
                     </p>
                   ) : null}
                 </div>
-              ) : null}
-              {d && !d.installed && !installable ? (
-                <p className="text-xs text-muted-foreground">
-                  {rt.manualNote ?? t.environment.noInstaller}
-                </p>
-              ) : null}
-              {notManaged && pm ? (
-                <p className="text-xs text-muted-foreground">
-                  {t.environment.notManaged(pm.manager)}
-                </p>
-              ) : null}
-            </Card>
-          )
-        })}
-      </div>
-    </SectionShell>
+              )
+            })}
+          </div>
+        </section>
+      }
+      aside={
+        <CapabilityTile
+          title={t.environment.detectionTitle}
+          description={t.environment.installHint}
+          action={
+            refresh ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0 gap-2"
+                onClick={() => void recheck()}
+                disabled={refreshing}
+              >
+                <RefreshCw className={cn("size-4", refreshing && "animate-spin")} />
+                {refreshing ? t.environment.detecting : t.environment.recheck}
+              </Button>
+            ) : null
+          }
+        >
+          <dl className="divide-y text-sm">
+            <div className="flex items-center justify-between gap-3 py-2">
+              <dt className="text-muted-foreground">{t.environment.metricInstalled}</dt>
+              <dd className="font-mono tabular-nums">
+                {detectionsMeasured ? installedCount : "—"}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-3 py-2">
+              <dt className="text-muted-foreground">{t.environment.metricMissing}</dt>
+              <dd className="font-mono tabular-nums">{detectionsMeasured ? missingCount : "—"}</dd>
+            </div>
+          </dl>
+        </CapabilityTile>
+      }
+    />
   )
 }

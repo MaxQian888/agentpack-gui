@@ -8,7 +8,9 @@ test("shows update state and every user preference", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "About & updates" })).toBeVisible()
   await expect(
-    page.getByText("Run the desktop app to see the version and check for updates.")
+    page
+      .getByRole("region", { name: "Application preferences" })
+      .getByText("Run the desktop app to see the version and check for updates.")
   ).toBeVisible()
   await expect(page.getByRole("button", { name: "Check for updates" })).toBeDisabled()
   await expect(page.getByLabel("Language")).toHaveValue("en")

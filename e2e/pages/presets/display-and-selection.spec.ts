@@ -16,9 +16,7 @@ test("shows every preset, configurable surface, and empty selection state", asyn
   for (const surface of ["CLIs", "Skills", "MCP servers"]) {
     await expect(page.getByRole("tab", { name: surface, exact: true })).toBeVisible()
   }
-  await expect(page.getByRole("complementary", { name: "Your selection" })).toContainText(
-    "Nothing yet."
-  )
+  await expect(page.getByRole("region", { name: "Your selection" })).toContainText("Nothing yet.")
 })
 
 test("applies a complete preset and Custom clears the staged plan", async ({ page }) => {

@@ -56,6 +56,17 @@ describe("bundles", () => {
 })
 
 describe("checklists", () => {
+  it("organizes bundle status, checklists, and the selection summary as one workbench", () => {
+    useAppStore.getState().applyPreset("minimal")
+    renderSection()
+
+    expect(screen.getByRole("region", { name: en.presetsScreen.summaryLabel })).toBeInTheDocument()
+    expect(screen.getByRole("region", { name: en.presetsScreen.catalogPanel })).toBeInTheDocument()
+    expect(
+      screen.getByRole("complementary", { name: en.presetsScreen.actionsLabel })
+    ).toBeInTheDocument()
+  })
+
   it("ticking a skill targets the agents the plan installs", async () => {
     useAppStore.getState().applyPreset("minimal")
     useAppStore.getState().setSkill("rust", [])
@@ -69,7 +80,7 @@ describe("checklists", () => {
   it("summarises the selection rather than making the user re-read the ticks", async () => {
     useAppStore.getState().applyPreset("minimal")
     renderSection()
-    const summary = screen.getByRole("complementary", { name: en.installDialog.summary })
+    const summary = screen.getByRole("region", { name: en.installDialog.summary })
     for (const id of useAppStore.getState().plan.clis) {
       expect(summary).toHaveTextContent(en.catalog.cli[id].title)
     }
@@ -77,7 +88,7 @@ describe("checklists", () => {
 
   it("says so plainly when nothing is selected", () => {
     renderSection()
-    expect(screen.getByRole("complementary", { name: en.installDialog.summary })).toHaveTextContent(
+    expect(screen.getByRole("region", { name: en.installDialog.summary })).toHaveTextContent(
       en.installDialog.summaryEmpty
     )
   })

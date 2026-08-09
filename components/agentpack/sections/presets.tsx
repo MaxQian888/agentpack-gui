@@ -9,7 +9,7 @@ import { matchPreset, mcpTargetsFor, PRESETS, skillTargetsFor } from "@/lib/agen
 import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-import { SectionShell } from "./section-shell"
+import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "./capability-workbench"
 import { HelpTip } from "../help-tip"
 import { KeyInput } from "./mcp/helpers"
 
@@ -74,143 +74,162 @@ export function PresetsSection() {
   }
 
   return (
-    <SectionShell
-      wide
+    <CapabilityWorkbench
       title={t.presetsScreen.title}
       subtitle={t.presetsScreen.subtitle}
       help={<HelpTip text={t.help.preset} />}
-    >
-      {/* Bundle chips — a shortcut that pre-fills the checklists below. */}
-      <div className="flex flex-col gap-2">
-        <div className="text-sm font-medium">{d.presetLabel}</div>
-        <div className="flex flex-wrap gap-2">
-          {OPTIONS.map((id) => {
-            const active = activePreset === id
-            return (
-              <button
-                key={id}
-                type="button"
-                aria-pressed={active}
-                onClick={() => choosePreset(id)}
-                className={cn(
-                  "rounded-[var(--hm-radius-control)] border px-3 py-1.5 text-sm",
-                  "transition-colors duration-(--hm-dur-fast) ease-(--hm-ease-out)",
-                  active
-                    ? "border-[var(--hm-accent)] bg-[var(--hm-accent-soft)] font-medium text-[var(--hm-accent)]"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                {id === "custom" ? d.custom : (t.presets[id]?.title ?? id)}
-              </button>
-            )
-          })}
-        </div>
-        {/* The description of whichever bundle is active, stated once. It used
+      summaryLabel={t.presetsScreen.summaryLabel}
+      actionsLabel={t.presetsScreen.actionsLabel}
+      metrics={
+        <>
+          <CapabilityMetric
+            label={t.presetsScreen.metricPreset}
+            value={
+              activePreset
+                ? activePreset === "custom"
+                  ? t.presetsScreen.customValue
+                  : (t.presets[activePreset]?.title ?? activePreset)
+                : "—"
+            }
+          />
+          <CapabilityMetric label={t.presetsScreen.metricClis} value={selectedClis.size} />
+          <CapabilityMetric label={t.presetsScreen.metricSkills} value={selectedSkills.size} />
+          <CapabilityMetric label={t.presetsScreen.metricMcp} value={selectedMcps.size} />
+        </>
+      }
+      primary={
+        <section
+          aria-label={t.presetsScreen.catalogPanel}
+          className="min-w-0 rounded-lg border p-4"
+        >
+          {/* Bundle chips — a shortcut that pre-fills the checklists below. */}
+          <div className="flex flex-col gap-2 border-b pb-4">
+            <div className="text-sm font-medium">{d.presetLabel}</div>
+            <div className="flex flex-wrap gap-2">
+              {OPTIONS.map((id) => {
+                const active = activePreset === id
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => choosePreset(id)}
+                    className={cn(
+                      "rounded-[var(--hm-radius-control)] border px-3 py-1.5 text-sm",
+                      "transition-colors duration-(--hm-dur-fast) ease-(--hm-ease-out)",
+                      active
+                        ? "border-[var(--hm-accent)] bg-[var(--hm-accent-soft)] font-medium text-[var(--hm-accent)]"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {id === "custom" ? d.custom : (t.presets[id]?.title ?? id)}
+                  </button>
+                )
+              })}
+            </div>
+            {/* The description of whichever bundle is active, stated once. It used
             to be a `title` on each chip, which both hid it from the keyboard
             and — because a title wins the accessible-name computation —
             replaced "Recommended" with a sentence for screen-reader users. */}
-        <p className="min-h-5 text-sm text-muted-foreground" aria-live="polite">
-          {activePreset ? (t.presets[activePreset]?.description ?? "") : ""}
-        </p>
-      </div>
+            <p className="min-h-5 text-sm text-muted-foreground" aria-live="polite">
+              {activePreset ? (t.presets[activePreset]?.description ?? "") : ""}
+            </p>
+          </div>
 
-      {/* The checklists get the width; the summary is a column of its own from
+          {/* The checklists get the width; the summary is a column of its own from
           1100px up. Below that the change tray already states the count, so a
           second summary would just be the same number twice. */}
-      <div className="grid gap-6 min-[1100px]:grid-cols-[minmax(0,1fr)_15rem]">
-        <Tabs defaultValue="clis" className="min-w-0">
-          <TabsList>
-            <TabsTrigger value="clis">{d.clis}</TabsTrigger>
-            <TabsTrigger value="skills">{d.skills}</TabsTrigger>
-            <TabsTrigger value="mcp">{d.mcp}</TabsTrigger>
-          </TabsList>
+          <Tabs defaultValue="clis" className="min-w-0 pt-4">
+            <TabsList>
+              <TabsTrigger value="clis">{d.clis}</TabsTrigger>
+              <TabsTrigger value="skills">{d.skills}</TabsTrigger>
+              <TabsTrigger value="mcp">{d.mcp}</TabsTrigger>
+            </TabsList>
 
-          <TabsContent value="clis">
-            {/* One block per kind, so the agents aren't interleaved with the
+            <TabsContent value="clis">
+              {/* One block per kind, so the agents aren't interleaved with the
                 tools that manage them (see `clisByKind`). */}
-            {clisByKind().map(({ kind, tools }) => (
-              <Group key={kind} icon={Terminal} title={t.tools.kinds[kind] ?? kind}>
-                {tools.map((tool) => (
+              {clisByKind().map(({ kind, tools }) => (
+                <Group key={kind} icon={Terminal} title={t.tools.kinds[kind] ?? kind}>
+                  {tools.map((tool) => (
+                    <CheckRow
+                      key={tool.id}
+                      id={`qi-cli-${tool.id}`}
+                      label={label.cli(tool.id)}
+                      checked={selectedClis.has(tool.id)}
+                      installed={detections[tool.id]?.installed}
+                      installedLabel={t.envcheck.installed}
+                      onToggle={() => toggleCliAndRetarget(tool.id)}
+                    />
+                  ))}
+                </Group>
+              ))}
+            </TabsContent>
+
+            <TabsContent value="skills">
+              <Group icon={Wrench} title={d.skills} note={d.writesTo(targetNames(skillTargets))}>
+                {SKILLS.map((skill) => (
                   <CheckRow
-                    key={tool.id}
-                    id={`qi-cli-${tool.id}`}
-                    label={label.cli(tool.id)}
-                    checked={selectedClis.has(tool.id)}
-                    installed={detections[tool.id]?.installed}
-                    installedLabel={t.envcheck.installed}
-                    onToggle={() => toggleCliAndRetarget(tool.id)}
+                    key={skill.id}
+                    id={`qi-skill-${skill.id}`}
+                    label={label.skill(skill.id)}
+                    checked={selectedSkills.has(skill.id)}
+                    onToggle={() =>
+                      setSkill(skill.id, selectedSkills.has(skill.id) ? [] : skillTargets)
+                    }
                   />
                 ))}
               </Group>
-            ))}
-          </TabsContent>
+            </TabsContent>
 
-          <TabsContent value="skills">
-            <Group icon={Wrench} title={d.skills} note={d.writesTo(targetNames(skillTargets))}>
-              {SKILLS.map((skill) => (
-                <CheckRow
-                  key={skill.id}
-                  id={`qi-skill-${skill.id}`}
-                  label={label.skill(skill.id)}
-                  checked={selectedSkills.has(skill.id)}
-                  onToggle={() =>
-                    setSkill(skill.id, selectedSkills.has(skill.id) ? [] : skillTargets)
-                  }
-                />
-              ))}
-            </Group>
-          </TabsContent>
-
-          <TabsContent value="mcp">
-            <Group icon={Server} title={d.mcp} note={d.writesTo(targetNames(mcpTargets))}>
-              {MCP_SERVERS.map((server) => {
-                const checked = selectedMcps.has(server.id)
-                return (
-                  <div key={server.id} className="flex flex-col gap-1">
-                    <CheckRow
-                      id={`qi-mcp-${server.id}`}
-                      label={label.mcp(server.id)}
-                      checked={checked}
-                      badge={server.keyEnv ? t.mcp.needsKeyBadge : undefined}
-                      onToggle={() => setMcp(server.id, checked ? [] : mcpTargets)}
-                    />
-                    {/* Ask for the key here rather than sending the user to the MCP
+            <TabsContent value="mcp">
+              <Group icon={Server} title={d.mcp} note={d.writesTo(targetNames(mcpTargets))}>
+                {MCP_SERVERS.map((server) => {
+                  const checked = selectedMcps.has(server.id)
+                  return (
+                    <div key={server.id} className="flex flex-col gap-1">
+                      <CheckRow
+                        id={`qi-mcp-${server.id}`}
+                        label={label.mcp(server.id)}
+                        checked={checked}
+                        badge={server.keyEnv ? t.mcp.needsKeyBadge : undefined}
+                        onToggle={() => setMcp(server.id, checked ? [] : mcpTargets)}
+                      />
+                      {/* Ask for the key here rather than sending the user to the MCP
                         page: a bundle can select a key-gated server (context7,
                         github), and without one the server installs degraded. */}
-                    {checked && server.keyEnv ? (
-                      <div className="pl-6">
-                        <KeyInput
-                          ariaLabel={`${server.id} ${server.keyEnv}`}
-                          placeholder={server.keyEnv}
-                          value={plan.mcpKeys[server.id] ?? ""}
-                          onChange={(v) => setMcpKey(server.id, v)}
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                )
-              })}
-            </Group>
-          </TabsContent>
-        </Tabs>
-
-        <aside
-          aria-label={d.summary}
-          className="hidden min-w-0 self-start rounded-[var(--hm-radius-surface)] border p-4 min-[1100px]:block"
-        >
-          <h3 className="text-sm font-medium">{d.summary}</h3>
+                      {checked && server.keyEnv ? (
+                        <div className="pl-6">
+                          <KeyInput
+                            ariaLabel={`${server.id} ${server.keyEnv}`}
+                            placeholder={server.keyEnv}
+                            value={plan.mcpKeys[server.id] ?? ""}
+                            onChange={(v) => setMcpKey(server.id, v)}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  )
+                })}
+              </Group>
+            </TabsContent>
+          </Tabs>
+        </section>
+      }
+      aside={
+        <CapabilityTile title={d.summary}>
           {anyPicked ? (
-            <dl className="mt-3 flex flex-col gap-3 text-sm">
+            <dl className="flex flex-col gap-3 text-sm">
               <SummaryGroup title={d.clis} items={plan.clis.map(label.cli)} />
               <SummaryGroup title={d.skills} items={plan.skills.map((s) => label.skill(s.id))} />
               <SummaryGroup title={d.mcp} items={plan.mcps.map((m) => label.mcp(m.id))} />
             </dl>
           ) : (
-            <p className="mt-2 text-sm text-muted-foreground">{d.summaryEmpty}</p>
+            <p className="text-sm text-muted-foreground">{d.summaryEmpty}</p>
           )}
-        </aside>
-      </div>
-    </SectionShell>
+        </CapabilityTile>
+      }
+    />
   )
 }
 

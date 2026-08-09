@@ -19,7 +19,7 @@ jest.mock("@/lib/tauri/commands", () => ({
   pathExists: jest.fn(async () => false),
 }))
 
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
@@ -106,7 +106,10 @@ function renderSection(opts: { panel?: boolean } = {}) {
 beforeEach(() => {
   jest.clearAllMocks()
   mocked.trash.mockResolvedValue([])
-  mocked.running.mockResolvedValue(false)
+  // Most tests do not exercise process detection. Keep that background probe
+  // pending so it cannot update the component after a synchronous assertion;
+  // the dedicated running-process test below supplies its own resolved result.
+  mocked.running.mockImplementation(() => new Promise(() => {}))
   mocked.read.mockResolvedValue("{}")
   mocked.apply.mockResolvedValue({
     quarantineId: "trash-1",
@@ -125,7 +128,9 @@ it("shows only what the scan found, with its measured size", async () => {
   renderSection()
 
   expect(await screen.findByText(en.cleanup.targets["codex-chats"].title)).toBeInTheDocument()
-  expect(screen.getByText("1.9 GB")).toBeInTheDocument()
+  expect(
+    within(screen.getByRole("region", { name: en.cleanup.targetsPanel })).getByText("1.9 GB")
+  ).toBeInTheDocument()
   expect(screen.getByText(en.cleanup.targets["claude-cache"].title)).toBeInTheDocument()
   // A catalog entry the scan says isn't there never reaches the screen.
   expect(screen.queryByText(en.cleanup.targets["opencode-chats"].title)).not.toBeInTheDocument()
@@ -134,6 +139,66 @@ it("shows only what the scan found, with its measured size", async () => {
 it("says so plainly when there is nothing to clean", async () => {
   renderSection()
   expect(await screen.findByText(en.cleanup.empty)).toBeInTheDocument()
+})
+
+it("organizes measured cleanup targets, controls, and trash as one workbench", async () => {
+  seedScan({ "claude-cache": { bytes: 1_024, files: 3 } })
+  renderSection()
+  await screen.findByText(en.cleanup.targets["claude-cache"].title)
+
+  expect(screen.getByRole("region", { name: en.cleanup.summaryLabel })).toBeInTheDocument()
+  expect(screen.getByRole("region", { name: en.cleanup.targetsPanel })).toBeInTheDocument()
+  expect(screen.getByRole("complementary", { name: en.cleanup.actionsLabel })).toBeInTheDocument()
+  expect(screen.getByRole("region", { name: en.cleanup.trashPanel })).toBeInTheDocument()
+})
+
+it("keeps disk metrics unmeasured and replaces the scan label while scanning", () => {
+  mocked.scan.mockImplementation(() => new Promise(() => {}))
+  renderSection()
+
+  const summary = screen.getByRole("region", { name: en.cleanup.summaryLabel })
+  expect(within(summary).getAllByText("—").length).toBeGreaterThanOrEqual(2)
+  expect(screen.getByRole("button", { name: en.cleanup.scanning })).toBeDisabled()
+})
+
+it("hides stale disk totals while a changed filter is being measured", async () => {
+  seedScan({ "claude-cache": { bytes: 1_024, files: 3 } })
+  renderSection()
+  await screen.findByText(en.cleanup.targets["claude-cache"].title)
+  mocked.scan.mockImplementation(() => new Promise(() => {}))
+
+  await userEvent.click(screen.getByRole("combobox", { name: en.cleanup.age.label }))
+  await userEvent.click(await screen.findByRole("option", { name: en.cleanup.age.days(30) }))
+
+  const summary = screen.getByRole("region", { name: en.cleanup.summaryLabel })
+  expect(within(summary).getAllByText("—").length).toBeGreaterThanOrEqual(2)
+})
+
+it("does not turn a recycle-area read failure into a plausible zero", async () => {
+  mocked.trash.mockRejectedValueOnce(new Error("permission denied"))
+  renderSection()
+
+  const summary = screen.getByRole("region", { name: en.cleanup.summaryLabel })
+  expect(
+    await within(summary).findByText(en.cleanup.metricReadFailed("permission denied"))
+  ).toBeInTheDocument()
+  const trashPanel = screen.getByRole("region", { name: en.cleanup.trashPanel })
+  expect(within(trashPanel).getByRole("alert")).toHaveTextContent(
+    en.cleanup.trash.loadFailed("permission denied")
+  )
+  expect(within(trashPanel).getByRole("button", { name: en.cleanup.trash.retry })).toBeEnabled()
+})
+
+it("keeps a failed disk scan explicit instead of reporting an empty machine", async () => {
+  mocked.scan.mockRejectedValueOnce(new Error("permission denied"))
+  renderSection()
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    en.cleanup.scanFailed("permission denied")
+  )
+  const summary = screen.getByRole("region", { name: en.cleanup.summaryLabel })
+  expect(within(summary).getAllByText("—").length).toBeGreaterThanOrEqual(2)
+  expect(screen.queryByText(en.cleanup.empty)).not.toBeInTheDocument()
 })
 
 /**

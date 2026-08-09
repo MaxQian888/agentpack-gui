@@ -40,10 +40,10 @@ import { isTauri } from "@/lib/tauri"
 import { cleanupQuarantineList, isProcessRunning, type QuarantineEntry } from "@/lib/tauri/commands"
 import { useAppStore } from "@/store/app-store"
 import { useMounted } from "@/hooks/use-mounted"
-import { SectionShell } from "../section-shell"
+import { CapabilityMetric, CapabilityWorkbench } from "../capability-workbench"
 import { DesktopOnlyNote } from "../../desktop-only-note"
 import { useRunnerCtx } from "../../run/runner-context"
-import { scanCleanup } from "./scan"
+import { scanCleanup, type CleanupScanResult } from "./scan"
 import { TrashCard } from "./trash-card"
 
 /** Which CLI process holds a target's files open, for the "close it first" warning. */
@@ -83,10 +83,15 @@ export function CleanupSection() {
   const [configTargets, setConfigTargets] = useState<CleanupConfigTarget[]>([])
   const [roots, setRoots] = useState<CleanupRoots | null>(null)
   const [trash, setTrash] = useState<QuarantineEntry[]>([])
+  const [trashStatus, setTrashStatus] = useState<"loading" | "ready" | "error" | "unavailable">(
+    "loading"
+  )
+  const [trashError, setTrashError] = useState<string | null>(null)
   const [running, setRunning] = useState<Record<string, boolean>>({})
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [ageDays, setAgeDays] = useState(0)
   const [mode, setMode] = useState<"quarantine" | "delete">("quarantine")
+  const [scanError, setScanError] = useState<string | null>(null)
   // Starts true because the section really is scanning from its first render —
   // the mount effect measures the disk. Deriving it that way (rather than
   // flipping it on inside the effect) keeps the effect free of synchronous
@@ -96,11 +101,19 @@ export function CleanupSection() {
   const [scanned, setScanned] = useState(false)
 
   const refreshTrash = useCallback(async () => {
-    if (!isTauri()) return
+    if (!isTauri()) {
+      setTrashStatus("unavailable")
+      return
+    }
+    setTrashStatus("loading")
+    setTrashError(null)
     try {
       setTrash(await cleanupQuarantineList())
-    } catch {
+      setTrashStatus("ready")
+    } catch (error) {
       setTrash([])
+      setTrashStatus("error")
+      setTrashError(error instanceof Error ? error.message : String(error))
     }
   }, [])
 
@@ -110,9 +123,16 @@ export function CleanupSection() {
       // and everything below is a setState. Web mode (no machine to measure)
       // awaits `null` and lands on "scanned, nothing found" rather than leaving
       // the spinner up forever beside the desktop-only note.
-      const result = await (isTauri() && paths
-        ? scanCleanup(paths, effectiveOS(), days).catch(() => null)
-        : null)
+      setScanError(null)
+      let result: CleanupScanResult | null = null
+      let failure: string | null = null
+      if (isTauri() && paths) {
+        try {
+          result = await scanCleanup(paths, effectiveOS(), days)
+        } catch (error) {
+          failure = error instanceof Error ? error.message : String(error)
+        }
+      }
       setRows(result?.rows ?? [])
       setConfigTargets(result?.configTargets ?? [])
       setRoots(result?.roots ?? null)
@@ -125,6 +145,7 @@ export function CleanupSection() {
       setSelected((prev) => new Set([...prev].filter((id) => live.has(id))))
       setScanning(false)
       setScanned(true)
+      setScanError(failure)
     },
     [paths, effectiveOS]
   )
@@ -208,12 +229,12 @@ export function CleanupSection() {
   }
 
   const notReady = !isTauri() && mounted
+  const diskMeasured = scanned && !scanning && !scanError && isTauri() && !!paths
 
   return (
-    <SectionShell
+    <CapabilityWorkbench
       title={t.cleanup.title}
       subtitle={t.cleanup.subtitle}
-      wide
       actions={
         <Button
           variant="outline"
@@ -226,167 +247,229 @@ export function CleanupSection() {
           }}
         >
           <RefreshCw className={cn("size-4", scanning && "animate-spin")} />
-          {t.cleanup.scan}
+          {scanning ? t.cleanup.scanning : t.cleanup.scan}
         </Button>
       }
-    >
-      {notReady ? <DesktopOnlyNote>{t.cleanup.notTauri}</DesktopOnlyNote> : null}
+      summaryLabel={t.cleanup.summaryLabel}
+      actionsLabel={t.cleanup.actionsLabel}
+      metrics={
+        <>
+          <CapabilityMetric
+            label={t.cleanup.metricReclaimable}
+            value={diskMeasured ? formatBytes(reclaimable) : "—"}
+            detail={
+              diskMeasured
+                ? undefined
+                : scanError
+                  ? t.cleanup.scanFailed(scanError)
+                  : t.cleanup.metricPending
+            }
+          />
+          <CapabilityMetric
+            label={t.cleanup.metricTargets}
+            value={diskMeasured ? shown.length + configTargets.length : "—"}
+            detail={
+              diskMeasured
+                ? undefined
+                : scanError
+                  ? t.cleanup.scanFailed(scanError)
+                  : t.cleanup.metricPending
+            }
+          />
+          <CapabilityMetric label={t.cleanup.metricSelected} value={selected.size} />
+          <CapabilityMetric
+            label={t.cleanup.metricTrash}
+            value={trashStatus === "ready" && isTauri() ? trash.length : "—"}
+            detail={
+              trashStatus === "ready" && isTauri()
+                ? undefined
+                : trashStatus === "error"
+                  ? t.cleanup.metricReadFailed(trashError ?? t.cleanup.trash.unknownError)
+                  : trashStatus === "unavailable"
+                    ? t.cleanup.metricUnavailable
+                    : t.cleanup.metricPending
+            }
+          />
+        </>
+      }
+      primary={
+        <section aria-label={t.cleanup.targetsPanel} className="flex min-w-0 flex-col gap-4">
+          {notReady ? <DesktopOnlyNote>{t.cleanup.notTauri}</DesktopOnlyNote> : null}
+          {scanError ? (
+            <p role="alert" className="text-sm text-[var(--hm-danger)]">
+              {t.cleanup.scanFailed(scanError)}
+            </p>
+          ) : null}
 
-      {/* Controls that change what the numbers below mean, so they sit above them. */}
-      <Card className="flex-row flex-wrap items-center gap-x-6 gap-y-3 p-4">
-        <div className="flex items-center gap-2">
-          <Label htmlFor="cleanup-age" className="text-xs text-muted-foreground">
-            {t.cleanup.age.label}
-          </Label>
-          <Select
-            value={String(ageDays)}
-            onValueChange={(v) => {
-              // The sizes on screen are all filtered by this, so every row is
-              // stale the moment it changes — say "measuring" rather than leave
-              // the old numbers sitting under a new filter.
-              setScanning(true)
-              setAgeDays(Number(v))
-            }}
-          >
-            <SelectTrigger id="cleanup-age" className="h-8 w-[150px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {AGE_PRESETS.map((days) => (
-                <SelectItem key={days} value={String(days)}>
-                  {days === 0 ? t.cleanup.age.all : t.cleanup.age.days(days)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Label htmlFor="cleanup-mode" className="text-xs text-muted-foreground">
-            {t.cleanup.mode.label}
-          </Label>
-          <Select value={mode} onValueChange={(v) => setMode(v as "quarantine" | "delete")}>
-            <SelectTrigger id="cleanup-mode" className="h-8 w-[190px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="quarantine">{t.cleanup.mode.quarantine}</SelectItem>
-              <SelectItem value="delete">{t.cleanup.mode.delete}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <p className="basis-full text-xs text-muted-foreground">
-          {mode === "quarantine" ? t.cleanup.mode.quarantineHint : t.cleanup.mode.deleteHint}{" "}
-          {ageDays > 0 ? t.cleanup.age.note : null}
-        </p>
-      </Card>
-
-      {scanned && shown.length === 0 && configTargets.length === 0 ? (
-        <Card className="gap-1 p-5">
-          <p className="text-sm">{t.cleanup.empty}</p>
-          <p className="text-xs text-muted-foreground">{t.cleanup.emptyHint}</p>
-        </Card>
-      ) : null}
-
-      {apps.map((app) => {
-        const appRows = rowsForApp(shown, app)
-        const appConfig = configTargets.filter((c) => c.app === app)
-        if (appRows.length === 0 && appConfig.length === 0) return null
-        const appBytes = appRows.reduce((sum, r) => sum + r.bytes, 0)
-        const proc = PROCESS_FOR_APP[app]
-        const isUp = proc ? running[proc] : false
-        return (
-          <Card key={app} className="gap-3 p-5">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium">{t.cleanup.apps[app] ?? app}</span>
-                <Badge variant="secondary" className="font-normal">
-                  {t.cleanup.reclaimable(formatBytes(appBytes))}
-                </Badge>
-              </div>
-              {isUp ? (
-                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <AlertTriangle className="size-3.5" />
-                  {t.cleanup.running(t.cleanup.apps[app] ?? app)}
-                </span>
-              ) : null}
-            </div>
-
-            <div className="flex flex-col gap-3">
-              {groupByCategory([
-                ...appRows.map((row) => ({
-                  category: row.target.category,
-                  id: row.target.id,
-                  risk: row.target.risk,
-                  size: formatBytes(row.bytes),
-                  files: row.files,
-                  degraded: row.degraded,
-                  paths: row.paths,
-                })),
-                ...appConfig.map((target) => ({
-                  category: target.category,
-                  id: target.id,
-                  risk: target.risk,
-                  // A config edit removes a key, not bytes. "0 B" would read as
-                  // "nothing here"; no size at all is the honest answer.
-                  size: null,
-                  files: 0,
-                  degraded: false,
-                  paths: paths ? [paths[target.file]] : [],
-                })),
-              ]).map((group) => (
-                <div key={group.category} className="flex flex-col gap-1.5">
-                  <div className="text-xs font-medium text-muted-foreground">
-                    {t.cleanup.categories[group.category] ?? group.category}
-                  </div>
-                  {group.items.map((item) => (
-                    <TargetRow
-                      key={item.id}
-                      {...item}
-                      checked={selected.has(item.id)}
-                      onChange={(on) => toggle(item.id, on)}
-                    />
+          {/* Controls that change what the numbers below mean, so they sit above them. */}
+          <Card className="flex-row flex-wrap items-center gap-x-6 gap-y-3 p-4">
+            <div className="flex min-w-0 flex-1 flex-col items-stretch gap-1 sm:flex-none sm:flex-row sm:items-center sm:gap-2">
+              <Label htmlFor="cleanup-age" className="text-xs text-muted-foreground">
+                {t.cleanup.age.label}
+              </Label>
+              <Select
+                value={String(ageDays)}
+                onValueChange={(v) => {
+                  // The sizes on screen are all filtered by this, so every row is
+                  // stale the moment it changes — say "measuring" rather than leave
+                  // the old numbers sitting under a new filter.
+                  setScanning(true)
+                  setAgeDays(Number(v))
+                }}
+              >
+                <SelectTrigger id="cleanup-age" className="h-8 w-full min-w-0 sm:w-[150px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {AGE_PRESETS.map((days) => (
+                    <SelectItem key={days} value={String(days)}>
+                      {days === 0 ? t.cleanup.age.all : t.cleanup.age.days(days)}
+                    </SelectItem>
                   ))}
-                </div>
-              ))}
+                </SelectContent>
+              </Select>
             </div>
+
+            <div className="flex min-w-0 flex-1 flex-col items-stretch gap-1 sm:flex-none sm:flex-row sm:items-center sm:gap-2">
+              <Label htmlFor="cleanup-mode" className="text-xs text-muted-foreground">
+                {t.cleanup.mode.label}
+              </Label>
+              <Select value={mode} onValueChange={(v) => setMode(v as "quarantine" | "delete")}>
+                <SelectTrigger id="cleanup-mode" className="h-8 w-full min-w-0 sm:w-[190px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="quarantine">{t.cleanup.mode.quarantine}</SelectItem>
+                  <SelectItem value="delete">{t.cleanup.mode.delete}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <p className="basis-full text-xs text-muted-foreground">
+              {mode === "quarantine" ? t.cleanup.mode.quarantineHint : t.cleanup.mode.deleteHint}{" "}
+              {ageDays > 0 ? t.cleanup.age.note : null}
+            </p>
           </Card>
-        )
-      })}
 
-      <TrashCard entries={trash} onChanged={refreshTrash} />
+          {scanned && !scanError && shown.length === 0 && configTargets.length === 0 ? (
+            <div className="rounded-lg border p-5">
+              <p className="text-sm">{t.cleanup.empty}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{t.cleanup.emptyHint}</p>
+            </div>
+          ) : null}
 
-      {/* The action bar stays at the bottom of the flow rather than floating:
+          {apps.length > 0 ? (
+            <div className="min-w-0 divide-y rounded-lg border">
+              {apps.map((app) => {
+                const appRows = rowsForApp(shown, app)
+                const appConfig = configTargets.filter((c) => c.app === app)
+                if (appRows.length === 0 && appConfig.length === 0) return null
+                const appBytes = appRows.reduce((sum, r) => sum + r.bytes, 0)
+                const proc = PROCESS_FOR_APP[app]
+                const isUp = proc ? running[proc] : false
+                return (
+                  <section key={app} className="flex min-w-0 flex-col gap-3 p-5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">{t.cleanup.apps[app] ?? app}</span>
+                        <Badge variant="secondary" className="font-normal">
+                          {t.cleanup.reclaimable(formatBytes(appBytes))}
+                        </Badge>
+                      </div>
+                      {isUp ? (
+                        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <AlertTriangle className="size-3.5" />
+                          {t.cleanup.running(t.cleanup.apps[app] ?? app)}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <div className="flex flex-col gap-3">
+                      {groupByCategory([
+                        ...appRows.map((row) => ({
+                          category: row.target.category,
+                          id: row.target.id,
+                          risk: row.target.risk,
+                          size: formatBytes(row.bytes),
+                          files: row.files,
+                          degraded: row.degraded,
+                          paths: row.paths,
+                        })),
+                        ...appConfig.map((target) => ({
+                          category: target.category,
+                          id: target.id,
+                          risk: target.risk,
+                          // A config edit removes a key, not bytes. "0 B" would read as
+                          // "nothing here"; no size at all is the honest answer.
+                          size: null,
+                          files: 0,
+                          degraded: false,
+                          paths: paths ? [paths[target.file]] : [],
+                        })),
+                      ]).map((group) => (
+                        <div key={group.category} className="flex flex-col gap-1.5">
+                          <div className="text-xs font-medium text-muted-foreground">
+                            {t.cleanup.categories[group.category] ?? group.category}
+                          </div>
+                          {group.items.map((item) => (
+                            <TargetRow
+                              key={item.id}
+                              {...item}
+                              checked={selected.has(item.id)}
+                              onChange={(on) => toggle(item.id, on)}
+                            />
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )
+              })}
+            </div>
+          ) : null}
+
+          {/* The action bar stays at the bottom of the flow rather than floating:
           the change tray already owns the docked position, and two competing
           bars is how a user ends up applying the wrong one. */}
-      <div className="flex flex-wrap items-center gap-3">
-        <Button disabled={!hasSelection || scanning} onClick={() => void clean()}>
-          {t.cleanup.clean}
-        </Button>
-        <Button
-          variant="outline"
-          className="gap-2"
-          disabled={scanning || shown.length === 0}
-          onClick={() => setSelected(new Set(safeSelection(rows)))}
-        >
-          <Sparkles className="size-4" />
-          {t.cleanup.quickClean}
-        </Button>
-        {hasSelection ? (
-          <Button variant="ghost" onClick={() => setSelected(new Set())}>
-            {t.cleanup.clearSelection}
-          </Button>
-        ) : null}
-        <span className="text-sm text-muted-foreground">
-          {scanning
-            ? t.cleanup.scanning
-            : hasSelection
-              ? t.cleanup.selectedSummary(formatBytes(selectedBytes), selectedFiles)
-              : t.cleanup.reclaimable(formatBytes(reclaimable))}
-        </span>
-      </div>
-    </SectionShell>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button disabled={!hasSelection || scanning} onClick={() => void clean()}>
+              {t.cleanup.clean}
+            </Button>
+            <Button
+              variant="outline"
+              className="gap-2"
+              disabled={scanning || shown.length === 0}
+              onClick={() => setSelected(new Set(safeSelection(rows)))}
+            >
+              <Sparkles className="size-4" />
+              {t.cleanup.quickClean}
+            </Button>
+            {hasSelection ? (
+              <Button variant="ghost" onClick={() => setSelected(new Set())}>
+                {t.cleanup.clearSelection}
+              </Button>
+            ) : null}
+            <span className="text-sm text-muted-foreground">
+              {scanning
+                ? t.cleanup.scanning
+                : hasSelection
+                  ? t.cleanup.selectedSummary(formatBytes(selectedBytes), selectedFiles)
+                  : t.cleanup.reclaimable(formatBytes(reclaimable))}
+            </span>
+          </div>
+        </section>
+      }
+      aside={
+        <section aria-label={t.cleanup.trashPanel} className="min-w-0">
+          <TrashCard
+            entries={trash}
+            status={trashStatus}
+            error={trashError}
+            onChanged={refreshTrash}
+          />
+        </section>
+      }
+    />
   )
 }
 

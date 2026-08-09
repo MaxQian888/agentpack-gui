@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { RunnerHarness } from "../run/__testing__/harness"
@@ -77,7 +77,10 @@ it("shows a not-found badge for a detected-but-missing tool", () => {
 
 it("renders every catalog tool under its kind heading, agents first", () => {
   const { container } = renderClis()
-  const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)
+  const catalog = screen.getByRole("region", { name: en.tools.catalogPanel })
+  const headings = within(catalog)
+    .getAllByRole("heading", { level: 3 })
+    .map((h) => h.textContent)
   expect(headings).toEqual(["Coding agents", "Companions"])
   // Grouped, not dropped: every tool still gets exactly one card.
   expect(screen.getAllByRole("checkbox")).toHaveLength(CLI_TOOLS.length)
@@ -85,6 +88,29 @@ it("renders every catalog tool under its kind heading, agents first", () => {
     expect(container.querySelector(`#cli-${tool.id}`)).not.toBeNull()
     expect(screen.getByText(en.catalog.cli[tool.id].title)).toBeInTheDocument()
   }
+})
+
+it("organizes CLI status, catalog, and selection guidance as one workbench", () => {
+  useAppStore.setState({
+    detections: {
+      "claude-code": { installed: true, version: "1.2.3" },
+      codex: { installed: false },
+    },
+    latestVersions: { "claude-code": "2.0.0" },
+  })
+  renderClis()
+
+  expect(screen.getByRole("region", { name: en.tools.summaryLabel })).toBeInTheDocument()
+  expect(screen.getByRole("region", { name: en.tools.catalogPanel })).toBeInTheDocument()
+  expect(screen.getByRole("complementary", { name: en.tools.actionsLabel })).toBeInTheDocument()
+  expect(screen.getByText(en.tools.overviewTitle)).toBeInTheDocument()
+})
+
+it("does not report zero installed tools before detection has completed", () => {
+  renderClis()
+
+  const summary = screen.getByRole("region", { name: en.tools.summaryLabel })
+  expect(within(summary).getAllByText("—")).toHaveLength(2)
 })
 
 it("puts the third-party agents in the agent group, not among the companions", () => {
