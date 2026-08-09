@@ -46,10 +46,132 @@ export interface PersonalOAuthPollResult {
   credential: PairingResult | null
 }
 
+export interface ManagementStepUpStartResult {
+  handle: string
+  authorizationUrl: string
+  expiresAt: number
+  intervalSeconds: number
+}
+
+export interface ManagementStepUpPollResult {
+  status: "authorization_pending" | "authorized"
+}
+
+export interface ForgetCredentialResult {
+  remoteRevoked: boolean
+  localDeleted: boolean
+  remoteError: string | null
+}
+
+export interface ActionPreviewBody {
+  action: string
+  payload: Record<string, unknown>
+}
+
+export interface PreviewAuthorizationBody {
+  preview_token: string
+  operation_id: string
+  reason: string
+}
+
+export interface CreateAccountBody extends PreviewAuthorizationBody {
+  username: string
+  display_name: string
+  email: string
+  group: string
+  master_id: number
+  initial_quota: number
+  invite_by_email: boolean
+}
+
+export interface AccountActionBody extends PreviewAuthorizationBody {
+  master_id?: number
+  balance_target_id?: number
+  write_off?: boolean
+  password?: string
+}
+
+export interface QuotaTransferBody extends PreviewAuthorizationBody {
+  source_id: number
+  target_id: number
+  amount: number
+}
+
+export interface QuotaAdjustmentBody extends PreviewAuthorizationBody {
+  account_id: number
+  amount: number
+  direction: "credit" | "debit"
+}
+
+export interface QuotaBatchBody {
+  batch_operation_id: string
+  mode: "atomic" | "best_effort"
+  items: Array<{
+    item_key: string
+    source_id: number
+    target_id: number
+    amount: number
+    reason: string
+  }>
+  preview_token: string
+}
+
+export interface AccountBatchBody {
+  batch_operation_id: string
+  mode: "atomic" | "best_effort"
+  action: "enable" | "disable" | "archive" | "restore" | "detach"
+  account_ids: number[]
+  reason: string
+  preview_token: string
+}
+
+export interface UpdateQuotaDisplayBody extends QuotaDisplaySetting {
+  preview_token: string
+  reason: string
+}
+
+export interface UpdateQuotaPolicyBody extends QuotaPolicy {
+  preview_token: string
+  reason: string
+}
+
+export interface AlertRuleBody {
+  owner_id?: number
+  name: string
+  kind: AlertRule["kind"]
+  threshold: number
+  enabled: boolean
+  cooldown_sec: number
+  version?: number
+}
+
+export interface InvitationMutationBody {
+  operation_id: string
+  reason: string
+  preview_token: string
+}
+
+export interface PersonalProfileBody {
+  display_name: string
+  email: string
+}
+
+export interface PersonalPasswordBody {
+  current_password: string
+  new_password: string
+}
+
+export interface PersonalCloseBody {
+  operation_id: string
+  current_password: string
+  confirm_username: string
+  reason: string
+}
+
 export type ManagementOperation =
   | { kind: "capabilities" }
   | { kind: "quotaDisplay" }
-  | { kind: "updateQuotaDisplay"; body: unknown }
+  | { kind: "updateQuotaDisplay"; body: UpdateQuotaDisplayBody }
   | { kind: "overview" }
   | {
       kind: "accounts"
@@ -58,22 +180,38 @@ export type ManagementOperation =
       search?: string | null
       lifecycleState?: string | null
       masterId?: number | null
+      accessStatus?: "enabled" | "disabled" | null
+      relation?: "master" | "child" | null
+      role?: "root" | "admin" | "master" | "child" | null
+      group?: string | null
+      sortBy?: "created_at" | "username" | "quota" | "last_login_at" | null
+      sortOrder?: "asc" | "desc" | null
     }
-  | { kind: "createAccount"; body: unknown }
+  | { kind: "createAccount"; body: CreateAccountBody }
+  | { kind: "createAccountBatch"; body: AccountBatchBody }
   | { kind: "account"; id: number }
-  | { kind: "actionPreview"; body: unknown }
-  | { kind: "accountAction"; id: number; action: AccountAction; body: unknown }
-  | { kind: "closeAccount"; id: number; body: unknown }
+  | { kind: "actionPreview"; body: ActionPreviewBody }
+  | { kind: "accountAction"; id: number; action: AccountAction; body: AccountActionBody }
+  | { kind: "closeAccount"; id: number; body: AccountActionBody }
   | { kind: "quotaSummary" }
-  | { kind: "quotaTransfer"; body: unknown }
-  | { kind: "quotaAdjustment"; body: unknown }
-  | { kind: "reverseQuota"; id: number; body: unknown }
+  | { kind: "quotaTransfer"; body: QuotaTransferBody }
+  | { kind: "quotaAdjustment"; body: QuotaAdjustmentBody }
+  | { kind: "reverseQuota"; id: number; body: PreviewAuthorizationBody }
   | { kind: "quotaOperation"; operationId: string }
-  | { kind: "quotaTransactions"; page: number; pageSize: number }
-  | { kind: "createQuotaBatch"; body: unknown }
+  | {
+      kind: "quotaTransactions"
+      page: number
+      pageSize: number
+      sourceId?: number | null
+      targetId?: number | null
+      transactionType?: string | null
+      start?: number | null
+      end?: number | null
+    }
+  | { kind: "createQuotaBatch"; body: QuotaBatchBody }
   | { kind: "quotaBatch"; id: number }
   | { kind: "quotaPolicy"; masterId?: number | null }
-  | { kind: "updateQuotaPolicy"; body: unknown }
+  | { kind: "updateQuotaPolicy"; body: UpdateQuotaPolicyBody }
   | {
       kind: "analytics"
       start: number
@@ -85,11 +223,30 @@ export type ManagementOperation =
       status?: "success" | "error" | "all" | null
       timezone?: string | null
     }
-  | { kind: "auditEvents"; page: number; pageSize: number }
-  | { kind: "alertRules" }
-  | { kind: "createAlertRule"; body: unknown }
-  | { kind: "updateAlertRule"; id: number; body: unknown }
+  | {
+      kind: "auditEvents"
+      page: number
+      pageSize: number
+      action?: string | null
+      resourceType?: string | null
+      resourceId?: string | null
+      errorCode?: string | null
+      start?: number | null
+      end?: number | null
+    }
+  | {
+      kind: "alertRules"
+      page: number
+      pageSize: number
+      search?: string | null
+      ruleKind?: AlertRule["kind"] | null
+      enabled?: boolean | null
+    }
+  | { kind: "createAlertRule"; body: AlertRuleBody }
+  | { kind: "updateAlertRule"; id: number; body: AlertRuleBody }
   | { kind: "deleteAlertRule"; id: number }
+  | { kind: "resendAccountInvitation"; id: number; body: InvitationMutationBody }
+  | { kind: "revokeAccountInvitation"; id: number; body: InvitationMutationBody }
   | { kind: "alertEvents"; page: number; pageSize: number; acknowledged?: boolean | null }
   | { kind: "acknowledgeAlert"; id: number }
   | { kind: "notifications" }
@@ -97,9 +254,9 @@ export type ManagementOperation =
   | { kind: "personalCapabilities" }
   | { kind: "personalOverview" }
   | { kind: "personalProfile" }
-  | { kind: "updatePersonalProfile"; body: unknown }
-  | { kind: "changePersonalPassword"; body: unknown }
-  | { kind: "closePersonalAccount"; body: unknown }
+  | { kind: "updatePersonalProfile"; body: PersonalProfileBody }
+  | { kind: "changePersonalPassword"; body: PersonalPasswordBody }
+  | { kind: "closePersonalAccount"; body: PersonalCloseBody }
   | { kind: "personalBalance" }
   | { kind: "personalLedger"; page: number; pageSize: number }
   | {
@@ -140,8 +297,12 @@ export interface ManagementCapabilities {
     quota_transfer_enabled: boolean
     quota_policy_automation_enabled: boolean
     distribution_detail_enabled: boolean
+    step_up_required: boolean
+    account_invites_enabled: boolean
+    remote_revoke_enabled: boolean
   }
   quota_display: QuotaDisplaySetting
+  quota_display_version: string
 }
 
 export interface PersonalCapabilities {
@@ -156,7 +317,11 @@ export interface PersonalCapabilities {
     browser_oauth_enabled?: boolean
     model_marketplace_enabled?: boolean
     usage_details_enabled?: boolean
+    remote_revoke_enabled?: boolean
   }
+  must_change_password: boolean
+  current_session_id: number
+  password_policy: { minimum_length: number; maximum_length: number }
   billing_portal_path: string
 }
 
@@ -319,6 +484,7 @@ export interface QuotaDisplaySetting {
   conversion_numerator: number
   conversion_denominator: number
   rate_valid_until: number
+  version: number
 }
 
 export interface Account {
@@ -334,7 +500,17 @@ export interface Account {
   lifecycle_state: "active" | "closing" | "archived" | ""
   quota_version: number
   management_version: number
-  created_time: number
+  children_count: number
+  created_at: number
+  last_login_at: number
+  group: string
+}
+
+export interface AccountDetail extends Account {
+  email: string
+  must_change_password: boolean
+  invitation_status?: string
+  active_billing_sessions: number
 }
 
 export interface OverviewData {

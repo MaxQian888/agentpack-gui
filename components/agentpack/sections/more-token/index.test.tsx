@@ -192,18 +192,23 @@ function mockOperation(operation: ManagementOperation) {
         total: 1,
       })
     case "alertRules":
-      return response([
-        {
-          id: 1,
-          owner_id: 1,
-          name: "Low child balance",
-          kind: "balance_below",
-          threshold: 100,
-          enabled: true,
-          cooldown_sec: 3600,
-          version: 1,
-        },
-      ])
+      return response({
+        items: [
+          {
+            id: 1,
+            owner_id: 1,
+            name: "Low child balance",
+            kind: "balance_below",
+            threshold: 100,
+            enabled: true,
+            cooldown_sec: 3600,
+            version: 1,
+          },
+        ],
+        page: 1,
+        page_size: 20,
+        total: 1,
+      })
     default:
       return response({})
   }
@@ -313,7 +318,7 @@ it("renders the account center and clearly marks a read-only instance", async ()
   ;(listInstances as jest.Mock).mockResolvedValue([{ ...instance, readOnly: true }])
   renderSection("accounts")
   expect(await screen.findByText(en.management.readonlyBanner)).toBeInTheDocument()
-  expect(await screen.findByText("master-a")).toBeInTheDocument()
+  expect(await screen.findAllByText("master-a")).not.toHaveLength(0)
   expect(screen.getByRole("button", { name: en.management.createAccount })).toBeDisabled()
 })
 

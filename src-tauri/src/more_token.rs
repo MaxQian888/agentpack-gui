@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fs;
-use std::io::{BufReader, Read};
+use std::fs::{self, OpenOptions};
+use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -78,6 +78,20 @@ struct PendingPersonalOAuth {
   expires_at: i64,
 }
 
+#[derive(Clone, Debug)]
+struct PendingManagementStepUp {
+  instance_id: String,
+  device_code: String,
+  preview_token: String,
+  expires_at: i64,
+}
+
+#[derive(Clone, Debug)]
+struct StoredStepUpGrant {
+  token: String,
+  expires_at: i64,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PersonalOAuthStartResult {
@@ -94,8 +108,23 @@ pub struct PersonalOAuthPollResult {
   pub credential: Option<PairingResult>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagementStepUpStartResult {
+  pub handle: String,
+  pub authorization_url: String,
+  pub expires_at: i64,
+  pub interval_seconds: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagementStepUpPollResult {
+  pub status: String,
+}
+
 fn persist_personal_credential(
-  instance_id: &str,
+  instance: &MoreTokenInstance,
   response: ManagementHttpResponse,
 ) -> Result<PairingResult, String> {
   if response.status >= 400 {
@@ -127,7 +156,7 @@ fn persist_personal_credential(
   Ok(PairingResult {
     token_id,
     expires_at,
-    credential_persistent: store_token(MoreTokenPackage::Personal, instance_id, token),
+    credential_persistent: store_token(instance, token),
   })
 }
 
@@ -136,6 +165,14 @@ fn persist_personal_credential(
 pub struct CredentialState {
   pub connected: bool,
   pub persistent: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForgetCredentialResult {
+  pub remote_revoked: bool,
+  pub local_deleted: bool,
+  pub remote_error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -164,8 +201,17 @@ pub enum ManagementOperation {
     search: Option<String>,
     lifecycle_state: Option<String>,
     master_id: Option<u64>,
+    access_status: Option<String>,
+    relation: Option<String>,
+    role: Option<String>,
+    group: Option<String>,
+    sort_by: Option<String>,
+    sort_order: Option<String>,
   },
   CreateAccount {
+    body: Value,
+  },
+  CreateAccountBatch {
     body: Value,
   },
   Account {
@@ -200,6 +246,11 @@ pub enum ManagementOperation {
   QuotaTransactions {
     page: u32,
     page_size: u32,
+    source_id: Option<u64>,
+    target_id: Option<u64>,
+    transaction_type: Option<String>,
+    start: Option<i64>,
+    end: Option<i64>,
   },
   CreateQuotaBatch {
     body: Value,
@@ -226,8 +277,20 @@ pub enum ManagementOperation {
   AuditEvents {
     page: u32,
     page_size: u32,
+    action: Option<String>,
+    resource_type: Option<String>,
+    resource_id: Option<String>,
+    error_code: Option<String>,
+    start: Option<i64>,
+    end: Option<i64>,
   },
-  AlertRules,
+  AlertRules {
+    page: u32,
+    page_size: u32,
+    search: Option<String>,
+    rule_kind: Option<String>,
+    enabled: Option<bool>,
+  },
   CreateAlertRule {
     body: Value,
   },
@@ -237,6 +300,14 @@ pub enum ManagementOperation {
   },
   DeleteAlertRule {
     id: u64,
+  },
+  ResendAccountInvitation {
+    id: u64,
+    body: Value,
+  },
+  RevokeAccountInvitation {
+    id: u64,
+    body: Value,
   },
   AlertEvents {
     page: u32,
@@ -330,9 +401,51 @@ fn memory_tokens() -> &'static Mutex<HashMap<String, String>> {
   TOKENS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+struct StoredCredential {
+  token: String,
+  origin: String,
+  ca_fingerprint: Option<String>,
+}
+
+impl StoredCredential {
+  fn for_instance(instance: &MoreTokenInstance, token: &str) -> Self {
+    Self {
+      token: token.to_string(),
+      origin: instance.base_url.clone(),
+      ca_fingerprint: instance.ca_fingerprint.clone(),
+    }
+  }
+
+  fn matches(&self, instance: &MoreTokenInstance) -> bool {
+    self.origin == instance.base_url && self.ca_fingerprint == instance.ca_fingerprint
+  }
+}
+
 fn pending_personal_oauth() -> &'static Mutex<HashMap<String, PendingPersonalOAuth>> {
   static AUTHORIZATIONS: OnceLock<Mutex<HashMap<String, PendingPersonalOAuth>>> = OnceLock::new();
   AUTHORIZATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn pending_management_step_up() -> &'static Mutex<HashMap<String, PendingManagementStepUp>> {
+  static AUTHORIZATIONS: OnceLock<Mutex<HashMap<String, PendingManagementStepUp>>> =
+    OnceLock::new();
+  AUTHORIZATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn management_step_up_grants() -> &'static Mutex<HashMap<String, StoredStepUpGrant>> {
+  static GRANTS: OnceLock<Mutex<HashMap<String, StoredStepUpGrant>>> = OnceLock::new();
+  GRANTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn step_up_grant_key(instance_id: &str, preview_token: &str) -> String {
+  let digest = Sha256::digest(preview_token.as_bytes());
+  let hash = digest
+    .iter()
+    .take(16)
+    .map(|byte| format!("{byte:02x}"))
+    .collect::<String>();
+  format!("{instance_id}:{hash}")
 }
 
 fn unix_now() -> i64 {
@@ -360,6 +473,38 @@ fn validate_personal_authorization_url(
     return Err("INVALID_AUTHORIZATION_URL".into());
   }
   Ok(target.to_string())
+}
+
+fn inject_management_step_up_grant(
+  instance_id: &str,
+  spec: &mut RequestSpec,
+) -> Result<(), String> {
+  if !spec.write {
+    return Ok(());
+  }
+  let Some(body) = spec.body.as_mut().and_then(Value::as_object_mut) else {
+    return Ok(());
+  };
+  let Some(preview_token) = body
+    .get("preview_token")
+    .and_then(Value::as_str)
+    .map(str::to_string)
+  else {
+    return Ok(());
+  };
+  let key = step_up_grant_key(instance_id, &preview_token);
+  let Some(grant) = management_step_up_grants()
+    .lock()
+    .map_err(|_| "STEP_UP_STATE_UNAVAILABLE".to_string())?
+    .remove(&key)
+  else {
+    return Ok(());
+  };
+  if grant.expires_at <= unix_now() {
+    return Err("STEP_UP_EXPIRED".into());
+  }
+  body.insert("step_up_token".into(), Value::String(grant.token));
+  Ok(())
 }
 
 fn active_requests() -> &'static Mutex<usize> {
@@ -470,7 +615,20 @@ fn ca_file(app: &AppHandle, instance_id: &str) -> Result<PathBuf, String> {
 }
 
 fn import_ca(app: &AppHandle, instance_id: &str, source: &str) -> Result<String, String> {
-  let bytes = fs::read(source).map_err(|_| "CA_IMPORT_FAILED".to_string())?;
+  let metadata = fs::symlink_metadata(source).map_err(|_| "CA_IMPORT_FAILED".to_string())?;
+  if !metadata.file_type().is_file()
+    || metadata.file_type().is_symlink()
+    || metadata.len() == 0
+    || metadata.len() > MAX_CA_BYTES
+  {
+    return Err("CA_IMPORT_FAILED".into());
+  }
+  let source_file = fs::File::open(source).map_err(|_| "CA_IMPORT_FAILED".to_string())?;
+  let mut bytes = Vec::with_capacity(metadata.len() as usize);
+  source_file
+    .take(MAX_CA_BYTES + 1)
+    .read_to_end(&mut bytes)
+    .map_err(|_| "CA_IMPORT_FAILED".to_string())?;
   if bytes.is_empty() || bytes.len() as u64 > MAX_CA_BYTES {
     return Err("CA_IMPORT_FAILED".into());
   }
@@ -485,7 +643,26 @@ fn import_ca(app: &AppHandle, instance_id: &str, source: &str) -> Result<String,
     .iter()
     .map(|byte| format!("{byte:02x}"))
     .collect::<String>();
-  fs::write(ca_file(app, instance_id)?, bytes).map_err(|_| "CA_STORE_UNAVAILABLE".to_string())?;
+  let destination = ca_file(app, instance_id)?;
+  let mut options = OpenOptions::new();
+  options.write(true).create(true).truncate(true);
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::OpenOptionsExt;
+    options.mode(0o600);
+  }
+  let mut output = options
+    .open(&destination)
+    .map_err(|_| "CA_STORE_UNAVAILABLE".to_string())?;
+  output
+    .write_all(&bytes)
+    .map_err(|_| "CA_STORE_UNAVAILABLE".to_string())?;
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&destination, fs::Permissions::from_mode(0o600))
+      .map_err(|_| "CA_STORE_UNAVAILABLE".to_string())?;
+  }
   Ok(fingerprint)
 }
 
@@ -504,10 +681,14 @@ fn keyring_entry(
   keyring::Entry::new(service, instance_id)
 }
 
-fn store_token(package: MoreTokenPackage, instance_id: &str, token: &str) -> bool {
-  let memory_key = credential_key(package, instance_id);
-  if let Ok(entry) = keyring_entry(package, instance_id) {
-    if entry.set_password(token).is_ok() {
+fn store_token(instance: &MoreTokenInstance, token: &str) -> bool {
+  let memory_key = credential_key(instance.package, &instance.id);
+  let payload = match serde_json::to_string(&StoredCredential::for_instance(instance, token)) {
+    Ok(value) => value,
+    Err(_) => return false,
+  };
+  if let Ok(entry) = keyring_entry(instance.package, &instance.id) {
+    if entry.set_password(&payload).is_ok() {
       if let Ok(mut tokens) = memory_tokens().lock() {
         tokens.remove(&memory_key);
       }
@@ -515,24 +696,33 @@ fn store_token(package: MoreTokenPackage, instance_id: &str, token: &str) -> boo
     }
   }
   if let Ok(mut tokens) = memory_tokens().lock() {
-    tokens.insert(memory_key, token.to_string());
+    tokens.insert(memory_key, payload);
   }
   false
 }
 
-fn load_token(package: MoreTokenPackage, instance_id: &str) -> Option<(String, bool)> {
-  if let Ok(entry) = keyring_entry(package, instance_id) {
-    if let Ok(token) = entry.get_password() {
-      if !token.is_empty() {
-        return Some((token, true));
+fn load_token(instance: &MoreTokenInstance) -> Option<(String, bool)> {
+  if let Ok(entry) = keyring_entry(instance.package, &instance.id) {
+    if let Ok(payload) = entry.get_password() {
+      if let Ok(credential) = serde_json::from_str::<StoredCredential>(&payload) {
+        if credential.matches(instance) && !credential.token.is_empty() {
+          return Some((credential.token, true));
+        }
       }
+      let _ = entry.delete_credential();
     }
   }
-  memory_tokens()
-    .lock()
-    .ok()
-    .and_then(|tokens| tokens.get(&credential_key(package, instance_id)).cloned())
-    .map(|token| (token, false))
+  memory_tokens().lock().ok().and_then(|mut tokens| {
+    let key = credential_key(instance.package, &instance.id);
+    let payload = tokens.get(&key)?.clone();
+    let credential = serde_json::from_str::<StoredCredential>(&payload).ok()?;
+    if credential.matches(instance) && !credential.token.is_empty() {
+      Some((credential.token, false))
+    } else {
+      tokens.remove(&key);
+      None
+    }
+  })
 }
 
 fn delete_token(package: MoreTokenPackage, instance_id: &str) {
@@ -549,6 +739,15 @@ fn bounded_page(page: u32, page_size: u32) -> Vec<(String, String)> {
     ("page".into(), page.max(1).to_string()),
     ("page_size".into(), page_size.clamp(1, 200).to_string()),
   ]
+}
+
+fn push_optional_query(query: &mut Vec<(String, String)>, key: &str, value: Option<String>) {
+  if let Some(value) = value
+    .map(|value| value.trim().to_owned())
+    .filter(|value| !value.is_empty())
+  {
+    query.push((key.to_owned(), value));
+  }
 }
 
 fn require_id(id: u64) -> Result<u64, String> {
@@ -601,6 +800,12 @@ fn operation_spec(
       search,
       lifecycle_state,
       master_id,
+      access_status,
+      relation,
+      role,
+      group,
+      sort_by,
+      sort_order,
     } => {
       let mut query = bounded_page(page, page_size);
       if let Some(value) = search.filter(|v| !v.trim().is_empty()) {
@@ -614,6 +819,28 @@ fn operation_spec(
       if let Some(value) = master_id {
         query.push(("master_id".into(), value.to_string()));
       }
+      if let Some(value) = access_status.filter(|v| ["enabled", "disabled"].contains(&v.as_str())) {
+        query.push(("access_status".into(), value));
+      }
+      if let Some(value) = relation.filter(|v| ["master", "child"].contains(&v.as_str())) {
+        query.push(("relation".into(), value));
+      }
+      if let Some(value) =
+        role.filter(|v| ["root", "admin", "master", "child"].contains(&v.as_str()))
+      {
+        query.push(("role".into(), value));
+      }
+      if let Some(value) = group.filter(|v| !v.trim().is_empty()) {
+        query.push(("group".into(), value));
+      }
+      if let Some(value) = sort_by
+        .filter(|v| ["created_at", "username", "quota", "last_login_at"].contains(&v.as_str()))
+      {
+        query.push(("sort_by".into(), value));
+      }
+      if let Some(value) = sort_order.filter(|v| ["asc", "desc"].contains(&v.as_str())) {
+        query.push(("sort_order".into(), value));
+      }
       (
         Method::Get,
         "/api/distribution/accounts".into(),
@@ -625,6 +852,13 @@ fn operation_spec(
     ManagementOperation::CreateAccount { body } => (
       Method::Post,
       "/api/distribution/accounts".into(),
+      vec![],
+      Some(body),
+      true,
+    ),
+    ManagementOperation::CreateAccountBatch { body } => (
+      Method::Post,
+      "/api/distribution/accounts/batches".into(),
       vec![],
       Some(body),
       true,
@@ -715,13 +949,37 @@ fn operation_spec(
         false,
       )
     }
-    ManagementOperation::QuotaTransactions { page, page_size } => (
-      Method::Get,
-      "/api/distribution/quota/transactions".into(),
-      bounded_page(page, page_size),
-      None,
-      false,
-    ),
+    ManagementOperation::QuotaTransactions {
+      page,
+      page_size,
+      source_id,
+      target_id,
+      transaction_type,
+      start,
+      end,
+    } => {
+      let mut query = bounded_page(page, page_size);
+      if let Some(value) = source_id {
+        query.push(("source_id".into(), value.to_string()));
+      }
+      if let Some(value) = target_id {
+        query.push(("target_id".into(), value.to_string()));
+      }
+      push_optional_query(&mut query, "type", transaction_type);
+      if let Some(value) = start {
+        query.push(("start".into(), value.to_string()));
+      }
+      if let Some(value) = end {
+        query.push(("end".into(), value.to_string()));
+      }
+      (
+        Method::Get,
+        "/api/distribution/quota/transactions".into(),
+        query,
+        None,
+        false,
+      )
+    }
     ManagementOperation::CreateQuotaBatch { body } => (
       Method::Post,
       "/api/distribution/quota/batches".into(),
@@ -791,20 +1049,56 @@ fn operation_spec(
         false,
       )
     }
-    ManagementOperation::AuditEvents { page, page_size } => (
-      Method::Get,
-      "/api/distribution/audit-events".into(),
-      bounded_page(page, page_size),
-      None,
-      false,
-    ),
-    ManagementOperation::AlertRules => (
-      Method::Get,
-      "/api/distribution/alert-rules".into(),
-      vec![],
-      None,
-      false,
-    ),
+    ManagementOperation::AuditEvents {
+      page,
+      page_size,
+      action,
+      resource_type,
+      resource_id,
+      error_code,
+      start,
+      end,
+    } => {
+      let mut query = bounded_page(page, page_size);
+      push_optional_query(&mut query, "action", action);
+      push_optional_query(&mut query, "resource_type", resource_type);
+      push_optional_query(&mut query, "resource_id", resource_id);
+      push_optional_query(&mut query, "error_code", error_code);
+      if let Some(value) = start {
+        query.push(("start".into(), value.to_string()));
+      }
+      if let Some(value) = end {
+        query.push(("end".into(), value.to_string()));
+      }
+      (
+        Method::Get,
+        "/api/distribution/audit-events".into(),
+        query,
+        None,
+        false,
+      )
+    }
+    ManagementOperation::AlertRules {
+      page,
+      page_size,
+      search,
+      rule_kind,
+      enabled,
+    } => {
+      let mut query = bounded_page(page, page_size);
+      push_optional_query(&mut query, "search", search);
+      push_optional_query(&mut query, "kind", rule_kind);
+      if let Some(value) = enabled {
+        query.push(("enabled".into(), value.to_string()));
+      }
+      (
+        Method::Get,
+        "/api/distribution/alert-rules".into(),
+        query,
+        None,
+        false,
+      )
+    }
     ManagementOperation::CreateAlertRule { body } => (
       Method::Post,
       "/api/distribution/alert-rules".into(),
@@ -824,6 +1118,26 @@ fn operation_spec(
       format!("/api/distribution/alert-rules/{}", require_id(id)?),
       vec![],
       None,
+      true,
+    ),
+    ManagementOperation::ResendAccountInvitation { id, body } => (
+      Method::Post,
+      format!(
+        "/api/distribution/accounts/{}/invitations/resend",
+        require_id(id)?
+      ),
+      vec![],
+      Some(body),
+      true,
+    ),
+    ManagementOperation::RevokeAccountInvitation { id, body } => (
+      Method::Post,
+      format!(
+        "/api/distribution/accounts/{}/invitations/revoke",
+        require_id(id)?
+      ),
+      vec![],
+      Some(body),
       true,
     ),
     ManagementOperation::AlertEvents {
@@ -1018,9 +1332,17 @@ fn build_agent(app: &AppHandle, instance: &MoreTokenInstance) -> Result<ureq::Ag
     .timeout_read(Duration::from_secs(15))
     .timeout_write(Duration::from_secs(15))
     .user_agent("agentpack-more-token/1");
-  if instance.ca_fingerprint.is_some() {
+  if let Some(expected_fingerprint) = instance.ca_fingerprint.as_deref() {
     let pem =
       fs::read(ca_file(app, &instance.id)?).map_err(|_| "CA_STORE_UNAVAILABLE".to_string())?;
+    let actual_fingerprint = Sha256::digest(&pem)
+      .iter()
+      .map(|byte| format!("{byte:02x}"))
+      .collect::<String>();
+    if actual_fingerprint != expected_fingerprint {
+      delete_token(instance.package, &instance.id);
+      return Err("CA_BINDING_CHANGED".into());
+    }
     let mut reader = BufReader::new(pem.as_slice());
     let certs = rustls_pemfile::certs(&mut reader)
       .collect::<Result<Vec<_>, _>>()
@@ -1128,6 +1450,7 @@ pub fn more_token_save_instance(
   {
     return Err("INSTANCE_PACKAGE_IMMUTABLE".into());
   }
+  let normalized_base_url = normalize_base_url(&draft.base_url)?;
   let ca_fingerprint = if draft.clear_custom_ca {
     let _ = fs::remove_file(ca_file(&app, &draft.id)?);
     None
@@ -1138,12 +1461,17 @@ pub fn more_token_save_instance(
   {
     Some(import_ca(&app, &draft.id, path)?)
   } else {
-    existing.and_then(|value| value.ca_fingerprint)
+    existing
+      .as_ref()
+      .and_then(|value| value.ca_fingerprint.clone())
   };
+  let binding_changed = existing.as_ref().is_some_and(|current| {
+    current.base_url != normalized_base_url || current.ca_fingerprint != ca_fingerprint
+  });
   let instance = MoreTokenInstance {
     id: draft.id,
     name: draft.name.trim().to_string(),
-    base_url: normalize_base_url(&draft.base_url)?,
+    base_url: normalized_base_url,
     ca_fingerprint,
     read_only: draft.read_only,
     display_currency: draft
@@ -1156,6 +1484,9 @@ pub fn more_token_save_instance(
   instances.push(instance.clone());
   instances.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
   save_instances(&app, &instances)?;
+  if binding_changed {
+    delete_token(instance.package, &instance.id);
+  }
   Ok(instance)
 }
 
@@ -1182,7 +1513,7 @@ pub fn more_token_credential_state(
 ) -> Result<CredentialState, String> {
   validate_id(&instance_id)?;
   let instance = find_instance(&app, &instance_id)?;
-  let state = load_token(instance.package, &instance_id);
+  let state = load_token(&instance);
   Ok(CredentialState {
     connected: state.is_some(),
     persistent: state.map(|(_, persistent)| persistent).unwrap_or(false),
@@ -1190,11 +1521,83 @@ pub fn more_token_credential_state(
 }
 
 #[tauri::command]
-pub fn more_token_forget_credential(app: AppHandle, instance_id: String) -> Result<(), String> {
+pub async fn more_token_forget_credential(
+  app: AppHandle,
+  instance_id: String,
+  allow_local_only: Option<bool>,
+) -> Result<ForgetCredentialResult, String> {
   validate_id(&instance_id)?;
   let instance = find_instance(&app, &instance_id)?;
-  delete_token(instance.package, &instance_id);
-  Ok(())
+  let Some((token, _)) = load_token(&instance) else {
+    delete_token(instance.package, &instance_id);
+    return Ok(ForgetCredentialResult {
+      remote_revoked: false,
+      local_deleted: true,
+      remote_error: None,
+    });
+  };
+  let path = match instance.package {
+    MoreTokenPackage::Management => "/api/management/credential/self",
+    MoreTokenPackage::Personal => "/api/personal/credential/self",
+  };
+  let app_for_request = app.clone();
+  let request_instance = instance.clone();
+  let remote = tauri::async_runtime::spawn_blocking(move || {
+    execute(
+      &app_for_request,
+      &request_instance,
+      RequestSpec {
+        method: Method::Delete,
+        path: path.into(),
+        query: vec![],
+        body: None,
+        write: false,
+      },
+      Some(&token),
+    )
+  })
+  .await
+  .map_err(|_| "NETWORK_ERROR".to_string())?;
+  match remote {
+    Ok(response) if response.status < 400 => {
+      delete_token(instance.package, &instance_id);
+      Ok(ForgetCredentialResult {
+        remote_revoked: true,
+        local_deleted: true,
+        remote_error: None,
+      })
+    }
+    Ok(response) => {
+      let code = response
+        .body
+        .pointer("/error/code")
+        .and_then(Value::as_str)
+        .unwrap_or("REMOTE_REVOKE_FAILED")
+        .to_string();
+      if allow_local_only.unwrap_or(false) {
+        delete_token(instance.package, &instance_id);
+        Ok(ForgetCredentialResult {
+          remote_revoked: false,
+          local_deleted: true,
+          remote_error: Some(code),
+        })
+      } else {
+        Err(format!("REMOTE_REVOKE_FAILED_LOCAL_RETAINED:{code}"))
+      }
+    }
+    Err(error) => {
+      if allow_local_only.unwrap_or(false) {
+        delete_token(instance.package, &instance_id);
+        Ok(ForgetCredentialResult {
+          remote_revoked: false,
+          local_deleted: true,
+          remote_error: Some(error),
+        })
+      } else {
+        Err(format!("REMOTE_REVOKE_FAILED_LOCAL_RETAINED:{error}"))
+      }
+    }
+  }
 }
 
 #[tauri::command]
@@ -1222,7 +1625,7 @@ pub async fn more_token_pair(
     MoreTokenPackage::Management => ("/api/management/pair", "management_token"),
     MoreTokenPackage::Personal => ("/api/personal/pair", "personal_token"),
   };
-  let package = instance.package;
+  let request_instance = instance.clone();
   let app_for_request = app.clone();
   let response = tauri::async_runtime::spawn_blocking(move || {
     execute(
@@ -1259,7 +1662,7 @@ pub async fn more_token_pair(
     .get("expires_at")
     .and_then(Value::as_i64)
     .ok_or_else(|| "INVALID_SERVER_RESPONSE".to_string())?;
-  let credential_persistent = store_token(package, &instance_id, token);
+  let credential_persistent = store_token(&request_instance, token);
   Ok(PairingResult {
     token_id,
     expires_at,
@@ -1298,6 +1701,7 @@ pub async fn more_token_personal_login(
     "client_id": client_id.trim(),
     "client_label": client_label.trim(),
   });
+  let request_instance = instance.clone();
   let app_for_request = app.clone();
   let response = tauri::async_runtime::spawn_blocking(move || {
     execute(
@@ -1315,7 +1719,7 @@ pub async fn more_token_personal_login(
   })
   .await
   .map_err(|_| "NETWORK_ERROR".to_string())??;
-  persist_personal_credential(&instance_id, response)
+  persist_personal_credential(&request_instance, response)
 }
 
 #[tauri::command]
@@ -1456,6 +1860,7 @@ pub async fn more_token_personal_oauth_poll(
     "device_code": pending.device_code,
     "client_id": pending.client_id,
   });
+  let request_instance = instance.clone();
   let app_for_request = app.clone();
   let response = tauri::async_runtime::spawn_blocking(move || {
     execute(
@@ -1509,7 +1914,7 @@ pub async fn more_token_personal_oauth_poll(
   let credential = PairingResult {
     token_id,
     expires_at,
-    credential_persistent: store_token(MoreTokenPackage::Personal, &instance_id, token),
+    credential_persistent: store_token(&request_instance, token),
   };
   pending_personal_oauth()
     .lock()
@@ -1539,6 +1944,217 @@ pub fn more_token_personal_oauth_cancel(instance_id: String, handle: String) -> 
 }
 
 #[tauri::command]
+pub async fn more_token_management_step_up_start(
+  app: AppHandle,
+  instance_id: String,
+  preview_token: String,
+) -> Result<ManagementStepUpStartResult, String> {
+  validate_id(&instance_id)?;
+  if preview_token.trim().len() < 32 || preview_token.len() > 256 {
+    return Err("INVALID_PREVIEW_TOKEN".into());
+  }
+  let instance = find_instance(&app, &instance_id)?;
+  if instance.package != MoreTokenPackage::Management {
+    return Err("PACKAGE_OPERATION_MISMATCH".into());
+  }
+  let (token, _) =
+    load_token(&instance).ok_or_else(|| "PACKAGE_CREDENTIAL_REQUIRED".to_string())?;
+  let body = json!({"preview_token": preview_token.trim()});
+  let request_instance = instance.clone();
+  let app_for_request = app.clone();
+  let response = tauri::async_runtime::spawn_blocking(move || {
+    execute(
+      &app_for_request,
+      &request_instance,
+      RequestSpec {
+        method: Method::Post,
+        path: "/api/management/step-up/device/authorize".into(),
+        query: vec![],
+        body: Some(body),
+        write: false,
+      },
+      Some(&token),
+    )
+  })
+  .await
+  .map_err(|_| "NETWORK_ERROR".to_string())??;
+  if response.status >= 400 {
+    return Err(
+      response
+        .body
+        .pointer("/error/code")
+        .and_then(Value::as_str)
+        .unwrap_or("STEP_UP_START_REJECTED")
+        .to_string(),
+    );
+  }
+  let data = response
+    .body
+    .get("data")
+    .ok_or_else(|| "INVALID_SERVER_RESPONSE".to_string())?;
+  let device_code = data
+    .get("device_code")
+    .and_then(Value::as_str)
+    .filter(|value| value.len() >= 40)
+    .ok_or_else(|| "INVALID_SERVER_RESPONSE".to_string())?
+    .to_string();
+  let raw_authorization_url = data
+    .get("verification_uri_complete")
+    .or_else(|| data.get("verification_uri"))
+    .and_then(Value::as_str)
+    .ok_or_else(|| "INVALID_SERVER_RESPONSE".to_string())?;
+  let authorization_url = validate_personal_authorization_url(&instance, raw_authorization_url)?;
+  let expires_in = data
+    .get("expires_in")
+    .and_then(Value::as_i64)
+    .unwrap_or(120)
+    .clamp(30, 120);
+  let interval_seconds = data
+    .get("interval")
+    .and_then(Value::as_u64)
+    .unwrap_or(2)
+    .clamp(2, 10);
+  let handle = Sha256::digest(format!("{}:{}", instance_id, device_code).as_bytes())
+    .iter()
+    .take(16)
+    .map(|byte| format!("{byte:02x}"))
+    .collect::<String>();
+  let expires_at = unix_now() + expires_in;
+  pending_management_step_up()
+    .lock()
+    .map_err(|_| "STEP_UP_STATE_UNAVAILABLE".to_string())?
+    .insert(
+      handle.clone(),
+      PendingManagementStepUp {
+        instance_id,
+        device_code,
+        preview_token: preview_token.trim().to_string(),
+        expires_at,
+      },
+    );
+  Ok(ManagementStepUpStartResult {
+    handle,
+    authorization_url,
+    expires_at,
+    interval_seconds,
+  })
+}
+
+#[tauri::command]
+pub async fn more_token_management_step_up_poll(
+  app: AppHandle,
+  instance_id: String,
+  handle: String,
+) -> Result<ManagementStepUpPollResult, String> {
+  validate_id(&instance_id)?;
+  if handle.len() != 32 || !handle.chars().all(|value| value.is_ascii_hexdigit()) {
+    return Err("INVALID_STEP_UP_HANDLE".into());
+  }
+  let pending = pending_management_step_up()
+    .lock()
+    .map_err(|_| "STEP_UP_STATE_UNAVAILABLE".to_string())?
+    .get(&handle)
+    .cloned()
+    .ok_or_else(|| "STEP_UP_STATE_NOT_FOUND".to_string())?;
+  if pending.instance_id != instance_id {
+    return Err("STEP_UP_STATE_NOT_FOUND".into());
+  }
+  if pending.expires_at <= unix_now() {
+    pending_management_step_up()
+      .lock()
+      .ok()
+      .map(|mut values| values.remove(&handle));
+    return Err("AUTHORIZATION_EXPIRED".into());
+  }
+  let instance = find_instance(&app, &instance_id)?;
+  if instance.package != MoreTokenPackage::Management {
+    return Err("PACKAGE_OPERATION_MISMATCH".into());
+  }
+  let (token, _) =
+    load_token(&instance).ok_or_else(|| "PACKAGE_CREDENTIAL_REQUIRED".to_string())?;
+  let body = json!({"device_code": pending.device_code});
+  let request_instance = instance.clone();
+  let app_for_request = app.clone();
+  let response = tauri::async_runtime::spawn_blocking(move || {
+    execute(
+      &app_for_request,
+      &request_instance,
+      RequestSpec {
+        method: Method::Post,
+        path: "/api/management/step-up/token".into(),
+        query: vec![],
+        body: Some(body),
+        write: false,
+      },
+      Some(&token),
+    )
+  })
+  .await
+  .map_err(|_| "NETWORK_ERROR".to_string())??;
+  if response.status >= 400 {
+    let status = response
+      .body
+      .pointer("/error/code")
+      .and_then(Value::as_str)
+      .unwrap_or("STEP_UP_REJECTED");
+    if status == "AUTHORIZATION_PENDING" {
+      return Ok(ManagementStepUpPollResult {
+        status: "authorization_pending".into(),
+      });
+    }
+    pending_management_step_up()
+      .lock()
+      .ok()
+      .map(|mut values| values.remove(&handle));
+    return Err(status.to_string());
+  }
+  let step_up_token = response
+    .body
+    .pointer("/data/step_up_token")
+    .and_then(Value::as_str)
+    .filter(|value| value.len() >= 32)
+    .ok_or_else(|| "INVALID_SERVER_RESPONSE".to_string())?
+    .to_string();
+  management_step_up_grants()
+    .lock()
+    .map_err(|_| "STEP_UP_STATE_UNAVAILABLE".to_string())?
+    .insert(
+      step_up_grant_key(&instance_id, &pending.preview_token),
+      StoredStepUpGrant {
+        token: step_up_token,
+        expires_at: unix_now() + 120,
+      },
+    );
+  pending_management_step_up()
+    .lock()
+    .ok()
+    .map(|mut values| values.remove(&handle));
+  Ok(ManagementStepUpPollResult {
+    status: "authorized".into(),
+  })
+}
+
+#[tauri::command]
+pub fn more_token_management_step_up_cancel(
+  instance_id: String,
+  handle: String,
+) -> Result<(), String> {
+  validate_id(&instance_id)?;
+  let mut values = pending_management_step_up()
+    .lock()
+    .map_err(|_| "STEP_UP_STATE_UNAVAILABLE".to_string())?;
+  if values
+    .get(&handle)
+    .map(|pending| pending.instance_id.as_str())
+    != Some(instance_id.as_str())
+  {
+    return Err("STEP_UP_STATE_NOT_FOUND".into());
+  }
+  values.remove(&handle);
+  Ok(())
+}
+
+#[tauri::command]
 pub async fn more_token_request(
   app: AppHandle,
   instance_id: String,
@@ -1546,9 +2162,12 @@ pub async fn more_token_request(
 ) -> Result<ManagementHttpResponse, String> {
   validate_id(&instance_id)?;
   let instance = find_instance(&app, &instance_id)?;
-  let spec = operation_spec(instance.package, operation)?;
-  let (token, _) = load_token(instance.package, &instance_id)
-    .ok_or_else(|| "PACKAGE_CREDENTIAL_REQUIRED".to_string())?;
+  let mut spec = operation_spec(instance.package, operation)?;
+  if instance.package == MoreTokenPackage::Management {
+    inject_management_step_up_grant(&instance_id, &mut spec)?;
+  }
+  let (token, _) =
+    load_token(&instance).ok_or_else(|| "PACKAGE_CREDENTIAL_REQUIRED".to_string())?;
   let app_for_request = app.clone();
   tauri::async_runtime::spawn_blocking(move || {
     execute(&app_for_request, &instance, spec, Some(&token))
@@ -1572,6 +2191,59 @@ mod tests {
     assert!(normalize_base_url("http://example.com").is_err());
     assert!(normalize_base_url("https://example.com/api").is_err());
     assert!(normalize_base_url("https://user:pass@example.com").is_err());
+  }
+
+  #[test]
+  fn credential_binding_rejects_changed_origin_or_ca() {
+    let instance = MoreTokenInstance {
+      id: "management".into(),
+      name: "Management".into(),
+      base_url: "https://more-token.example.com".into(),
+      ca_fingerprint: Some("ca-a".into()),
+      read_only: false,
+      display_currency: None,
+      package: MoreTokenPackage::Management,
+    };
+    let credential = StoredCredential::for_instance(&instance, "secret-token");
+    assert!(credential.matches(&instance));
+
+    let mut changed_origin = instance.clone();
+    changed_origin.base_url = "https://other.example.com".into();
+    assert!(!credential.matches(&changed_origin));
+
+    let mut changed_ca = instance.clone();
+    changed_ca.ca_fingerprint = Some("ca-b".into());
+    assert!(!credential.matches(&changed_ca));
+  }
+
+  #[test]
+  fn step_up_secret_is_injected_only_inside_rust_transport() {
+    let preview = "preview-token-abcdefghijklmnopqrstuvwxyz";
+    management_step_up_grants().lock().unwrap().insert(
+      step_up_grant_key("management", preview),
+      StoredStepUpGrant {
+        token: "step-up-secret".into(),
+        expires_at: unix_now() + 120,
+      },
+    );
+    let mut spec = RequestSpec {
+      method: Method::Post,
+      path: "/api/distribution/accounts/1/archive".into(),
+      query: vec![],
+      body: Some(json!({"preview_token": preview, "reason": "test"})),
+      write: true,
+    };
+
+    inject_management_step_up_grant("management", &mut spec).unwrap();
+
+    assert_eq!(
+      spec.body.unwrap()["step_up_token"],
+      Value::String("step-up-secret".into())
+    );
+    assert!(!management_step_up_grants()
+      .lock()
+      .unwrap()
+      .contains_key(&step_up_grant_key("management", preview)));
   }
 
   #[test]
@@ -1605,6 +2277,12 @@ mod tests {
         search: None,
         lifecycle_state: None,
         master_id: None,
+        access_status: None,
+        relation: None,
+        role: None,
+        group: None,
+        sort_by: None,
+        sort_order: None,
       },
     )
     .is_err());
@@ -1703,6 +2381,12 @@ mod tests {
         search: Some("a&role=root".into()),
         lifecycle_state: None,
         master_id: None,
+        access_status: None,
+        relation: None,
+        role: None,
+        group: None,
+        sort_by: None,
+        sort_order: None,
       },
     )
     .unwrap();

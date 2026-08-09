@@ -1,21 +1,14 @@
-import {
-  moreTokenCredentialState,
-  moreTokenForgetCredential,
-  moreTokenListInstances,
-  moreTokenPair,
-  moreTokenPersonalLogin,
-  moreTokenPersonalOAuthCancel,
-  moreTokenPersonalOAuthPoll,
-  moreTokenPersonalOAuthStart,
-  moreTokenRemoveInstance,
-  moreTokenRequest,
-  moreTokenSaveInstance,
-} from "@/lib/tauri/commands"
+import { z } from "zod"
+import { getMoreTokenPort } from "./port"
+import { parseManagementOperation, parseManagementResponseData } from "./schemas"
 import type {
   CredentialState,
+  ForgetCredentialResult,
   ManagementEnvelope,
   ManagementErrorEnvelope,
   ManagementOperation,
+  ManagementStepUpPollResult,
+  ManagementStepUpStartResult,
   MoreTokenInstance,
   MoreTokenInstanceDraft,
   PairingResult,
@@ -37,20 +30,23 @@ export class ManagementApiError extends Error {
   }
 }
 
-export const listInstances = (): Promise<MoreTokenInstance[]> => moreTokenListInstances()
+export const listInstances = (): Promise<MoreTokenInstance[]> => getMoreTokenPort().listInstances()
 export const saveInstance = (draft: MoreTokenInstanceDraft): Promise<MoreTokenInstance> =>
-  moreTokenSaveInstance(draft)
+  getMoreTokenPort().saveInstance(draft)
 export const removeInstance = (instanceId: string): Promise<void> =>
-  moreTokenRemoveInstance(instanceId)
+  getMoreTokenPort().removeInstance(instanceId)
 export const credentialState = (instanceId: string): Promise<CredentialState> =>
-  moreTokenCredentialState(instanceId)
-export const forgetCredential = (instanceId: string): Promise<void> =>
-  moreTokenForgetCredential(instanceId)
+  getMoreTokenPort().credentialState(instanceId)
+export const forgetCredential = (
+  instanceId: string,
+  allowLocalOnly = false
+): Promise<ForgetCredentialResult> =>
+  getMoreTokenPort().forgetCredential(instanceId, allowLocalOnly)
 export const pairInstance = (
   instanceId: string,
   pairingCode: string,
   clientId = "agentpack-desktop"
-): Promise<PairingResult> => moreTokenPair(instanceId, pairingCode, clientId)
+): Promise<PairingResult> => getMoreTokenPort().pair(instanceId, pairingCode, clientId)
 export const loginPersonalInstance = (
   instanceId: string,
   username: string,
@@ -59,19 +55,55 @@ export const loginPersonalInstance = (
   clientId = "agentpack-personal-desktop",
   clientLabel = "AgentPack Desktop"
 ): Promise<PairingResult> =>
-  moreTokenPersonalLogin(instanceId, username, password, twoFactorCode, clientId, clientLabel)
+  getMoreTokenPort().personalLogin(
+    instanceId,
+    username,
+    password,
+    twoFactorCode,
+    clientId,
+    clientLabel
+  )
 export const startPersonalOAuth = (
   instanceId: string,
   clientId = "agentpack-personal-desktop",
   clientLabel = "AgentPack Desktop"
 ): Promise<PersonalOAuthStartResult> =>
-  moreTokenPersonalOAuthStart(instanceId, clientId, clientLabel)
+  getMoreTokenPort().personalOAuthStart(instanceId, clientId, clientLabel)
 export const pollPersonalOAuth = (
   instanceId: string,
   handle: string
-): Promise<PersonalOAuthPollResult> => moreTokenPersonalOAuthPoll(instanceId, handle)
+): Promise<PersonalOAuthPollResult> => getMoreTokenPort().personalOAuthPoll(instanceId, handle)
 export const cancelPersonalOAuth = (instanceId: string, handle: string): Promise<void> =>
-  moreTokenPersonalOAuthCancel(instanceId, handle)
+  getMoreTokenPort().personalOAuthCancel(instanceId, handle)
+export const startManagementStepUp = (
+  instanceId: string,
+  previewToken: string
+): Promise<ManagementStepUpStartResult> =>
+  getMoreTokenPort().managementStepUpStart(instanceId, previewToken)
+export const pollManagementStepUp = (
+  instanceId: string,
+  handle: string
+): Promise<ManagementStepUpPollResult> =>
+  getMoreTokenPort().managementStepUpPoll(instanceId, handle)
+export const cancelManagementStepUp = (instanceId: string, handle: string): Promise<void> =>
+  getMoreTokenPort().managementStepUpCancel(instanceId, handle)
+
+const successEnvelopeSchema = z.object({
+  success: z.literal(true),
+  data: z.unknown(),
+  request_id: z.string(),
+  server_time: z.number(),
+})
+const errorEnvelopeSchema = z.object({
+  success: z.literal(false),
+  error: z.object({
+    code: z.string(),
+    message: z.string(),
+    request_id: z.string(),
+    retryable: z.boolean(),
+    details: z.unknown().optional(),
+  }),
+})
 
 export async function managementRequest<T>(
   instanceId: string,
@@ -79,9 +111,22 @@ export async function managementRequest<T>(
   signal?: AbortSignal
 ): Promise<ManagementEnvelope<T>> {
   if (signal?.aborted) throw new DOMException("Request cancelled", "AbortError")
-  const response = await moreTokenRequest(instanceId, operation)
+  const response = await getMoreTokenPort().request(instanceId, parseManagementOperation(operation))
   if (signal?.aborted) throw new DOMException("Request cancelled", "AbortError")
-  const body = response.body as ManagementEnvelope<T> | ManagementErrorEnvelope
+  const parsedBody =
+    response.status >= 400
+      ? errorEnvelopeSchema.safeParse(response.body)
+      : successEnvelopeSchema.safeParse(response.body)
+  if (!parsedBody.success) {
+    throw new ManagementApiError(
+      "INVALID_SERVER_RESPONSE",
+      "more-token returned an invalid response",
+      "",
+      false,
+      response.status
+    )
+  }
+  const body = parsedBody.data as ManagementEnvelope<T> | ManagementErrorEnvelope
   if (response.status >= 400 || body.success === false) {
     const error = body.success === false ? body.error : null
     throw new ManagementApiError(
@@ -92,7 +137,17 @@ export async function managementRequest<T>(
       response.status
     )
   }
-  return body
+  try {
+    return { ...body, data: parseManagementResponseData(operation, body.data) as T }
+  } catch {
+    throw new ManagementApiError(
+      "INVALID_SERVER_RESPONSE",
+      `more-token returned invalid data for ${operation.kind}`,
+      body.request_id,
+      false,
+      response.status
+    )
+  }
 }
 
 export function operationId(): string {
@@ -155,17 +210,19 @@ export function quotaDisplayAmount(value: number, display: QuotaDisplaySetting):
 
 export function quotaCurrencyLabel(value: number, display: QuotaDisplaySetting): string {
   const amount = quotaDisplayAmount(value, display)
-  if (amount === null) return quotaLabel(value, display.quota_per_unit)
+  const raw = `${new Intl.NumberFormat().format(value)} quota`
+  if (amount === null) return raw
   const isSmallNonZeroAmount = Math.abs(amount) > 0 && Math.abs(amount) < 0.01
   try {
-    return new Intl.NumberFormat(undefined, {
+    const formatted = new Intl.NumberFormat(undefined, {
       style: "currency",
       currency: display.display_currency || "USD",
       minimumFractionDigits: 2,
       maximumFractionDigits: isSmallNonZeroAmount ? 4 : 2,
     }).format(amount)
+    return `${formatted} · ${raw}`
   } catch {
-    return `${amount.toFixed(isSmallNonZeroAmount ? 4 : 2)} ${display.display_currency}`
+    return `${amount.toFixed(isSmallNonZeroAmount ? 4 : 2)} ${display.display_currency} · ${raw}`
   }
 }
 
@@ -174,8 +231,7 @@ export function downloadCsv(filename: string, rows: Array<Array<string | number>
     .map((row) =>
       row
         .map((cell) => {
-          const value = String(cell)
-          return /[",\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value
+          return escapeCsvCell(cell)
         })
         .join(",")
     )
@@ -186,4 +242,20 @@ export function downloadCsv(filename: string, rows: Array<Array<string | number>
   anchor.download = filename
   anchor.click()
   URL.revokeObjectURL(url)
+}
+
+export function escapeCsvCell(cell: string | number): string {
+  let value = String(cell)
+  if (/^[\t\r ]*[=+\-@]/.test(value)) value = `'${value}`
+  return /[",\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value
+}
+
+export function sameOriginServerUrl(baseUrl: string, path: string): string {
+  const base = new URL(baseUrl)
+  if (!path.startsWith("/") || path.startsWith("//")) throw new Error("SERVER_URL_NOT_ALLOWED")
+  const target = new URL(path, base)
+  if (target.origin !== base.origin || target.username || target.password) {
+    throw new Error("SERVER_URL_NOT_ALLOWED")
+  }
+  return target.toString()
 }

@@ -57,6 +57,7 @@ import {
   pairInstance,
   pollPersonalOAuth,
   quotaCurrencyLabel,
+  sameOriginServerUrl,
   saveInstance,
   startPersonalOAuth,
 } from "@/lib/more-token/client"
@@ -64,12 +65,14 @@ import type {
   MoreTokenInstance,
   Page,
   PersonalAccount,
+  PersonalCloseBody,
   PersonalBalance,
   PersonalCapabilities,
   PersonalLedgerEntry,
   PersonalModel,
   PersonalModelCatalog,
   PersonalOverview,
+  PersonalPasswordBody,
   PersonalSession,
   PersonalUsage,
   PersonalView,
@@ -185,7 +188,14 @@ export function PersonalMoreTokenSection({ view }: { view: PersonalView }) {
   ) : capabilities.isError ? (
     <PersonalError error={capabilities.error} retry={() => void capabilities.refetch()} />
   ) : capabilities.data ? (
-    <div className="min-w-0">
+    <div className="min-w-0 space-y-4">
+      {capabilities.data.must_change_password ? (
+        <Alert variant="destructive">
+          <KeyRound className="size-4" />
+          <AlertTitle>{personal.mustChangePassword}</AlertTitle>
+          <AlertDescription>{personal.mustChangePasswordHint}</AlertDescription>
+        </Alert>
+      ) : null}
       {view === "my-account" ? (
         <PersonalAccountView instance={instance!} capabilities={capabilities.data} />
       ) : view === "my-balance" ? (
@@ -295,7 +305,15 @@ export function PersonalMoreTokenSection({ view }: { view: PersonalView }) {
                     variant="ghost"
                     size="sm"
                     onClick={async () => {
-                      await forgetCredential(activeId)
+                      try {
+                        await forgetCredential(activeId)
+                      } catch (error) {
+                        const confirmed = window.confirm(
+                          `${errorText(error)}\n\n${management.localOnlyCredentialWarning}`
+                        )
+                        if (!confirmed) return
+                        await forgetCredential(activeId, true)
+                      }
                       await credential.refetch()
                     }}
                   >
@@ -611,7 +629,7 @@ function PersonalAccountView({
     mutationFn: (displayName: string) =>
       request<PersonalAccount>(instance.id, {
         kind: "updatePersonalProfile",
-        body: { display_name: displayName },
+        body: { display_name: displayName, email: overview.data?.account.email ?? "" },
       }),
     onSuccess: () => {
       toast.success(m.saveProfile)
@@ -714,9 +732,15 @@ function PersonalAccountView({
             <Button
               variant="outline"
               size="sm"
-              onClick={() =>
-                void openUrl(new URL(capabilities.billing_portal_path, instance.baseUrl).toString())
-              }
+              onClick={() => {
+                try {
+                  void openUrl(
+                    sameOriginServerUrl(instance.baseUrl, capabilities.billing_portal_path)
+                  )
+                } catch (error) {
+                  toast.error(errorText(error))
+                }
+              }}
             >
               <ExternalLink className="size-4" />
               {m.openBillingPortal}
@@ -731,17 +755,20 @@ function PersonalAccountView({
 function PersonalBalanceView({ instance }: { instance: MoreTokenInstance }) {
   const m = useT().personal
   const management = useT().management
+  const [page, setPage] = useState(1)
+  const [now] = useState(() => Math.floor(Date.now() / 1000))
+  const pageSize = 25
   const balance = useQuery({
     queryKey: ["more-token", instance.id, "personal-balance"],
     queryFn: () => request<PersonalBalance>(instance.id, { kind: "personalBalance" }),
   })
   const ledger = useQuery({
-    queryKey: ["more-token", instance.id, "personal-ledger"],
+    queryKey: ["more-token", instance.id, "personal-ledger", page],
     queryFn: () =>
       request<Page<PersonalLedgerEntry>>(instance.id, {
         kind: "personalLedger",
-        page: 1,
-        pageSize: 50,
+        page,
+        pageSize,
       }),
   })
   if (balance.isError || ledger.isError)
@@ -756,6 +783,14 @@ function PersonalBalanceView({ instance }: { instance: MoreTokenInstance }) {
     )
   return (
     <div className="space-y-5">
+      {balance.data?.quota_display.rate_valid_until &&
+      balance.data.quota_display.rate_valid_until < now ? (
+        <Alert>
+          <AlertTriangle className="size-4" />
+          <AlertTitle>{management.exchangeRateExpired}</AlertTitle>
+          <AlertDescription>{management.exchangeRateExpiredHint}</AlertDescription>
+        </Alert>
+      ) : null}
       {balance.data ? (
         <MetricStrip
           items={[
@@ -826,6 +861,29 @@ function PersonalBalanceView({ instance }: { instance: MoreTokenInstance }) {
               ) : null}
             </TableBody>
           </Table>
+        </div>
+        <div className="flex items-center justify-between gap-3 py-4 text-xs text-muted-foreground">
+          <span>
+            {m.pageSummary(page, Math.max(1, Math.ceil((ledger.data?.total ?? 0) / pageSize)))}
+          </span>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page <= 1}
+              onClick={() => setPage(page - 1)}
+            >
+              {m.previousPage}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page * pageSize >= (ledger.data?.total ?? 0)}
+              onClick={() => setPage(page + 1)}
+            >
+              {m.nextPage}
+            </Button>
+          </div>
         </div>
       </section>
     </div>
@@ -1481,19 +1539,21 @@ function PersonalSecurityView({
     onError: (error) => toast.error(errorText(error)),
   })
   const password = useMutation({
-    mutationFn: (body: unknown) => request(instance.id, { kind: "changePersonalPassword", body }),
+    mutationFn: (body: PersonalPasswordBody) =>
+      request(instance.id, { kind: "changePersonalPassword", body }),
     onSuccess: async () => {
       toast.success(m.changePassword)
-      await forgetCredential(instance.id)
+      await forgetCredential(instance.id, true)
       void queryClient.invalidateQueries({ queryKey: ["more-token", instance.id] })
     },
     onError: (error) => toast.error(errorText(error)),
   })
   const close = useMutation({
-    mutationFn: (body: unknown) => request(instance.id, { kind: "closePersonalAccount", body }),
+    mutationFn: (body: PersonalCloseBody) =>
+      request(instance.id, { kind: "closePersonalAccount", body }),
     onSuccess: async () => {
       toast.success(m.closeAccount)
-      await forgetCredential(instance.id)
+      await forgetCredential(instance.id, true)
       void queryClient.invalidateQueries({ queryKey: ["more-token", instance.id] })
     },
     onError: (error) => toast.error(errorText(error)),
@@ -1510,7 +1570,12 @@ function PersonalSecurityView({
               className="flex flex-col justify-between gap-3 p-3 sm:flex-row sm:items-center"
             >
               <div>
-                <p className="text-sm font-medium">{session.client_label || session.client_id}</p>
+                <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                  {session.client_label || session.client_id}
+                  {session.id === capabilities.current_session_id ? (
+                    <Badge variant="outline">{m.currentSession}</Badge>
+                  ) : null}
+                </p>
                 <p className="text-xs text-muted-foreground">
                   {formatTime(session.last_used_at || session.created_at)} ·{" "}
                   {formatTime(session.expires_at)}
@@ -1537,8 +1602,8 @@ function PersonalSecurityView({
             event.preventDefault()
             const form = new FormData(event.currentTarget)
             password.mutate({
-              current_password: form.get("currentPassword"),
-              new_password: form.get("newPassword"),
+              current_password: String(form.get("currentPassword") ?? ""),
+              new_password: String(form.get("newPassword") ?? ""),
             })
           }}
         >
@@ -1592,9 +1657,9 @@ function PersonalSecurityView({
             const form = new FormData(event.currentTarget)
             close.mutate({
               operation_id: operationId(),
-              current_password: form.get("closePassword"),
-              confirm_username: form.get("confirmUsername"),
-              reason: form.get("reason"),
+              current_password: String(form.get("closePassword") ?? ""),
+              confirm_username: String(form.get("confirmUsername") ?? ""),
+              reason: String(form.get("reason") ?? ""),
             })
           }}
         >

@@ -25,12 +25,15 @@ import type { UpdateQuery } from "@/lib/skills/updates"
 import type { CleanupRoots, CleanupSpec, CleanupStat } from "@/lib/agentpack/cleanup"
 import type {
   CredentialState,
+  ForgetCredentialResult,
   ManagementOperation,
   MoreTokenInstance,
   MoreTokenInstanceDraft,
   PairingResult,
   PersonalOAuthPollResult,
   PersonalOAuthStartResult,
+  ManagementStepUpPollResult,
+  ManagementStepUpStartResult,
 } from "@/lib/more-token/types"
 
 // Typed wrappers around the custom Rust commands (src-tauri/src/*.rs). Keep this
@@ -45,8 +48,8 @@ export const moreTokenRemoveInstance = (instanceId: string) =>
   invoke<void>("more_token_remove_instance", { instanceId })
 export const moreTokenCredentialState = (instanceId: string) =>
   invoke<CredentialState>("more_token_credential_state", { instanceId })
-export const moreTokenForgetCredential = (instanceId: string) =>
-  invoke<void>("more_token_forget_credential", { instanceId })
+export const moreTokenForgetCredential = (instanceId: string, allowLocalOnly = false) =>
+  invoke<ForgetCredentialResult>("more_token_forget_credential", { instanceId, allowLocalOnly })
 export const moreTokenPair = (instanceId: string, pairingCode: string, clientId: string) =>
   invoke<PairingResult>("more_token_pair", { instanceId, pairingCode, clientId })
 export const moreTokenPersonalLogin = (
@@ -79,6 +82,18 @@ export const moreTokenPersonalOAuthPoll = (instanceId: string, handle: string) =
   invoke<PersonalOAuthPollResult>("more_token_personal_oauth_poll", { instanceId, handle })
 export const moreTokenPersonalOAuthCancel = (instanceId: string, handle: string) =>
   invoke<void>("more_token_personal_oauth_cancel", { instanceId, handle })
+export const moreTokenManagementStepUpStart = (instanceId: string, previewToken: string) =>
+  invoke<ManagementStepUpStartResult>("more_token_management_step_up_start", {
+    instanceId,
+    previewToken,
+  })
+export const moreTokenManagementStepUpPoll = (instanceId: string, handle: string) =>
+  invoke<ManagementStepUpPollResult>("more_token_management_step_up_poll", {
+    instanceId,
+    handle,
+  })
+export const moreTokenManagementStepUpCancel = (instanceId: string, handle: string) =>
+  invoke<void>("more_token_management_step_up_cancel", { instanceId, handle })
 export const moreTokenRequest = (instanceId: string, operation: ManagementOperation) =>
   invoke<{ status: number; body: unknown }>("more_token_request", { instanceId, operation })
 
