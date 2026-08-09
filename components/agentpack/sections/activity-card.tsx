@@ -1,7 +1,9 @@
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
+/* Hallmark · genre: modern-minimal · macrostructure: Workbench · design-system: design.md · contrast: pass (40–41) · slop: pass (42–49) · mobile: pass (34, 49, 50–57) */
 "use client"
 
 import { History } from "lucide-react"
-import { Card } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useLocale, useT } from "@/lib/i18n/provider"
 import type { ActivityOutcome, ActivityRecord } from "@/lib/agentpack/activity"
@@ -51,7 +53,7 @@ export function ActivityCard({
   const { lang } = useLocale()
 
   return (
-    <Card className="flex flex-col gap-3 p-4">
+    <section aria-label={a.title} className="flex min-w-0 flex-col gap-3 rounded-lg border p-4">
       <div className="flex items-center gap-2">
         <History className="size-4 text-muted-foreground" aria-hidden="true" />
         <h3 className="text-sm font-medium">{a.title}</h3>
@@ -86,14 +88,15 @@ export function ActivityCard({
         </ul>
       )}
       {onOpenPanel && records.length > 0 ? (
-        <button
-          type="button"
+        <Button
+          variant="link"
+          size="sm"
           onClick={onOpenPanel}
-          className="self-start text-sm text-[var(--hm-accent)] hover:underline"
+          className="h-auto self-start p-0 text-sm text-[var(--hm-accent)]"
         >
           {a.viewAll}
-        </button>
+        </Button>
       ) : null}
-    </Card>
+    </section>
   )
 }

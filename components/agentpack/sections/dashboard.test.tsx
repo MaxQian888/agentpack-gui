@@ -1,4 +1,4 @@
-jest.mock("@/lib/tauri", () => ({ isTauri: () => true }))
+jest.mock("@/lib/tauri", () => ({ isTauri: jest.fn(() => true) }))
 jest.mock("@/lib/tauri/commands")
 jest.mock("@/lib/tauri/settings", () => ({
   saveSettings: jest.fn(async () => undefined),
@@ -23,6 +23,7 @@ import { RunnerHarness } from "../run/__testing__/harness"
 import { useAppStore } from "@/store/app-store"
 import type { Paths } from "@/lib/agentpack/types"
 import { BACKUP_SUFFIX } from "@/lib/agentpack/plan"
+import { isTauri } from "@/lib/tauri"
 import type { SectionKey } from "../sidebar-nav"
 import { DashboardSection, scanEnvironment, type DashboardScan } from "./dashboard"
 
@@ -47,6 +48,7 @@ const paths: Paths = {
 }
 
 beforeEach(() => {
+  ;(isTauri as jest.Mock).mockReturnValue(true)
   useAppStore.getState().resetPlan()
   useAppStore.setState({
     detections: {},
@@ -121,8 +123,45 @@ function renderDashboard() {
 it("renders the dashboard title and grouped sections", async () => {
   renderDashboard()
   expect(screen.getByText(/environment dashboard/i)).toBeInTheDocument()
-  expect(screen.getByText(/MCP servers/i)).toBeInTheDocument()
+  expect(screen.getByRole("heading", { name: /MCP servers/i })).toBeInTheDocument()
   await screen.findByText("my-custom") // flush the async scan
+})
+
+it("organizes measured state into a summary, primary inventory, and supporting activity", async () => {
+  useAppStore.setState({
+    detections: { "claude-code": { installed: true, version: "1.2.3" } },
+  })
+  renderDashboard()
+  await screen.findByText("my-custom")
+
+  expect(screen.getByRole("region", { name: "Environment status" })).toBeInTheDocument()
+  expect(screen.getByRole("region", { name: "System inventory" })).toBeInTheDocument()
+  expect(screen.getByRole("complementary", { name: "Usage and activity" })).toBeInTheDocument()
+})
+
+it("keeps desktop actions and unmeasured values honest in web mode", async () => {
+  ;(isTauri as jest.Mock).mockReturnValue(false)
+  renderDashboard()
+
+  await screen.findByText(en.dashboard.notTauri)
+  const status = screen.getByRole("region", { name: en.dashboard.statusSummary })
+  expect(within(status).getAllByText("—")).toHaveLength(6)
+  expect(within(status).getAllByText(en.dashboard.notMeasured)).toHaveLength(6)
+  const inventory = screen.getByRole("region", { name: en.dashboard.systemInventory })
+  expect(within(inventory).getAllByText(en.dashboard.notMeasured)).toHaveLength(5)
+  expect(within(inventory).queryByText(en.envcheck.notFound)).not.toBeInTheDocument()
+  expect(within(inventory).queryByText(en.dashboard.relayNone)).not.toBeInTheDocument()
+  expect(screen.queryByRole("button", { name: en.dashboard.refresh })).not.toBeInTheDocument()
+})
+
+it("marks scan-derived metrics as incomplete when a desktop scan is degraded", async () => {
+  ;(api.readTextFile as jest.Mock).mockRejectedValue(new Error("permission denied"))
+  renderDashboard()
+
+  await screen.findByText(en.diagnostics.degradedTitle)
+  const status = screen.getByRole("region", { name: en.dashboard.statusSummary })
+  expect(within(status).getAllByText("—")).toHaveLength(4)
+  expect(within(status).getAllByText(en.dashboard.partialScan)).toHaveLength(4)
 })
 
 it("shows a detected CLI version from the store", async () => {
@@ -163,7 +202,7 @@ it("renders rich scan state without any management actions", async () => {
   // Wait for the async scan, then assert scan- and store-derived content.
   expect(await screen.findByText("Prov")).toBeInTheDocument()
   expect(screen.getByText(/update → 2\.0\.0/)).toBeInTheDocument()
-  expect(screen.getByText(/configured/i)).toBeInTheDocument()
+  expect(screen.getAllByText(/configured/i)).toHaveLength(2)
 
   // The overview is read-only now: removing an MCP server / skill / provider,
   // uninstalling a CLI and applying cc-switch visible apps all moved to the

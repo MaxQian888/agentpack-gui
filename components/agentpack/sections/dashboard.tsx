@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
+/* Hallmark · genre: modern-minimal · macrostructure: Workbench · design-system: design.md · contrast: pass (40–41) · slop: pass (42–49) · mobile: pass (34, 49, 50–57) */
 "use client"
 
 import {
@@ -12,7 +14,6 @@ import {
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
@@ -42,9 +43,10 @@ import { ActivityCard } from "./activity-card"
 import { buildDiagnostics, type DiagnosticItem } from "@/lib/agentpack/diagnostics"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-import { SectionShell } from "./section-shell"
 import type { SectionKey } from "../sidebar-nav"
 import { useRunnerCtx } from "../run/runner-context"
+import { DesktopOnlyNote } from "../desktop-only-note"
+import { CapabilityMetric, CapabilityWorkbench } from "./capability-workbench"
 
 type FileStatus = "ok" | "invalid" | "missing"
 interface FileHealth {
@@ -251,7 +253,9 @@ export function DashboardSection({
 
   // First scan hasn't landed yet (desktop only): show skeletons instead of a
   // misleading "nothing here" while the disk read is in flight.
-  const loading = mounted && isTauri() && !scan
+  const runtimeResolved = mounted
+  const desktopAvailable = runtimeResolved && isTauri()
+  const loading = desktopAvailable && !scan
   const busy = scanning || loading
 
   const mcpEntries = mergeEntries([
@@ -267,6 +271,7 @@ export function DashboardSection({
   // At-a-glance counts for the overview strip — derived from the same merged
   // lists the cards render, so a tile and its card can never disagree.
   const allTools = [...CLI_TOOLS, ...RUNTIMES]
+  const installedTools = allTools.filter((tool) => detections[tool.id]?.installed).length
   const relayConfigured = !!(view.relay.baseUrl || view.relay.hasToken || view.hasCodexRelay)
 
   // Everything that needs the user's attention, leading the page. Derived from
@@ -283,6 +288,21 @@ export function DashboardSection({
     paths,
     os,
   })
+  const baseMeasured = desktopAvailable && !loading
+  const scanMeasured = baseMeasured && !view.degraded
+  const metricValue = (value: React.ReactNode, measured = baseMeasured) => (measured ? value : "—")
+  const metricDetail = (fallback: React.ReactNode, measured = baseMeasured) => {
+    if (!runtimeResolved) return d.runtimeChecking
+    if (!desktopAvailable) return d.notMeasured
+    if (loading) return d.scanning
+    if (!measured) return d.partialScan
+    return fallback
+  }
+  const inventoryUnavailable = !desktopAvailable
+    ? runtimeResolved
+      ? d.notMeasured
+      : d.runtimeChecking
+    : null
 
   /**
    * One item, one action. Every branch that writes goes back through `run`,
@@ -320,189 +340,236 @@ export function DashboardSection({
   }
 
   return (
-    <SectionShell
+    <CapabilityWorkbench
       title={d.title}
       subtitle={d.subtitle}
-      wide
+      summaryLabel={d.statusSummary}
+      actionsLabel={d.supporting}
       actions={
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-2"
-          onClick={() => void rescan()}
-          disabled={busy}
-        >
-          <RefreshCw className={cn("size-4", busy && "animate-spin")} />
-          {busy ? d.scanning : d.refresh}
-        </Button>
+        desktopAvailable ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() => void rescan()}
+            disabled={busy}
+          >
+            <RefreshCw className={cn("size-4", busy && "animate-spin")} />
+            {busy ? d.scanning : d.refresh}
+          </Button>
+        ) : undefined
       }
-    >
-      {showQuickStart ? (
-        <QuickStartCard
-          q={t.quickStart}
-          networkBlocked={!!probe && !probe.directOk && !probe.bestProxy}
-          onOpen={() => setOnboardingOpen(true)}
-          onNetwork={() => onNavigate("network")}
-          onDismiss={dismissQuickStart}
-        />
-      ) : null}
+      metrics={
+        <>
+          <CapabilityMetric
+            label={d.overviewAttention}
+            value={metricValue(diagnostics.length)}
+            detail={metricDetail(
+              diagnostics.length === 0
+                ? d.healthAllGood
+                : d.healthNeedsAttention(diagnostics.length)
+            )}
+          />
+          <CapabilityMetric
+            label={d.overviewTools}
+            value={metricValue(`${installedTools} / ${allTools.length}`)}
+            detail={metricDetail(d.sectionClis)}
+          />
+          <CapabilityMetric
+            label={d.overviewMcp}
+            value={metricValue(mcpEntries.length, scanMeasured)}
+            detail={metricDetail(d.sectionMcp, scanMeasured)}
+          />
+          <CapabilityMetric
+            label={d.overviewSkills}
+            value={metricValue(skillEntries.length, scanMeasured)}
+            detail={metricDetail(d.sectionSkills, scanMeasured)}
+          />
+          <CapabilityMetric
+            label={d.overviewProviders}
+            value={metricValue(view.providers.length, scanMeasured)}
+            detail={metricDetail(d.sectionCcswitch, scanMeasured)}
+          />
+          <CapabilityMetric
+            label={d.overviewRelay}
+            value={metricValue(relayConfigured ? d.relayConfigured : d.relayNone, scanMeasured)}
+            detail={metricDetail(d.sectionRelay, scanMeasured)}
+          />
+        </>
+      }
+      primary={
+        <div className="flex min-w-0 flex-col gap-4">
+          {runtimeResolved && !desktopAvailable ? (
+            <DesktopOnlyNote>{d.notTauri}</DesktopOnlyNote>
+          ) : null}
 
-      {mounted && !isTauri() ? (
-        <div className="rounded-lg border border-dashed bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-          {d.notTauri}
-        </div>
-      ) : null}
+          <DiagnosticsList
+            items={diagnostics}
+            loading={loading}
+            available={desktopAvailable}
+            onAct={actOn}
+          />
 
-      {/* The page leads with what needs doing. The four identical tinted stat
-          tiles that used to sit here are gone: they ranked nothing, four
-          colours competing for a glance said less than one ordered list, and
-          the counts they held are already on the cards below. */}
-      <DiagnosticsList
-        items={diagnostics}
-        loading={loading}
-        available={!mounted || isTauri()}
-        onAct={actOn}
-      />
+          {showQuickStart ? (
+            <QuickStartCard
+              q={t.quickStart}
+              networkBlocked={!!probe && !probe.directOk && !probe.bestProxy}
+              onOpen={() => setOnboardingOpen(true)}
+              onNetwork={() => onNavigate("network")}
+              onDismiss={dismissQuickStart}
+            />
+          ) : null}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {/* Spend leads the grid: it is the only figure here the user cares
-            about independently of setup, and it sits above the configuration
-            cards so one screen answers both "what did this cost" and "what is
-            installed". */}
-        <SpendCard history={history} onNavigate={onNavigate} />
-
-        <ActivityCard
-          records={activity}
-          available={!mounted || isTauri()}
-          onOpenPanel={() => setPanelOpen(true)}
-        />
-
-        {/* CLIs & runtimes — read-only status; installs and removals live in
-            the CLIs / Environment sections. */}
-        <Card className="flex flex-col gap-3 p-4 sm:col-span-2 xl:col-span-3">
-          <CardHead icon={Terminal} title={d.sectionClis} />
-          <div className="flex flex-col gap-0.5 sm:grid sm:grid-cols-2 sm:gap-x-6">
-            {allTools.map((tool) => {
-              const det = detections[tool.id]
-              const latest = latestVersions[tool.id]
-              const installed = det?.installed
-              const isCli = CLI_TOOLS.some((c) => c.id === tool.id)
-              // Same semver-aware check as the CLIs section, so the two agree.
-              const hasUpdate = !!installed && isUpgradeAvailable(det?.version, latest)
-              const title =
-                (isCli ? t.catalog.cli[tool.id] : t.catalog.runtime[tool.id])?.title ?? tool.id
-              // `detect_cli` keeps the whole first line of `--version`, which for
-              // uv/python is "uv 0.9.7 (3d9460278 2026-…)" — far too long for a
-              // badge. Show the semver when there is one, the raw line when there
-              // isn't, and let the badge ellipsize either way.
-              const version = extractSemver(det?.version) ?? det?.version
-              return (
-                <div
-                  key={tool.id}
-                  className="-mx-2 flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/50"
-                >
-                  <StatusDot on={!!installed} />
-                  <span className="truncate font-medium">{title}</span>
-                  <Badge
-                    variant={installed ? "secondary" : "outline"}
-                    className="min-w-0 shrink font-normal text-ellipsis"
-                  >
-                    {installed
-                      ? `${t.envcheck.installed}${version ? ` · ${version}` : ""}`
-                      : t.envcheck.notFound}
-                  </Badge>
-                  {hasUpdate ? (
-                    <Badge variant="default" className="shrink-0 font-normal">
-                      {d.updateAvailable(latest)}
-                    </Badge>
-                  ) : null}
-                </div>
-              )
-            })}
-          </div>
-        </Card>
-
-        {/* MCP servers */}
-        <OverviewCard
-          icon={Server}
-          title={d.sectionMcp}
-          entries={mcpEntries}
-          loading={loading}
-          d={d}
-          onViewAll={() => onNavigate("mcp")}
-        />
-
-        {/* Skills */}
-        <OverviewCard
-          icon={Wrench}
-          title={d.sectionSkills}
-          entries={skillEntries}
-          loading={loading}
-          d={d}
-          onViewAll={() => onNavigate("skills")}
-        />
-
-        {/* cc-switch providers */}
-        <Card className="flex flex-col gap-3 p-4">
-          <CardHead icon={ArrowLeftRight} title={d.sectionCcswitch} />
-          {loading ? (
-            <SkeletonRows rows={3} />
-          ) : view.providers.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{d.none}</p>
-          ) : (
-            <>
-              <div className="flex flex-col gap-0.5">
-                {view.providers.slice(0, OVERVIEW_LIMIT).map((p) => (
-                  <div
-                    key={p.id}
-                    className="-mx-2 flex items-center justify-between gap-2 rounded-md px-2 py-1 text-sm transition-colors hover:bg-muted/50"
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      <StatusDot on={p.is_current} />
-                      <span className="truncate font-medium">{p.name}</span>
-                    </span>
-                    <span className="shrink-0 text-[11px] text-muted-foreground">{p.app_type}</span>
-                  </div>
-                ))}
-              </div>
-              <ViewAll
-                label={d.viewAll(view.providers.length)}
-                onClick={() => onNavigate("ccswitch")}
-              />
-            </>
-          )}
-        </Card>
-
-        {/* Relay — one line; it used to be padded out to a full card height. */}
-        <Card className="flex flex-col gap-3 p-4 sm:col-span-2 xl:col-span-3">
-          <CardHead icon={Globe} title={d.sectionRelay} />
-          {loading ? (
-            <SkeletonRows rows={1} />
-          ) : (
-            <div className="flex items-center gap-2 text-sm">
-              <StatusDot on={relayConfigured} />
-              {relayConfigured ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="secondary" className="font-normal">
-                    {d.relayConfigured}
-                  </Badge>
-                  {view.relay.baseUrl ? (
-                    <span className="text-xs text-muted-foreground">
-                      {d.relayBaseUrl(view.relay.baseUrl)}
-                    </span>
-                  ) : null}
-                  {view.relay.hasToken ? (
-                    <span className="text-xs text-muted-foreground">{d.relayToken}</span>
-                  ) : null}
-                </div>
-              ) : (
-                <span className="text-muted-foreground">{d.relayNone}</span>
-              )}
+          <section
+            aria-label={d.systemInventory}
+            className="min-w-0 overflow-hidden rounded-lg border"
+          >
+            <div className="border-b px-4 py-3">
+              <h3 className="font-medium">{d.systemInventory}</h3>
+              <p className="mt-1 text-xs text-muted-foreground">{d.systemInventoryHint}</p>
             </div>
-          )}
-        </Card>
-      </div>
-    </SectionShell>
+
+            <InventoryBlock icon={Terminal} title={d.sectionClis} className="border-b">
+              {inventoryUnavailable ? (
+                <p className="text-sm text-muted-foreground">{inventoryUnavailable}</p>
+              ) : (
+                <div className="flex flex-col gap-0.5 sm:grid sm:grid-cols-2 sm:gap-x-6">
+                  {allTools.map((tool) => {
+                    const det = detections[tool.id]
+                    const latest = latestVersions[tool.id]
+                    const installed = det?.installed
+                    const isCli = CLI_TOOLS.some((c) => c.id === tool.id)
+                    const hasUpdate = !!installed && isUpgradeAvailable(det?.version, latest)
+                    const title =
+                      (isCli ? t.catalog.cli[tool.id] : t.catalog.runtime[tool.id])?.title ??
+                      tool.id
+                    const version = extractSemver(det?.version) ?? det?.version
+                    return (
+                      <div
+                        key={tool.id}
+                        className="-mx-2 flex min-w-0 items-center gap-2 px-2 py-1.5 text-sm"
+                      >
+                        <StatusDot on={!!installed} />
+                        <span className="truncate font-medium">{title}</span>
+                        <Badge
+                          variant={installed ? "secondary" : "outline"}
+                          className="min-w-0 shrink font-normal text-ellipsis"
+                        >
+                          {installed
+                            ? `${t.envcheck.installed}${version ? ` · ${version}` : ""}`
+                            : t.envcheck.notFound}
+                        </Badge>
+                        {hasUpdate ? (
+                          <Badge variant="default" className="shrink-0 font-normal">
+                            {d.updateAvailable(latest)}
+                          </Badge>
+                        ) : null}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </InventoryBlock>
+
+            <div className="grid min-w-0 md:grid-cols-2">
+              <InventoryBlock icon={Server} title={d.sectionMcp} className="border-b md:border-r">
+                <OverviewList
+                  entries={mcpEntries}
+                  loading={loading}
+                  unavailable={inventoryUnavailable}
+                  d={d}
+                  onViewAll={() => onNavigate("mcp")}
+                />
+              </InventoryBlock>
+              <InventoryBlock icon={Wrench} title={d.sectionSkills} className="border-b">
+                <OverviewList
+                  entries={skillEntries}
+                  loading={loading}
+                  unavailable={inventoryUnavailable}
+                  d={d}
+                  onViewAll={() => onNavigate("skills")}
+                />
+              </InventoryBlock>
+              <InventoryBlock
+                icon={ArrowLeftRight}
+                title={d.sectionCcswitch}
+                className="border-b md:border-r md:border-b-0"
+              >
+                {inventoryUnavailable ? (
+                  <p className="text-sm text-muted-foreground">{inventoryUnavailable}</p>
+                ) : loading ? (
+                  <SkeletonRows rows={3} />
+                ) : view.providers.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">{d.none}</p>
+                ) : (
+                  <>
+                    <div className="flex flex-col gap-0.5">
+                      {view.providers.slice(0, OVERVIEW_LIMIT).map((p) => (
+                        <div
+                          key={p.id}
+                          className="-mx-2 flex min-w-0 items-center justify-between gap-2 px-2 py-1 text-sm"
+                        >
+                          <span className="flex min-w-0 items-center gap-2">
+                            <StatusDot on={p.is_current} />
+                            <span className="truncate font-medium">{p.name}</span>
+                            <span className="sr-only">
+                              {p.is_current ? d.currentProvider : d.inactiveProvider}
+                            </span>
+                          </span>
+                          <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                            {p.app_type}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <ViewAll
+                      label={d.viewAll(view.providers.length)}
+                      onClick={() => onNavigate("ccswitch")}
+                    />
+                  </>
+                )}
+              </InventoryBlock>
+              <InventoryBlock icon={Globe} title={d.sectionRelay}>
+                {inventoryUnavailable ? (
+                  <p className="text-sm text-muted-foreground">{inventoryUnavailable}</p>
+                ) : loading ? (
+                  <SkeletonRows rows={1} />
+                ) : (
+                  <div className="flex min-w-0 items-start gap-2 text-sm">
+                    <StatusDot on={relayConfigured} />
+                    {relayConfigured ? (
+                      <div className="flex min-w-0 flex-col gap-1">
+                        <span className="font-medium">{d.relayConfigured}</span>
+                        {view.relay.baseUrl ? (
+                          <span className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                            {d.relayBaseUrl(view.relay.baseUrl)}
+                          </span>
+                        ) : null}
+                        {view.relay.hasToken ? (
+                          <span className="text-xs text-muted-foreground">{d.relayToken}</span>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">{d.relayNone}</span>
+                    )}
+                  </div>
+                )}
+              </InventoryBlock>
+            </div>
+          </section>
+        </div>
+      }
+      aside={
+        <>
+          <SpendCard history={history} onNavigate={onNavigate} />
+          <ActivityCard
+            records={activity}
+            available={desktopAvailable}
+            onOpenPanel={() => setPanelOpen(true)}
+          />
+        </>
+      }
+    />
   )
 }
 
@@ -523,12 +590,10 @@ function QuickStartCard({
 }) {
   const steps = [q.stepPick, q.stepPreview, q.stepInstall]
   return (
-    <Card className="gap-3 overflow-hidden border-primary/25 bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-4">
+    <section aria-label={q.title} className="border-y py-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
-            <Sparkles className="size-5" aria-hidden="true" />
-          </span>
+          <Sparkles className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
           <div>
             <h3 className="font-semibold">{q.title}</h3>
             <p className="text-sm text-muted-foreground">{q.intro}</p>
@@ -538,36 +603,31 @@ function QuickStartCard({
           {q.dismiss}
         </Button>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
+      <ol className="mt-3 grid gap-2 sm:grid-cols-3">
         {steps.map((step, i) => (
-          <span
-            key={step}
-            className="inline-flex items-center gap-1.5 rounded-full bg-background/60 px-2.5 py-1 text-xs text-muted-foreground"
-          >
-            <span className="flex size-4 items-center justify-center rounded-full bg-primary/15 text-[10px] font-semibold text-primary">
-              {i + 1}
-            </span>
-            {step}
-          </span>
+          <li key={step} className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+            <span className="font-mono text-primary tabular-nums">0{i + 1}</span>
+            <span>{step}</span>
+          </li>
         ))}
-      </div>
+      </ol>
       {/* Point a blocked machine at the fix before it watches an install fail. */}
       {networkBlocked ? (
         <button
           type="button"
           onClick={onNetwork}
-          className="self-start text-left text-sm text-amber-600 underline-offset-4 hover:underline dark:text-amber-400"
+          className="mt-3 self-start rounded-sm text-left text-sm text-[var(--hm-warn)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         >
           {q.networkBlocked}
         </button>
       ) : null}
-      <div>
+      <div className="mt-3">
         <Button size="sm" className="gap-2" onClick={onOpen}>
           <Sparkles className="size-4" aria-hidden="true" />
           {q.openGuide}
         </Button>
       </div>
-    </Card>
+    </section>
   )
 }
 
@@ -577,7 +637,7 @@ function StatusDot({ on }: { on: boolean }) {
     <span
       className={cn(
         "size-1.5 shrink-0 rounded-full",
-        on ? "bg-emerald-500" : "bg-muted-foreground/40"
+        on ? "bg-[var(--hm-ok)]" : "bg-[var(--hm-neutral)]"
       )}
       aria-hidden="true"
     />
@@ -610,47 +670,48 @@ function ViewAll({ label, onClick }: { label: string; onClick: () => void }) {
   )
 }
 
-/** A card's heading row: an icon in a well, the title, and an optional action. */
-function CardHead({
+/** A flat inventory subsection separated from its siblings by the parent rules. */
+function InventoryBlock({
   icon: Icon,
   title,
-  action,
+  className,
+  children,
 }: {
   icon: LucideIcon
   title: string
-  action?: React.ReactNode
+  className?: string
+  children: React.ReactNode
 }) {
   return (
-    <div className="flex items-center justify-between gap-2">
-      <div className="flex items-center gap-2">
+    <section className={cn("min-w-0 p-4", className)}>
+      <div className="mb-3 flex items-center gap-2">
         <Icon className="size-4 text-muted-foreground" aria-hidden="true" />
         <h3 className="text-sm font-medium">{title}</h3>
       </div>
-      {action}
-    </div>
+      {children}
+    </section>
   )
 }
 
-/** An MCP / skills summary card: the first few ids, then a link to the rest. */
-function OverviewCard({
-  icon,
-  title,
+/** An MCP / skills summary list: the first few ids, then a link to the owner. */
+function OverviewList({
   entries,
   loading,
+  unavailable,
   d,
   onViewAll,
 }: {
-  icon: LucideIcon
-  title: string
   entries: OverviewEntry[]
   loading: boolean
+  unavailable: string | null
   d: ReturnType<typeof useT>["dashboard"]
   onViewAll: () => void
 }) {
   return (
-    <Card className="flex flex-col gap-3 p-4">
-      <CardHead icon={icon} title={title} />
-      {loading ? (
+    <div className="flex min-w-0 flex-col gap-3">
+      {unavailable ? (
+        <p className="text-sm text-muted-foreground">{unavailable}</p>
+      ) : loading ? (
         <SkeletonRows rows={3} />
       ) : entries.length === 0 ? (
         <p className="text-sm text-muted-foreground">{d.none}</p>
@@ -660,7 +721,7 @@ function OverviewCard({
             {entries.slice(0, OVERVIEW_LIMIT).map((entry) => (
               <div
                 key={entry.id}
-                className="-mx-2 flex items-center justify-between gap-2 rounded-md px-2 py-1 text-sm transition-colors hover:bg-muted/50"
+                className="-mx-2 flex items-center justify-between gap-2 px-2 py-1 text-sm"
               >
                 <span className="flex min-w-0 items-center gap-2">
                   <span className="truncate">{entry.id}</span>
@@ -679,6 +740,6 @@ function OverviewCard({
           <ViewAll label={d.viewAll(entries.length)} onClick={onViewAll} />
         </>
       )}
-    </Card>
+    </div>
   )
 }

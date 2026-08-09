@@ -108,7 +108,7 @@ export function CapabilityWorkbench({
         {aside ? (
           <aside
             aria-label={actionsLabel}
-            className="grid min-w-0 gap-4 min-[768px]:max-[1099px]:grid-cols-2 min-[1100px]:col-span-4"
+            className="grid min-w-0 content-start gap-4 self-start min-[768px]:max-[1099px]:grid-cols-2 min-[1100px]:col-span-4"
           >
             {aside}
           </aside>

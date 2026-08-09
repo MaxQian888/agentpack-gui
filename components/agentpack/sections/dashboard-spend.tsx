@@ -1,9 +1,10 @@
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
+/* Hallmark · genre: modern-minimal · macrostructure: Workbench · design-system: design.md · contrast: pass (40–41) · slop: pass (42–49) · mobile: pass (34, 49, 50–57) */
 "use client"
 
 import { useMemo } from "react"
 import { ArrowRight, Wallet } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
@@ -84,7 +85,7 @@ export function SpendCard({
               <span
                 className={cn(
                   "font-semibold tabular-nums",
-                  spend.deltaPct > 0 ? "text-red-500" : "text-emerald-600"
+                  spend.deltaPct > 0 ? "text-[var(--hm-danger)]" : "text-[var(--hm-ok)]"
                 )}
               >
                 {formatDelta(spend.deltaPct)}
@@ -127,7 +128,7 @@ export function SpendCard({
   }
 
   return (
-    <Card className="flex flex-col gap-3 p-4 sm:col-span-2 xl:col-span-3">
+    <section aria-label={s.title} className="flex min-w-0 flex-col gap-3 rounded-lg border p-4">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="flex size-7 items-center justify-center rounded-md bg-muted text-muted-foreground">
@@ -146,7 +147,7 @@ export function SpendCard({
         </Button>
       </div>
       {body()}
-    </Card>
+    </section>
   )
 }
 
