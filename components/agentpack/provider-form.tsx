@@ -270,12 +270,22 @@ export function ProviderForm({
                 <Label htmlFor="pf-model">{c.fieldModel}</Label>
                 <Input
                   id="pf-model"
+                  list={probe?.ok && probe.models.length > 0 ? "pf-model-options" : undefined}
                   value={model}
                   onChange={(e) => {
                     clearRaw()
                     setModel(e.target.value)
                   }}
                 />
+                {probe?.ok && probe.models.length > 0 ? (
+                  <datalist id="pf-model-options">
+                    {probe.models.map((modelId) => (
+                      <option key={modelId} value={modelId}>
+                        {modelId}
+                      </option>
+                    ))}
+                  </datalist>
+                ) : null}
               </div>
             </TabsContent>
 

@@ -1,5 +1,9 @@
 import { defineConfig, devices } from "@playwright/test"
 
+const mainPort = process.env.AGENTPACK_E2E_PORT ?? "3000"
+const mainUrl = `http://localhost:${mainPort}`
+const mainOnly = process.env.AGENTPACK_E2E_MAIN_ONLY === "1"
+
 /**
  * Playwright E2E config for the agentpack web build (`pnpm dev`).
  *
@@ -20,7 +24,7 @@ export default defineConfig({
   expect: { timeout: 10_000 },
 
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: mainUrl,
     trace: "on-first-retry",
     locale: "en-US",
   },
@@ -40,20 +44,24 @@ export default defineConfig({
 
   webServer: [
     {
-      command: "pnpm dev",
-      url: "http://localhost:3000",
+      command: `pnpm dev --port ${mainPort}`,
+      url: mainUrl,
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,
       stdout: "ignore",
       stderr: "pipe",
     },
-    {
-      command: "pnpm docs:dev",
-      url: "http://localhost:3001/docs",
-      reuseExistingServer: !process.env.CI,
-      timeout: 180_000,
-      stdout: "ignore",
-      stderr: "pipe",
-    },
+    ...(mainOnly
+      ? []
+      : [
+          {
+            command: "pnpm docs:dev",
+            url: "http://localhost:3001/docs",
+            reuseExistingServer: !process.env.CI,
+            timeout: 180_000,
+            stdout: "ignore" as const,
+            stderr: "pipe" as const,
+          },
+        ]),
   ],
 })

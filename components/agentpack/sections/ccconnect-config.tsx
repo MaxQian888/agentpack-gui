@@ -4,6 +4,7 @@ import { useMemo, useState } from "react"
 import { Pencil } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import {
   Dialog,
   DialogContent,
@@ -20,10 +21,22 @@ import {
   parseConfigDoc,
   serializeConfigDoc,
 } from "@/lib/agentpack/ccconnect"
-import { readTextFile, writeTextFile } from "@/lib/tauri/commands"
+import { readTextFile } from "@/lib/tauri/commands"
 import { useT } from "@/lib/i18n/provider"
 import { CodeEditor } from "./code-editor"
 import { ConfigFormFields } from "./config-form"
+import { useRunnerCtx } from "../run/runner-context"
+
+type ConfigGroup = "all" | "core" | "connection" | "media" | "display" | "reliability" | "security"
+
+const CONFIG_GROUPS: Record<Exclude<ConfigGroup, "all">, string[]> = {
+  core: ["general"],
+  connection: ["management", "bridge", "webhook", "relay"],
+  media: ["speech", "tts"],
+  display: ["display", "streamPreview", "instantReply"],
+  reliability: ["rateLimit", "outgoingRateLimit", "cron", "timeouts"],
+  security: ["management", "bridge", "webhook", "rateLimit"],
+}
 
 interface Props {
   /** Absolute path of ~/.cc-connect/config.toml. */
@@ -48,12 +61,30 @@ interface Props {
 export function CcConnectConfigEditor({ path, exists, onSaved }: Props) {
   const t = useT()
   const c = t.ccconnect
+  const { run } = useRunnerCtx()
   const [open, setOpen] = useState(false)
   const [raw, setRaw] = useState("")
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [query, setQuery] = useState("")
+  const [group, setGroup] = useState<ConfigGroup>("all")
 
   const doc = useMemo(() => parseConfigDoc(raw), [raw])
+  const visibleSections = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase()
+    const keys = group === "all" ? null : new Set(CONFIG_GROUPS[group])
+    const sectionLabels = c.sections as Record<string, string>
+    const fieldLabels = c.fields as Record<string, string>
+    return CONFIG_SECTIONS.filter((section) => {
+      if (keys && !keys.has(section.key)) return false
+      if (!normalized) return true
+      const sectionLabel = sectionLabels[section.key] ?? section.key
+      const labels = section.fields.map((field) => fieldLabels[field.key] ?? field.key)
+      return [sectionLabel, ...labels].some((label) =>
+        label.toLocaleLowerCase().includes(normalized)
+      )
+    })
+  }, [c.fields, c.sections, group, query])
 
   const load = async () => {
     setLoading(true)
@@ -75,7 +106,23 @@ export function CcConnectConfigEditor({ path, exists, onSaved }: Props) {
     }
     setSaving(true)
     try {
-      await writeTextFile(path, raw.endsWith("\n") ? raw : `${raw}\n`)
+      const content = raw.endsWith("\n") ? raw : `${raw}\n`
+      const reports = await run([
+        {
+          kind: "mergeFile",
+          id: "ccconnect-config-save",
+          label: c.save,
+          path,
+          merge: () => content,
+          writtenNote: c.saved,
+        },
+      ])
+      if (
+        !reports.some((report) => report.id === "ccconnect-config-save" && report.status === "done")
+      ) {
+        if (reports.some((report) => report.status === "error")) toast.error(c.saveFailed)
+        return
+      }
       toast.success(c.saved)
       setOpen(false)
       onSaved()
@@ -113,23 +160,43 @@ export function CcConnectConfigEditor({ path, exists, onSaved }: Props) {
             </TabsList>
             <TabsContent value="form">
               {doc ? (
-                <ConfigFormFields
-                  idPrefix="ccconf"
-                  sections={CONFIG_SECTIONS}
-                  doc={doc}
-                  onChange={(next) => setRaw(serializeConfigDoc(next))}
-                  labels={c.fields}
-                  sectionLabels={c.sections}
-                  unsetLabel={c.unset}
-                  lockedHint={t.configFiles.lockedHint}
-                  providerFirstHint={c.providerFirst}
-                  mapLabels={{
-                    add: t.configFiles.mapAdd,
-                    remove: t.configFiles.mapRemove,
-                    key: t.configFiles.mapKey,
-                    value: t.configFiles.mapValue,
-                  }}
-                />
+                <div className="flex flex-col gap-3">
+                  <Input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder={c.configSearch}
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    {(Object.keys(c.configGroups) as ConfigGroup[]).map((key) => (
+                      <Button
+                        key={key}
+                        type="button"
+                        size="sm"
+                        variant={group === key ? "secondary" : "outline"}
+                        onClick={() => setGroup(key)}
+                      >
+                        {c.configGroups[key]}
+                      </Button>
+                    ))}
+                  </div>
+                  <ConfigFormFields
+                    idPrefix="ccconf"
+                    sections={visibleSections}
+                    doc={doc}
+                    onChange={(next) => setRaw(serializeConfigDoc(next))}
+                    labels={c.fields}
+                    sectionLabels={c.sections}
+                    unsetLabel={c.unset}
+                    lockedHint={t.configFiles.lockedHint}
+                    providerFirstHint={c.providerFirst}
+                    mapLabels={{
+                      add: t.configFiles.mapAdd,
+                      remove: t.configFiles.mapRemove,
+                      key: t.configFiles.mapKey,
+                      value: t.configFiles.mapValue,
+                    }}
+                  />
+                </div>
               ) : (
                 <p className="text-sm text-muted-foreground">{c.formUnavailable}</p>
               )}

@@ -1,25 +1,32 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Plus,
-  Star,
   RefreshCw,
   Database,
   Download,
   ExternalLink,
-  KeyRound,
   Loader2,
   Power,
+  Search,
   AlertTriangle,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   Table,
   TableBody,
@@ -73,6 +80,7 @@ import { buildSettingsConfig, parseSettingsConfig } from "@/lib/agentpack/ccswit
 import {
   PROVIDER_APPS,
   type Provider,
+  type ProviderApp,
   type ProviderBackend,
   type ProviderForm as ProviderFormData,
   type VisibleApps,
@@ -99,10 +107,11 @@ import { isTauri } from "@/lib/tauri"
 import { pickFile, pickSavePath } from "@/lib/tauri/dialog"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-import { SectionShell } from "../section-shell"
+import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "../capability-workbench"
 import { HelpTip } from "../../help-tip"
 import { ProviderForm } from "../../provider-form"
 import { useRunnerCtx } from "../../run/runner-context"
+import { DesktopOnlyNote } from "../../desktop-only-note"
 import { AccountsCard } from "./accounts-card"
 import { BackupsCard } from "./backups-card"
 import { LoadingLine } from "./loading-line"
@@ -112,6 +121,7 @@ import { VisibleAppsCard } from "./visible-apps-card"
 export function CcSwitchSection() {
   const t = useT()
   const c = t.ccswitch
+  const tauri = isTauri()
   const paths = useAppStore((s) => s.paths)
   const effectiveOS = useAppStore((s) => s.effectiveOS)
   const storeDetected = useAppStore((s) => s.detections["cc-switch"])
@@ -129,7 +139,7 @@ export function CcSwitchSection() {
   const [ccRunning, setCcRunning] = useState<boolean | null>(null)
   // Starts true only in the desktop app (where the first scan runs); in web mode
   // there's nothing to scan, so we skip straight to the not-in-Tauri message.
-  const [loading, setLoading] = useState(() => isTauri())
+  const [loading, setLoading] = useState(tauri)
   const [initializing, setInitializing] = useState(false)
   const [providers, setProviders] = useState<Provider[] | null>(null)
   // Relay config already on disk that no provider row covers — offered for import
@@ -150,6 +160,12 @@ export function CcSwitchSection() {
   // Bumped on every open so <ProviderForm> remounts and re-seeds its fields from
   // `formInitial` (useState initializers only run once per mount).
   const [formKey, setFormKey] = useState(0)
+  const [providerQuery, setProviderQuery] = useState("")
+  const [providerApp, setProviderApp] = useState<ProviderApp | "all">("all")
+  const [providerStatus, setProviderStatus] = useState<"all" | "official" | "custom" | "current">(
+    "all"
+  )
+  const [providerSort, setProviderSort] = useState<"name" | "app" | "current">("name")
 
   // Guards the DB-init polling loop from setting state after unmount.
   const mounted = useRef(true)
@@ -322,16 +338,25 @@ export function CcSwitchSection() {
   }
 
   // Create the SQLite DB ourselves rather than launching cc-switch and polling
-  // for the file it writes on first run: that made cc-switch a hard prerequisite
-  // and cost up to a minute of waiting. A ref (not the `initializing` state)
-  // guards re-entry so the auto-trigger effect and the manual button can't both
-  // fire — the memoized callback would otherwise read a stale `initializing`.
+  // for the file it writes on first run. The info step keeps this write inside
+  // the same review flow as every other persisted capability change.
   const initInFlight = useRef(false)
   const initDb = useCallback(async () => {
     if (initInFlight.current) return
     initInFlight.current = true
     setInitializing(true)
     try {
+      const reports = await run([
+        {
+          kind: "info",
+          id: "ccswitch-init-db",
+          label: c.initDb,
+          lines: [c.initDbHint],
+        },
+      ])
+      if (!reports.some((report) => report.id === "ccswitch-init-db" && report.status === "done")) {
+        return
+      }
       await ccInitDb()
     } catch {
       if (mounted.current) toast.error(c.initFailed)
@@ -340,23 +365,7 @@ export function CcSwitchSection() {
       if (mounted.current) setInitializing(false)
       await reload()
     }
-  }, [reload, c.initFailed])
-
-  // No database yet → create it, without waiting for a manual click and without
-  // needing cc-switch installed. Single-shot per mount so a failure doesn't retry
-  // in a loop; the button below stays available for an explicit retry.
-  const autoInitAttempted = useRef(false)
-  useEffect(() => {
-    if (
-      backend === "ccswitch" &&
-      dbReady === false &&
-      staleColumns.length === 0 &&
-      !autoInitAttempted.current
-    ) {
-      autoInitAttempted.current = true
-      void initDb()
-    }
-  }, [backend, dbReady, staleColumns, initDb])
+  }, [reload, run, c.initDb, c.initDbHint, c.initFailed])
 
   const applyVisible = () => {
     if (!paths) return
@@ -449,18 +458,33 @@ export function CcSwitchSection() {
   const writeAccounts = async (profiles: AccountProfile[]): Promise<boolean> => {
     if (!paths) return false
     const previous = accounts
+    let failed = false
     setAccounts(profiles)
     try {
-      await writeTextFile(
-        accountsPath(paths.home),
-        serializeAccounts({ version: ACCOUNTS_VERSION, profiles })
-      )
-      return true
+      const reports = await run([
+        {
+          kind: "mergeFile",
+          id: "ccswitch-account-profiles",
+          label: c.accountsTitle,
+          path: accountsPath(paths.home),
+          merge: () => serializeAccounts({ version: ACCOUNTS_VERSION, profiles }),
+          writtenNote: c.accountsTitle,
+        },
+      ])
+      if (
+        reports.some(
+          (report) => report.id === "ccswitch-account-profiles" && report.status === "done"
+        )
+      ) {
+        return true
+      }
+      failed = reports.some((report) => report.status === "error")
     } catch {
-      setAccounts(previous)
-      toast.error(c.accountWriteFailed)
-      return false
+      failed = true
     }
+    setAccounts(previous)
+    if (failed) toast.error(c.accountWriteFailed)
+    return false
   }
 
   const saveAccount = async () => {
@@ -554,458 +578,630 @@ export function CcSwitchSection() {
   // editing controls and guide the user to close it first.
   const editingBlocked = backend === "ccswitch" && ccRunning === true
   const activeAccounts = accountsForBackend(accounts, backend)
+  const currentProviderCount = providers?.filter((provider) => provider.is_current).length ?? 0
+  const signedInCount = login ? Object.values(login).filter((status) => status.signedIn).length : 0
+  const filteredProviders = useMemo(() => {
+    const query = providerQuery.trim().toLocaleLowerCase()
+    return [...(providers ?? [])]
+      .filter((provider) => {
+        if (query && !provider.name.toLocaleLowerCase().includes(query)) return false
+        if (providerApp !== "all" && provider.app_type !== providerApp) return false
+        if (providerStatus === "official" && !isOfficial(provider)) return false
+        if (providerStatus === "custom" && isOfficial(provider)) return false
+        if (providerStatus === "current" && !provider.is_current) return false
+        return true
+      })
+      .sort((a, b) => {
+        if (providerSort === "current" && a.is_current !== b.is_current) {
+          return a.is_current ? -1 : 1
+        }
+        const fieldA = providerSort === "app" ? a.app_type : a.name
+        const fieldB = providerSort === "app" ? b.app_type : b.name
+        return fieldA.localeCompare(fieldB)
+      })
+  }, [providerApp, providerQuery, providerSort, providerStatus, providers])
 
   return (
-    <SectionShell title={c.menuTitle} help={<HelpTip text={t.help.ccswitch} />}>
-      <Card>
-        <CardHeader>
-          <CardTitle>{c.backendTitle}</CardTitle>
-          <CardDescription>{c.backendHint}</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            value={backend}
-            onValueChange={selectBackend}
-            aria-label={c.backendTitle}
-          >
-            <ToggleGroupItem value="native">{c.backendNative}</ToggleGroupItem>
-            <ToggleGroupItem value="ccswitch">{c.backendCcSwitch}</ToggleGroupItem>
-          </ToggleGroup>
-          <p className="text-xs text-muted-foreground">
-            {backend === "native" ? c.backendNativeHint : c.backendCcSwitchHint}
-          </p>
-        </CardContent>
-      </Card>
+    <>
+      <CapabilityWorkbench
+        title={c.menuTitle}
+        help={<HelpTip text={t.help.ccswitch} />}
+        summaryLabel={c.summaryLabel}
+        actionsLabel={c.actionsLabel}
+        metrics={
+          <>
+            <CapabilityMetric label={c.metricProviders} value={providers?.length ?? "—"} />
+            <CapabilityMetric label={c.metricCurrent} value={currentProviderCount} />
+            <CapabilityMetric label={c.metricAccounts} value={activeAccounts.length} />
+            <CapabilityMetric
+              label={c.metricBackend}
+              value={backend === "native" ? c.backendNative : c.backendCcSwitch}
+            />
+            <CapabilityMetric
+              label={c.metricCcSwitch}
+              value={backend === "native" ? "—" : detected === null ? "…" : detected ? "✓" : "—"}
+            />
+            <CapabilityMetric label={c.loginTitle} value={login ? `${signedInCount}/3` : "—"} />
+          </>
+        }
+        primary={
+          <div className="flex min-w-0 flex-col gap-4">
+            {!tauri ? <DesktopOnlyNote>{t.shell.notInTauri}</DesktopOnlyNote> : null}
+            <Card>
+              <CardHeader>
+                <CardTitle>{c.backendTitle}</CardTitle>
+                <CardDescription>{c.backendHint}</CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-3">
+                <ToggleGroup
+                  type="single"
+                  variant="outline"
+                  value={backend}
+                  onValueChange={selectBackend}
+                  aria-label={c.backendTitle}
+                  disabled={!tauri}
+                >
+                  <ToggleGroupItem value="native">{c.backendNative}</ToggleGroupItem>
+                  <ToggleGroupItem value="ccswitch">{c.backendCcSwitch}</ToggleGroupItem>
+                </ToggleGroup>
+                <p className="text-xs text-muted-foreground">
+                  {backend === "native" ? c.backendNativeHint : c.backendCcSwitchHint}
+                </p>
+              </CardContent>
+            </Card>
 
-      {/* Install / check / initialize */}
-      {backend === "ccswitch" ? (
-        <>
-          <Card className="gap-3 p-4">
-            <div className="flex flex-row items-center gap-3">
-              <div className="flex-1">
-                <div className="font-medium">{c.install}</div>
-                {detected !== null ? (
-                  <Badge
-                    variant={detected ? "secondary" : "outline"}
-                    className="mt-1 font-normal text-muted-foreground"
-                  >
-                    {detected ? c.detected : c.notDetected}
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="mt-1 gap-1 font-normal text-muted-foreground">
-                    <Loader2 className="size-3 animate-spin" />
-                    {c.checking}
-                  </Badge>
-                )}
-              </div>
-              {isTauri() ? (
-                <Button variant="ghost" size="sm" className="gap-1" onClick={() => void reload()}>
-                  <RefreshCw className="size-3.5" />
-                  {c.refresh}
-                </Button>
-              ) : null}
-              {!detected && canInstall ? (
-                <Button variant="outline" onClick={installCcSwitch}>
-                  {c.install}
-                </Button>
-              ) : null}
-              {!canInstall ? (
-                <span className="text-xs text-muted-foreground">{tool.manualNote}</span>
-              ) : null}
-            </div>
-
-            {/* App control. Only once it's installed — there's nothing to open or
-            quit otherwise, and the buttons would just be dead weight. */}
-            {isTauri() && detected ? (
-              <div className="flex flex-row flex-wrap items-center gap-3 border-t pt-3">
-                <div className="flex-1">
-                  <div className="font-medium">{c.appTitle}</div>
-                  <div className="mt-1 flex items-center gap-2">
-                    <span
-                      aria-hidden="true"
-                      className={cn(
-                        "size-2 rounded-full",
-                        ccRunning === null
-                          ? "bg-muted-foreground/40"
-                          : ccRunning
-                            ? "bg-emerald-500"
-                            : "bg-muted-foreground/40"
+            {/* Install / check / initialize */}
+            {backend === "ccswitch" ? (
+              <>
+                <Card className="gap-3 p-4">
+                  <div className="flex flex-row items-center gap-3">
+                    <div className="flex-1">
+                      <div className="font-medium">{c.install}</div>
+                      {detected !== null ? (
+                        <Badge
+                          variant={detected ? "secondary" : "outline"}
+                          className="mt-1 font-normal text-muted-foreground"
+                        >
+                          {detected ? c.detected : c.notDetected}
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className="mt-1 gap-1 font-normal text-muted-foreground"
+                        >
+                          <Loader2 className="size-3 animate-spin" />
+                          {c.checking}
+                        </Badge>
                       )}
-                    />
-                    <span className="text-xs text-muted-foreground">
-                      {ccRunning === null ? c.checking : ccRunning ? c.appRunning : c.appStopped}
-                    </span>
+                    </div>
+                    {isTauri() ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="gap-1"
+                        onClick={() => void reload()}
+                      >
+                        <RefreshCw className="size-3.5" />
+                        {c.refresh}
+                      </Button>
+                    ) : null}
+                    {tauri && !detected && canInstall ? (
+                      <Button variant="outline" onClick={installCcSwitch}>
+                        {c.install}
+                      </Button>
+                    ) : null}
+                    {!canInstall ? (
+                      <span className="text-xs text-muted-foreground">{tool.manualNote}</span>
+                    ) : null}
                   </div>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1"
-                  onClick={() => void openApp()}
-                  disabled={appBusy !== null}
-                >
-                  {appBusy === "open" ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : (
-                    <ExternalLink className="size-3.5" />
-                  )}
-                  {c.appOpen}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1"
-                  onClick={() => void quitApp()}
-                  disabled={appBusy !== null || ccRunning === false}
-                >
-                  {appBusy === "quit" ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : (
-                    <Power className="size-3.5" />
-                  )}
-                  {c.appQuit}
-                </Button>
-              </div>
-            ) : null}
 
-            {needsMigration ? (
-              <Alert className="mt-3">
-                <AlertTriangle />
-                <AlertTitle>{c.initDb}</AlertTitle>
-                <AlertDescription>
-                  <span>{c.schemaStale(staleColumns.join(", "))}</span>
+                  {/* App control. Only once it's installed — there's nothing to open or
+            quit otherwise, and the buttons would just be dead weight. */}
+                  {isTauri() && detected ? (
+                    <div className="flex flex-row flex-wrap items-center gap-3 border-t pt-3">
+                      <div className="flex-1">
+                        <div className="font-medium">{c.appTitle}</div>
+                        <div className="mt-1 flex items-center gap-2">
+                          <span
+                            aria-hidden="true"
+                            className={cn(
+                              "size-2 rounded-full",
+                              ccRunning === null
+                                ? "bg-muted-foreground/40"
+                                : ccRunning
+                                  ? "bg-emerald-500"
+                                  : "bg-muted-foreground/40"
+                            )}
+                          />
+                          <span className="text-xs text-muted-foreground">
+                            {ccRunning === null
+                              ? c.checking
+                              : ccRunning
+                                ? c.appRunning
+                                : c.appStopped}
+                          </span>
+                        </div>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1"
+                        onClick={() => void openApp()}
+                        disabled={appBusy !== null}
+                      >
+                        {appBusy === "open" ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <ExternalLink className="size-3.5" />
+                        )}
+                        {c.appOpen}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1"
+                        onClick={() => void quitApp()}
+                        disabled={appBusy !== null || ccRunning === false}
+                      >
+                        {appBusy === "quit" ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Power className="size-3.5" />
+                        )}
+                        {c.appQuit}
+                      </Button>
+                    </div>
+                  ) : null}
+
+                  {needsMigration ? (
+                    <Alert className="mt-3">
+                      <AlertTriangle />
+                      <AlertTitle>{c.initDb}</AlertTitle>
+                      <AlertDescription>
+                        <span>{c.schemaStale(staleColumns.join(", "))}</span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="mt-1"
+                          onClick={() =>
+                            void launchCcSwitch().catch(() => toast.error(c.initFailed))
+                          }
+                        >
+                          {c.launchCcSwitch}
+                        </Button>
+                      </AlertDescription>
+                    </Alert>
+                  ) : needsDb ? (
+                    <div className="flex flex-row items-center gap-3 border-t pt-3">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-1.5 font-medium">
+                          <Database className="size-4" />
+                          {c.initDb}
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {initializing ? c.initializing : c.initDbHint}
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        onClick={() => void initDb()}
+                        disabled={initializing}
+                      >
+                        {c.initDb}
+                      </Button>
+                    </div>
+                  ) : dbReady === true ? (
+                    <p className="border-t pt-3 text-xs text-muted-foreground">{c.dbReady}</p>
+                  ) : null}
+                </Card>
+
+                <VisibleAppsCard
+                  visible={visible}
+                  disabled={editingBlocked || !tauri}
+                  onChange={setVisible}
+                  onApply={applyVisible}
+                />
+              </>
+            ) : (
+              <Alert>
+                <Database />
+                <AlertTitle>{c.nativeReady}</AlertTitle>
+                <AlertDescription>{c.nativeReadyHint}</AlertDescription>
+              </Alert>
+            )}
+
+            <LoginsCard login={login} loading={loading} />
+
+            {/* Providers */}
+            <Card className="gap-3 p-4">
+              {editingBlocked ? (
+                <Alert>
+                  <AlertTriangle />
+                  <AlertTitle>{c.runningTitle}</AlertTitle>
+                  <AlertDescription>
+                    <span>{c.runningHint}</span>
+                    {/* The fix, right where the problem is stated — no hunting for the
+                  app in the dock just to unblock editing here. */}
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1"
+                        onClick={() => void quitApp()}
+                        disabled={appBusy !== null}
+                      >
+                        {appBusy === "quit" ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Power className="size-3.5" />
+                        )}
+                        {c.appQuit}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="gap-1"
+                        onClick={() => void reload()}
+                      >
+                        <RefreshCw className="size-3.5" />
+                        {c.refresh}
+                      </Button>
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
+              <div className="flex items-center justify-between">
+                <div className="font-medium">{c.providersTitle}</div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    className="gap-1"
+                    disabled={editingBlocked || !tauri}
+                    onClick={() => openAdd()}
+                  >
+                    <Plus className="size-4" />
+                    {c.addProvider}
+                  </Button>
+                </div>
+              </div>
+
+              {unmanaged.length > 0 && !editingBlocked ? (
+                <Alert>
+                  <Download />
+                  <AlertTitle>{c.unmanagedTitle(unmanaged.length)}</AlertTitle>
+                  <AlertDescription>
+                    <span>{c.unmanagedHint}</span>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {unmanaged.map((u) => (
+                        <Button
+                          key={u.key}
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openAdd(u.form)}
+                        >
+                          {c.importOne(u.app, u.form.baseUrl ?? "")}
+                        </Button>
+                      ))}
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  {hasCurrent ? c.setCurrentNote : c.syncNoCurrent}
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="ghost" size="sm" disabled={!providers?.length}>
+                        {c.exportProviders}
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>{c.exportProviders}</AlertDialogTitle>
+                        <AlertDialogDescription>{c.exportTokensAsk}</AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => void exportProviderBundle(false)}>
+                          {c.exportWithoutTokens}
+                        </AlertDialogAction>
+                        <AlertDialogAction onClick={() => void exportProviderBundle(true)}>
+                          {c.exportWithTokens}
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={editingBlocked || !tauri}
+                    onClick={() => void pickImportFile()}
+                  >
+                    {c.importProviders}
+                  </Button>
                   <Button
                     variant="outline"
                     size="sm"
-                    className="mt-1"
-                    onClick={() => void launchCcSwitch().catch(() => toast.error(c.initFailed))}
+                    onClick={syncCurrent}
+                    disabled={!hasCurrent || editingBlocked}
                   >
-                    {c.launchCcSwitch}
+                    {c.syncCurrent}
                   </Button>
-                </AlertDescription>
-              </Alert>
-            ) : needsDb ? (
-              <div className="flex flex-row items-center gap-3 border-t pt-3">
-                <div className="flex-1">
-                  <div className="flex items-center gap-1.5 font-medium">
-                    <Database className="size-4" />
-                    {c.initDb}
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {initializing ? c.initializing : c.initDbHint}
-                  </p>
                 </div>
-                <Button variant="outline" onClick={() => void initDb()} disabled={initializing}>
-                  {c.initDb}
-                </Button>
               </div>
-            ) : dbReady === true ? (
-              <p className="border-t pt-3 text-xs text-muted-foreground">{c.dbReady}</p>
-            ) : null}
-          </Card>
 
-          <VisibleAppsCard
-            visible={visible}
-            disabled={editingBlocked}
-            onChange={setVisible}
-            onApply={applyVisible}
-          />
-        </>
-      ) : (
-        <Alert>
-          <Database />
-          <AlertTitle>{c.nativeReady}</AlertTitle>
-          <AlertDescription>{c.nativeReadyHint}</AlertDescription>
-        </Alert>
-      )}
-
-      <LoginsCard login={login} loading={loading} />
-
-      {/* Providers */}
-      <Card className="gap-3 p-4">
-        {editingBlocked ? (
-          <Alert>
-            <AlertTriangle />
-            <AlertTitle>{c.runningTitle}</AlertTitle>
-            <AlertDescription>
-              <span>{c.runningHint}</span>
-              {/* The fix, right where the problem is stated — no hunting for the
-                  app in the dock just to unblock editing here. */}
-              <div className="mt-1 flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1"
-                  onClick={() => void quitApp()}
-                  disabled={appBusy !== null}
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="relative sm:col-span-2 xl:col-span-1">
+                  <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={providerQuery}
+                    onChange={(event) => setProviderQuery(event.target.value)}
+                    placeholder={c.providerSearch}
+                    className="pl-8"
+                  />
+                </div>
+                <Select
+                  value={providerApp}
+                  onValueChange={(value) => setProviderApp(value as typeof providerApp)}
                 >
-                  {appBusy === "quit" ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : (
-                    <Power className="size-3.5" />
-                  )}
-                  {c.appQuit}
-                </Button>
-                <Button variant="ghost" size="sm" className="gap-1" onClick={() => void reload()}>
-                  <RefreshCw className="size-3.5" />
-                  {c.refresh}
-                </Button>
+                  <SelectTrigger aria-label={c.providerAppFilter}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{c.providerAllApps}</SelectItem>
+                    {PROVIDER_APPS.map((app) => (
+                      <SelectItem key={app} value={app}>
+                        {c.appLabels[app] ?? app}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={providerStatus}
+                  onValueChange={(value) => setProviderStatus(value as typeof providerStatus)}
+                >
+                  <SelectTrigger aria-label={c.providerStatusFilter}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{c.providerStatusAll}</SelectItem>
+                    <SelectItem value="official">{c.providerStatusOfficial}</SelectItem>
+                    <SelectItem value="custom">{c.providerStatusCustom}</SelectItem>
+                    <SelectItem value="current">{c.providerStatusCurrent}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={providerSort}
+                  onValueChange={(value) => setProviderSort(value as typeof providerSort)}
+                >
+                  <SelectTrigger aria-label={c.providerSort}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="name">{c.providerSortName}</SelectItem>
+                    <SelectItem value="app">{c.providerSortApp}</SelectItem>
+                    <SelectItem value="current">{c.providerSortCurrent}</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-            </AlertDescription>
-          </Alert>
-        ) : null}
 
-        <div className="flex items-center justify-between">
-          <div className="font-medium">{c.providersTitle}</div>
-          <div className="flex flex-wrap gap-2">
-            {missingOfficial.map((app) => (
-              <Button
-                key={`official-${app}`}
-                variant="ghost"
-                size="sm"
-                className="gap-1"
-                disabled={editingBlocked}
-                onClick={() => openAdd(officialForm(app, c.officialName))}
-              >
-                <KeyRound className="size-3.5" />
-                {c.addOfficial(app)}
-              </Button>
-            ))}
-            {RECOMMENDED_PROVIDERS.map((preset) => (
-              <Button
-                key={preset.key}
-                variant="ghost"
-                size="sm"
-                className="gap-1"
-                disabled={editingBlocked}
-                onClick={() => openAdd(preset.form)}
-              >
-                <Star className="size-3.5" />
-                {preset.label}
-              </Button>
-            ))}
-            <Button size="sm" className="gap-1" disabled={editingBlocked} onClick={() => openAdd()}>
-              <Plus className="size-4" />
-              {c.addProvider}
-            </Button>
+              <AlertDialog open={!!importPlan} onOpenChange={(o) => !o && setImportPlan(null)}>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{c.importProviders}</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {c.importConflicts(
+                        importPlan?.fresh.length ?? 0,
+                        importPlan?.conflicts.map((x) => x.entry.name).join(", ") ?? ""
+                      )}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => importPlan && runImport(importPlan, false)}>
+                      {c.importFreshOnly}
+                    </AlertDialogAction>
+                    <AlertDialogAction onClick={() => importPlan && runImport(importPlan, true)}>
+                      {c.importOverwrite}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+
+              {providers && filteredProviders.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{c.fieldName.replace(":", "")}</TableHead>
+                      <TableHead>{c.fieldApp}</TableHead>
+                      <TableHead className="text-right">{c.rowActionEdit}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredProviders.map((p) => (
+                      <TableRow key={p.id}>
+                        <TableCell className="font-medium">
+                          {p.name}
+                          {isOfficial(p) ? (
+                            <Badge variant="outline" className="ml-2 font-normal">
+                              {c.officialBadge}
+                            </Badge>
+                          ) : null}
+                          {p.is_current ? (
+                            <Badge variant="secondary" className="ml-2 font-normal">
+                              {c.current}
+                            </Badge>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className="capitalize text-muted-foreground">
+                          {p.app_type}
+                        </TableCell>
+                        <TableCell className="space-x-1 text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={editingBlocked}
+                            onClick={() => openEdit(p)}
+                          >
+                            {c.rowActionEdit}
+                          </Button>
+                          {!p.is_current ? (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button variant="ghost" size="sm" disabled={editingBlocked}>
+                                  {c.rowActionSetCurrent}
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>{c.rowActionSetCurrent}</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    {c.setCurrentConfirm}
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
+                                  <AlertDialogAction onClick={() => setCurrent(p)}>
+                                    {c.rowActionSetCurrent}
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          ) : null}
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-red-500"
+                                disabled={p.is_current || editingBlocked}
+                              >
+                                {c.rowActionDelete}
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>{c.rowActionDelete}</AlertDialogTitle>
+                                <AlertDialogDescription>{c.deleteConfirm}</AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
+                                <AlertDialogAction
+                                  onClick={() =>
+                                    void runThen([
+                                      providerStep(
+                                        "delete",
+                                        p.app_type,
+                                        p.name,
+                                        undefined,
+                                        p.id,
+                                        t,
+                                        backend
+                                      ),
+                                    ])
+                                  }
+                                >
+                                  {c.rowActionDelete}
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : providers && providers.length > 0 ? (
+                <p className="text-sm text-muted-foreground">{c.providerFilterEmpty}</p>
+              ) : loading && providers === null ? (
+                <LoadingLine />
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {providers ? c.empty : isTauri() ? c.noDb : t.shell.notInTauri}
+                </p>
+              )}
+            </Card>
           </div>
-        </div>
-
-        {unmanaged.length > 0 && !editingBlocked ? (
-          <Alert>
-            <Download />
-            <AlertTitle>{c.unmanagedTitle(unmanaged.length)}</AlertTitle>
-            <AlertDescription>
-              <span>{c.unmanagedHint}</span>
-              <div className="mt-1 flex flex-wrap gap-2">
-                {unmanaged.map((u) => (
-                  <Button key={u.key} variant="outline" size="sm" onClick={() => openAdd(u.form)}>
-                    {c.importOne(u.app, u.form.baseUrl ?? "")}
+        }
+        aside={
+          <>
+            <CapabilityTile title={c.backendTitle} description={c.backendHint}>
+              <Badge variant="secondary" className="font-normal">
+                {backend === "native" ? c.backendNative : c.backendCcSwitch}
+              </Badge>
+            </CapabilityTile>
+            <CapabilityTile title={c.formAddTitle} description={c.setCurrentNote}>
+              <div className="flex flex-wrap gap-2">
+                {missingOfficial.map((app) => (
+                  <Button
+                    key={`tile-official-${app}`}
+                    variant="outline"
+                    size="sm"
+                    disabled={editingBlocked || !tauri}
+                    onClick={() => openAdd(officialForm(app, c.officialName))}
+                  >
+                    {c.addOfficial(app)}
+                  </Button>
+                ))}
+                {RECOMMENDED_PROVIDERS.map((preset) => (
+                  <Button
+                    key={`tile-${preset.key}`}
+                    variant="outline"
+                    size="sm"
+                    disabled={editingBlocked || !tauri}
+                    onClick={() => openAdd(preset.form)}
+                  >
+                    {preset.label}
                   </Button>
                 ))}
               </div>
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs text-muted-foreground">
-            {hasCurrent ? c.setCurrentNote : c.syncNoCurrent}
-          </p>
-          <div className="flex gap-1">
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="ghost" size="sm" disabled={!providers?.length}>
-                  {c.exportProviders}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{c.exportProviders}</AlertDialogTitle>
-                  <AlertDialogDescription>{c.exportTokensAsk}</AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => void exportProviderBundle(false)}>
-                    {c.exportWithoutTokens}
-                  </AlertDialogAction>
-                  <AlertDialogAction onClick={() => void exportProviderBundle(true)}>
-                    {c.exportWithTokens}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={editingBlocked}
-              onClick={() => void pickImportFile()}
-            >
-              {c.importProviders}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={syncCurrent}
-              disabled={!hasCurrent || editingBlocked}
-            >
-              {c.syncCurrent}
-            </Button>
-          </div>
-        </div>
-
-        <AlertDialog open={!!importPlan} onOpenChange={(o) => !o && setImportPlan(null)}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>{c.importProviders}</AlertDialogTitle>
-              <AlertDialogDescription>
-                {c.importConflicts(
-                  importPlan?.fresh.length ?? 0,
-                  importPlan?.conflicts.map((x) => x.entry.name).join(", ") ?? ""
-                )}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
-              <AlertDialogAction onClick={() => importPlan && runImport(importPlan, false)}>
-                {c.importFreshOnly}
-              </AlertDialogAction>
-              <AlertDialogAction onClick={() => importPlan && runImport(importPlan, true)}>
-                {c.importOverwrite}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-
-        {providers && providers.length > 0 ? (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{c.fieldName.replace(":", "")}</TableHead>
-                <TableHead>{c.fieldApp}</TableHead>
-                <TableHead className="text-right">{c.rowActionEdit}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {providers.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell className="font-medium">
-                    {p.name}
-                    {isOfficial(p) ? (
-                      <Badge variant="outline" className="ml-2 font-normal">
-                        {c.officialBadge}
+            </CapabilityTile>
+            <CapabilityTile title={c.loginTitle} description={c.loginHint}>
+              <div className="flex flex-wrap gap-2">
+                {login
+                  ? Object.entries(login).map(([app, status]) => (
+                      <Badge key={app} variant={status.signedIn ? "secondary" : "outline"}>
+                        {app}: {status.signedIn ? c.loginSignedIn : c.loginSignedOut}
                       </Badge>
-                    ) : null}
-                    {p.is_current ? (
-                      <Badge variant="secondary" className="ml-2 font-normal">
-                        {c.current}
-                      </Badge>
-                    ) : null}
-                  </TableCell>
-                  <TableCell className="capitalize text-muted-foreground">{p.app_type}</TableCell>
-                  <TableCell className="space-x-1 text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={editingBlocked}
-                      onClick={() => openEdit(p)}
-                    >
-                      {c.rowActionEdit}
-                    </Button>
-                    {!p.is_current ? (
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button variant="ghost" size="sm" disabled={editingBlocked}>
-                            {c.rowActionSetCurrent}
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>{c.rowActionSetCurrent}</AlertDialogTitle>
-                            <AlertDialogDescription>{c.setCurrentConfirm}</AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
-                            <AlertDialogAction onClick={() => setCurrent(p)}>
-                              {c.rowActionSetCurrent}
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    ) : null}
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-red-500"
-                          disabled={p.is_current || editingBlocked}
-                        >
-                          {c.rowActionDelete}
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>{c.rowActionDelete}</AlertDialogTitle>
-                          <AlertDialogDescription>{c.deleteConfirm}</AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={() =>
-                              void runThen([
-                                providerStep(
-                                  "delete",
-                                  p.app_type,
-                                  p.name,
-                                  undefined,
-                                  p.id,
-                                  t,
-                                  backend
-                                ),
-                              ])
-                            }
-                          >
-                            {c.rowActionDelete}
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        ) : loading && providers === null ? (
-          <LoadingLine />
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            {providers ? c.empty : isTauri() ? c.noDb : t.shell.notInTauri}
-          </p>
-        )}
-      </Card>
-
-      <AccountsCard
-        accounts={activeAccounts}
-        providers={providers}
-        newAccount={newAccount}
-        hasCurrent={hasCurrent}
-        editingBlocked={editingBlocked}
-        onNewAccountChange={setNewAccount}
-        onSave={saveAccount}
-        onUpdate={(profile) =>
-          void writeAccounts(
-            accounts.map((account) => (account.id === profile.id ? profile : account))
-          )
+                    ))
+                  : loading
+                    ? c.loading
+                    : c.loginUnavailable}
+              </div>
+            </CapabilityTile>
+          </>
         }
-        onApply={applyAccount}
-        onDelete={(a) => void writeAccounts(accounts.filter((x) => x.id !== a.id))}
+        detail={
+          <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+            <AccountsCard
+              accounts={activeAccounts}
+              providers={providers}
+              newAccount={newAccount}
+              hasCurrent={hasCurrent}
+              editingBlocked={editingBlocked}
+              onNewAccountChange={setNewAccount}
+              onSave={saveAccount}
+              onUpdate={(profile) =>
+                void writeAccounts(
+                  accounts.map((account) => (account.id === profile.id ? profile : account))
+                )
+              }
+              onApply={applyAccount}
+              onDelete={(a) => void writeAccounts(accounts.filter((x) => x.id !== a.id))}
+            />
+
+            <BackupsCard
+              backups={backups}
+              loading={loading}
+              onRestore={(id) => void doRestore(id)}
+            />
+          </div>
+        }
       />
-
-      <BackupsCard backups={backups} loading={loading} onRestore={(id) => void doRestore(id)} />
-
       <ProviderForm
         key={formKey}
         open={formOpen}
@@ -1014,6 +1210,6 @@ export function CcSwitchSection() {
         editing={!!editingId}
         onSubmit={submitForm}
       />
-    </SectionShell>
+    </>
   )
 }

@@ -96,6 +96,8 @@ it("probes the model list with the CLI's own auth header", async () => {
   expect(url).toBe("https://relay.example/v1/models")
   expect(headers["x-api-key"]).toBe("sk-1")
   expect(await screen.findByText(en.ccswitch.probeOk(120, 1))).toBeInTheDocument()
+  expect(screen.getByLabelText(en.ccswitch.fieldModel)).toHaveAttribute("list", "pf-model-options")
+  expect(document.querySelector('#pf-model-options option[value="m1"]')).toBeInTheDocument()
 })
 
 it("won't probe without a base URL", () => {

@@ -80,6 +80,29 @@ it("the needs-key filter narrows to keyed servers", async () => {
   expect(screen.queryByText(/knowledge graph/i)).not.toBeInTheDocument()
 })
 
+it("filters the catalog by target context, transport, and authentication", async () => {
+  renderCatalog()
+  expect(screen.getByRole("combobox", { name: "Target" })).toBeDisabled()
+
+  await userEvent.click(screen.getByRole("button", { name: /^Installed$/i }))
+  expect(screen.getByRole("combobox", { name: "Target" })).toBeEnabled()
+  await userEvent.click(screen.getByRole("combobox", { name: "Target" }))
+  await userEvent.click(screen.getByRole("option", { name: "Claude Code" }))
+  expect(screen.getByText("Context7")).toBeInTheDocument()
+
+  await userEvent.click(screen.getByRole("button", { name: /^All$/i }))
+  await userEvent.click(screen.getByRole("combobox", { name: "Transport" }))
+  await userEvent.click(screen.getByRole("option", { name: "Remote (HTTP)" }))
+  expect(screen.queryByText("Context7")).not.toBeInTheDocument()
+
+  await userEvent.click(screen.getByRole("combobox", { name: "Transport" }))
+  await userEvent.click(screen.getByRole("option", { name: "Any transport" }))
+  await userEvent.click(screen.getByRole("combobox", { name: "Authentication" }))
+  await userEvent.click(screen.getByRole("option", { name: "No key required" }))
+  expect(screen.queryByText("Context7")).not.toBeInTheDocument()
+  expect(screen.getByText(/knowledge graph/i)).toBeInTheDocument()
+})
+
 it("confirming removal runs the remove step and syncs the plan", async () => {
   useAppStore.getState().setMcp("context7", ["claude"])
   renderCatalog()

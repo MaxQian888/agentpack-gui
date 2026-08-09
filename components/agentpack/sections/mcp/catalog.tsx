@@ -8,6 +8,13 @@ import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -41,6 +48,9 @@ import { McpDetailDialog } from "./detail-dialog"
 import { CustomServerForm, type CustomFormValue } from "./custom-form"
 
 type Filter = "all" | "installed" | "notInstalled" | "needsKey"
+type TargetFilter = McpTarget | "all"
+type TransportFilter = McpServer["transport"] | "all"
+type AuthFilter = "all" | "key" | "none"
 const FILTERS: Filter[] = ["all", "installed", "notInstalled", "needsKey"]
 
 export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refresh: () => void }) {
@@ -55,6 +65,9 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
 
   const [search, setSearch] = useState("")
   const [filter, setFilter] = useState<Filter>("all")
+  const [target, setTarget] = useState<TargetFilter>("all")
+  const [transport, setTransport] = useState<TransportFilter>("all")
+  const [auth, setAuth] = useState<AuthFilter>("all")
   const [detailId, setDetailId] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<{ server: McpServer; target: McpTarget } | null>(null)
 
@@ -150,7 +163,11 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
       const hay = `${server.id} ${meta?.title ?? ""} ${meta?.purpose ?? ""}`.toLowerCase()
       if (!hay.includes(q)) return false
     }
-    const installed = anyPresent(presenceOf(scan, server.id))
+    if (transport !== "all" && server.transport !== transport) return false
+    if (auth === "key" && !server.keyEnv) return false
+    if (auth === "none" && server.keyEnv) return false
+    const presence = presenceOf(scan, server.id)
+    const installed = target === "all" ? anyPresent(presence) : presence[target]
     if (filter === "installed") return installed
     if (filter === "notInstalled") return !installed
     if (filter === "needsKey") return !!server.keyEnv
@@ -164,7 +181,7 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
         servers: MCP_SERVERS.filter((s) => s.category === cat && matches(s)),
       })).filter((g) => g.servers.length > 0),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [scan, q, filter]
+    [scan, q, filter, target, transport, auth]
   )
 
   const nothing = groups.length === 0
@@ -176,7 +193,10 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
           <button
             key={f}
             type="button"
-            onClick={() => setFilter(f)}
+            onClick={() => {
+              setFilter(f)
+              if (f !== "installed" && f !== "notInstalled") setTarget("all")
+            }}
             className={cn(
               "rounded-full border px-3 py-1 text-xs transition-colors",
               filter === f
@@ -193,6 +213,42 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
                   : m.filterNeedsKey}
           </button>
         ))}
+        <Select value={target} onValueChange={(value) => setTarget(value as TargetFilter)}>
+          <SelectTrigger
+            size="sm"
+            className="w-36"
+            aria-label={m.filterTarget}
+            disabled={filter !== "installed" && filter !== "notInstalled"}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{m.filterAnyTarget}</SelectItem>
+            <SelectItem value="claude">{m.targets.claude}</SelectItem>
+            <SelectItem value="codex">{m.targets.codex}</SelectItem>
+            <SelectItem value="opencode">{m.targets.opencode}</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={transport} onValueChange={(value) => setTransport(value as TransportFilter)}>
+          <SelectTrigger size="sm" className="w-40" aria-label={m.filterTransport}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{m.filterAnyTransport}</SelectItem>
+            <SelectItem value="stdio">{m.transportStdio}</SelectItem>
+            <SelectItem value="http">{m.transportHttp}</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={auth} onValueChange={(value) => setAuth(value as AuthFilter)}>
+          <SelectTrigger size="sm" className="w-44" aria-label={m.filterAuth}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{m.filterAnyAuth}</SelectItem>
+            <SelectItem value="key">{m.filterNeedsKey}</SelectItem>
+            <SelectItem value="none">{m.filterNoKey}</SelectItem>
+          </SelectContent>
+        </Select>
         <div className="relative ml-auto">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input

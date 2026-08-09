@@ -112,6 +112,16 @@ beforeEach(() => {
   }))
 })
 
+afterEach(async () => {
+  // A scan fans out to several async desktop reads. Flush their state updates
+  // before RTL unmounts the tree so tests that only assert initial UI do not
+  // leak React act() warnings into later cases.
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+})
+
 function renderCc() {
   return render(
     <I18nProvider>
@@ -125,6 +135,44 @@ function renderCc() {
 it("lists providers from the DB", async () => {
   renderCc()
   expect(await screen.findByText("Mine")).toBeInTheDocument()
+})
+
+it("filters and sorts providers by name, app, official/current state", async () => {
+  ;(ccLoadProviders as jest.Mock).mockResolvedValue([
+    {
+      id: "1",
+      app_type: "claude",
+      name: "Zulu",
+      settings_config: '{"env":{"ANTHROPIC_BASE_URL":"https://z"}}',
+      is_current: false,
+    },
+    {
+      id: "2",
+      app_type: "codex",
+      name: "Alpha",
+      settings_config: '{"auth":{"OPENAI_API_KEY":"x"}}',
+      is_current: true,
+    },
+    {
+      id: "3",
+      app_type: "opencode",
+      name: en.ccswitch.officialName,
+      settings_config: "{}",
+      is_current: false,
+    },
+  ])
+  renderCc()
+  await screen.findByText("Zulu")
+
+  await userEvent.type(screen.getByPlaceholderText(en.ccswitch.providerSearch), "alpha")
+  expect(screen.getByText("Alpha")).toBeInTheDocument()
+  expect(screen.queryByText("Zulu")).not.toBeInTheDocument()
+
+  await userEvent.clear(screen.getByPlaceholderText(en.ccswitch.providerSearch))
+  await userEvent.click(screen.getByRole("combobox", { name: en.ccswitch.providerStatusFilter }))
+  await userEvent.click(screen.getByRole("option", { name: en.ccswitch.providerStatusOfficial }))
+  expect(screen.getByText(en.ccswitch.officialName)).toBeInTheDocument()
+  expect(screen.queryByText("Alpha")).not.toBeInTheDocument()
 })
 
 it("switches to the independent native provider store and persists the choice", async () => {
@@ -270,6 +318,7 @@ it("deletes a non-current provider after confirmation", async () => {
 
 it("offers recommended provider presets", async () => {
   renderCc()
+  await screen.findByText("Mine")
   const presetBtn = screen.getAllByRole("button").find((b) => b.querySelector("svg"))
   expect(presetBtn).toBeTruthy()
 })
@@ -280,14 +329,17 @@ it("falls back to the no-db message when the list is empty", async () => {
   expect(await screen.findByText(en.ccswitch.empty)).toBeInTheDocument()
 })
 
-it("creates the DB itself when missing, without needing cc-switch", async () => {
-  // cc-switch not installed: creating the database used to mean launching it and
-  // polling for up to a minute, which made it a hard prerequisite.
+it("reviews database initialization before creating it", async () => {
   ;(detectCli as jest.Mock).mockResolvedValue({ installed: false })
   ;(ccSchemaStatus as jest.Mock)
     .mockResolvedValueOnce({ exists: false, userVersion: 0, missingColumns: [] })
     .mockResolvedValue({ exists: true, userVersion: 0, missingColumns: [] })
   renderCc()
+
+  const initialize = await screen.findByRole("button", { name: en.ccswitch.initDb })
+  expect(ccInitDb).not.toHaveBeenCalled()
+  await userEvent.click(initialize)
+
   await waitFor(() => expect(ccInitDb).toHaveBeenCalledTimes(1))
   expect(await screen.findByText(en.ccswitch.dbReady)).toBeInTheDocument()
 })

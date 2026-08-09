@@ -24,7 +24,7 @@ export const NAV = {
   cleanup: { workspace: "install", tab: "Clean up" },
   skills: { workspace: "capabilities", tab: "Engineering skills" },
   mcp: { workspace: "capabilities", tab: "MCP servers" },
-  ccswitch: { workspace: "capabilities", tab: "cc-switch management" },
+  ccswitch: { workspace: "capabilities", tab: "Accounts & relays" },
   ccconnect: { workspace: "capabilities", tab: "cc-connect management" },
   history: { workspace: "usage", tab: null },
   config: { workspace: "settings", tab: "Save current setup as config" },

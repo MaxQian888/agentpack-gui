@@ -20,6 +20,31 @@ export interface ProviderPreset {
  */
 export const RECOMMENDED_PROVIDERS: ProviderPreset[] = [
   {
+    key: "anthropic-compatible",
+    label: "Anthropic-compatible",
+    form: {
+      name: "Anthropic-compatible",
+      app: "claude",
+      claudeAuthKind: "auth_token",
+    },
+  },
+  {
+    key: "openai-compatible",
+    label: "OpenAI-compatible",
+    form: {
+      name: "OpenAI-compatible",
+      app: "codex",
+    },
+  },
+  {
+    key: "opencode-compatible",
+    label: "OpenCode-compatible",
+    form: {
+      name: "OpenCode-compatible",
+      app: "opencode",
+    },
+  },
+  {
     key: "moretoken-claude",
     label: "napi.moretoken.ai (Claude)",
     form: {

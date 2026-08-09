@@ -1,9 +1,8 @@
 "use client"
 
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { isTauri } from "@/lib/tauri"
@@ -17,15 +16,7 @@ import { InstalledSkillsTab } from "./installed"
 import { CatalogTab } from "./catalog"
 import { AddSkillsTab } from "./add"
 import { DesktopOnlyNote } from "../../desktop-only-note"
-
-function StatTile({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-lg border p-3">
-      <div className="text-2xl font-semibold tabular-nums">{value}</div>
-      <div className="text-xs text-muted-foreground">{label}</div>
-    </div>
-  )
-}
+import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "../capability-workbench"
 
 /**
  * Skills manager: browse everything installed across the four global skills
@@ -43,6 +34,8 @@ export function SkillsSection({ scan, loading, refresh }: SkillsSectionProps) {
   const t = useT()
   const sb = t.skillsBrowser
   const tauri = isTauri()
+  const [detail, setDetail] = useState<"catalog" | "add" | null>(null)
+  const [updateCount, setUpdateCount] = useState(0)
 
   const stats = useMemo(() => {
     if (!scan) return null
@@ -64,16 +57,37 @@ export function SkillsSection({ scan, loading, refresh }: SkillsSectionProps) {
     </div>
   )
 
+  const primary = !tauri ? (
+    notTauri
+  ) : scan === null ? (
+    spinner
+  ) : (
+    <section aria-label={sb.installedPanel} className="min-w-0">
+      <h3 className="mb-3 font-medium">{sb.tabInstalled}</h3>
+      <InstalledSkillsTab scan={scan} refresh={refresh} onUpdateCountChange={setUpdateCount} />
+    </section>
+  )
+
+  const detailPanel =
+    tauri && detail ? (
+      <section aria-label={sb.detailPanel} className="min-w-0 border-t pt-5">
+        <h3 className="mb-4 text-lg font-medium">
+          {detail === "catalog" ? sb.tabCatalog : sb.tabAdd}
+        </h3>
+        {detail === "catalog" ? (
+          <CatalogTab scan={scan} refresh={refresh} />
+        ) : (
+          <AddSkillsTab installed={scan} refresh={refresh} />
+        )}
+      </section>
+    ) : null
+
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-5">
-      <div className="flex items-start justify-between gap-3">
-        <div data-tour="section-heading">
-          <h2 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
-            {sb.title}
-            <HelpTip text={t.help.skills} />
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">{sb.subtitle}</p>
-        </div>
+    <CapabilityWorkbench
+      title={sb.title}
+      subtitle={sb.subtitle}
+      help={<HelpTip text={t.help.skills} />}
+      actions={
         <Button
           variant="outline"
           size="sm"
@@ -84,49 +98,55 @@ export function SkillsSection({ scan, loading, refresh }: SkillsSectionProps) {
           <RefreshCw className={cn("size-4", loading && "animate-spin")} />
           {sb.refresh}
         </Button>
-      </div>
-
-      {stats ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7">
-          <StatTile label={sb.statTotal} value={stats.total} />
-          <StatTile label={sb.sources.claude} value={stats.counts.claude} />
-          <StatTile label={sb.sources.codex} value={stats.counts.codex} />
-          <StatTile label={sb.sources.opencode} value={stats.counts.opencode} />
-          <StatTile label={sb.sources.agents} value={stats.counts.agents} />
-          <StatTile label={sb.statBundled} value={stats.bundled} />
-          <StatTile label={sb.statManaged} value={stats.managed} />
-        </div>
-      ) : null}
-
-      <Tabs defaultValue="installed">
-        <TabsList>
-          <TabsTrigger value="installed">{sb.tabInstalled}</TabsTrigger>
-          <TabsTrigger value="catalog">{sb.tabCatalog}</TabsTrigger>
-          <TabsTrigger value="add">{sb.tabAdd}</TabsTrigger>
-        </TabsList>
-        <TabsContent value="installed" className="mt-4">
-          {!tauri ? (
-            notTauri
-          ) : scan === null ? (
-            spinner
-          ) : (
-            <>
-              {scan.errors.map((e) => (
-                <p key={e.source} className="mb-2 text-xs text-destructive">
-                  {sb.scanError(sb.sources[e.source] ?? e.source, e.message)}
-                </p>
-              ))}
-              <InstalledSkillsTab scan={scan} refresh={refresh} />
-            </>
-          )}
-        </TabsContent>
-        <TabsContent value="catalog" className="mt-4">
-          {tauri ? <CatalogTab scan={scan} refresh={refresh} /> : notTauri}
-        </TabsContent>
-        <TabsContent value="add" className="mt-4">
-          {tauri ? <AddSkillsTab installed={scan} refresh={refresh} /> : notTauri}
-        </TabsContent>
-      </Tabs>
-    </div>
+      }
+      summaryLabel={sb.summaryLabel}
+      actionsLabel={sb.actionsLabel}
+      metrics={
+        stats ? (
+          <>
+            <CapabilityMetric label={sb.statTotal} value={stats.total} />
+            <CapabilityMetric
+              label={sb.statSources}
+              value={Object.values(stats.counts).filter((count) => count > 0).length}
+              detail={Object.entries(stats.counts)
+                .map(([source, count]) => `${sb.sources[source]} ${count}`)
+                .join(" · ")}
+            />
+            <CapabilityMetric label={sb.statManaged} value={stats.managed} />
+            <CapabilityMetric label={sb.statUpdates} value={updateCount} />
+            <CapabilityMetric label={sb.statScanIssues} value={scan?.errors.length ?? 0} />
+            <CapabilityMetric label={sb.statBundled} value={stats.bundled} />
+          </>
+        ) : null
+      }
+      primary={primary}
+      aside={
+        tauri ? (
+          <>
+            <CapabilityTile
+              title={sb.tabCatalog}
+              description={sb.catalogActionHint}
+              active={detail === "catalog"}
+              action={
+                <Button variant="outline" size="sm" onClick={() => setDetail("catalog")}>
+                  {sb.tabCatalog}
+                </Button>
+              }
+            />
+            <CapabilityTile
+              title={sb.tabAdd}
+              description={sb.addActionHint}
+              active={detail === "add"}
+              action={
+                <Button variant="outline" size="sm" onClick={() => setDetail("add")}>
+                  {sb.tabAdd}
+                </Button>
+              }
+            />
+          </>
+        ) : null
+      }
+      detail={detailPanel}
+    />
   )
 }

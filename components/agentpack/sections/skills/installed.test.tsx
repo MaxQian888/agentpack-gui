@@ -79,6 +79,8 @@ const scan: SkillsScanResult = {
 }
 
 beforeEach(() => {
+  jest.clearAllMocks()
+  ;(readTextFile as jest.Mock).mockResolvedValue("{}")
   useAppStore.setState({ paths, panelOpen: false })
 })
 
@@ -93,7 +95,7 @@ function renderTab(refresh = jest.fn()) {
   return refresh
 }
 
-it("groups skills into rows with source, symlink and bundled badges", () => {
+it("groups skills into rows with source, symlink and bundled badges", async () => {
   renderTab()
   // caveman + tauri-v2 + rust = 3 rows (caveman groups claude + agents).
   expect(screen.getByText("caveman")).toBeInTheDocument()
@@ -101,6 +103,7 @@ it("groups skills into rows with source, symlink and bundled badges", () => {
   expect(screen.getByText(en.skillsBrowser.symlinkBadge)).toBeInTheDocument()
   // "rust" is a bundled registry id.
   expect(screen.getByText(en.skillsBrowser.bundledBadge)).toBeInTheDocument()
+  await waitFor(() => expect(readTextFile).toHaveBeenCalled())
 })
 
 it("filters by source pill and by search query", async () => {
@@ -113,6 +116,66 @@ it("filters by source pill and by search query", async () => {
   await userEvent.type(screen.getByPlaceholderText(en.skillsBrowser.searchPlaceholder), "cave")
   expect(screen.getByText("caveman")).toBeInTheDocument()
   expect(screen.queryByText("tauri-v2")).not.toBeInTheDocument()
+})
+
+it("filters installed skills by management and issue status", async () => {
+  renderTab()
+  await userEvent.click(screen.getByRole("combobox", { name: en.skillsBrowser.statusFilter }))
+  expect(screen.getByRole("option", { name: en.skillsBrowser.statusManaged })).toBeInTheDocument()
+  expect(screen.getByRole("option", { name: en.skillsBrowser.statusUnmanaged })).toBeInTheDocument()
+  expect(screen.getByRole("option", { name: en.skillsBrowser.statusUpdates })).toBeInTheDocument()
+  expect(screen.getByRole("option", { name: en.skillsBrowser.statusIssues })).toBeInTheDocument()
+  await userEvent.click(screen.getByRole("option", { name: en.skillsBrowser.statusManaged }))
+  expect(screen.getByText(en.skillsBrowser.emptyFiltered)).toBeInTheDocument()
+})
+
+it("treats divergent copies across skill sources as a conflict", async () => {
+  render(
+    <I18nProvider>
+      <RunnerHarness autoApply>
+        <InstalledSkillsTab
+          scan={{
+            skills: [
+              skill({ source: "claude", dirName: "shared", path: "/c/shared" }),
+              skill({
+                source: "codex",
+                dirName: "shared",
+                path: "/x/shared",
+                skillMd: "---\nname: shared\n---\n# Different content\n",
+              }),
+            ],
+            errors: [],
+          }}
+          refresh={jest.fn()}
+        />
+      </RunnerHarness>
+    </I18nProvider>
+  )
+  await userEvent.click(screen.getByRole("combobox", { name: en.skillsBrowser.statusFilter }))
+  await userEvent.click(screen.getByRole("option", { name: en.skillsBrowser.statusIssues }))
+  expect(screen.getByText("shared")).toBeInTheDocument()
+})
+
+it("shows scan errors only in the all and issues status views", async () => {
+  const message = en.skillsBrowser.scanError("Codex", "permission denied")
+  render(
+    <I18nProvider>
+      <RunnerHarness autoApply>
+        <InstalledSkillsTab
+          scan={{ ...scan, errors: [{ source: "codex", message: "permission denied" }] }}
+          refresh={jest.fn()}
+        />
+      </RunnerHarness>
+    </I18nProvider>
+  )
+
+  expect(screen.getByText(message)).toBeInTheDocument()
+  await userEvent.click(screen.getByRole("combobox", { name: en.skillsBrowser.statusFilter }))
+  await userEvent.click(screen.getByRole("option", { name: en.skillsBrowser.statusUnmanaged }))
+  expect(screen.queryByText(message)).not.toBeInTheDocument()
+  await userEvent.click(screen.getByRole("combobox", { name: en.skillsBrowser.statusFilter }))
+  await userEvent.click(screen.getByRole("option", { name: en.skillsBrowser.statusIssues }))
+  expect(screen.getByText(message)).toBeInTheDocument()
 })
 
 it("shows the filtered-empty state when nothing matches", async () => {
@@ -192,6 +255,7 @@ it("opens the backups dialog from the toolbar", async () => {
 })
 
 it("checks for updates and flags a managed skill with a pending update", async () => {
+  const onUpdateCountChange = jest.fn()
   const managedScan: SkillsScanResult = {
     skills: [
       skill({
@@ -209,7 +273,11 @@ it("checks for updates and flags a managed skill with a pending update", async (
   render(
     <I18nProvider>
       <RunnerHarness autoApply>
-        <InstalledSkillsTab scan={managedScan} refresh={jest.fn()} />
+        <InstalledSkillsTab
+          scan={managedScan}
+          refresh={jest.fn()}
+          onUpdateCountChange={onUpdateCountChange}
+        />
       </RunnerHarness>
     </I18nProvider>
   )
@@ -221,6 +289,7 @@ it("checks for updates and flags a managed skill with a pending update", async (
     )
   )
   expect(await screen.findByText(en.skillsBrowser.updateAvailable)).toBeInTheDocument()
+  await waitFor(() => expect(onUpdateCountChange).toHaveBeenLastCalledWith(1))
 
   // "Update all" re-syncs the managed skill through the runner.
   await userEvent.click(screen.getByRole("button", { name: /Update all/ }))

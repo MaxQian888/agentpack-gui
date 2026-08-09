@@ -104,12 +104,21 @@ interface SkillStatus {
   permission?: string
 }
 
+type SkillStatusFilter = "all" | "managed" | "unmanaged" | "updates" | "issues"
+
+function hasSkillConflict(row: SkillRow): boolean {
+  if (row.nameMismatch) return true
+  return new Set(Object.values(row.entries).map((entry) => entry.skillMd)).size > 1
+}
+
 export function InstalledSkillsTab({
   scan,
   refresh,
+  onUpdateCountChange,
 }: {
   scan: SkillsScanResult
   refresh: () => void
+  onUpdateCountChange?: (count: number) => void
 }) {
   const t = useT()
   const sb = t.skillsBrowser
@@ -123,6 +132,7 @@ export function InstalledSkillsTab({
   // are searched across many skills.
   const deferredQuery = useDeferredValue(query)
   const [source, setSource] = useState<SkillSource | "all">("all")
+  const [statusFilter, setStatusFilter] = useState<SkillStatusFilter>("all")
   const [sort, setSort] = useState<SkillSort>("name")
   const [detail, setDetail] = useState<SkillRow | null>(null)
   const [toDelete, setToDelete] = useState<{ row: SkillRow; source: SkillSource } | null>(null)
@@ -140,13 +150,20 @@ export function InstalledSkillsTab({
   const rows = useMemo(() => groupSkills(scan.skills), [scan])
   const counts = useMemo(() => countsBySource(scan.skills), [scan])
   const managedRows = useMemo(() => rows.filter(isManaged), [rows])
-  const filtered = useMemo(
-    () => sortRows(filterRows(rows, deferredQuery, source), sort),
-    [rows, deferredQuery, source, sort]
-  )
+  const filtered = useMemo(() => {
+    const searched = filterRows(rows, deferredQuery, source)
+    const statusRows = searched.filter((row) => {
+      if (statusFilter === "managed") return isManaged(row)
+      if (statusFilter === "unmanaged") return !isManaged(row)
+      if (statusFilter === "updates") return rowUpdateTargets(row, updates).length > 0
+      if (statusFilter === "issues") return hasSkillConflict(row)
+      return true
+    })
+    return sortRows(statusRows, sort)
+  }, [rows, deferredQuery, source, sort, statusFilter, updates])
   const { visible, sentinelRef, hasMore } = useIncremental(
     filtered.length,
-    `${source}|${deferredQuery}|${sort}`,
+    `${source}|${statusFilter}|${deferredQuery}|${sort}`,
     50
   )
 
@@ -186,6 +203,10 @@ export function InstalledSkillsTab({
     () => rows.filter((r) => rowUpdateTargets(r, updates).length > 0).length,
     [rows, updates]
   )
+
+  useEffect(() => {
+    onUpdateCountChange?.(updateCount)
+  }, [onUpdateCountChange, updateCount])
 
   const doCheckUpdates = async () => {
     const queries = updateQueries(managedRows)
@@ -374,6 +395,21 @@ export function InstalledSkillsTab({
           </button>
         ))}
         <div className="ml-auto flex items-center gap-2">
+          <Select
+            value={statusFilter}
+            onValueChange={(value) => setStatusFilter(value as SkillStatusFilter)}
+          >
+            <SelectTrigger size="sm" className="w-44" aria-label={sb.statusFilter}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{sb.statusAll}</SelectItem>
+              <SelectItem value="managed">{sb.statusManaged}</SelectItem>
+              <SelectItem value="unmanaged">{sb.statusUnmanaged}</SelectItem>
+              <SelectItem value="updates">{sb.statusUpdates}</SelectItem>
+              <SelectItem value="issues">{sb.statusIssues}</SelectItem>
+            </SelectContent>
+          </Select>
           <div className="relative">
             <Search className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -394,6 +430,16 @@ export function InstalledSkillsTab({
           </Select>
         </div>
       </div>
+
+      {scan.errors.length > 0 && (statusFilter === "all" || statusFilter === "issues") ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+          {scan.errors.map((error) => (
+            <p key={error.source} className="text-xs text-destructive">
+              {sb.scanError(sb.sources[error.source] ?? error.source, error.message)}
+            </p>
+          ))}
+        </div>
+      ) : null}
 
       {selected.size > 0 ? (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-2">

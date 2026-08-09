@@ -4,6 +4,7 @@ jest.mock("sonner", () => ({
 jest.mock("@/lib/tauri/commands", () => ({
   readTextFile: jest.fn(async () => ""),
   writeTextFile: jest.fn(async () => undefined),
+  pathExists: jest.fn(async () => false),
 }))
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
@@ -13,15 +14,33 @@ import { I18nProvider } from "@/lib/i18n/provider"
 import { readTextFile, writeTextFile } from "@/lib/tauri/commands"
 import { CcConnectConfigEditor } from "./ccconnect-config"
 import { en } from "@/lib/i18n/en"
+import { RunnerHarness } from "../run/__testing__/harness"
+import { useAppStore } from "@/store/app-store"
 
 const PATH = "/h/.cc-connect/config.toml"
 
-beforeEach(() => jest.clearAllMocks())
+beforeEach(() => {
+  jest.clearAllMocks()
+  useAppStore.setState({ paths: { home: "/h" } as never, panelOpen: false })
+})
 
 function renderEditor(exists: boolean, onSaved = jest.fn()) {
   render(
     <I18nProvider>
-      <CcConnectConfigEditor path={PATH} exists={exists} onSaved={onSaved} />
+      <RunnerHarness autoApply>
+        <CcConnectConfigEditor path={PATH} exists={exists} onSaved={onSaved} />
+      </RunnerHarness>
+    </I18nProvider>
+  )
+  return onSaved
+}
+
+function renderEditorWithReview(exists: boolean, onSaved = jest.fn()) {
+  render(
+    <I18nProvider>
+      <RunnerHarness panel>
+        <CcConnectConfigEditor path={PATH} exists={exists} onSaved={onSaved} />
+      </RunnerHarness>
     </I18nProvider>
   )
   return onSaved
@@ -44,6 +63,15 @@ it("offers Create wording and seeds the default template when no config exists",
   await userEvent.click(toml)
   const area = screen.getByRole("textbox", { name: en.ccconnect.tabToml })
   expect((area as HTMLTextAreaElement).value).toContain("[management]")
+})
+
+it("searches settings and navigates the grouped form", async () => {
+  ;(readTextFile as jest.Mock).mockResolvedValue("[management]\nport = 9820\n")
+  await openDialog(true)
+  expect(screen.getByPlaceholderText(en.ccconnect.configSearch)).toBeInTheDocument()
+  await userEvent.click(screen.getByRole("button", { name: en.ccconnect.configGroups.media }))
+  expect(screen.queryByLabelText(en.ccconnect.fields.quiet)).not.toBeInTheDocument()
+  expect(screen.getByText(en.ccconnect.sections.speech)).toBeInTheDocument()
 })
 
 it("loads the existing config and saves a form edit back through TOML", async () => {
@@ -140,4 +168,17 @@ it("surfaces a write failure as a toast and keeps the dialog open", async () => 
   await userEvent.click(screen.getByRole("button", { name: en.ccconnect.save }))
   await waitFor(() => expect(toast.error).toHaveBeenCalledWith(en.ccconnect.saveFailed))
   expect(screen.getByRole("dialog")).toBeInTheDocument()
+})
+
+it("keeps the editor open and does not save when review is discarded", async () => {
+  ;(readTextFile as jest.Mock).mockResolvedValue("[management]\nport = 9820\n")
+  const onSaved = renderEditorWithReview(true)
+  await userEvent.click(screen.getByRole("button", { name: en.ccconnect.configEdit }))
+  await screen.findByRole("tab", { name: en.ccconnect.tabForm })
+  await userEvent.click(screen.getByRole("button", { name: en.ccconnect.save }))
+  await userEvent.click(await screen.findByRole("button", { name: en.review.discard }))
+  await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+  expect(writeTextFile).not.toHaveBeenCalled()
+  expect(onSaved).not.toHaveBeenCalled()
+  expect(toast.success).not.toHaveBeenCalled()
 })

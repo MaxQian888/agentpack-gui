@@ -122,6 +122,7 @@ it("shows the not-in-Tauri fallback in web mode", async () => {
 
 it("shows not-detected and installs via the runner", async () => {
   renderCc()
+  expect(screen.getByRole("region", { name: en.ccconnect.summaryLabel })).toBeInTheDocument()
   expect(await screen.findByText(en.ccconnect.notDetected)).toBeInTheDocument()
   const install = screen.getByRole("button", { name: en.ccconnect.install })
   await userEvent.click(install)

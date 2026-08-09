@@ -132,6 +132,49 @@ export function countProjects(toml: string): number {
   return projectCount(parseConfigDoc(toml))
 }
 
+export interface CcConnectSummary {
+  projectCount: number
+  platformCount: number
+  agentTypes: string[]
+  management: { port: number; enabled: boolean }
+  bridge: { port: number; enabled: boolean }
+  webhook: { port: number; enabled: boolean }
+}
+
+/**
+ * Parse only non-secret operational metadata for the management workbench.
+ * Tokens and platform credentials are deliberately never copied into the
+ * returned object, so rendering or logging this summary cannot expose them.
+ */
+export function summarizeConfig(toml: string): CcConnectSummary {
+  const doc = parseConfigDoc(toml)
+  const projects = Array.isArray(doc?.projects)
+    ? (doc.projects as Array<Record<string, unknown>>)
+    : []
+  const agentTypes = new Set<string>()
+  let platformCount = 0
+  for (const project of projects) {
+    const agent = project.agent
+    if (agent && typeof agent === "object" && !Array.isArray(agent)) {
+      const type = (agent as Record<string, unknown>).type
+      if (typeof type === "string" && type) agentTypes.add(type)
+    }
+    if (Array.isArray(project.platforms)) platformCount += project.platforms.length
+  }
+  const endpoint = (section: string, fallback: number) => ({
+    port: sectionPort(doc, section, fallback),
+    enabled: sectionTable(doc, section)?.enabled === true,
+  })
+  return {
+    projectCount: projects.length,
+    platformCount,
+    agentTypes: [...agentTypes].sort(),
+    management: endpoint("management", CC_CONNECT_MANAGEMENT_PORT),
+    bridge: endpoint("bridge", CC_CONNECT_BRIDGE_PORT),
+    webhook: endpoint("webhook", CC_CONNECT_WEBHOOK_PORT),
+  }
+}
+
 /**
  * The visual editor's schema — cc-connect's documented **global** settings,
  * grouped to mirror its TOML sections. Projects (`[[projects]]`), providers,

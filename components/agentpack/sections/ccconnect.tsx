@@ -43,6 +43,8 @@ import {
   parseWebhookPort,
   projectCount,
   serializeConfigDoc,
+  summarizeConfig,
+  type CcConnectSummary,
 } from "@/lib/agentpack/ccconnect"
 import {
   detectCli,
@@ -52,13 +54,13 @@ import {
   readTextFile,
   startCcConnect,
   stopCcConnect,
-  writeTextFile,
 } from "@/lib/tauri/commands"
 import { openUrl, revealPath } from "@/lib/tauri/system"
 import { isTauri } from "@/lib/tauri"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
+import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "./capability-workbench"
 import { CcConnectConfigEditor } from "./ccconnect-config"
 import { CcConnectDashboardFrame } from "./ccconnect-dashboard"
 import { HelpTip } from "../help-tip"
@@ -117,6 +119,7 @@ export function CcConnectSection() {
   const [bridgePort, setBridgePort] = useState(CC_CONNECT_BRIDGE_PORT)
   const [webhookPort, setWebhookPort] = useState(CC_CONNECT_WEBHOOK_PORT)
   const [mgmtEnabled, setMgmtEnabled] = useState(false)
+  const [summary, setSummary] = useState<CcConnectSummary>(() => summarizeConfig(""))
   // cc-connect exits during config validation when no project is declared, so
   // this — not "is web admin on" — is what decides whether the service can run
   // at all. Null until the first scan lands.
@@ -160,6 +163,7 @@ export function CcConnectSection() {
       setWebhookPort(parseWebhookPort(cfg))
       setMgmtEnabled(isSectionEnabled(cfg, "management"))
       setProjects(countProjects(cfg))
+      setSummary(summarizeConfig(cfg))
     }
     const [d, proc, mUp, bUp] = await Promise.all([
       detectCli("cc-connect", false),
@@ -267,7 +271,25 @@ export function CcConnectSection() {
     const portVal = getConfigValue(doc, ["management", "port"])
     const port = typeof portVal === "number" ? portVal : CC_CONNECT_MANAGEMENT_PORT
     if (changed) {
-      await writeTextFile(paths.ccConnectConfig, `${serializeConfigDoc(doc)}\n`)
+      const content = `${serializeConfigDoc(doc)}\n`
+      const reports = await run([
+        {
+          kind: "mergeFile",
+          id: "ccconnect-enable-web-admin",
+          label: c.enableAndOpen,
+          path: paths.ccConnectConfig,
+          merge: () => content,
+          writtenNote: c.managementEnabled,
+        },
+      ])
+      if (
+        !reports.some(
+          (report) => report.id === "ccconnect-enable-web-admin" && report.status === "done"
+        )
+      ) {
+        if (reports.some((report) => report.status === "error")) toast.error(c.webAdminFailed)
+        return null
+      }
     }
     // If the dashboard port isn't answering, (re)start the service so it picks
     // up the config. A stale bridge-only instance is bounced first, otherwise
@@ -340,210 +362,272 @@ export function CcConnectSection() {
   }
 
   return (
-    <SectionShell title={c.menuTitle} help={<HelpTip text={t.help.ccconnect} />}>
-      {/* Install / check */}
-      <Card className="gap-3 p-4">
-        <div className="flex flex-row items-center gap-3">
-          <div className="flex-1">
-            <div className="font-medium">{c.install}</div>
-            {detected !== null ? (
-              <Badge
-                variant={detected ? "secondary" : "outline"}
-                className="mt-1 font-normal text-muted-foreground"
-              >
-                {detected ? `${c.detected}${version ? ` · ${version}` : ""}` : c.notDetected}
-              </Badge>
-            ) : (
-              <Badge variant="outline" className="mt-1 gap-1 font-normal text-muted-foreground">
-                <Loader2 className="size-3 animate-spin" />
-                {c.checking}
-              </Badge>
-            )}
-          </div>
-          <Button variant="ghost" size="sm" className="gap-1" onClick={() => void reload()}>
-            <RefreshCw className="size-3.5" />
-            {c.refresh}
-          </Button>
-          {detected === false && installMethod ? (
-            <Button variant="outline" onClick={install}>
-              {c.install}
-            </Button>
-          ) : null}
-          {detected === true && hasUpdate && upgradeCmd ? (
-            <Button variant="outline" onClick={upgrade}>
-              {t.shell.upgrade}
-            </Button>
-          ) : null}
-          {detected === true ? (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="ghost" size="sm" className="text-red-500">
-                  {c.uninstall}
+    <CapabilityWorkbench
+      title={c.menuTitle}
+      help={<HelpTip text={t.help.ccconnect} />}
+      summaryLabel={c.summaryLabel}
+      actionsLabel={c.actionsLabel}
+      metrics={
+        <>
+          <CapabilityMetric label={c.metricVersion} value={version ?? "—"} />
+          <CapabilityMetric
+            label={c.metricStatus}
+            value={running === null ? "…" : running ? "✓" : "—"}
+          />
+          <CapabilityMetric label={c.metricProjects} value={summary.projectCount} />
+          <CapabilityMetric label={c.metricPlatforms} value={summary.platformCount} />
+          <CapabilityMetric
+            label={c.metricManagement}
+            value={summary.management.port}
+            detail={summary.management.enabled ? "✓" : "—"}
+          />
+          <CapabilityMetric
+            label={c.metricBridge}
+            value={summary.bridge.port}
+            detail={summary.bridge.enabled ? "✓" : "—"}
+          />
+        </>
+      }
+      primary={
+        <div className="flex min-w-0 flex-col gap-4">
+          {/* Install / check */}
+          <Card className="gap-3 p-4">
+            <div className="flex flex-row flex-wrap items-center gap-3">
+              <div className="min-w-0 flex-1 basis-full sm:basis-auto">
+                <div className="font-medium">{c.install}</div>
+                {detected !== null ? (
+                  <Badge
+                    variant={detected ? "secondary" : "outline"}
+                    className="mt-1 font-normal text-muted-foreground"
+                  >
+                    {detected ? `${c.detected}${version ? ` · ${version}` : ""}` : c.notDetected}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="mt-1 gap-1 font-normal text-muted-foreground">
+                    <Loader2 className="size-3 animate-spin" />
+                    {c.checking}
+                  </Badge>
+                )}
+              </div>
+              <Button variant="ghost" size="sm" className="gap-1" onClick={() => void reload()}>
+                <RefreshCw className="size-3.5" />
+                {c.refresh}
+              </Button>
+              {detected === false && installMethod ? (
+                <Button variant="outline" onClick={install}>
+                  {c.install}
                 </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{c.uninstall}</AlertDialogTitle>
-                  <AlertDialogDescription>{c.uninstallConfirm}</AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
-                  <AlertDialogAction onClick={uninstall}>{c.uninstall}</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          ) : null}
-        </div>
-      </Card>
+              ) : null}
+              {detected === true && hasUpdate && upgradeCmd ? (
+                <Button variant="outline" onClick={upgrade}>
+                  {t.shell.upgrade}
+                </Button>
+              ) : null}
+              {detected === true ? (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="ghost" size="sm" className="text-red-500">
+                      {c.uninstall}
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>{c.uninstall}</AlertDialogTitle>
+                      <AlertDialogDescription>{c.uninstallConfirm}</AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
+                      <AlertDialogAction onClick={uninstall}>{c.uninstall}</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              ) : null}
+            </div>
+          </Card>
 
-      {/* Bridge service */}
-      <Card className="gap-3 p-4">
-        <div className="flex flex-row items-center gap-3">
-          <div className="flex-1">
-            <div className="font-medium">{c.serviceTitle}</div>
-            <p className="mt-1 text-xs text-muted-foreground">{c.serviceHint}</p>
-          </div>
-          {projects === 0 ? (
-            <Badge variant="outline" className="font-normal text-muted-foreground">
-              {c.noProjects}
-            </Badge>
-          ) : null}
-          {running !== null ? (
-            <Badge variant={running ? "secondary" : "outline"} className="font-normal">
-              {running ? c.running : c.stopped}
-            </Badge>
-          ) : null}
-          {running ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1"
-              disabled={busy}
-              onClick={() => void setService(false)}
-            >
-              {busy ? (
-                <Loader2 className="size-3.5 animate-spin" />
+          {/* Web dashboard */}
+          <Card className="order-first gap-3 p-4">
+            <div className="flex flex-row flex-wrap items-center gap-3">
+              <div className="min-w-0 flex-1 basis-full sm:basis-auto">
+                <div className="font-medium">{c.webTitle}</div>
+                <p className="mt-1 text-xs text-muted-foreground">{c.webUrl(url)}</p>
+                {configExists !== null ? (
+                  <Badge
+                    variant={mgmtEnabled ? "secondary" : "outline"}
+                    className="mt-1 font-normal text-muted-foreground"
+                  >
+                    {mgmtEnabled ? c.managementEnabled : c.managementDisabled}
+                  </Badge>
+                ) : null}
+              </div>
+              {projects === 0 ? (
+                <Badge variant="outline" className="font-normal text-muted-foreground">
+                  {c.noProjects}
+                </Badge>
+              ) : null}
+              {running !== null ? (
+                <Badge variant={running ? "secondary" : "outline"} className="font-normal">
+                  {running ? c.running : c.stopped}
+                </Badge>
+              ) : null}
+              {running ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1"
+                  disabled={busy}
+                  onClick={() => void setService(false)}
+                >
+                  {busy ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Square className="size-3.5" />
+                  )}
+                  {c.stop}
+                </Button>
               ) : (
-                <Square className="size-3.5" />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1"
+                  disabled={busy || detected !== true}
+                  onClick={() => void setService(true)}
+                >
+                  {busy ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Play className="size-3.5" />
+                  )}
+                  {c.start}
+                </Button>
               )}
-              {c.stop}
-            </Button>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1"
-              disabled={busy || detected !== true}
-              onClick={() => void setService(true)}
-            >
-              {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-              {c.start}
-            </Button>
-          )}
-        </div>
-        <p className="border-t pt-3 text-xs text-muted-foreground">
-          {projects === 0 ? c.needsProject : c.daemonNote}
-        </p>
-      </Card>
-
-      {/* Web dashboard */}
-      <Card className="gap-3 p-4">
-        <div className="flex flex-row items-center gap-3">
-          <div className="flex-1">
-            <div className="font-medium">{c.webTitle}</div>
-            <p className="mt-1 text-xs text-muted-foreground">{c.webUrl(url)}</p>
-            {configExists !== null ? (
-              <Badge
-                variant={mgmtEnabled ? "secondary" : "outline"}
-                className="mt-1 font-normal text-muted-foreground"
+              <Button
+                size="sm"
+                className="gap-1"
+                disabled={webBusy || detected !== true || !paths}
+                onClick={() => void openDashboard("embed")}
               >
-                {mgmtEnabled ? c.managementEnabled : c.managementDisabled}
-              </Badge>
-            ) : null}
-          </div>
-          <Button
-            size="sm"
-            className="gap-1"
-            disabled={webBusy || detected !== true || !paths}
-            onClick={() => void openDashboard("embed")}
-          >
-            {webBusy ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <PanelsTopLeft className="size-3.5" />
-            )}
-            {mgmtEnabled ? c.openWeb : c.enableAndOpen}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="gap-1"
-            disabled={webBusy || detected !== true || !paths}
-            onClick={() => void openDashboard("browser")}
-          >
-            <ExternalLink className="size-3.5" />
-            {c.openInBrowser}
-          </Button>
-        </div>
-        <p className="border-t pt-3 text-xs text-muted-foreground">
-          {mgmtEnabled ? c.webReadyHint : c.webAdminHint}
-        </p>
-      </Card>
-
-      {embed ? (
-        <CcConnectDashboardFrame
-          open
-          onOpenChange={(o) => {
-            // Dropping the URL on close unmounts the frame, which is what stops
-            // the dashboard's polling instead of leaving it running behind a
-            // hidden panel.
-            if (!o) setEmbed(null)
-          }}
-          url={embed.url}
-          displayUrl={dashboardUrl(embed.port)}
-          onOpenExternal={openEmbeddedExternally}
-        />
-      ) : null}
-
-      {/* Configuration */}
-      <Card className="gap-3 p-4">
-        <div className="flex flex-row items-center gap-3">
-          <div className="flex-1">
-            <div className="font-medium">{c.configTitle}</div>
-            {paths ? (
-              <p className="mt-1 font-mono text-xs text-muted-foreground">
-                {paths.ccConnectConfig}
-              </p>
-            ) : null}
-            {configExists !== null ? (
-              <Badge
-                variant={configExists ? "secondary" : "outline"}
-                className="mt-1 font-normal text-muted-foreground"
+                {webBusy ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <PanelsTopLeft className="size-3.5" />
+                )}
+                {mgmtEnabled ? c.openWeb : c.enableAndOpen}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1"
+                disabled={webBusy || detected !== true || !paths}
+                onClick={() => void openDashboard("browser")}
               >
-                {configExists ? c.configInitialized : c.configMissing}
-              </Badge>
-            ) : null}
-          </div>
-          {paths ? (
-            <CcConnectConfigEditor
-              path={paths.ccConnectConfig}
-              exists={configExists === true}
-              onSaved={() => void reload()}
+                <ExternalLink className="size-3.5" />
+                {c.openInBrowser}
+              </Button>
+            </div>
+            <p className="border-t pt-3 text-xs text-muted-foreground">
+              {projects === 0
+                ? c.needsProject
+                : mgmtEnabled
+                  ? `${c.webReadyHint} ${c.daemonNote}`
+                  : c.webAdminHint}
+            </p>
+          </Card>
+
+          {embed ? (
+            <CcConnectDashboardFrame
+              open
+              onOpenChange={(o) => {
+                // Dropping the URL on close unmounts the frame, which is what stops
+                // the dashboard's polling instead of leaving it running behind a
+                // hidden panel.
+                if (!o) setEmbed(null)
+              }}
+              url={embed.url}
+              displayUrl={dashboardUrl(embed.port)}
+              onOpenExternal={openEmbeddedExternally}
             />
           ) : null}
-          {paths && configExists ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="gap-1"
-              onClick={() => void revealPath(paths.ccConnectConfig)}
-            >
-              <FolderOpen className="size-3.5" />
-              {c.reveal}
-            </Button>
-          ) : null}
+
+          {/* Configuration */}
+          <Card className="gap-3 p-4">
+            <div className="flex flex-row flex-wrap items-center gap-3">
+              <div className="min-w-0 flex-1 basis-full sm:basis-auto">
+                <div className="font-medium">{c.configTitle}</div>
+                {paths ? (
+                  <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
+                    {paths.ccConnectConfig}
+                  </p>
+                ) : null}
+                {configExists !== null ? (
+                  <Badge
+                    variant={configExists ? "secondary" : "outline"}
+                    className="mt-1 font-normal text-muted-foreground"
+                  >
+                    {configExists ? c.configInitialized : c.configMissing}
+                  </Badge>
+                ) : null}
+              </div>
+              {paths ? (
+                <CcConnectConfigEditor
+                  path={paths.ccConnectConfig}
+                  exists={configExists === true}
+                  onSaved={() => void reload()}
+                />
+              ) : null}
+              {paths && configExists ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1"
+                  onClick={() => void revealPath(paths.ccConnectConfig)}
+                >
+                  <FolderOpen className="size-3.5" />
+                  {c.reveal}
+                </Button>
+              ) : null}
+            </div>
+          </Card>
         </div>
-      </Card>
-    </SectionShell>
+      }
+      aside={
+        <>
+          <CapabilityTile
+            title={c.metricManagement}
+            description={`localhost:${summary.management.port}`}
+          >
+            <Badge variant={summary.management.enabled ? "secondary" : "outline"}>
+              <span
+                aria-label={summary.management.enabled ? c.managementEnabled : c.managementDisabled}
+              >
+                {summary.management.enabled ? "✓" : "—"}
+              </span>
+            </Badge>
+          </CapabilityTile>
+          <CapabilityTile title={c.metricBridge} description={`localhost:${summary.bridge.port}`}>
+            <Badge variant={summary.bridge.enabled ? "secondary" : "outline"}>
+              <span
+                aria-label={summary.bridge.enabled ? c.managementEnabled : c.managementDisabled}
+              >
+                {summary.bridge.enabled ? "✓" : "—"}
+              </span>
+            </Badge>
+          </CapabilityTile>
+          <CapabilityTile title={c.metricWebhook} description={`localhost:${summary.webhook.port}`}>
+            <Badge variant={summary.webhook.enabled ? "secondary" : "outline"}>
+              <span
+                aria-label={summary.webhook.enabled ? c.managementEnabled : c.managementDisabled}
+              >
+                {summary.webhook.enabled ? "✓" : "—"}
+              </span>
+            </Badge>
+          </CapabilityTile>
+          <CapabilityTile
+            title={c.metricAgents}
+            description={summary.agentTypes.length ? summary.agentTypes.join(", ") : c.noProjects}
+          />
+        </>
+      }
+    />
   )
 }

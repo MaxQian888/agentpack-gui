@@ -19,7 +19,40 @@ import {
   resolveFieldPath,
   serializeConfigDoc,
   setConfigValue,
+  summarizeConfig,
 } from "./ccconnect"
+
+describe("config summary", () => {
+  it("extracts counts, agent types, ports and enabled states without exposing tokens", () => {
+    const summary = summarizeConfig(`
+[management]
+enabled = true
+port = 8080
+token = "top-secret"
+[bridge]
+enabled = false
+port = 8181
+token = "bridge-secret"
+[[projects]]
+name = "one"
+[projects.agent]
+type = "codex"
+[[projects.platforms]]
+type = "slack"
+[[projects.platforms]]
+type = "feishu"
+`)
+    expect(summary).toEqual({
+      projectCount: 1,
+      platformCount: 2,
+      agentTypes: ["codex"],
+      management: { port: 8080, enabled: true },
+      bridge: { port: 8181, enabled: false },
+      webhook: { port: CC_CONNECT_WEBHOOK_PORT, enabled: false },
+    })
+    expect(JSON.stringify(summary)).not.toContain("secret")
+  })
+})
 
 describe("section ports", () => {
   it("management defaults to 9820 on empty / unparseable / missing / mis-tabled", () => {
