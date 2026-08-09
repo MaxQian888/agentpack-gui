@@ -1,3 +1,5 @@
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
+/* Hallmark · genre: modern-minimal · macrostructure: Workbench · design-system: design.md · designed-as-app */
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
@@ -65,7 +67,7 @@ import {
 } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { DesktopOnlyNote } from "../../desktop-only-note"
-import { SectionShell } from "../section-shell"
+import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "../capability-workbench"
 import { isTauri } from "@/lib/tauri"
 import { useT } from "@/lib/i18n/provider"
 import { notify } from "@/lib/tauri/system"
@@ -88,7 +90,6 @@ import type {
   AlertRule,
   AnalyticsData,
   AuditEvent,
-  CredentialState,
   ManagementCapabilities,
   ManagementOperation,
   ManagementView,
@@ -193,33 +194,18 @@ export function MoreTokenSection({ view, localUsage }: MoreTokenSectionProps) {
 
   if (!tauri) {
     return (
-      <SectionShell title={m.title} subtitle={m.subtitle} wide>
-        <DesktopOnlyNote>{m.desktopOnly}</DesktopOnlyNote>
-      </SectionShell>
+      <CapabilityWorkbench
+        title={m.title}
+        subtitle={m.subtitle}
+        summaryLabel={m.statusSummary}
+        actionsLabel={m.supportingActions}
+        primary={<DesktopOnlyNote>{m.desktopOnly}</DesktopOnlyNote>}
+      />
     )
   }
 
   const actions = (
     <div className="flex items-center gap-2">
-      {instances.length > 0 ? (
-        <label className="sr-only" htmlFor="more-token-instance">
-          {m.instance}
-        </label>
-      ) : null}
-      {instances.length > 0 ? (
-        <select
-          id="more-token-instance"
-          value={activeId}
-          onChange={(event) => setSelectedId(event.target.value)}
-          className="h-9 max-w-48 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {instances.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name}
-            </option>
-          ))}
-        </select>
-      ) : null}
       <Button variant="outline" size="sm" onClick={() => setInstanceOpen(true)}>
         <Plus className="size-4" />
         <span className="hidden sm:inline">{m.addInstance}</span>
@@ -236,74 +222,198 @@ export function MoreTokenSection({ view, localUsage }: MoreTokenSectionProps) {
     </div>
   )
 
+  const title = m.tabs[view === "management-overview" ? "overview" : view]
+  const connected = credentialQuery.data?.connected === true
+  const connectionLabel = credentialQuery.isLoading
+    ? m.loading
+    : credentialQuery.isError
+      ? m.unavailable
+      : connected
+        ? m.healthy
+        : m.unavailable
+  const primary = instancesQuery.isError ? (
+    <ErrorPanel error={instancesQuery.error} retry={() => void instancesQuery.refetch()} />
+  ) : instancesQuery.isLoading ? (
+    <LoadingPanel />
+  ) : instances.length === 0 ? (
+    <EmptyPanel
+      text={m.noInstances}
+      action={<Button onClick={() => setInstanceOpen(true)}>{m.addInstance}</Button>}
+    />
+  ) : credentialQuery.isError ? (
+    <ErrorPanel error={credentialQuery.error} retry={() => void credentialQuery.refetch()} />
+  ) : credentialQuery.isLoading ? (
+    <LoadingPanel />
+  ) : credentialQuery.data?.connected !== true ? (
+    <PairPanel instance={instance!} onPaired={() => void credentialQuery.refetch()} />
+  ) : capabilities.isError ? (
+    <ErrorPanel error={capabilities.error} retry={() => void capabilities.refetch()} />
+  ) : capabilities.data ? (
+    <div className="space-y-5">
+      {instance?.readOnly ? (
+        <Alert>
+          <ShieldAlert className="size-4" />
+          <AlertTitle>{m.readOnly}</AlertTitle>
+          <AlertDescription>{m.readonlyBanner}</AlertDescription>
+        </Alert>
+      ) : null}
+      {view === "management-overview" ? (
+        <OverviewView instances={instances} activeId={activeId} />
+      ) : view === "accounts" ? (
+        <AccountsView instance={instance!} capabilities={capabilities.data} />
+      ) : view === "quota" ? (
+        <QuotaView instance={instance!} capabilities={capabilities.data} />
+      ) : view === "analytics" ? (
+        <AnalyticsView instance={instance!} localUsage={localUsage} />
+      ) : (
+        <AuditView instance={instance!} capabilities={capabilities.data} />
+      )}
+    </div>
+  ) : (
+    <LoadingPanel />
+  )
+
   return (
-    <SectionShell
-      title={m.tabs[view === "management-overview" ? "overview" : view]}
+    <CapabilityWorkbench
+      title={title}
       subtitle={m.subtitle}
       actions={actions}
-      wide
-    >
-      {instancesQuery.isLoading ? (
-        <LoadingPanel />
-      ) : instances.length === 0 ? (
-        <EmptyPanel
-          text={m.noInstances}
-          action={<Button onClick={() => setInstanceOpen(true)}>{m.addInstance}</Button>}
-        />
-      ) : credentialQuery.isLoading ? (
-        <LoadingPanel />
-      ) : credentialQuery.data?.connected !== true ? (
-        <PairPanel instance={instance!} onPaired={() => void credentialQuery.refetch()} />
-      ) : capabilities.isError ? (
-        <ErrorPanel error={capabilities.error} retry={() => void capabilities.refetch()} />
-      ) : capabilities.data ? (
+      summaryLabel={m.statusSummary}
+      actionsLabel={m.supportingActions}
+      metrics={
         <>
-          <InstanceBanner
-            instance={instance!}
-            credential={credentialQuery.data}
-            capabilities={capabilities.data}
-            onEdit={() => setInstanceOpen(true)}
-            onDisconnect={async () => {
-              await forgetCredential(activeId)
-              await credentialQuery.refetch()
-            }}
+          <CapabilityMetric
+            label={m.instances}
+            value={
+              instancesQuery.isLoading || instancesQuery.isError ? "—" : number(instances.length)
+            }
+            detail={
+              instancesQuery.isLoading
+                ? m.loading
+                : instancesQuery.isError
+                  ? errorText(instancesQuery.error)
+                  : undefined
+            }
           />
-          {instance?.readOnly ? (
-            <Alert>
-              <ShieldAlert className="size-4" />
-              <AlertTitle>{m.readOnly}</AlertTitle>
-              <AlertDescription>{m.readonlyBanner}</AlertDescription>
-            </Alert>
-          ) : null}
-          {view === "management-overview" ? (
-            <OverviewView instances={instances} activeId={activeId} />
-          ) : view === "accounts" ? (
-            <AccountsView instance={instance!} capabilities={capabilities.data} />
-          ) : view === "quota" ? (
-            <QuotaView instance={instance!} capabilities={capabilities.data} />
-          ) : view === "analytics" ? (
-            <AnalyticsView instance={instance!} localUsage={localUsage} />
-          ) : (
-            <AuditView instance={instance!} capabilities={capabilities.data} />
-          )}
+          <CapabilityMetric
+            label={m.health}
+            value={
+              instancesQuery.isLoading || credentialQuery.isLoading || credentialQuery.isError
+                ? "—"
+                : connected
+                  ? m.healthy
+                  : m.unavailable
+            }
+            detail={
+              credentialQuery.isLoading
+                ? m.loading
+                : credentialQuery.isError
+                  ? errorText(credentialQuery.error)
+                  : undefined
+            }
+          />
+          <CapabilityMetric
+            label={m.apiVersion}
+            value={capabilities.data?.management_api_version ?? "—"}
+            detail={capabilities.isLoading ? m.loading : undefined}
+          />
+          <CapabilityMetric label={m.role} value={capabilities.data?.role ?? "—"} />
         </>
-      ) : (
-        <LoadingPanel />
-      )}
-      <InstanceDialog
-        open={instanceOpen}
-        instance={instance}
-        onOpenChange={setInstanceOpen}
-        onSaved={async (saved) => {
-          await queryClient.invalidateQueries({ queryKey: ["more-token", "instances"] })
-          setSelectedId(saved.id)
-        }}
-        onRemoved={async () => {
-          setSelectedId("")
-          await queryClient.invalidateQueries({ queryKey: ["more-token"] })
-        }}
-      />
-    </SectionShell>
+      }
+      primary={primary}
+      aside={
+        <>
+          <CapabilityTile
+            title={m.connection}
+            description={m.connectionHint}
+            active={connected}
+            action={
+              instance ? (
+                <Badge variant={connected ? "outline" : "secondary"}>{connectionLabel}</Badge>
+              ) : undefined
+            }
+          >
+            {instance ? (
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="more-token-instance">{m.instance}</Label>
+                  <select
+                    id="more-token-instance"
+                    value={activeId}
+                    onChange={(event) => setSelectedId(event.target.value)}
+                    className="h-9 w-full min-w-0 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {instances.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <p className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                  {instance.baseUrl}
+                </p>
+                <p className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                  {connected
+                    ? credentialQuery.data?.persistent
+                      ? m.persistentCredential
+                      : m.memoryCredential
+                    : m.pairTitle}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setInstanceOpen(true)}>
+                    {m.editInstance}
+                  </Button>
+                  {connected ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={async () => {
+                        await forgetCredential(activeId)
+                        await credentialQuery.refetch()
+                      }}
+                    >
+                      <Unplug className="size-4" />
+                      {m.disconnect}
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => setInstanceOpen(true)}>
+                <Plus className="size-4" />
+                {m.addInstance}
+              </Button>
+            )}
+          </CapabilityTile>
+          <CapabilityTile title={m.workspace} description={m.workspaceHint}>
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs">
+              <dt className="text-muted-foreground">{m.workspace}</dt>
+              <dd className="min-w-0 text-right font-medium [overflow-wrap:anywhere]">{title}</dd>
+              <dt className="text-muted-foreground">{m.grantedScopes}</dt>
+              <dd className="text-right font-mono tabular-nums">
+                {capabilities.data ? number(capabilities.data.scopes.length) : "—"}
+              </dd>
+            </dl>
+          </CapabilityTile>
+        </>
+      }
+      detail={
+        <InstanceDialog
+          open={instanceOpen}
+          instance={instance}
+          onOpenChange={setInstanceOpen}
+          onSaved={async (saved) => {
+            await queryClient.invalidateQueries({ queryKey: ["more-token", "instances"] })
+            setSelectedId(saved.id)
+          }}
+          onRemoved={async () => {
+            setSelectedId("")
+            await queryClient.invalidateQueries({ queryKey: ["more-token"] })
+          }}
+        />
+      }
+    />
   )
 }
 
@@ -342,52 +452,6 @@ function ErrorPanel({ error, retry }: { error: unknown; retry: () => void }) {
         </Button>
       </AlertDescription>
     </Alert>
-  )
-}
-
-function InstanceBanner({
-  instance,
-  credential,
-  capabilities,
-  onEdit,
-  onDisconnect,
-}: {
-  instance: MoreTokenInstance
-  credential: CredentialState
-  capabilities: ManagementCapabilities
-  onEdit: () => void
-  onDisconnect: () => void
-}) {
-  const m = useT().management
-  return (
-    <div className="flex flex-col gap-3 border-y py-3 sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex min-w-0 items-center gap-3">
-        <span className="flex size-9 items-center justify-center rounded-md bg-[var(--hm-ok-soft)] text-[var(--hm-ok)]">
-          <Check className="size-4" />
-        </span>
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <p className="truncate text-sm font-medium">{instance.name}</p>
-            <Badge variant="outline">{m.healthy}</Badge>
-          </div>
-          <p className="truncate text-xs text-muted-foreground">
-            {instance.baseUrl} · API v{capabilities.management_api_version} · {capabilities.role}
-          </p>
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs text-muted-foreground">
-          {credential.persistent ? m.persistentCredential : m.memoryCredential}
-        </span>
-        <Button variant="outline" size="sm" onClick={onEdit}>
-          {m.editInstance}
-        </Button>
-        <Button variant="ghost" size="sm" onClick={onDisconnect}>
-          <Unplug className="size-4" />
-          {m.disconnect}
-        </Button>
-      </div>
-    </div>
   )
 }
 
@@ -1237,29 +1301,38 @@ function QuotaView({
           <AlertTitle>{m.featureDisabled}</AlertTitle>
         </Alert>
       ) : null}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard
+      <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border lg:grid-cols-4 [&>div]:bg-background">
+        <CapabilityMetric
           label={m.totalQuota}
           value={summary.data ? number(summary.data.available) : "—"}
         />
-        <MetricCard label={m.usedQuota} value={summary.data ? number(summary.data.used) : "—"} />
-        <MetricCard label={m.accounts} value={summary.data ? number(summary.data.accounts) : "—"} />
-        <MetricCard label={m.totalQuota} value={summary.data ? number(summary.data.total) : "—"} />
-      </div>
+        <CapabilityMetric
+          label={m.usedQuota}
+          value={summary.data ? number(summary.data.used) : "—"}
+        />
+        <CapabilityMetric
+          label={m.accounts}
+          value={summary.data ? number(summary.data.accounts) : "—"}
+        />
+        <CapabilityMetric
+          label={m.quotaTotal}
+          value={summary.data ? number(summary.data.total) : "—"}
+        />
+      </dl>
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(310px,0.75fr)]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">{m.ledger}</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
+        <section className="min-w-0 overflow-hidden border-y">
+          <div className="py-4">
+            <h3 className="font-medium">{m.ledger}</h3>
+          </div>
+          <div className="min-w-0 overflow-x-auto">
             <LedgerTable
               items={ledger.data?.items ?? []}
               instance={instance}
               capabilities={capabilities}
               onDone={invalidate}
             />
-          </CardContent>
-        </Card>
+          </div>
+        </section>
         <PolicyEditor
           policy={policy.data ?? null}
           instance={instance}
@@ -1281,17 +1354,6 @@ function QuotaView({
         onDone={invalidate}
       />
     </div>
-  )
-}
-
-function MetricCard({ label, value }: { label: string; value: string }) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p className="mt-2 text-xl font-semibold tabular-nums">{value}</p>
-      </CardContent>
-    </Card>
   )
 }
 
@@ -1616,19 +1678,15 @@ function PolicyEditor({
   })
   if (!policy)
     return (
-      <Card>
-        <CardContent className="p-5">
-          <Skeleton className="h-64" />
-        </CardContent>
-      </Card>
+      <section className="border-y p-5">
+        <Skeleton className="h-64" />
+      </section>
     )
   const canWrite = capabilities.scopes.includes("policy:write") && !instance.readOnly
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{m.policies}</CardTitle>
-      </CardHeader>
-      <CardContent>
+    <section className="border-y py-4">
+      <h3 className="font-medium">{m.policies}</h3>
+      <div className="mt-4">
         <form
           className="space-y-3"
           onSubmit={(event) => {
@@ -1711,8 +1769,8 @@ function PolicyEditor({
             {m.savePolicy}
           </Button>
         </form>
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   )
 }
 
@@ -1838,53 +1896,59 @@ function AnalyticsView({
           {m.exportCsv}
         </Button>
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">{m.serverBilling}</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              {analytics.data?.definition ?? m.analyticsDefinition}
-            </p>
-          </CardHeader>
-          <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-            <Metric label={m.requests} value={number(analytics.data?.metrics.requests ?? 0)} />
+      <div className="grid overflow-hidden rounded-lg border lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.65fr)]">
+        <section className="min-w-0 p-5 lg:border-r">
+          <h3 className="font-medium">{m.serverBilling}</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {analytics.data?.definition ?? m.analyticsDefinition}
+          </p>
+          <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-3">
+            <Metric
+              label={m.requests}
+              value={analytics.data ? number(analytics.data.metrics.requests) : "—"}
+            />
             <Metric
               label={m.promptTokens}
-              value={number(analytics.data?.metrics.prompt_tokens ?? 0)}
+              value={analytics.data ? number(analytics.data.metrics.prompt_tokens) : "—"}
             />
             <Metric
               label={m.completionTokens}
-              value={number(analytics.data?.metrics.completion_tokens ?? 0)}
+              value={analytics.data ? number(analytics.data.metrics.completion_tokens) : "—"}
             />
-            <Metric label={m.peakRpm} value={number(analytics.data?.metrics.peak_rpm ?? 0)} />
-            <Metric label={m.peakTpm} value={number(analytics.data?.metrics.peak_tpm ?? 0)} />
-            <Metric label={m.totalQuota} value={number(analytics.data?.metrics.quota ?? 0)} />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">{m.localEstimate}</CardTitle>
-            <p className="text-xs text-muted-foreground">{m.localEstimateHint}</p>
-          </CardHeader>
-          <CardContent>
+            <Metric
+              label={m.peakRpm}
+              value={analytics.data ? number(analytics.data.metrics.peak_rpm) : "—"}
+            />
+            <Metric
+              label={m.peakTpm}
+              value={analytics.data ? number(analytics.data.metrics.peak_tpm) : "—"}
+            />
+            <Metric
+              label={m.totalQuota}
+              value={analytics.data ? number(analytics.data.metrics.quota) : "—"}
+            />
+          </div>
+        </section>
+        <section className="border-t p-5 lg:border-t-0">
+          <h3 className="font-medium">{m.localEstimate}</h3>
+          <p className="mt-1 text-xs text-muted-foreground">{m.localEstimateHint}</p>
+          <div className="mt-5">
             {localUsage.data ? (
-              <Metric label="Token" value={number(localTokens)} />
+              <Metric label={m.localTokens} value={number(localTokens)} />
             ) : (
               <Button variant="outline" onClick={localUsage.request} disabled={localUsage.loading}>
                 {localUsage.loading ? m.loading : m.localEstimate}
               </Button>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </section>
       </div>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">RPM / TPM</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <section className="border-y py-5">
+        <h3 className="font-medium">{m.throughput}</h3>
+        <div className="mt-5">
           <UsageBars series={analytics.data?.series ?? []} />
-        </CardContent>
-      </Card>
+        </div>
+      </section>
     </div>
   )
 }
@@ -1899,10 +1963,11 @@ function FieldValue({ label, children }: { label: string; children: React.ReactN
 }
 
 function UsageBars({ series }: { series: AnalyticsData["series"] }) {
+  const m = useT().management
   const max = Math.max(1, ...series.map((point) => point.tpm))
   const visible = series.slice(-60)
   return (
-    <div className="flex h-44 items-end gap-px" role="img" aria-label="Token usage over time">
+    <div className="flex h-44 items-end gap-px" role="img" aria-label={m.usageOverTime}>
       {visible.map((point) => (
         <div
           key={point.bucket}
@@ -1946,11 +2011,9 @@ function AuditView({
   })
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">{m.auditTimeline}</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <section className="border-y py-5">
+        <h3 className="font-medium">{m.auditTimeline}</h3>
+        <div className="mt-5">
           <div className="space-y-0">
             {audits.data?.items.map((event, index) => (
               <div key={event.id} className="relative grid grid-cols-[18px_1fr] gap-3 pb-5">
@@ -1990,12 +2053,12 @@ function AuditView({
               </div>
             ))}
           </div>
-        </CardContent>
-      </Card>
-      <div className="space-y-4">
-        <Card>
-          <CardHeader className="flex-row items-center justify-between">
-            <CardTitle className="text-base">{m.alertRules}</CardTitle>
+        </div>
+      </section>
+      <div className="divide-y border-y">
+        <section className="py-5">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="font-medium">{m.alertRules}</h3>
             <Button
               size="sm"
               onClick={() => setRuleOpen(true)}
@@ -2004,8 +2067,8 @@ function AuditView({
               <Plus className="size-4" />
               {m.createRule}
             </Button>
-          </CardHeader>
-          <CardContent className="space-y-2">
+          </div>
+          <div className="mt-4 space-y-2">
             {rules.data?.length ? (
               rules.data.map((rule) => (
                 <div
@@ -2026,13 +2089,11 @@ function AuditView({
             ) : (
               <p className="text-sm text-muted-foreground">{m.noData}</p>
             )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">{m.alertEvents}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
+          </div>
+        </section>
+        <section className="py-5">
+          <h3 className="font-medium">{m.alertEvents}</h3>
+          <div className="mt-4 space-y-2">
             {events.data?.items.map((event) => (
               <div key={event.id} className="rounded-md border p-3">
                 <div className="flex items-start justify-between gap-3">
@@ -2052,8 +2113,8 @@ function AuditView({
                 </div>
               </div>
             ))}
-          </CardContent>
-        </Card>
+          </div>
+        </section>
       </div>
       <AlertRuleDialog
         open={ruleOpen}

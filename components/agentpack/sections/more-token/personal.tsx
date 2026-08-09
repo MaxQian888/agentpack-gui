@@ -1,10 +1,11 @@
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
+/* Hallmark · genre: modern-minimal · macrostructure: Workbench · design-system: design.md · designed-as-app */
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   AlertTriangle,
-  Check,
   Download,
   ExternalLink,
   KeyRound,
@@ -60,7 +61,6 @@ import {
   startPersonalOAuth,
 } from "@/lib/more-token/client"
 import type {
-  CredentialState,
   MoreTokenInstance,
   Page,
   PersonalAccount,
@@ -75,13 +75,9 @@ import type {
   PersonalView,
 } from "@/lib/more-token/types"
 import { DesktopOnlyNote } from "../../desktop-only-note"
-import { SectionShell } from "../section-shell"
+import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "../capability-workbench"
 
 const PERSONAL_CLIENT_ID = "agentpack-personal-desktop"
-
-/* Hallmark · pre-emit critique: P5 H4 E4 S5 R4 V4
- * component: personal-workspace · genre: modern-minimal · theme: existing Cobalt/Geist
- */
 
 function request<T>(instanceId: string, operation: Parameters<typeof managementRequest>[1]) {
   return managementRequest<T>(instanceId, operation).then((response) => response.data)
@@ -136,29 +132,19 @@ export function PersonalMoreTokenSection({ view }: { view: PersonalView }) {
 
   if (!tauri) {
     return (
-      <SectionShell title={personal.title} subtitle={personal.subtitle} wide>
-        <DesktopOnlyNote>{management.desktopOnly}</DesktopOnlyNote>
-      </SectionShell>
+      <CapabilityWorkbench
+        title={personal.title}
+        subtitle={personal.subtitle}
+        summaryLabel={personal.statusSummary}
+        actionsLabel={personal.supportingActions}
+        primary={<DesktopOnlyNote>{personal.desktopOnly}</DesktopOnlyNote>}
+      />
     )
   }
 
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ["more-token", activeId] })
   const actions = (
     <div className="flex items-center gap-2">
-      {instances.length ? (
-        <select
-          aria-label={management.instance}
-          value={activeId}
-          onChange={(event) => setSelectedId(event.target.value)}
-          className="h-9 max-w-52 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {instances.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name}
-            </option>
-          ))}
-        </select>
-      ) : null}
       <Button variant="outline" size="sm" onClick={() => setInstanceOpen(true)}>
         <Plus className="size-4" />
         <span className="hidden sm:inline">{management.addInstance}</span>
@@ -175,63 +161,175 @@ export function PersonalMoreTokenSection({ view }: { view: PersonalView }) {
     </div>
   )
 
+  const title = personal.tabs[view.replace("my-", "") as keyof typeof personal.tabs]
+  const connected = credential.data?.connected === true
+  const connectionLabel = credential.isLoading
+    ? management.loading
+    : credential.isError
+      ? management.unavailable
+      : connected
+        ? management.healthy
+        : management.unavailable
+  const primary = instancesQuery.isError ? (
+    <PersonalError error={instancesQuery.error} retry={() => void instancesQuery.refetch()} />
+  ) : instancesQuery.isLoading ? (
+    <PersonalLoading />
+  ) : instances.length === 0 ? (
+    <FlatEmpty text={management.noInstances} action={() => setInstanceOpen(true)} />
+  ) : credential.isError ? (
+    <PersonalError error={credential.error} retry={() => void credential.refetch()} />
+  ) : credential.isLoading ? (
+    <PersonalLoading />
+  ) : credential.data?.connected !== true ? (
+    <PersonalPairPanel instance={instance!} onPaired={() => void credential.refetch()} />
+  ) : capabilities.isError ? (
+    <PersonalError error={capabilities.error} retry={() => void capabilities.refetch()} />
+  ) : capabilities.data ? (
+    <div className="min-w-0">
+      {view === "my-account" ? (
+        <PersonalAccountView instance={instance!} capabilities={capabilities.data} />
+      ) : view === "my-balance" ? (
+        <PersonalBalanceView instance={instance!} />
+      ) : view === "my-usage" ? (
+        <PersonalUsageView instance={instance!} />
+      ) : view === "my-models" ? (
+        <PersonalModelsView instance={instance!} />
+      ) : (
+        <PersonalSecurityView instance={instance!} capabilities={capabilities.data} />
+      )}
+    </div>
+  ) : (
+    <PersonalLoading />
+  )
+
   return (
-    <SectionShell
-      title={personal.tabs[view.replace("my-", "") as keyof typeof personal.tabs]}
+    <CapabilityWorkbench
+      title={title}
       subtitle={personal.subtitle}
       actions={actions}
-      wide
-    >
-      <Alert>
-        <ShieldCheck className="size-4" />
-        <AlertTitle>{personal.packageLabel}</AlertTitle>
-        <AlertDescription>{personal.isolationNote}</AlertDescription>
-      </Alert>
-      {instancesQuery.isLoading ? (
-        <PersonalLoading />
-      ) : instances.length === 0 ? (
-        <FlatEmpty text={management.noInstances} action={() => setInstanceOpen(true)} />
-      ) : credential.isLoading ? (
-        <PersonalLoading />
-      ) : credential.data?.connected !== true ? (
-        <PersonalPairPanel instance={instance!} onPaired={() => void credential.refetch()} />
-      ) : capabilities.isError ? (
-        <PersonalError error={capabilities.error} retry={() => void capabilities.refetch()} />
-      ) : capabilities.data ? (
-        <div className="space-y-5">
-          <PersonalInstanceBar
-            instance={instance!}
-            credential={credential.data}
-            capabilities={capabilities.data}
-            onDisconnect={async () => {
-              await forgetCredential(activeId)
-              await credential.refetch()
-            }}
+      summaryLabel={personal.statusSummary}
+      actionsLabel={personal.supportingActions}
+      metrics={
+        <>
+          <CapabilityMetric
+            label={management.instances}
+            value={
+              instancesQuery.isLoading || instancesQuery.isError
+                ? "—"
+                : formatNumber(instances.length)
+            }
+            detail={
+              instancesQuery.isLoading
+                ? management.loading
+                : instancesQuery.isError
+                  ? errorText(instancesQuery.error)
+                  : undefined
+            }
           />
-          {view === "my-account" ? (
-            <PersonalAccountView instance={instance!} capabilities={capabilities.data} />
-          ) : view === "my-balance" ? (
-            <PersonalBalanceView instance={instance!} />
-          ) : view === "my-usage" ? (
-            <PersonalUsageView instance={instance!} />
-          ) : view === "my-models" ? (
-            <PersonalModelsView instance={instance!} />
-          ) : (
-            <PersonalSecurityView instance={instance!} capabilities={capabilities.data} />
-          )}
-        </div>
-      ) : (
-        <PersonalLoading />
-      )}
-      <PersonalInstanceDialog
-        open={instanceOpen}
-        onOpenChange={setInstanceOpen}
-        onSaved={async (saved) => {
-          await queryClient.invalidateQueries({ queryKey: ["more-token", "instances"] })
-          setSelectedId(saved.id)
-        }}
-      />
-    </SectionShell>
+          <CapabilityMetric
+            label={management.health}
+            value={
+              instancesQuery.isLoading || credential.isLoading || credential.isError
+                ? "—"
+                : connected
+                  ? management.healthy
+                  : management.unavailable
+            }
+            detail={
+              credential.isLoading
+                ? management.loading
+                : credential.isError
+                  ? errorText(credential.error)
+                  : undefined
+            }
+          />
+          <CapabilityMetric
+            label={personal.apiVersion}
+            value={capabilities.data?.personal_api_version ?? "—"}
+          />
+          <CapabilityMetric label={personal.currentView} value={title} />
+        </>
+      }
+      primary={primary}
+      aside={
+        <>
+          <CapabilityTile
+            title={management.connection}
+            description={management.connectionHint}
+            active={connected}
+            action={
+              instance ? (
+                <Badge variant={connected ? "outline" : "secondary"}>{connectionLabel}</Badge>
+              ) : undefined
+            }
+          >
+            {instance ? (
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="personal-more-token-instance">{management.instance}</Label>
+                  <select
+                    id="personal-more-token-instance"
+                    value={activeId}
+                    onChange={(event) => setSelectedId(event.target.value)}
+                    className="h-9 w-full min-w-0 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {instances.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <p className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                  {instance.baseUrl}
+                </p>
+                <p className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                  {connected
+                    ? credential.data?.persistent
+                      ? management.persistentCredential
+                      : management.memoryCredential
+                    : personal.signInTitle}
+                </p>
+                {connected ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={async () => {
+                      await forgetCredential(activeId)
+                      await credential.refetch()
+                    }}
+                  >
+                    <Unplug className="size-4" />
+                    {management.disconnect}
+                  </Button>
+                ) : null}
+              </div>
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => setInstanceOpen(true)}>
+                <Plus className="size-4" />
+                {management.addInstance}
+              </Button>
+            )}
+          </CapabilityTile>
+          <CapabilityTile title={personal.packageLabel} description={personal.isolationNote}>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <ShieldCheck className="size-4 text-[var(--hm-ok)]" />
+              <span>{personal.tabs.account}</span>
+            </div>
+          </CapabilityTile>
+        </>
+      }
+      detail={
+        <PersonalInstanceDialog
+          open={instanceOpen}
+          onOpenChange={setInstanceOpen}
+          onSaved={async (saved) => {
+            await queryClient.invalidateQueries({ queryKey: ["more-token", "instances"] })
+            setSelectedId(saved.id)
+          }}
+        />
+      }
+    />
   )
 }
 
@@ -473,49 +571,6 @@ function PersonalPairPanel({
           </Button>
         </>
       )}
-    </div>
-  )
-}
-
-function PersonalInstanceBar({
-  instance,
-  credential,
-  capabilities,
-  onDisconnect,
-}: {
-  instance: MoreTokenInstance
-  credential: CredentialState
-  capabilities: PersonalCapabilities
-  onDisconnect: () => void
-}) {
-  const m = useT()
-  return (
-    <div className="flex flex-col gap-3 border-y py-3 sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex min-w-0 items-center gap-3">
-        <span className="flex size-9 items-center justify-center rounded-md bg-[var(--hm-ok-soft)] text-[var(--hm-ok)]">
-          <Check className="size-4" />
-        </span>
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <p className="truncate text-sm font-medium">{instance.name}</p>
-            <Badge variant="outline">{m.management.healthy}</Badge>
-          </div>
-          <p className="truncate text-xs text-muted-foreground">
-            {instance.baseUrl} · Personal API v{capabilities.personal_api_version}
-          </p>
-        </div>
-      </div>
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-muted-foreground">
-          {credential.persistent
-            ? m.management.persistentCredential
-            : m.management.memoryCredential}
-        </span>
-        <Button variant="ghost" size="sm" onClick={onDisconnect}>
-          <Unplug className="size-4" />
-          {m.management.disconnect}
-        </Button>
-      </div>
     </div>
   )
 }

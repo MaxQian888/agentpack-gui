@@ -100,7 +100,11 @@ export function CapabilityWorkbench({
       ) : null}
 
       <div className="grid min-w-0 gap-4 min-[1100px]:grid-cols-12">
-        <div className="min-w-0 min-[1100px]:col-span-8">{primary}</div>
+        <div
+          className={cn("min-w-0", aside ? "min-[1100px]:col-span-8" : "min-[1100px]:col-span-12")}
+        >
+          {primary}
+        </div>
         {aside ? (
           <aside
             aria-label={actionsLabel}

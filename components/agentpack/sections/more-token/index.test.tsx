@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
@@ -248,6 +248,24 @@ it("shows the empty instance state without attempting management requests", asyn
   expect(managementRequest).not.toHaveBeenCalled()
 })
 
+it("shows retryable instance discovery failures instead of an empty state", async () => {
+  ;(listInstances as jest.Mock).mockRejectedValue(new Error("instance store offline"))
+  renderSection("management-overview")
+
+  expect(await screen.findAllByText("instance store offline")).toHaveLength(2)
+  expect(screen.queryByText(en.management.noInstances)).not.toBeInTheDocument()
+  expect(
+    within(screen.getByRole("alert")).getByRole("button", { name: en.management.retry })
+  ).toBeEnabled()
+})
+
+it("keeps a measurable loading state while instance discovery is pending", () => {
+  ;(listInstances as jest.Mock).mockReturnValue(new Promise(() => undefined))
+  const { container } = renderSection("management-overview")
+
+  expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument()
+})
+
 it("pairs an unconnected instance without exposing the returned token", async () => {
   ;(credentialState as jest.Mock).mockResolvedValue({ connected: false, persistent: false })
   ;(pairInstance as jest.Mock).mockResolvedValue({
@@ -271,6 +289,24 @@ it("renders account topology, quota risk and open alerts", async () => {
   expect(screen.getByText("child-a")).toBeInTheDocument()
   expect(screen.getByText("Child A is nearly depleted")).toBeInTheDocument()
   expect(screen.getByText(en.management.balanceRisk)).toBeInTheDocument()
+})
+
+it("presents management state and controls in the shared workbench", async () => {
+  renderSection("management-overview")
+  await screen.findByText("master-a")
+
+  const summary = screen.getByRole("region", { name: "Management status" })
+  expect(within(summary).getAllByText("1")).toHaveLength(2)
+  expect(within(summary).getByText(en.management.healthy)).toBeInTheDocument()
+  expect(within(summary).getByText("admin")).toBeInTheDocument()
+
+  const controls = screen.getByRole("complementary", { name: "Management controls" })
+  expect(within(controls).getByRole("region", { name: "Connection" })).toHaveTextContent(
+    instance.baseUrl
+  )
+  expect(within(controls).getByRole("region", { name: "Workspace" })).toHaveTextContent(
+    en.management.tabs.overview
+  )
 })
 
 it("renders the account center and clearly marks a read-only instance", async () => {

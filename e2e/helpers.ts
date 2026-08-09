@@ -1,7 +1,7 @@
 import { type Page, expect } from "@playwright/test"
 
 /**
- * The five task areas in the rail (English catalog `workspaces.*`), and which
+ * The seven task areas in the rail (English catalog `workspaces.*`), and which
  * of them owns each destination. Navigation is two steps now — pick the area,
  * then its tab — so the helper below does both and the specs stay about what
  * they're actually testing.
@@ -10,6 +10,8 @@ export const WORKSPACE = {
   overview: "Overview",
   install: "Install & repair",
   capabilities: "Capabilities",
+  account: "My account",
+  management: "Accounts & quota",
   usage: "Usage",
   settings: "Settings",
 } as const
@@ -26,6 +28,8 @@ export const NAV = {
   mcp: { workspace: "capabilities", tab: "MCP servers" },
   ccswitch: { workspace: "capabilities", tab: "Accounts & relays" },
   ccconnect: { workspace: "capabilities", tab: "cc-connect management" },
+  myAccount: { workspace: "account", tab: "My account" },
+  managementOverview: { workspace: "management", tab: "Operations overview" },
   history: { workspace: "usage", tab: null },
   config: { workspace: "settings", tab: "Save current setup as config" },
   about: { workspace: "settings", tab: "About & updates" },

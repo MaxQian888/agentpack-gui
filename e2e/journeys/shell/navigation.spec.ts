@@ -8,7 +8,7 @@ test("loads the app shell on the overview", async ({ page }) => {
   await expect(page.getByText("agentpack").first()).toBeVisible()
 })
 
-test("offers five task areas, not twelve destinations", async ({ page }) => {
+test("offers seven task areas instead of exposing every destination", async ({ page }) => {
   const rail = page.getByRole("navigation", { name: "Task areas" })
   for (const label of Object.values(WORKSPACE)) {
     await expect(rail.getByRole("button", { name: label, exact: true })).toBeVisible()
@@ -24,7 +24,7 @@ test("navigates through every section, via its workspace", async ({ page }) => {
 
   await navTo(page, "skills")
   await expect(page.getByRole("heading", { name: /Skills/ })).toBeVisible()
-  await expect(page.getByRole("tab", { name: "Installed" })).toBeVisible()
+  await expect(page.getByText("Skill browsing needs the desktop app.")).toBeVisible()
 
   await navTo(page, "mcp")
   await expect(page.getByRole("heading", { name: "MCP servers" })).toBeVisible()
@@ -43,6 +43,16 @@ test("navigates through every section, via its workspace", async ({ page }) => {
 
   await navTo(page, "ccconnect")
   await expect(page.getByText(NOT_IN_TAURI)).toBeVisible()
+
+  await navTo(page, "myAccount")
+  await expect(page.getByRole("heading", { name: "My more-token account" })).toBeVisible()
+  await expect(
+    page.getByText("Personal account management is available", { exact: false })
+  ).toBeVisible()
+
+  await navTo(page, "managementOverview")
+  await expect(page.getByRole("heading", { name: "Accounts & quota" })).toBeVisible()
+  await expect(page.getByText("Account management is available", { exact: false })).toBeVisible()
 
   await navTo(page, "config")
   await expect(page.getByRole("button", { name: "Save config" })).toBeVisible()

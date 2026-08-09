@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
@@ -258,12 +258,30 @@ beforeEach(() => {
   )
 })
 
+it("keeps the personal workspace desktop-only with its own boundary copy", () => {
+  ;(isTauri as jest.Mock).mockReturnValue(false)
+  renderSection("my-account")
+  expect(screen.getByText(en.personal.desktopOnly)).toBeInTheDocument()
+  expect(listInstances).not.toHaveBeenCalled()
+})
+
 it("hides management-package instances from the personal workspace", async () => {
   ;(listInstances as jest.Mock).mockResolvedValue([managementInstance])
   renderSection("my-account")
   expect(await screen.findByText(en.management.noInstances)).toBeInTheDocument()
   expect(screen.queryByText("Operations")).not.toBeInTheDocument()
   expect(managementRequest).not.toHaveBeenCalled()
+})
+
+it("shows credential read failures instead of treating the account as unpaired", async () => {
+  ;(credentialState as jest.Mock).mockRejectedValue(new Error("credential vault unavailable"))
+  renderSection("my-account")
+
+  expect(await screen.findAllByText("credential vault unavailable")).toHaveLength(2)
+  expect(screen.queryByPlaceholderText("ABCDE-FGHIJ")).not.toBeInTheDocument()
+  expect(
+    within(screen.getByRole("alert")).getByRole("button", { name: en.management.retry })
+  ).toBeEnabled()
 })
 
 it("renders only the paired user's balance and parent relationship", async () => {
@@ -279,6 +297,24 @@ it("renders only the paired user's balance and parent relationship", async () =>
     expect(operations).toEqual(expect.arrayContaining(["personalCapabilities", "personalOverview"]))
     expect(operations.every((kind) => kind.startsWith("personal"))).toBe(true)
   })
+})
+
+it("presents personal state and package boundaries in the shared workbench", async () => {
+  renderSection("my-account")
+  await screen.findByDisplayValue("Atlas User")
+
+  const summary = screen.getByRole("region", { name: "Personal account status" })
+  expect(within(summary).getByText("1")).toBeInTheDocument()
+  expect(within(summary).getByText(en.management.healthy)).toBeInTheDocument()
+  expect(within(summary).getByText("1.0")).toBeInTheDocument()
+
+  const controls = screen.getByRole("complementary", { name: "Personal account controls" })
+  expect(within(controls).getByRole("region", { name: "Connection" })).toHaveTextContent(
+    personalInstance.baseUrl
+  )
+  expect(
+    within(controls).getByRole("region", { name: en.personal.packageLabel })
+  ).toHaveTextContent(en.personal.isolationNote)
 })
 
 it("uses the personal client identity when pairing", async () => {

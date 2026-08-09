@@ -40,4 +40,20 @@ describe("CapabilityWorkbench", () => {
     expect(screen.getByRole("region", { name: "Catalog" })).toHaveAttribute("data-selected", "true")
     expect(screen.getByRole("button", { name: "Open" })).toBeEnabled()
   })
+
+  it("lets the primary panel use the full desktop grid when no aside is present", () => {
+    render(
+      <CapabilityWorkbench
+        title="Desktop boundary"
+        summaryLabel="Boundary status"
+        actionsLabel="Boundary actions"
+        primary={<section aria-label="Desktop requirement">Desktop only</section>}
+      />
+    )
+
+    expect(screen.getByRole("region", { name: "Desktop requirement" }).parentElement).toHaveClass(
+      "min-[1100px]:col-span-12"
+    )
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument()
+  })
 })
