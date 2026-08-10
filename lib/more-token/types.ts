@@ -511,6 +511,20 @@ export interface AccountDetail extends Account {
   must_change_password: boolean
   invitation_status?: string
   active_billing_sessions: number
+  parent: Account | null
+  children: Account[]
+  children_truncated: boolean
+  active_sessions: ActiveBillingSession[]
+  active_sessions_truncated: boolean
+}
+
+export interface ActiveBillingSession {
+  id: number
+  status: string
+  funding_source: string
+  reserved_quota: number
+  lease_expires_at: number
+  started_at: number
 }
 
 export interface OverviewData {

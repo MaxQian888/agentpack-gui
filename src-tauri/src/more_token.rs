@@ -1348,7 +1348,7 @@ fn build_agent(app: &AppHandle, instance: &MoreTokenInstance) -> Result<ureq::Ag
       .collect::<Result<Vec<_>, _>>()
       .map_err(|_| "CA_IMPORT_FAILED".to_string())?;
     let mut roots = ureq::rustls::RootCertStore {
-      roots: webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect(),
+      roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
     };
     let (added, _) = roots.add_parsable_certificates(certs);
     if added == 0 {
@@ -1482,7 +1482,7 @@ pub fn more_token_save_instance(
   };
   instances.retain(|item| item.id != instance.id);
   instances.push(instance.clone());
-  instances.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+  instances.sort_by_key(|instance| instance.name.to_lowercase());
   save_instances(&app, &instances)?;
   if binding_changed {
     delete_token(instance.package, &instance.id);

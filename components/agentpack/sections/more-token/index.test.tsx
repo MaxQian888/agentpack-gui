@@ -6,6 +6,7 @@ import { en } from "@/lib/i18n/en"
 import { isTauri } from "@/lib/tauri"
 import {
   credentialState,
+  downloadCsv,
   listInstances,
   managementRequest,
   pairInstance,
@@ -18,6 +19,7 @@ jest.mock("@/lib/tauri/system", () => ({ notify: jest.fn() }))
 jest.mock("@/lib/more-token/client", () => ({
   ...jest.requireActual("@/lib/more-token/client"),
   credentialState: jest.fn(),
+  downloadCsv: jest.fn(),
   forgetCredential: jest.fn(),
   listInstances: jest.fn(),
   managementRequest: jest.fn(),
@@ -114,6 +116,29 @@ function mockOperation(operation: ManagementOperation) {
       })
     case "accounts":
       return response({ items: accounts, page: 1, page_size: 200, total: 2 })
+    case "account":
+      return response({
+        account: {
+          ...(operation.id === 2 ? accounts[1] : accounts[0]),
+          email: operation.id === 2 ? "child@example.com" : "master@example.com",
+          must_change_password: false,
+          active_billing_sessions: 1,
+          parent: operation.id === 2 ? accounts[0] : null,
+          children: operation.id === 2 ? [] : [accounts[1]],
+          children_truncated: false,
+          active_sessions: [
+            {
+              id: 41,
+              status: "ACTIVE",
+              funding_source: "wallet",
+              reserved_quota: 25,
+              lease_expires_at: 2_000_000_000,
+              started_at: 1_700_000_400,
+            },
+          ],
+          active_sessions_truncated: false,
+        },
+      })
     case "alertEvents":
       return response({
         items: [
@@ -136,7 +161,30 @@ function mockOperation(operation: ManagementOperation) {
     case "quotaSummary":
       return response({ total: 1300, available: 1080, used: 220, accounts: 2 })
     case "quotaTransactions":
-      return response({ items: [], page: 1, page_size: 50, total: 0 })
+      return response({
+        items: [
+          {
+            id: 7,
+            operation_id: "0198fefe-1111-7111-8111-111111111111",
+            type: "transfer",
+            actor_id: 1,
+            source_id: 1,
+            target_id: 2,
+            amount: 25,
+            source_before: 1000,
+            source_after: 975,
+            target_before: 80,
+            target_after: 105,
+            status: "committed",
+            reason: '=HYPERLINK("https://evil.example")',
+            request_id: "request-7",
+            created_at: 1_700_000_000,
+          },
+        ],
+        page: 1,
+        page_size: 50,
+        total: 1,
+      })
     case "quotaPolicy":
       return response({
         master_id: 1,
@@ -322,6 +370,24 @@ it("renders the account center and clearly marks a read-only instance", async ()
   expect(screen.getByRole("button", { name: en.management.createAccount })).toBeDisabled()
 })
 
+it("shows safe child relationships and active billing sessions in account details", async () => {
+  renderSection("accounts")
+  const accountTable = await screen.findByRole("table")
+  const accountButton = within(accountTable)
+    .getAllByRole("button", { name: /master-a/i })
+    .find((button) => button.textContent?.includes("Master A"))
+  expect(accountButton).toBeDefined()
+  await userEvent.click(accountButton!)
+
+  expect(await screen.findByText(en.management.accountDetail)).toBeInTheDocument()
+  const detail = screen.getByRole("dialog")
+  expect(within(detail).getByText(en.management.directChildren)).toBeInTheDocument()
+  expect(within(detail).getByText("child-a")).toBeInTheDocument()
+  expect(within(detail).getByText(en.management.activeBillingSessions)).toBeInTheDocument()
+  expect(within(detail).getByText(/wallet/)).toBeInTheDocument()
+  expect(within(detail).getByText(/ACTIVE/)).toBeInTheDocument()
+})
+
 it("renders ledger policy and disables writes when the server closes the quota gate", async () => {
   ;(managementRequest as jest.Mock).mockImplementation(
     (_instanceId: string, operation: ManagementOperation) =>
@@ -338,6 +404,17 @@ it("renders ledger policy and disables writes when the server closes the quota g
   expect(screen.getByText(en.management.ledger)).toBeInTheDocument()
 })
 
+it("exports the current ledger page through the CSV-safe download path", async () => {
+  renderSection("quota")
+  const exportButton = await screen.findByRole("button", { name: en.management.exportLedgerPage })
+  await userEvent.click(exportButton)
+
+  expect(downloadCsv).toHaveBeenCalledWith(
+    "more-token-ledger-primary-1.csv",
+    expect.arrayContaining([expect.arrayContaining(['=HYPERLINK("https://evil.example")'])])
+  )
+})
+
 it("labels authoritative analytics and local CLI estimates as different scopes", async () => {
   renderSection("analytics")
   expect(await screen.findByText(en.management.serverBilling)).toBeInTheDocument()
@@ -350,4 +427,7 @@ it("shows immutable audit details, alert rules and acknowledgement controls", as
   expect(screen.getByText("security review")).toBeInTheDocument()
   expect(screen.getByText("Low child balance")).toBeInTheDocument()
   expect(screen.getByRole("button", { name: en.management.acknowledge })).toBeEnabled()
+  await userEvent.click(screen.getByRole("button", { name: "View account #2" }))
+  expect(await screen.findByText(en.management.accountDetail)).toBeInTheDocument()
+  expect(within(screen.getByRole("dialog")).getByText("child-a")).toBeInTheDocument()
 })

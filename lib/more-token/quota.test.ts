@@ -1,4 +1,5 @@
-import { quotaAmountWithRaw } from "./quota"
+import { escapeCsvCell } from "./client"
+import { quotaAmountWithRaw, quotaTransactionsCsvRows } from "./quota"
 
 it("formats rational display amounts while preserving authoritative raw quota", () => {
   expect(
@@ -24,4 +25,48 @@ it("falls back to authoritative raw quota when the exchange rate expired", () =>
       version: 1,
     })
   ).toBe("500,000 quota")
+})
+
+it("builds a complete ledger export whose user-controlled fields are CSV-safe", () => {
+  const rows = quotaTransactionsCsvRows([
+    {
+      id: 7,
+      operation_id: "0198fefe-1111-7111-8111-111111111111",
+      type: "transfer",
+      actor_id: 1,
+      source_id: 2,
+      target_id: 3,
+      amount: 25,
+      source_before: 100,
+      source_after: 75,
+      target_before: 10,
+      target_after: 35,
+      status: "committed",
+      reason: '=HYPERLINK("https://evil.example")',
+      request_id: "request-7",
+      created_at: 1_700_000_000,
+    },
+  ])
+
+  expect(rows[0]).toEqual([
+    "id",
+    "operation_id",
+    "type",
+    "actor_id",
+    "source_id",
+    "target_id",
+    "amount_quota",
+    "source_before",
+    "source_after",
+    "target_before",
+    "target_after",
+    "status",
+    "reason",
+    "reversal_of",
+    "created_at",
+  ])
+  expect(rows[1]?.map(escapeCsvCell).join(",")).toContain(
+    '"\'=HYPERLINK(""https://evil.example"")"'
+  )
+  expect(rows[1]).not.toContain("request-7")
 })

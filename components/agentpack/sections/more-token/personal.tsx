@@ -43,6 +43,7 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { useT } from "@/lib/i18n/provider"
 import { isTauri } from "@/lib/tauri"
+import { hasInjectedMoreTokenPort } from "@/lib/more-token/port"
 import { openUrl } from "@/lib/tauri/system"
 import {
   cancelPersonalOAuth,
@@ -107,7 +108,7 @@ export function PersonalMoreTokenSection({ view }: { view: PersonalView }) {
   const personal = m.personal
   const management = m.management
   const queryClient = useQueryClient()
-  const tauri = isTauri()
+  const tauri = isTauri() || hasInjectedMoreTokenPort()
   const [selectedId, setSelectedId] = useState("")
   const [instanceOpen, setInstanceOpen] = useState(false)
   const instancesQuery = useQuery({

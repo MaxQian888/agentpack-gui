@@ -1,4 +1,45 @@
-import type { QuotaDisplaySetting } from "./types"
+import type { QuotaDisplaySetting, QuotaTransaction } from "./types"
+
+export function quotaTransactionsCsvRows(
+  transactions: QuotaTransaction[]
+): Array<Array<string | number>> {
+  return [
+    [
+      "id",
+      "operation_id",
+      "type",
+      "actor_id",
+      "source_id",
+      "target_id",
+      "amount_quota",
+      "source_before",
+      "source_after",
+      "target_before",
+      "target_after",
+      "status",
+      "reason",
+      "reversal_of",
+      "created_at",
+    ],
+    ...transactions.map((transaction) => [
+      transaction.id,
+      transaction.operation_id,
+      transaction.type,
+      transaction.actor_id,
+      transaction.source_id,
+      transaction.target_id,
+      transaction.amount,
+      transaction.source_before,
+      transaction.source_after,
+      transaction.target_before,
+      transaction.target_after,
+      transaction.status,
+      transaction.reason,
+      transaction.reversal_of ?? "",
+      new Date(transaction.created_at * 1000).toISOString(),
+    ]),
+  ]
+}
 
 export function quotaAmountWithRaw(value: number, display: QuotaDisplaySetting): string {
   const raw = `${new Intl.NumberFormat().format(value)} quota`

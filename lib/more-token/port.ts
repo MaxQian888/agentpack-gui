@@ -84,6 +84,10 @@ export function getMoreTokenPort(): MoreTokenPort {
   return activePort
 }
 
+export function hasInjectedMoreTokenPort(): boolean {
+  return activePort !== tauriMoreTokenPort
+}
+
 export function setMoreTokenPortForTests(port: MoreTokenPort | null): void {
   activePort = port ?? tauriMoreTokenPort
 }

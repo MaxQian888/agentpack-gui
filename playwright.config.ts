@@ -44,7 +44,7 @@ export default defineConfig({
 
   webServer: [
     {
-      command: `pnpm dev --port ${mainPort}`,
+      command: `NEXT_PUBLIC_AGENTPACK_E2E_FIXTURES=1 pnpm dev --port ${mainPort}`,
       url: mainUrl,
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,

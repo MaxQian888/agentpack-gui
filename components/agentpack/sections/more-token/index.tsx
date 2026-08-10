@@ -40,7 +40,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
@@ -48,13 +47,6 @@ import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import {
@@ -68,7 +60,9 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { DesktopOnlyNote } from "../../desktop-only-note"
 import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "../capability-workbench"
+import { AccountDetailSheet } from "./account-detail-sheet"
 import { isTauri } from "@/lib/tauri"
+import { hasInjectedMoreTokenPort } from "@/lib/more-token/port"
 import { useT } from "@/lib/i18n/provider"
 import { notify } from "@/lib/tauri/system"
 import {
@@ -85,7 +79,7 @@ import {
 } from "@/lib/more-token/client"
 import { authorizeManagementPreview } from "@/lib/more-token/step-up"
 import { availableAccountActions } from "@/lib/more-token/accounts"
-import { quotaAmountWithRaw } from "@/lib/more-token/quota"
+import { quotaAmountWithRaw, quotaTransactionsCsvRows } from "@/lib/more-token/quota"
 import type {
   Account,
   AccountAction,
@@ -201,7 +195,7 @@ export interface MoreTokenSectionProps {
 export function MoreTokenSection({ view, localUsage }: MoreTokenSectionProps) {
   const m = useT().management
   const queryClient = useQueryClient()
-  const tauri = isTauri()
+  const tauri = isTauri() || hasInjectedMoreTokenPort()
   const instancesQuery = useQuery({
     queryKey: ["more-token", "instances"],
     queryFn: listInstances,
@@ -981,8 +975,8 @@ function AccountsView({
           setSelected={setSelected}
           onDetail={(account) => setDetailId(account.id)}
           onAction={(account, nextAction) => setAction({ account, action: nextAction })}
-          canWrite={canWrite}
-          managementRole={capabilities.role}
+          capabilities={capabilities}
+          readOnly={instance.readOnly}
           quotaDisplay={capabilities.quota_display}
         />
       )}
@@ -1042,8 +1036,8 @@ function AccountTable({
   setSelected,
   onDetail,
   onAction,
-  canWrite,
-  managementRole,
+  capabilities,
+  readOnly,
   quotaDisplay,
 }: {
   accounts: Account[]
@@ -1051,8 +1045,8 @@ function AccountTable({
   setSelected: (value: Set<number>) => void
   onDetail: (account: Account) => void
   onAction: (account: Account, action: AccountAction | "close") => void
-  canWrite: boolean
-  managementRole: ManagementCapabilities["role"]
+  capabilities: ManagementCapabilities
+  readOnly: boolean
   quotaDisplay: QuotaDisplaySetting
 }) {
   const m = useT().management
@@ -1082,40 +1076,12 @@ function AccountTable({
                   {quotaAmountWithRaw(account.quota, quotaDisplay)}
                 </span>
               </button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={`${m.actions}: ${account.username}`}
-                  >
-                    <Ellipsis />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {availableAccountActions(account, managementRole).map((action) => (
-                    <DropdownMenuItem
-                      key={action}
-                      disabled={!canWrite}
-                      onClick={() => onAction(account, action)}
-                    >
-                      {m[action === "password" ? "changePassword" : action]}
-                    </DropdownMenuItem>
-                  ))}
-                  {account.lifecycle_state === "active" || !account.lifecycle_state ? (
-                    <>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        disabled={!canWrite}
-                        className="text-destructive"
-                        onClick={() => onAction(account, "close")}
-                      >
-                        {m.close}
-                      </DropdownMenuItem>
-                    </>
-                  ) : null}
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <AccountActionsMenu
+                account={account}
+                capabilities={capabilities}
+                readOnly={readOnly}
+                onAction={onAction}
+              />
             </div>
             <div className="mt-3 flex gap-2">
               <Badge variant="outline">{account.status === 1 ? "enabled" : "disabled"}</Badge>
@@ -1197,40 +1163,12 @@ function AccountTable({
                   </Badge>
                 </TableCell>
                 <TableCell>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={`${m.actions}: ${account.username}`}
-                      >
-                        <Ellipsis />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      {availableAccountActions(account, managementRole).map((action) => (
-                        <DropdownMenuItem
-                          key={action}
-                          disabled={!canWrite}
-                          onClick={() => onAction(account, action)}
-                        >
-                          {m[action === "password" ? "changePassword" : action]}
-                        </DropdownMenuItem>
-                      ))}
-                      {account.lifecycle_state === "active" || !account.lifecycle_state ? (
-                        <>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            disabled={!canWrite}
-                            className="text-destructive"
-                            onClick={() => onAction(account, "close")}
-                          >
-                            {m.close}
-                          </DropdownMenuItem>
-                        </>
-                      ) : null}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  <AccountActionsMenu
+                    account={account}
+                    capabilities={capabilities}
+                    readOnly={readOnly}
+                    onAction={onAction}
+                  />
                 </TableCell>
               </TableRow>
             ))}
@@ -1241,125 +1179,39 @@ function AccountTable({
   )
 }
 
-function AccountDetailSheet({
+function AccountActionsMenu({
   account,
-  quotaDisplay,
-  instance,
   capabilities,
-  onDone,
-  onOpenChange,
+  readOnly,
+  onAction,
 }: {
-  account: AccountDetail | null
-  quotaDisplay: QuotaDisplaySetting
-  instance: MoreTokenInstance
+  account: Account
   capabilities: ManagementCapabilities
-  onDone: () => void
-  onOpenChange: (open: boolean) => void
+  readOnly: boolean
+  onAction: (account: Account, action: AccountAction | "close") => void
 }) {
   const m = useT().management
-  const [invitationReason, setInvitationReason] = useState("")
-  const invitation = useMutation({
-    mutationFn: async (action: "resend" | "revoke") => {
-      if (!account) throw new Error("ACCOUNT_NOT_SELECTED")
-      const draft = {
-        account_id: account.id,
-        operation_id: operationId(),
-        reason: invitationReason.trim(),
-      }
-      const preview = await data<{ preview_token: string }>(instance.id, {
-        kind: "actionPreview",
-        body: { action: `invitation_${action}`, payload: draft },
-      })
-      await authorizeManagementPreview(instance.id, preview.preview_token)
-      const body = {
-        operation_id: draft.operation_id,
-        reason: draft.reason,
-        preview_token: preview.preview_token,
-      }
-      return data(
-        instance.id,
-        action === "resend"
-          ? { kind: "resendAccountInvitation", id: account.id, body }
-          : { kind: "revokeAccountInvitation", id: account.id, body }
-      )
-    },
-    onSuccess: () => {
-      setInvitationReason("")
-      onDone()
-    },
-    onError: (error) => toast.error(errorText(error)),
-  })
+  const actions = availableAccountActions(account, capabilities, readOnly)
+  if (!actions.length) return null
   return (
-    <Sheet open={account !== null} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-md">
-        <SheetHeader>
-          <SheetTitle>{m.accountDetail}</SheetTitle>
-          <SheetDescription>{account?.username}</SheetDescription>
-        </SheetHeader>
-        {account ? (
-          <div className="space-y-4 px-4">
-            <dl className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-3 text-sm">
-              <dt className="text-muted-foreground">ID</dt>
-              <dd className="tabular-nums">{account.id}</dd>
-              <dt className="text-muted-foreground">{m.balance}</dt>
-              <dd className="tabular-nums">{quotaAmountWithRaw(account.quota, quotaDisplay)}</dd>
-              <dt className="text-muted-foreground">{m.usedQuota}</dt>
-              <dd className="tabular-nums">
-                {quotaAmountWithRaw(account.used_quota, quotaDisplay)}
-              </dd>
-              <dt className="text-muted-foreground">{m.relationship}</dt>
-              <dd>{account.master_id ? `#${account.master_id}` : "—"}</dd>
-              <dt className="text-muted-foreground">{m.lifecycle}</dt>
-              <dd>{account.lifecycle_state || "active"}</dd>
-              <dt className="text-muted-foreground">quota_version</dt>
-              <dd className="font-mono text-xs">{account.quota_version}</dd>
-              <dt className="text-muted-foreground">management_version</dt>
-              <dd className="font-mono text-xs">{account.management_version}</dd>
-              <dt className="text-muted-foreground">{m.email}</dt>
-              <dd className="truncate">{account.email || "—"}</dd>
-              <dt className="text-muted-foreground">{m.activeBillingSessions}</dt>
-              <dd>{account.active_billing_sessions}</dd>
-              <dt className="text-muted-foreground">{m.children}</dt>
-              <dd>{account.children_count}</dd>
-              <dt className="text-muted-foreground">{m.credentialState}</dt>
-              <dd>
-                {account.must_change_password
-                  ? m.passwordChangeRequired
-                  : account.invitation_status || m.ready}
-              </dd>
-            </dl>
-            {capabilities.features.account_invites_enabled && account.invitation_status ? (
-              <div className="space-y-3 rounded-md border p-3">
-                <Label htmlFor="invitation-reason">{m.reason}</Label>
-                <Input
-                  id="invitation-reason"
-                  value={invitationReason}
-                  onChange={(event) => setInvitationReason(event.target.value)}
-                />
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={!invitationReason.trim() || invitation.isPending || instance.readOnly}
-                    onClick={() => invitation.mutate("resend")}
-                  >
-                    {m.resendInvitation}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    disabled={!invitationReason.trim() || invitation.isPending || instance.readOnly}
-                    onClick={() => invitation.mutate("revoke")}
-                  >
-                    {m.revokeInvitation}
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </SheetContent>
-    </Sheet>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon-sm" aria-label={`${m.actions}: ${account.username}`}>
+          <Ellipsis />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {actions.map((action) => (
+          <DropdownMenuItem
+            key={action}
+            className={action === "close" ? "text-destructive" : undefined}
+            onClick={() => onAction(account, action)}
+          >
+            {m[action === "password" ? "changePassword" : action]}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -1767,21 +1619,37 @@ function QuotaView({
         <section className="min-w-0 overflow-hidden border-y">
           <div className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
             <h3 className="font-medium">{m.ledger}</h3>
-            <select
-              value={ledgerType}
-              onChange={(event) => {
-                setLedgerType(event.target.value)
-                setLedgerPage(1)
-              }}
-              className="h-9 rounded-md border bg-background px-2 text-sm"
-              aria-label={m.transactionType}
-            >
-              <option value="">{m.all}</option>
-              <option value="transfer">transfer</option>
-              <option value="reversal">reversal</option>
-              <option value="adjustment">adjustment</option>
-              <option value="initial_allocation">initial_allocation</option>
-            </select>
+            <div className="flex flex-wrap gap-2">
+              <select
+                value={ledgerType}
+                onChange={(event) => {
+                  setLedgerType(event.target.value)
+                  setLedgerPage(1)
+                }}
+                className="h-9 rounded-md border bg-background px-2 text-sm"
+                aria-label={m.transactionType}
+              >
+                <option value="">{m.all}</option>
+                <option value="transfer">transfer</option>
+                <option value="reversal">reversal</option>
+                <option value="adjustment">adjustment</option>
+                <option value="initial_allocation">initial_allocation</option>
+              </select>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!ledger.data?.items.length}
+                onClick={() =>
+                  downloadCsv(
+                    `more-token-ledger-${instance.id}-${ledgerPage}.csv`,
+                    quotaTransactionsCsvRows(ledger.data?.items ?? [])
+                  )
+                }
+              >
+                <Download className="size-4" />
+                {m.exportLedgerPage}
+              </Button>
+            </div>
           </div>
           <div className="min-w-0 overflow-x-auto">
             <LedgerTable
@@ -2516,6 +2384,7 @@ function AuditView({
   const [rulePage, setRulePage] = useState(1)
   const [ruleSearch, setRuleSearch] = useState("")
   const [eventPage, setEventPage] = useState(1)
+  const [detailId, setDetailId] = useState<number | null>(null)
   const audits = useQuery({
     queryKey: ["more-token", instance.id, "audit", auditPage, auditAction],
     queryFn: ({ signal }) =>
@@ -2543,6 +2412,16 @@ function AuditView({
         signal
       ),
   })
+  const detail = useQuery({
+    queryKey: ["more-token", instance.id, "account", detailId],
+    queryFn: () =>
+      data<{ account: AccountDetail }>(instance.id, { kind: "account", id: detailId! }),
+    enabled: detailId !== null,
+  })
+  useEffect(() => {
+    if (!detail.isError || detailId === null) return
+    toast.error(errorText(detail.error))
+  }, [detail.error, detail.isError, detailId])
   const ack = useMutation({
     mutationFn: (id: number) => data(instance.id, { kind: "acknowledgeAlert", id }),
     onSuccess: () =>
@@ -2724,13 +2603,25 @@ function AuditView({
                       {formatTime(event.created_at)} · {number(event.observed_value)}
                     </p>
                   </div>
-                  {event.acknowledged_at ? (
-                    <Badge variant="outline">{m.acknowledged}</Badge>
-                  ) : (
-                    <Button variant="outline" size="sm" onClick={() => ack.mutate(event.id)}>
-                      {m.acknowledge}
-                    </Button>
-                  )}
+                  <div className="flex shrink-0 flex-col items-end gap-2">
+                    {event.acknowledged_at ? (
+                      <Badge variant="outline">{m.acknowledged}</Badge>
+                    ) : (
+                      <Button variant="outline" size="sm" onClick={() => ack.mutate(event.id)}>
+                        {m.acknowledge}
+                      </Button>
+                    )}
+                    {event.account_id > 0 ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setDetailId(event.account_id)}
+                      >
+                        {m.viewAccount(event.account_id)}
+                        <ChevronRight className="size-4" />
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             ))}
@@ -2751,6 +2642,15 @@ function AuditView({
         onDone={() =>
           queryClient.invalidateQueries({ queryKey: ["more-token", instance.id, "alert-rules"] })
         }
+      />
+      <AccountDetailSheet
+        key={detailId ?? "closed"}
+        account={detail.data?.account ?? null}
+        quotaDisplay={capabilities.quota_display}
+        instance={instance}
+        capabilities={capabilities}
+        onDone={() => queryClient.invalidateQueries({ queryKey: ["more-token", instance.id] })}
+        onOpenChange={(open) => !open && setDetailId(null)}
       />
     </div>
   )

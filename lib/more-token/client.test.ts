@@ -16,7 +16,11 @@ jest.mock("@/lib/tauri/commands", () => ({
 }))
 
 import { moreTokenRequest } from "@/lib/tauri/commands"
-import { createMemoryMoreTokenPort, setMoreTokenPortForTests } from "./port"
+import {
+  createMemoryMoreTokenPort,
+  hasInjectedMoreTokenPort,
+  setMoreTokenPortForTests,
+} from "./port"
 import {
   escapeCsvCell,
   ManagementApiError,
@@ -47,6 +51,11 @@ it("supports an isolated in-memory adapter for browser tests", async () => {
     })
   )
   await expect(listInstances()).resolves.toHaveLength(1)
+  expect(hasInjectedMoreTokenPort()).toBe(true)
+})
+
+it("does not report the Tauri port as an injected browser runtime", () => {
+  expect(hasInjectedMoreTokenPort()).toBe(false)
 })
 
 it("blocks spreadsheet formulas in CSV exports", () => {
@@ -162,6 +171,119 @@ it("rejects a success envelope whose operation data does not match the contract"
   await expect(managementRequest("primary", { kind: "capabilities" })).rejects.toMatchObject({
     code: "INVALID_SERVER_RESPONSE",
   })
+})
+
+it("accepts signed deltas in personal ledger responses", async () => {
+  ;(moreTokenRequest as jest.Mock).mockResolvedValue({
+    status: 200,
+    body: {
+      success: true,
+      data: {
+        items: [
+          {
+            id: 7,
+            operation_id: "0198fefe-1111-7111-8111-111111111111",
+            type: "transfer",
+            amount: 25,
+            delta: -25,
+            balance_before: 100,
+            balance_after: 75,
+            counterparty: "child-a",
+            reason: "allocation",
+            status: "committed",
+            created_at: 1_700_000_000,
+          },
+        ],
+        page: 1,
+        page_size: 20,
+        total: 1,
+      },
+      request_id: "req-ledger",
+      server_time: 1,
+    },
+  })
+
+  await expect(
+    managementRequest<{ items: Array<{ delta: number }> }>("personal", {
+      kind: "personalLedger",
+      page: 1,
+      pageSize: 20,
+    })
+  ).resolves.toMatchObject({ data: { items: [{ delta: -25 }] } })
+})
+
+it("accepts system audit events without an authenticated actor", async () => {
+  ;(moreTokenRequest as jest.Mock).mockResolvedValue({
+    status: 200,
+    body: {
+      success: true,
+      data: {
+        items: [
+          {
+            id: 8,
+            actor_id: 0,
+            action: "management_request_denied",
+            resource_type: "route",
+            resource_id: "GET /api/distribution/accounts",
+            reason: "management authentication required",
+            request_id: "req-denied",
+            error_code: "AUTH_EXPIRED",
+            created_at: 1_700_000_000,
+          },
+        ],
+        page: 1,
+        page_size: 20,
+        total: 1,
+      },
+      request_id: "req-audit",
+      server_time: 1,
+    },
+  })
+
+  await expect(
+    managementRequest<{ items: Array<{ actor_id: number }> }>("primary", {
+      kind: "auditEvents",
+      page: 1,
+      pageSize: 20,
+    })
+  ).resolves.toMatchObject({ data: { items: [{ actor_id: 0 }] } })
+})
+
+it("accepts system alerts that are not tied to a rule", async () => {
+  ;(moreTokenRequest as jest.Mock).mockResolvedValue({
+    status: 200,
+    body: {
+      success: true,
+      data: {
+        items: [
+          {
+            id: 9,
+            rule_id: 0,
+            owner_id: 1,
+            account_id: 0,
+            kind: "monthly_budget",
+            message: "Monthly soft budget reached",
+            observed_value: 500,
+            acknowledged_at: 0,
+            created_at: 1_700_000_000,
+          },
+        ],
+        page: 1,
+        page_size: 20,
+        total: 1,
+      },
+      request_id: "req-alert",
+      server_time: 1,
+    },
+  })
+
+  await expect(
+    managementRequest<{ items: Array<{ rule_id: number }> }>("primary", {
+      kind: "alertEvents",
+      page: 1,
+      pageSize: 20,
+    })
+  ).resolves.toMatchObject({ data: { items: [{ rule_id: 0 }] } })
 })
 
 it("rejects malformed operations before they reach Tauri", async () => {
