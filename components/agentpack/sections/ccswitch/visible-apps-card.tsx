@@ -1,7 +1,6 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { useT } from "@/lib/i18n/provider"
@@ -28,12 +27,12 @@ export function VisibleAppsCard({
   const c = t.ccswitch
 
   return (
-    <Card className="gap-3 p-4">
-      <div className="font-medium">{c.visibleTitle}</div>
-      <div className="grid grid-cols-2 gap-3">
+    <section aria-label={c.visibleTitle} className="min-w-0 rounded-lg border p-4">
+      <h3 className="font-medium">{c.visibleTitle}</h3>
+      <div className="mt-3 divide-y">
         {VISIBLE_APP_KEYS.map((key) => (
-          <div key={key} className="flex items-center justify-between gap-2">
-            <Label htmlFor={`va-${key}`} className="cursor-pointer text-sm font-normal">
+          <div key={key} className="flex min-w-0 items-center justify-between gap-2 py-1.5">
+            <Label htmlFor={`va-${key}`} className="min-w-0 cursor-pointer text-sm font-normal">
               {c.appLabels[key]}
             </Label>
             <Switch
@@ -44,11 +43,9 @@ export function VisibleAppsCard({
           </div>
         ))}
       </div>
-      <div>
-        <Button variant="outline" size="sm" onClick={onApply} disabled={disabled}>
-          {t.shell.apply}
-        </Button>
-      </div>
-    </Card>
+      <Button variant="outline" size="sm" className="mt-3" onClick={onApply} disabled={disabled}>
+        {t.shell.apply}
+      </Button>
+    </section>
   )
 }

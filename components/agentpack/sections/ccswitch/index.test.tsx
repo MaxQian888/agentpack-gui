@@ -67,6 +67,7 @@ import {
 import { open as openDialog } from "@tauri-apps/plugin-dialog"
 import { CcSwitchSection } from "./index"
 import { en } from "@/lib/i18n/en"
+import { RECOMMENDED_PROVIDERS } from "@/lib/agentpack/ccswitch/preset"
 import { saveSettings } from "@/lib/tauri/settings"
 
 const CC_SETTINGS = "/h/.cc-switch/settings.json"
@@ -180,8 +181,14 @@ it("switches to the independent native provider store and persists the choice", 
   await screen.findByText("Mine")
   await userEvent.click(screen.getByRole("radio", { name: en.ccswitch.backendNative }))
   await waitFor(() => expect(saveSettings).toHaveBeenCalledWith({ providerBackend: "native" }))
-  expect(await screen.findByText(en.ccswitch.nativeReady)).toBeInTheDocument()
+  // Native mode is now stated by the option itself rather than by a second
+  // panel restating it, so that is what confirms the switch landed.
+  await waitFor(() =>
+    expect(screen.getByRole("radio", { name: en.ccswitch.backendNative })).toBeChecked()
+  )
+  // No cc-switch app to install, so that step is absent — not present and ticked.
   expect(screen.queryByText(en.ccswitch.install)).not.toBeInTheDocument()
+  expect(screen.queryByText(en.ccswitch.stepDatabaseTitle)).not.toBeInTheDocument()
 })
 
 it("ignores a stale CC Switch scan that finishes after switching to native", async () => {
@@ -316,11 +323,53 @@ it("deletes a non-current provider after confirmation", async () => {
   )
 })
 
-it("offers recommended provider presets", async () => {
+it("offers each recommended preset exactly once, beside a list that has rows", async () => {
+  // Quick add has one home at a time — the empty list, or the aside. Rendering
+  // it in both would put every preset button on screen twice.
   renderCc()
   await screen.findByText("Mine")
-  const presetBtn = screen.getAllByRole("button").find((b) => b.querySelector("svg"))
-  expect(presetBtn).toBeTruthy()
+  const preset = RECOMMENDED_PROVIDERS[0]
+  expect(screen.getAllByRole("button", { name: preset.label })).toHaveLength(1)
+  expect(screen.queryByText(en.ccswitch.emptyHint)).not.toBeInTheDocument()
+})
+
+it("puts quick add inside the empty list, where a first provider is chosen", async () => {
+  ;(ccLoadProviders as jest.Mock).mockResolvedValueOnce([])
+  renderCc()
+  expect(await screen.findByText(en.ccswitch.emptyHint)).toBeInTheDocument()
+  const preset = RECOMMENDED_PROVIDERS[0]
+  expect(screen.getAllByRole("button", { name: preset.label })).toHaveLength(1)
+  // Nothing to filter yet, so the toolbar isn't chrome describing an empty list.
+  expect(
+    screen.queryByRole("group", { name: en.ccswitch.providerToolbarLabel })
+  ).not.toBeInTheDocument()
+})
+
+it("names each provider's endpoint in the list instead of hiding it in the form", async () => {
+  ;(ccLoadProviders as jest.Mock).mockResolvedValueOnce([
+    {
+      id: "1",
+      app_type: "claude",
+      name: "Relay",
+      settings_config: JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://relay.example" } }),
+      is_current: false,
+    },
+  ])
+  renderCc()
+  expect(await screen.findByText("https://relay.example")).toBeInTheDocument()
+})
+
+it("sorts the current provider to the top when asked to", async () => {
+  ;(ccLoadProviders as jest.Mock).mockResolvedValueOnce([
+    { id: "1", app_type: "claude", name: "Alpha", settings_config: "{}", is_current: false },
+    { id: "2", app_type: "codex", name: "Zulu", settings_config: "{}", is_current: true },
+  ])
+  renderCc()
+  await screen.findByText("Zulu")
+  await userEvent.click(screen.getByRole("combobox", { name: en.ccswitch.providerSort }))
+  await userEvent.click(screen.getByRole("option", { name: en.ccswitch.providerSortCurrent }))
+  const firstBodyRow = screen.getAllByRole("row")[1]
+  expect(within(firstBodyRow).getByText("Zulu")).toBeInTheDocument()
 })
 
 it("falls back to the no-db message when the list is empty", async () => {

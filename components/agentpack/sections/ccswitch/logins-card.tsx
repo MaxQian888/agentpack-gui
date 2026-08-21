@@ -1,7 +1,5 @@
 "use client"
 
-import { KeyRound } from "lucide-react"
-import { Card } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import { isTauri } from "@/lib/tauri"
 import { useT } from "@/lib/i18n/provider"
@@ -15,59 +13,62 @@ import { LoadingLine } from "./loading-line"
  * agentpack never reads or writes the credential files themselves; this only
  * reports what `login_status` could tell from their metadata, which is why
  * macOS shows no plan or expiry.
+ *
+ * It used to render here *and* as a badge row in the aside — the same three
+ * apps, twice on one screen, with the aside copy dropping the plan and expiry
+ * that are the only reason to look. One home now, in the aside, as a list: at a
+ * quarter of the width the old three-column grid truncated every value it had.
  */
 export function LoginsCard({ login, loading }: { login: LoginReport | null; loading: boolean }) {
   const t = useT()
   const c = t.ccswitch
 
   return (
-    <Card className="gap-3 p-4">
-      <div className="flex items-center gap-1.5 font-medium">
-        <KeyRound className="size-4" />
-        {c.loginTitle}
-      </div>
-      <p className="text-xs text-muted-foreground">{c.loginHint}</p>
+    <section aria-label={c.loginTitle} className="min-w-0 rounded-lg border p-4">
+      <h3 className="font-medium">{c.loginTitle}</h3>
+      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{c.loginHint}</p>
       {login ? (
-        <div className="grid gap-2 sm:grid-cols-3">
+        <dl className="mt-3 divide-y text-sm">
           {PROVIDER_APPS.map((app) => {
             const st = login[app]
+            const detail = st.signedIn
+              ? [
+                  st.plan ?? undefined,
+                  st.mode ?? undefined,
+                  st.expiresAt
+                    ? c.loginExpires(new Date(st.expiresAt).toLocaleDateString())
+                    : undefined,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || c.loginSignedIn
+              : c.loginSignedOut
             return (
-              <div key={app} className="flex items-center gap-2 rounded-md border px-3 py-2">
-                <span
-                  aria-hidden
-                  className={cn(
-                    "size-2 shrink-0 rounded-full",
-                    st.signedIn ? "bg-emerald-500" : "bg-muted-foreground/40"
-                  )}
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium capitalize">{app}</div>
-                  <div className="truncate text-xs text-muted-foreground">
-                    {st.signedIn
-                      ? [
-                          st.plan ?? undefined,
-                          st.mode ?? undefined,
-                          st.expiresAt
-                            ? c.loginExpires(new Date(st.expiresAt).toLocaleDateString())
-                            : undefined,
-                        ]
-                          .filter(Boolean)
-                          .join(" · ") || c.loginSignedIn
-                      : c.loginSignedOut}
-                  </div>
-                </div>
+              <div key={app} className="flex min-w-0 items-start justify-between gap-3 py-2">
+                <dt className="min-w-0 capitalize">{c.appLabels[app] ?? app}</dt>
+                <dd className="flex min-w-0 shrink items-start gap-1.5 text-right text-xs text-muted-foreground">
+                  <span className="min-w-0 [overflow-wrap:anywhere]">{detail}</span>
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "mt-1 size-1.5 shrink-0 rounded-[var(--hm-radius-dot)]",
+                      st.signedIn ? "bg-[var(--hm-ok)]" : "bg-[var(--hm-neutral)]"
+                    )}
+                  />
+                </dd>
               </div>
             )
           })}
-        </div>
+        </dl>
       ) : loading ? (
-        <LoadingLine />
+        <div className="mt-3">
+          <LoadingLine />
+        </div>
       ) : (
         // A failed scan must not leave a spinner here forever.
-        <p className="text-sm text-muted-foreground">
+        <p className="mt-3 text-sm text-muted-foreground">
           {isTauri() ? c.loginUnavailable : t.shell.notInTauri}
         </p>
       )}
-    </Card>
+    </section>
   )
 }

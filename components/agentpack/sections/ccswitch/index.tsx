@@ -1,40 +1,9 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import {
-  Plus,
-  RefreshCw,
-  Database,
-  Download,
-  ExternalLink,
-  Loader2,
-  Power,
-  Search,
-  AlertTriangle,
-} from "lucide-react"
-import { cn } from "@/lib/utils"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -44,7 +13,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { CLI_TOOLS } from "@/lib/agentpack/registry"
 import {
@@ -57,9 +25,8 @@ import {
   visibleAppsStep,
 } from "@/lib/agentpack/plan"
 import { DEFAULT_VISIBLE_APPS, readVisibleApps } from "@/lib/agentpack/ccswitch/settings"
-import { RECOMMENDED_PROVIDERS } from "@/lib/agentpack/ccswitch/preset"
 import { detectUnmanagedProviders, type UnmanagedProvider } from "@/lib/agentpack/ccswitch/import"
-import { appsMissingOfficial, isOfficial, officialForm } from "@/lib/agentpack/ccswitch/official"
+import { appsMissingOfficial } from "@/lib/agentpack/ccswitch/official"
 import {
   ACCOUNTS_VERSION,
   accountsPath,
@@ -107,15 +74,20 @@ import { isTauri } from "@/lib/tauri"
 import { pickFile, pickSavePath } from "@/lib/tauri/dialog"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "../capability-workbench"
+import { CapabilityWorkbench } from "../capability-workbench"
+import { SectionStatus } from "../section-status"
+import { SetupSteps, type SetupStep } from "../setup-steps"
 import { HelpTip } from "../../help-tip"
 import { ProviderForm } from "../../provider-form"
 import { useRunnerCtx } from "../../run/runner-context"
 import { DesktopOnlyNote } from "../../desktop-only-note"
 import { AccountsCard } from "./accounts-card"
+import { AppCard } from "./app-card"
+import { BackendCard } from "./backend-card"
 import { BackupsCard } from "./backups-card"
-import { LoadingLine } from "./loading-line"
 import { LoginsCard } from "./logins-card"
+import { ProvidersCard, type ProviderFilters } from "./providers-card"
+import { QuickAddCard } from "./quick-add-card"
 import { VisibleAppsCard } from "./visible-apps-card"
 
 export function CcSwitchSection() {
@@ -579,626 +551,275 @@ export function CcSwitchSection() {
   const editingBlocked = backend === "ccswitch" && ccRunning === true
   const activeAccounts = accountsForBackend(accounts, backend)
   const currentProviderCount = providers?.filter((provider) => provider.is_current).length ?? 0
-  const signedInCount = login ? Object.values(login).filter((status) => status.signedIn).length : 0
-  const filteredProviders = useMemo(() => {
-    const query = providerQuery.trim().toLocaleLowerCase()
-    return [...(providers ?? [])]
-      .filter((provider) => {
-        if (query && !provider.name.toLocaleLowerCase().includes(query)) return false
-        if (providerApp !== "all" && provider.app_type !== providerApp) return false
-        if (providerStatus === "official" && !isOfficial(provider)) return false
-        if (providerStatus === "custom" && isOfficial(provider)) return false
-        if (providerStatus === "current" && !provider.is_current) return false
-        return true
-      })
-      .sort((a, b) => {
-        if (providerSort === "current" && a.is_current !== b.is_current) {
-          return a.is_current ? -1 : 1
-        }
-        const fieldA = providerSort === "app" ? a.app_type : a.name
-        const fieldB = providerSort === "app" ? b.app_type : b.name
-        return fieldA.localeCompare(fieldB)
-      })
-  }, [providerApp, providerQuery, providerSort, providerStatus, providers])
+  const providerCount = providers?.length ?? 0
+  const filters: ProviderFilters = {
+    query: providerQuery,
+    app: providerApp,
+    status: providerStatus,
+    sort: providerSort,
+  }
+  const setFilters = (next: Partial<ProviderFilters>) => {
+    if (next.query !== undefined) setProviderQuery(next.query)
+    if (next.app !== undefined) setProviderApp(next.app)
+    if (next.status !== undefined) setProviderStatus(next.status)
+    if (next.sort !== undefined) setProviderSort(next.sort)
+  }
+
+  /**
+   * The first-run path, in the order it has to happen.
+   *
+   * Which steps exist depends on the storage backend, and that is the point:
+   * the native store has no app to install and no database to create, so those
+   * rows are absent rather than present-and-ticked. The last two rows carry no
+   * button — the verbs they name live on the list below and on its rows, and a
+   * second "Add provider" would be a second primary for the same action.
+   */
+  const steps: SetupStep[] = [
+    ...(backend === "ccswitch"
+      ? ([
+          {
+            id: "install",
+            title: c.stepInstallTitle,
+            description: canInstall ? c.stepInstallDesc : tool.manualNote,
+            note: detected === null ? c.checking : detected ? c.detected : c.notDetected,
+            status: detected === null ? "waiting" : detected ? "done" : "current",
+            action:
+              tauri && !detected && canInstall ? (
+                <Button variant="outline" size="sm" onClick={installCcSwitch}>
+                  {c.install}
+                </Button>
+              ) : undefined,
+          },
+          {
+            id: "database",
+            title: c.stepDatabaseTitle,
+            description: needsMigration
+              ? c.schemaStale(staleColumns.join(", "))
+              : initializing
+                ? c.initializing
+                : c.stepDatabaseDesc,
+            note: dbReady === true && !needsMigration ? c.dbReady : undefined,
+            /* `dbReady === null` means the scan hasn't answered yet. Calling
+               that "current" put the accent on a row with nothing to click,
+               which reads as stuck rather than as still measuring. */
+            status: needsMigration
+              ? "blocked"
+              : dbReady === true
+                ? "done"
+                : dbReady === null || detected === null
+                  ? "waiting"
+                  : "current",
+            action: needsMigration ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void launchCcSwitch().catch(() => toast.error(c.initFailed))}
+              >
+                {c.launchCcSwitch}
+              </Button>
+            ) : needsDb ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void initDb()}
+                disabled={initializing}
+              >
+                {c.initDb}
+              </Button>
+            ) : undefined,
+          },
+        ] satisfies SetupStep[])
+      : []),
+    {
+      id: "provider",
+      title: c.stepProviderTitle,
+      description: c.stepProviderDesc,
+      note: providerCount > 0 ? c.stepProviderDone(providerCount) : undefined,
+      status: providers === null ? "waiting" : providerCount > 0 ? "done" : "current",
+    },
+    {
+      id: "current",
+      title: c.stepCurrentTitle,
+      description: c.stepCurrentDesc,
+      note: hasCurrent ? c.stepCurrentDone(currentProviderCount) : undefined,
+      status: hasCurrent ? "done" : providerCount > 0 ? "current" : "waiting",
+    },
+  ]
+
+  /* Quick add has exactly one home at a time: inside the empty list, where a
+     first provider is actually chosen, and in the aside once the list has rows.
+     Rendering it in both would put every preset button on screen twice. */
+  const quickAdd = (flat: boolean) => (
+    <QuickAddCard
+      missingOfficial={missingOfficial}
+      disabled={editingBlocked || !tauri}
+      flat={flat}
+      onPick={openAdd}
+    />
+  )
+  const listIsEmpty = providerCount === 0
 
   return (
     <>
       <CapabilityWorkbench
         title={c.menuTitle}
         help={<HelpTip text={t.help.ccswitch} />}
-        summaryLabel={c.summaryLabel}
         actionsLabel={c.actionsLabel}
-        metrics={
-          <>
-            <CapabilityMetric label={c.metricProviders} value={providers?.length ?? "—"} />
-            <CapabilityMetric label={c.metricCurrent} value={currentProviderCount} />
-            <CapabilityMetric label={c.metricAccounts} value={activeAccounts.length} />
-            <CapabilityMetric
-              label={c.metricBackend}
-              value={backend === "native" ? c.backendNative : c.backendCcSwitch}
-            />
-            <CapabilityMetric
-              label={c.metricCcSwitch}
-              value={backend === "native" ? "—" : detected === null ? "…" : detected ? "✓" : "—"}
-            />
-            <CapabilityMetric label={c.loginTitle} value={login ? `${signedInCount}/3` : "—"} />
-          </>
+        actions={
+          tauri ? (
+            <Button variant="ghost" size="sm" className="gap-1" onClick={() => void reload()}>
+              <RefreshCw className="size-3.5" />
+              {c.refresh}
+            </Button>
+          ) : undefined
+        }
+        lead={
+          /* Storage backend and the login tally are deliberately absent: the
+             backend picker states the first at the top of this very page, and
+             the logins tile in the aside lists the second per app. A summary
+             that repeats both is the third copy of each. */
+          <SectionStatus
+            label={c.summaryLabel}
+            facts={[
+              { label: c.metricProviders, value: providers?.length ?? "—" },
+              { label: c.metricCurrent, value: currentProviderCount },
+              { label: c.metricAccounts, value: activeAccounts.length },
+              {
+                label: c.metricCcSwitch,
+                value:
+                  backend === "native"
+                    ? c.metricNotUsed
+                    : detected === null
+                      ? c.loading
+                      : detected
+                        ? t.envcheck.installed
+                        : t.envcheck.notFound,
+              },
+            ]}
+          />
         }
         primary={
           <div className="flex min-w-0 flex-col gap-4">
             {!tauri ? <DesktopOnlyNote>{t.shell.notInTauri}</DesktopOnlyNote> : null}
-            <Card>
-              <CardHeader>
-                <CardTitle>{c.backendTitle}</CardTitle>
-                <CardDescription>{c.backendHint}</CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-3">
-                <ToggleGroup
-                  type="single"
-                  variant="outline"
-                  value={backend}
-                  onValueChange={selectBackend}
-                  aria-label={c.backendTitle}
-                  disabled={!tauri}
-                >
-                  <ToggleGroupItem value="native">{c.backendNative}</ToggleGroupItem>
-                  <ToggleGroupItem value="ccswitch">{c.backendCcSwitch}</ToggleGroupItem>
-                </ToggleGroup>
-                <p className="text-xs text-muted-foreground">
-                  {backend === "native" ? c.backendNativeHint : c.backendCcSwitchHint}
-                </p>
-              </CardContent>
-            </Card>
 
-            {/* Install / check / initialize */}
-            {backend === "ccswitch" ? (
-              <>
-                <Card className="gap-3 p-4">
-                  <div className="flex flex-row items-center gap-3">
-                    <div className="flex-1">
-                      <div className="font-medium">{c.install}</div>
-                      {detected !== null ? (
-                        <Badge
-                          variant={detected ? "secondary" : "outline"}
-                          className="mt-1 font-normal text-muted-foreground"
-                        >
-                          {detected ? c.detected : c.notDetected}
-                        </Badge>
-                      ) : (
-                        <Badge
-                          variant="outline"
-                          className="mt-1 gap-1 font-normal text-muted-foreground"
-                        >
-                          <Loader2 className="size-3 animate-spin" />
-                          {c.checking}
-                        </Badge>
-                      )}
-                    </div>
-                    {isTauri() ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="gap-1"
-                        onClick={() => void reload()}
-                      >
-                        <RefreshCw className="size-3.5" />
-                        {c.refresh}
-                      </Button>
-                    ) : null}
-                    {tauri && !detected && canInstall ? (
-                      <Button variant="outline" onClick={installCcSwitch}>
-                        {c.install}
-                      </Button>
-                    ) : null}
-                    {!canInstall ? (
-                      <span className="text-xs text-muted-foreground">{tool.manualNote}</span>
-                    ) : null}
-                  </div>
+            <BackendCard backend={backend} disabled={!tauri} onSelect={selectBackend} />
 
-                  {/* App control. Only once it's installed — there's nothing to open or
-            quit otherwise, and the buttons would just be dead weight. */}
-                  {isTauri() && detected ? (
-                    <div className="flex flex-row flex-wrap items-center gap-3 border-t pt-3">
-                      <div className="flex-1">
-                        <div className="font-medium">{c.appTitle}</div>
-                        <div className="mt-1 flex items-center gap-2">
-                          <span
-                            aria-hidden="true"
-                            className={cn(
-                              "size-2 rounded-full",
-                              ccRunning === null
-                                ? "bg-muted-foreground/40"
-                                : ccRunning
-                                  ? "bg-emerald-500"
-                                  : "bg-muted-foreground/40"
-                            )}
-                          />
-                          <span className="text-xs text-muted-foreground">
-                            {ccRunning === null
-                              ? c.checking
-                              : ccRunning
-                                ? c.appRunning
-                                : c.appStopped}
-                          </span>
-                        </div>
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-1"
-                        onClick={() => void openApp()}
-                        disabled={appBusy !== null}
-                      >
-                        {appBusy === "open" ? (
-                          <Loader2 className="size-3.5 animate-spin" />
-                        ) : (
-                          <ExternalLink className="size-3.5" />
-                        )}
-                        {c.appOpen}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-1"
-                        onClick={() => void quitApp()}
-                        disabled={appBusy !== null || ccRunning === false}
-                      >
-                        {appBusy === "quit" ? (
-                          <Loader2 className="size-3.5 animate-spin" />
-                        ) : (
-                          <Power className="size-3.5" />
-                        )}
-                        {c.appQuit}
-                      </Button>
-                    </div>
-                  ) : null}
+            <SetupSteps
+              title={c.guideTitle}
+              hint={c.guideHint}
+              steps={steps}
+              progressLabel={c.guideProgress}
+              statusLabels={{
+                done: t.shell.setupDone,
+                current: t.shell.setupCurrent,
+                waiting: t.shell.setupWaiting,
+                blocked: t.shell.setupBlocked,
+              }}
+            />
 
-                  {needsMigration ? (
-                    <Alert className="mt-3">
-                      <AlertTriangle />
-                      <AlertTitle>{c.initDb}</AlertTitle>
-                      <AlertDescription>
-                        <span>{c.schemaStale(staleColumns.join(", "))}</span>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="mt-1"
-                          onClick={() =>
-                            void launchCcSwitch().catch(() => toast.error(c.initFailed))
-                          }
-                        >
-                          {c.launchCcSwitch}
-                        </Button>
-                      </AlertDescription>
-                    </Alert>
-                  ) : needsDb ? (
-                    <div className="flex flex-row items-center gap-3 border-t pt-3">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-1.5 font-medium">
-                          <Database className="size-4" />
-                          {c.initDb}
-                        </div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {initializing ? c.initializing : c.initDbHint}
-                        </p>
-                      </div>
-                      <Button
-                        variant="outline"
-                        onClick={() => void initDb()}
-                        disabled={initializing}
-                      >
-                        {c.initDb}
-                      </Button>
-                    </div>
-                  ) : dbReady === true ? (
-                    <p className="border-t pt-3 text-xs text-muted-foreground">{c.dbReady}</p>
-                  ) : null}
-                </Card>
-
-                <VisibleAppsCard
-                  visible={visible}
-                  disabled={editingBlocked || !tauri}
-                  onChange={setVisible}
-                  onApply={applyVisible}
-                />
-              </>
-            ) : (
-              <Alert>
-                <Database />
-                <AlertTitle>{c.nativeReady}</AlertTitle>
-                <AlertDescription>{c.nativeReadyHint}</AlertDescription>
-              </Alert>
-            )}
-
-            <LoginsCard login={login} loading={loading} />
-
-            {/* Providers */}
-            <Card className="gap-3 p-4">
-              {editingBlocked ? (
-                <Alert>
-                  <AlertTriangle />
-                  <AlertTitle>{c.runningTitle}</AlertTitle>
-                  <AlertDescription>
-                    <span>{c.runningHint}</span>
-                    {/* The fix, right where the problem is stated — no hunting for the
-                  app in the dock just to unblock editing here. */}
-                    <div className="mt-1 flex flex-wrap gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-1"
-                        onClick={() => void quitApp()}
-                        disabled={appBusy !== null}
-                      >
-                        {appBusy === "quit" ? (
-                          <Loader2 className="size-3.5 animate-spin" />
-                        ) : (
-                          <Power className="size-3.5" />
-                        )}
-                        {c.appQuit}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="gap-1"
-                        onClick={() => void reload()}
-                      >
-                        <RefreshCw className="size-3.5" />
-                        {c.refresh}
-                      </Button>
-                    </div>
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-
-              <div className="flex items-center justify-between">
-                <div className="font-medium">{c.providersTitle}</div>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    className="gap-1"
-                    disabled={editingBlocked || !tauri}
-                    onClick={() => openAdd()}
-                  >
-                    <Plus className="size-4" />
-                    {c.addProvider}
-                  </Button>
-                </div>
-              </div>
-
-              {unmanaged.length > 0 && !editingBlocked ? (
-                <Alert>
-                  <Download />
-                  <AlertTitle>{c.unmanagedTitle(unmanaged.length)}</AlertTitle>
-                  <AlertDescription>
-                    <span>{c.unmanagedHint}</span>
-                    <div className="mt-1 flex flex-wrap gap-2">
-                      {unmanaged.map((u) => (
-                        <Button
-                          key={u.key}
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openAdd(u.form)}
-                        >
-                          {c.importOne(u.app, u.form.baseUrl ?? "")}
-                        </Button>
-                      ))}
-                    </div>
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs text-muted-foreground">
-                  {hasCurrent ? c.setCurrentNote : c.syncNoCurrent}
-                </p>
-                <div className="flex flex-wrap gap-1">
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button variant="ghost" size="sm" disabled={!providers?.length}>
-                        {c.exportProviders}
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>{c.exportProviders}</AlertDialogTitle>
-                        <AlertDialogDescription>{c.exportTokensAsk}</AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => void exportProviderBundle(false)}>
-                          {c.exportWithoutTokens}
-                        </AlertDialogAction>
-                        <AlertDialogAction onClick={() => void exportProviderBundle(true)}>
-                          {c.exportWithTokens}
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={editingBlocked || !tauri}
-                    onClick={() => void pickImportFile()}
-                  >
-                    {c.importProviders}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={syncCurrent}
-                    disabled={!hasCurrent || editingBlocked}
-                  >
-                    {c.syncCurrent}
-                  </Button>
-                </div>
-              </div>
-
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                <div className="relative sm:col-span-2 xl:col-span-1">
-                  <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    value={providerQuery}
-                    onChange={(event) => setProviderQuery(event.target.value)}
-                    placeholder={c.providerSearch}
-                    className="pl-8"
-                  />
-                </div>
-                <Select
-                  value={providerApp}
-                  onValueChange={(value) => setProviderApp(value as typeof providerApp)}
-                >
-                  <SelectTrigger aria-label={c.providerAppFilter}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">{c.providerAllApps}</SelectItem>
-                    {PROVIDER_APPS.map((app) => (
-                      <SelectItem key={app} value={app}>
-                        {c.appLabels[app] ?? app}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={providerStatus}
-                  onValueChange={(value) => setProviderStatus(value as typeof providerStatus)}
-                >
-                  <SelectTrigger aria-label={c.providerStatusFilter}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">{c.providerStatusAll}</SelectItem>
-                    <SelectItem value="official">{c.providerStatusOfficial}</SelectItem>
-                    <SelectItem value="custom">{c.providerStatusCustom}</SelectItem>
-                    <SelectItem value="current">{c.providerStatusCurrent}</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={providerSort}
-                  onValueChange={(value) => setProviderSort(value as typeof providerSort)}
-                >
-                  <SelectTrigger aria-label={c.providerSort}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="name">{c.providerSortName}</SelectItem>
-                    <SelectItem value="app">{c.providerSortApp}</SelectItem>
-                    <SelectItem value="current">{c.providerSortCurrent}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <AlertDialog open={!!importPlan} onOpenChange={(o) => !o && setImportPlan(null)}>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>{c.importProviders}</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      {c.importConflicts(
-                        importPlan?.fresh.length ?? 0,
-                        importPlan?.conflicts.map((x) => x.entry.name).join(", ") ?? ""
-                      )}
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => importPlan && runImport(importPlan, false)}>
-                      {c.importFreshOnly}
-                    </AlertDialogAction>
-                    <AlertDialogAction onClick={() => importPlan && runImport(importPlan, true)}>
-                      {c.importOverwrite}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-
-              {providers && filteredProviders.length > 0 ? (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{c.fieldName.replace(":", "")}</TableHead>
-                      <TableHead>{c.fieldApp}</TableHead>
-                      <TableHead className="text-right">{c.rowActionEdit}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredProviders.map((p) => (
-                      <TableRow key={p.id}>
-                        <TableCell className="font-medium">
-                          {p.name}
-                          {isOfficial(p) ? (
-                            <Badge variant="outline" className="ml-2 font-normal">
-                              {c.officialBadge}
-                            </Badge>
-                          ) : null}
-                          {p.is_current ? (
-                            <Badge variant="secondary" className="ml-2 font-normal">
-                              {c.current}
-                            </Badge>
-                          ) : null}
-                        </TableCell>
-                        <TableCell className="capitalize text-muted-foreground">
-                          {p.app_type}
-                        </TableCell>
-                        <TableCell className="space-x-1 text-right">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            disabled={editingBlocked}
-                            onClick={() => openEdit(p)}
-                          >
-                            {c.rowActionEdit}
-                          </Button>
-                          {!p.is_current ? (
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="ghost" size="sm" disabled={editingBlocked}>
-                                  {c.rowActionSetCurrent}
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>{c.rowActionSetCurrent}</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    {c.setCurrentConfirm}
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
-                                  <AlertDialogAction onClick={() => setCurrent(p)}>
-                                    {c.rowActionSetCurrent}
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          ) : null}
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-red-500"
-                                disabled={p.is_current || editingBlocked}
-                              >
-                                {c.rowActionDelete}
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>{c.rowActionDelete}</AlertDialogTitle>
-                                <AlertDialogDescription>{c.deleteConfirm}</AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
-                                <AlertDialogAction
-                                  onClick={() =>
-                                    void runThen([
-                                      providerStep(
-                                        "delete",
-                                        p.app_type,
-                                        p.name,
-                                        undefined,
-                                        p.id,
-                                        t,
-                                        backend
-                                      ),
-                                    ])
-                                  }
-                                >
-                                  {c.rowActionDelete}
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              ) : providers && providers.length > 0 ? (
-                <p className="text-sm text-muted-foreground">{c.providerFilterEmpty}</p>
-              ) : loading && providers === null ? (
-                <LoadingLine />
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  {providers ? c.empty : isTauri() ? c.noDb : t.shell.notInTauri}
-                </p>
-              )}
-            </Card>
+            <AlertDialog open={!!importPlan} onOpenChange={(o) => !o && setImportPlan(null)}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{c.importProviders}</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {c.importConflicts(
+                      importPlan?.fresh.length ?? 0,
+                      importPlan?.conflicts.map((x) => x.entry.name).join(", ") ?? ""
+                    )}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => importPlan && runImport(importPlan, false)}>
+                    {c.importFreshOnly}
+                  </AlertDialogAction>
+                  <AlertDialogAction onClick={() => importPlan && runImport(importPlan, true)}>
+                    {c.importOverwrite}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         }
         aside={
           <>
-            <CapabilityTile title={c.backendTitle} description={c.backendHint}>
-              <Badge variant="secondary" className="font-normal">
-                {backend === "native" ? c.backendNative : c.backendCcSwitch}
-              </Badge>
-            </CapabilityTile>
-            <CapabilityTile title={c.formAddTitle} description={c.setCurrentNote}>
-              <div className="flex flex-wrap gap-2">
-                {missingOfficial.map((app) => (
-                  <Button
-                    key={`tile-official-${app}`}
-                    variant="outline"
-                    size="sm"
-                    disabled={editingBlocked || !tauri}
-                    onClick={() => openAdd(officialForm(app, c.officialName))}
-                  >
-                    {c.addOfficial(app)}
-                  </Button>
-                ))}
-                {RECOMMENDED_PROVIDERS.map((preset) => (
-                  <Button
-                    key={`tile-${preset.key}`}
-                    variant="outline"
-                    size="sm"
-                    disabled={editingBlocked || !tauri}
-                    onClick={() => openAdd(preset.form)}
-                  >
-                    {preset.label}
-                  </Button>
-                ))}
-              </div>
-            </CapabilityTile>
-            <CapabilityTile title={c.loginTitle} description={c.loginHint}>
-              <div className="flex flex-wrap gap-2">
-                {login
-                  ? Object.entries(login).map(([app, status]) => (
-                      <Badge key={app} variant={status.signedIn ? "secondary" : "outline"}>
-                        {app}: {status.signedIn ? c.loginSignedIn : c.loginSignedOut}
-                      </Badge>
-                    ))
-                  : loading
-                    ? c.loading
-                    : c.loginUnavailable}
-              </div>
-            </CapabilityTile>
+            {listIsEmpty ? null : quickAdd(false)}
+            <LoginsCard login={login} loading={loading} />
+            {backend === "ccswitch" && tauri && detected ? (
+              <AppCard
+                running={ccRunning}
+                busy={appBusy}
+                onOpen={() => void openApp()}
+                onQuit={() => void quitApp()}
+              />
+            ) : null}
+            {backend === "ccswitch" ? (
+              <VisibleAppsCard
+                visible={visible}
+                disabled={editingBlocked || !tauri}
+                onChange={setVisible}
+                onApply={applyVisible}
+              />
+            ) : null}
           </>
         }
         detail={
-          <div className="grid min-w-0 gap-4 lg:grid-cols-2">
-            <AccountsCard
-              accounts={activeAccounts}
+          /* The provider list is the largest object on the page and the one a
+             row is read across — name, app, endpoint, three verbs. In the
+             8-column primary its last column fell off the panel; here it has
+             the whole width, and the two columns above stay short enough to
+             read as one decision plus its checklist. */
+          <div className="flex min-w-0 flex-col gap-4">
+            <ProvidersCard
               providers={providers}
-              newAccount={newAccount}
-              hasCurrent={hasCurrent}
+              loading={loading}
+              unmanaged={unmanaged}
               editingBlocked={editingBlocked}
-              onNewAccountChange={setNewAccount}
-              onSave={saveAccount}
-              onUpdate={(profile) =>
-                void writeAccounts(
-                  accounts.map((account) => (account.id === profile.id ? profile : account))
-                )
+              tauri={tauri}
+              hasCurrent={hasCurrent}
+              filters={filters}
+              appBusy={appBusy}
+              quickAdd={listIsEmpty ? quickAdd(true) : undefined}
+              onFilters={setFilters}
+              onAdd={openAdd}
+              onEdit={openEdit}
+              onSetCurrent={setCurrent}
+              onDelete={(p) =>
+                void runThen([
+                  providerStep("delete", p.app_type, p.name, undefined, p.id, t, backend),
+                ])
               }
-              onApply={applyAccount}
-              onDelete={(a) => void writeAccounts(accounts.filter((x) => x.id !== a.id))}
+              onSync={syncCurrent}
+              onExport={(withTokens) => void exportProviderBundle(withTokens)}
+              onImport={() => void pickImportFile()}
+              onQuitApp={() => void quitApp()}
+              onRefresh={() => void reload()}
             />
 
-            <BackupsCard
-              backups={backups}
-              loading={loading}
-              onRestore={(id) => void doRestore(id)}
-            />
+            <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+              <AccountsCard
+                accounts={activeAccounts}
+                providers={providers}
+                newAccount={newAccount}
+                hasCurrent={hasCurrent}
+                editingBlocked={editingBlocked}
+                onNewAccountChange={setNewAccount}
+                onSave={saveAccount}
+                onUpdate={(profile) =>
+                  void writeAccounts(
+                    accounts.map((account) => (account.id === profile.id ? profile : account))
+                  )
+                }
+                onApply={applyAccount}
+                onDelete={(a) => void writeAccounts(accounts.filter((x) => x.id !== a.id))}
+              />
+
+              <BackupsCard
+                backups={backups}
+                loading={loading}
+                onRestore={(id) => void doRestore(id)}
+              />
+            </div>
           </div>
         }
       />

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
+  AlertTriangle,
   ExternalLink,
   FolderOpen,
   Loader2,
@@ -12,8 +13,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Card } from "@/components/ui/card"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -60,7 +60,10 @@ import { isTauri } from "@/lib/tauri"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SectionShell } from "./section-shell"
-import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "./capability-workbench"
+import { cn } from "@/lib/utils"
+import { CapabilityTile, CapabilityWorkbench } from "./capability-workbench"
+import { SectionStatus } from "./section-status"
+import { SetupSteps, type SetupStep } from "./setup-steps"
 import { CcConnectConfigEditor } from "./ccconnect-config"
 import { CcConnectDashboardFrame } from "./ccconnect-dashboard"
 import { HelpTip } from "../help-tip"
@@ -360,179 +363,224 @@ export function CcConnectSection() {
       </SectionShell>
     )
   }
+  // The checklist is the page: cc-connect is staged work, and every stage is
+  // gated on the one before it. `waiting` is not "disabled" — the row says
+  // which step it is waiting on, which is the thing a greyed-out button never
+  // manages to say.
+  const configured = configExists === true && (projects ?? 0) > 0
+  const steps: SetupStep[] = [
+    {
+      id: "install",
+      title: c.stepInstallTitle,
+      description: c.stepInstallDesc,
+      note:
+        detected === null
+          ? c.checking
+          : detected
+            ? `${c.detected}${version ? ` · ${version}` : ""}`
+            : c.notDetected,
+      status: detected === null ? "waiting" : detected ? "done" : "current",
+      action:
+        detected === false && installMethod ? (
+          <Button variant="outline" size="sm" onClick={install}>
+            {c.install}
+          </Button>
+        ) : detected === true && hasUpdate && upgradeCmd ? (
+          <Button variant="outline" size="sm" onClick={upgrade}>
+            {t.shell.upgrade}
+          </Button>
+        ) : undefined,
+      secondaryAction:
+        detected === true ? (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground hover:text-[var(--hm-danger)]"
+              >
+                {c.uninstall}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{c.uninstall}</AlertDialogTitle>
+                <AlertDialogDescription>{c.uninstallConfirm}</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
+                <AlertDialogAction onClick={uninstall}>{c.uninstall}</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        ) : undefined,
+    },
+    {
+      id: "config",
+      title: c.stepConfigTitle,
+      description: (
+        <>
+          {c.stepConfigDesc}
+          {configExists !== null ? (
+            <span className="mt-1 block">
+              {configExists ? c.configInitialized : c.configMissing}
+            </span>
+          ) : null}
+        </>
+      ),
+      note: paths ? (
+        <>
+          <span className="block">{paths.ccConnectConfig}</span>
+          {configured ? <span className="block">{c.stepConfigDone(projects ?? 0)}</span> : null}
+        </>
+      ) : undefined,
+      status: !detected ? "waiting" : configured ? "done" : "current",
+      action: paths ? (
+        <CcConnectConfigEditor
+          path={paths.ccConnectConfig}
+          exists={configExists === true}
+          onSaved={() => void reload()}
+        />
+      ) : undefined,
+      secondaryAction:
+        paths && configExists ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1 text-muted-foreground"
+            onClick={() => void revealPath(paths.ccConnectConfig)}
+          >
+            <FolderOpen className="size-3.5" />
+            {c.reveal}
+          </Button>
+        ) : undefined,
+    },
+    {
+      id: "service",
+      title: c.stepStartTitle,
+      description: running ? c.daemonNote : c.stepStartDesc,
+      note: running === null ? undefined : running ? c.running : c.stopped,
+      status: !configured ? "waiting" : running ? "done" : "current",
+      action: running ? (
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1"
+          disabled={busy}
+          onClick={() => void setService(false)}
+        >
+          {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Square className="size-3.5" />}
+          {c.stop}
+        </Button>
+      ) : (
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1"
+          disabled={busy || detected !== true}
+          onClick={() => void setService(true)}
+        >
+          {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+          {c.start}
+        </Button>
+      ),
+    },
+    {
+      id: "dashboard",
+      title: c.stepOpenTitle,
+      description: (
+        <>
+          {mgmtEnabled ? c.webReadyHint : c.webAdminHint}
+          <span className="mt-1 block">{c.webUrl(url)}</span>
+        </>
+      ),
+      note:
+        configExists !== null
+          ? mgmtEnabled
+            ? c.managementEnabled
+            : c.managementDisabled
+          : undefined,
+      status: !configured ? "waiting" : "current",
+      action: (
+        <Button
+          size="sm"
+          className="gap-1"
+          disabled={webBusy || detected !== true || !paths}
+          onClick={() => void openDashboard("embed")}
+        >
+          {webBusy ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <PanelsTopLeft className="size-3.5" />
+          )}
+          {mgmtEnabled ? c.openWeb : c.enableAndOpen}
+        </Button>
+      ),
+      secondaryAction: (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="gap-1 text-muted-foreground"
+          disabled={webBusy || detected !== true || !paths}
+          onClick={() => void openDashboard("browser")}
+        >
+          <ExternalLink className="size-3.5" />
+          {c.openInBrowser}
+        </Button>
+      ),
+    },
+  ]
 
   return (
     <CapabilityWorkbench
       title={c.menuTitle}
       help={<HelpTip text={t.help.ccconnect} />}
-      summaryLabel={c.summaryLabel}
       actionsLabel={c.actionsLabel}
-      metrics={
-        <>
-          <CapabilityMetric label={c.metricVersion} value={version ?? "—"} />
-          <CapabilityMetric
-            label={c.metricStatus}
-            value={running === null ? "…" : running ? "✓" : "—"}
-          />
-          <CapabilityMetric label={c.metricProjects} value={summary.projectCount} />
-          <CapabilityMetric label={c.metricPlatforms} value={summary.platformCount} />
-          <CapabilityMetric
-            label={c.metricManagement}
-            value={summary.management.port}
-            detail={summary.management.enabled ? "✓" : "—"}
-          />
-          <CapabilityMetric
-            label={c.metricBridge}
-            value={summary.bridge.port}
-            detail={summary.bridge.enabled ? "✓" : "—"}
-          />
-        </>
+      actions={
+        <Button variant="ghost" size="sm" className="gap-1" onClick={() => void reload()}>
+          <RefreshCw className="size-3.5" />
+          {c.refresh}
+        </Button>
+      }
+      lead={
+        /* The three ports are listed in the aside with their state spelled out;
+           a "✓" in a tile up here was both a third copy and a glyph where a
+           word belongs. */
+        <SectionStatus
+          label={c.summaryLabel}
+          facts={[
+            { label: c.metricVersion, value: version ?? "—" },
+            /* Not the running state: the checklist below carries it on the very
+               row whose button changes it. */
+            { label: c.metricProjects, value: summary.projectCount },
+            { label: c.metricPlatforms, value: summary.platformCount },
+          ]}
+        />
       }
       primary={
         <div className="flex min-w-0 flex-col gap-4">
-          {/* Install / check */}
-          <Card className="gap-3 p-4">
-            <div className="flex flex-row flex-wrap items-center gap-3">
-              <div className="min-w-0 flex-1 basis-full sm:basis-auto">
-                <div className="font-medium">{c.install}</div>
-                {detected !== null ? (
-                  <Badge
-                    variant={detected ? "secondary" : "outline"}
-                    className="mt-1 font-normal text-muted-foreground"
-                  >
-                    {detected ? `${c.detected}${version ? ` · ${version}` : ""}` : c.notDetected}
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="mt-1 gap-1 font-normal text-muted-foreground">
-                    <Loader2 className="size-3 animate-spin" />
-                    {c.checking}
-                  </Badge>
-                )}
-              </div>
-              <Button variant="ghost" size="sm" className="gap-1" onClick={() => void reload()}>
-                <RefreshCw className="size-3.5" />
-                {c.refresh}
-              </Button>
-              {detected === false && installMethod ? (
-                <Button variant="outline" onClick={install}>
-                  {c.install}
-                </Button>
-              ) : null}
-              {detected === true && hasUpdate && upgradeCmd ? (
-                <Button variant="outline" onClick={upgrade}>
-                  {t.shell.upgrade}
-                </Button>
-              ) : null}
-              {detected === true ? (
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button variant="ghost" size="sm" className="text-red-500">
-                      {c.uninstall}
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>{c.uninstall}</AlertDialogTitle>
-                      <AlertDialogDescription>{c.uninstallConfirm}</AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
-                      <AlertDialogAction onClick={uninstall}>{c.uninstall}</AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              ) : null}
-            </div>
-          </Card>
+          <SetupSteps
+            title={c.guideTitle}
+            hint={c.guideHint}
+            steps={steps}
+            progressLabel={c.guideProgress}
+            statusLabels={{
+              done: t.shell.setupDone,
+              current: t.shell.setupCurrent,
+              waiting: t.shell.setupWaiting,
+              blocked: t.shell.setupBlocked,
+            }}
+          />
 
-          {/* Web dashboard */}
-          <Card className="order-first gap-3 p-4">
-            <div className="flex flex-row flex-wrap items-center gap-3">
-              <div className="min-w-0 flex-1 basis-full sm:basis-auto">
-                <div className="font-medium">{c.webTitle}</div>
-                <p className="mt-1 text-xs text-muted-foreground">{c.webUrl(url)}</p>
-                {configExists !== null ? (
-                  <Badge
-                    variant={mgmtEnabled ? "secondary" : "outline"}
-                    className="mt-1 font-normal text-muted-foreground"
-                  >
-                    {mgmtEnabled ? c.managementEnabled : c.managementDisabled}
-                  </Badge>
-                ) : null}
-              </div>
-              {projects === 0 ? (
-                <Badge variant="outline" className="font-normal text-muted-foreground">
-                  {c.noProjects}
-                </Badge>
-              ) : null}
-              {running !== null ? (
-                <Badge variant={running ? "secondary" : "outline"} className="font-normal">
-                  {running ? c.running : c.stopped}
-                </Badge>
-              ) : null}
-              {running ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1"
-                  disabled={busy}
-                  onClick={() => void setService(false)}
-                >
-                  {busy ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : (
-                    <Square className="size-3.5" />
-                  )}
-                  {c.stop}
-                </Button>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1"
-                  disabled={busy || detected !== true}
-                  onClick={() => void setService(true)}
-                >
-                  {busy ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : (
-                    <Play className="size-3.5" />
-                  )}
-                  {c.start}
-                </Button>
-              )}
-              <Button
-                size="sm"
-                className="gap-1"
-                disabled={webBusy || detected !== true || !paths}
-                onClick={() => void openDashboard("embed")}
-              >
-                {webBusy ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <PanelsTopLeft className="size-3.5" />
-                )}
-                {mgmtEnabled ? c.openWeb : c.enableAndOpen}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="gap-1"
-                disabled={webBusy || detected !== true || !paths}
-                onClick={() => void openDashboard("browser")}
-              >
-                <ExternalLink className="size-3.5" />
-                {c.openInBrowser}
-              </Button>
-            </div>
-            <p className="border-t pt-3 text-xs text-muted-foreground">
-              {projects === 0
-                ? c.needsProject
-                : mgmtEnabled
-                  ? `${c.webReadyHint} ${c.daemonNote}`
-                  : c.webAdminHint}
-            </p>
-          </Card>
+          {/* The one thing the checklist can't state in a row: why the service
+              refuses to start at all. It is a config error, not a step. */}
+          {detected && configExists && projects === 0 ? (
+            <Alert>
+              <AlertTriangle />
+              <AlertTitle>{c.noProjects}</AlertTitle>
+              <AlertDescription>{c.needsProject}</AlertDescription>
+            </Alert>
+          ) : null}
 
           {embed ? (
             <CcConnectDashboardFrame
@@ -548,79 +596,40 @@ export function CcConnectSection() {
               onOpenExternal={openEmbeddedExternally}
             />
           ) : null}
-
-          {/* Configuration */}
-          <Card className="gap-3 p-4">
-            <div className="flex flex-row flex-wrap items-center gap-3">
-              <div className="min-w-0 flex-1 basis-full sm:basis-auto">
-                <div className="font-medium">{c.configTitle}</div>
-                {paths ? (
-                  <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
-                    {paths.ccConnectConfig}
-                  </p>
-                ) : null}
-                {configExists !== null ? (
-                  <Badge
-                    variant={configExists ? "secondary" : "outline"}
-                    className="mt-1 font-normal text-muted-foreground"
-                  >
-                    {configExists ? c.configInitialized : c.configMissing}
-                  </Badge>
-                ) : null}
-              </div>
-              {paths ? (
-                <CcConnectConfigEditor
-                  path={paths.ccConnectConfig}
-                  exists={configExists === true}
-                  onSaved={() => void reload()}
-                />
-              ) : null}
-              {paths && configExists ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="gap-1"
-                  onClick={() => void revealPath(paths.ccConnectConfig)}
-                >
-                  <FolderOpen className="size-3.5" />
-                  {c.reveal}
-                </Button>
-              ) : null}
-            </div>
-          </Card>
         </div>
       }
       aside={
         <>
-          <CapabilityTile
-            title={c.metricManagement}
-            description={`localhost:${summary.management.port}`}
-          >
-            <Badge variant={summary.management.enabled ? "secondary" : "outline"}>
-              <span
-                aria-label={summary.management.enabled ? c.managementEnabled : c.managementDisabled}
-              >
-                {summary.management.enabled ? "✓" : "—"}
-              </span>
-            </Badge>
-          </CapabilityTile>
-          <CapabilityTile title={c.metricBridge} description={`localhost:${summary.bridge.port}`}>
-            <Badge variant={summary.bridge.enabled ? "secondary" : "outline"}>
-              <span
-                aria-label={summary.bridge.enabled ? c.managementEnabled : c.managementDisabled}
-              >
-                {summary.bridge.enabled ? "✓" : "—"}
-              </span>
-            </Badge>
-          </CapabilityTile>
-          <CapabilityTile title={c.metricWebhook} description={`localhost:${summary.webhook.port}`}>
-            <Badge variant={summary.webhook.enabled ? "secondary" : "outline"}>
-              <span
-                aria-label={summary.webhook.enabled ? c.managementEnabled : c.managementDisabled}
-              >
-                {summary.webhook.enabled ? "✓" : "—"}
-              </span>
-            </Badge>
+          <CapabilityTile title={c.endpointsTitle} description={c.endpointsHint}>
+            <dl className="divide-y text-sm">
+              {[
+                { id: "management", label: c.metricManagement, ...summary.management },
+                { id: "bridge", label: c.metricBridge, ...summary.bridge },
+                { id: "webhook", label: c.metricWebhook, ...summary.webhook },
+              ].map((endpoint) => (
+                <div
+                  key={endpoint.id}
+                  className="flex min-w-0 items-center justify-between gap-3 py-2"
+                >
+                  <dt className="min-w-0">
+                    <span className="block">{endpoint.label}</span>
+                    <span className="block font-mono text-[var(--hm-text-2xs)] text-muted-foreground [overflow-wrap:anywhere]">
+                      localhost:{endpoint.port}
+                    </span>
+                  </dt>
+                  <dd className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "size-1.5 rounded-[var(--hm-radius-dot)]",
+                        endpoint.enabled ? "bg-[var(--hm-ok)]" : "bg-[var(--hm-neutral)]"
+                      )}
+                    />
+                    {endpoint.enabled ? c.endpointEnabled : c.endpointDisabled}
+                  </dd>
+                </div>
+              ))}
+            </dl>
           </CapabilityTile>
           <CapabilityTile
             title={c.metricAgents}

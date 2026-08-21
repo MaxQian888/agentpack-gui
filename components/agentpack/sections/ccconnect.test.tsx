@@ -120,6 +120,40 @@ it("shows the not-in-Tauri fallback in web mode", async () => {
   expect(screen.getByText(en.shell.notInTauri)).toBeInTheDocument()
 })
 
+it("orders the checklist install → configure → start → open, and tracks progress", async () => {
+  // The page is staged work, and the order is the layout: a fresh machine must
+  // read top to bottom, with only reached steps ticked.
+  ;(detectCli as jest.Mock).mockResolvedValue({ installed: true, version: "1.4.1" })
+  ;(pathExists as jest.Mock).mockResolvedValue(true)
+  ;(readTextFile as jest.Mock).mockResolvedValue(RUNNABLE)
+  renderCc()
+
+  await screen.findByText(en.ccconnect.stepConfigTitle)
+  const rows = screen.getAllByRole("listitem")
+  expect(rows.map((row) => row.textContent)).toEqual([
+    expect.stringContaining(en.ccconnect.stepInstallTitle),
+    expect.stringContaining(en.ccconnect.stepConfigTitle),
+    expect.stringContaining(en.ccconnect.stepStartTitle),
+    expect.stringContaining(en.ccconnect.stepOpenTitle),
+  ])
+  // Installed and configured; the bridge is not running, so that is where the
+  // "do this next" marker sits and the tally stops.
+  await waitFor(() => expect(rows[1].dataset.status).toBe("done"))
+  expect(rows[0].dataset.status).toBe("done")
+  expect(rows[2].dataset.status).toBe("current")
+  expect(screen.getByText(en.ccconnect.guideProgress(2, 4))).toBeInTheDocument()
+})
+
+it("leaves later steps waiting until the one they depend on is settled", async () => {
+  // Nothing installed: configure/start/open are not merely disabled, they say
+  // they are waiting on the step above.
+  renderCc()
+  await screen.findByText(en.ccconnect.notDetected)
+  const rows = screen.getAllByRole("listitem")
+  expect(rows[0].dataset.status).toBe("current")
+  expect(rows.slice(1).map((row) => row.dataset.status)).toEqual(["waiting", "waiting", "waiting"])
+})
+
 it("shows not-detected and installs via the runner", async () => {
   renderCc()
   expect(screen.getByRole("region", { name: en.ccconnect.summaryLabel })).toBeInTheDocument()

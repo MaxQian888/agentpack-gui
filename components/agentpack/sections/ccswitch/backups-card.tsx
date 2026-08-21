@@ -1,8 +1,6 @@
 "use client"
 
-import { History } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
 import {
   AlertDialog,
@@ -38,14 +36,11 @@ export function BackupsCard({
   const c = t.ccswitch
 
   return (
-    <Card className="gap-3 p-4">
-      <div className="flex items-center gap-1.5 font-medium">
-        <History className="size-4" />
-        {c.backupsTitle}
-      </div>
-      <p className="text-xs text-muted-foreground">{c.backupsHint}</p>
+    <section aria-label={c.backupsTitle} className="min-w-0 rounded-lg border p-4">
+      <h3 className="font-medium">{c.backupsTitle}</h3>
+      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{c.backupsHint}</p>
       {backups.length > 0 ? (
-        <Table>
+        <Table className="mt-2">
           <TableBody>
             {backups.map((b) => (
               <TableRow key={b.id}>
@@ -82,10 +77,12 @@ export function BackupsCard({
           </TableBody>
         </Table>
       ) : loading ? (
-        <LoadingLine />
+        <div className="mt-3">
+          <LoadingLine />
+        </div>
       ) : (
-        <p className="text-sm text-muted-foreground">{c.noBackups}</p>
+        <p className="mt-3 text-sm text-muted-foreground">{c.noBackups}</p>
       )}
-    </Card>
+    </section>
   )
 }

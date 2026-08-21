@@ -1,7 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import { Users } from "lucide-react"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,14 +13,6 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -96,15 +87,10 @@ export function AccountsCard({
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-1.5">
-          <Users data-icon="inline-start" />
-          {c.accountsTitle}
-        </CardTitle>
-        <CardDescription>{c.accountsHint}</CardDescription>
-      </CardHeader>
-      <CardContent>
+    <section aria-label={c.accountsTitle} className="min-w-0 rounded-lg border p-4">
+      <h3 className="font-medium">{c.accountsTitle}</h3>
+      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{c.accountsHint}</p>
+      <div className="mt-3 min-w-0">
         {accounts.length > 0 ? (
           <Table>
             <TableBody>
@@ -177,8 +163,10 @@ export function AccountsCard({
         ) : (
           <p className="text-sm text-muted-foreground">{c.accountEmpty}</p>
         )}
-      </CardContent>
-      <CardFooter className="flex gap-2">
+      </div>
+      {/* Naming the current selection is what creates a profile, so the field
+          sits under the list it adds to rather than in a panel of its own. */}
+      <div className="mt-3 flex min-w-0 gap-2 border-t pt-3">
         <Input
           aria-label={c.accountNewLabel}
           placeholder={c.accountNewLabel}
@@ -188,7 +176,7 @@ export function AccountsCard({
         <Button variant="outline" onClick={onSave} disabled={!newAccount.trim() || !hasCurrent}>
           {c.accountSave}
         </Button>
-      </CardFooter>
+      </div>
 
       <Dialog open={editing !== null} onOpenChange={(open) => !open && setEditing(null)}>
         <DialogContent>
@@ -237,6 +225,6 @@ export function AccountsCard({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </section>
   )
 }
