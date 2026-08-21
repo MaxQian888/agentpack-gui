@@ -165,13 +165,17 @@ export const en = {
         title: "cc-connect",
         body: "Drive your local coding agents from a chat app — Feishu, Slack, Telegram — so you can work away from your desk.",
       },
+      preferences: {
+        title: "Preferences",
+        body: "Theme, language, interface scale and the screen agentpack opens on — all in one place.",
+      },
       config: {
-        title: "Save & share",
-        body: "Export your setup to a file, or save it as a profile so you can reproduce it on another machine.",
+        title: "Profiles & backup",
+        body: "Save your setup as a profile, or export the whole machine so you can rebuild it somewhere else.",
       },
       about: {
-        title: "Updates & settings",
-        body: "Check for a new agentpack version, set a global summon hotkey, and reopen this guide any time.",
+        title: "About & updates",
+        body: "Which build you're running, and how to get the next one.",
       },
       command: {
         title: "One way to anywhere",
@@ -242,19 +246,50 @@ export const en = {
       "Manage official accounts and relay providers for Claude Code, Codex, and OpenCode. Use Agentpack's independent store or share CC Switch's database.",
     ccconnect:
       "cc-connect bridges your local coding agents to chat apps (Feishu, Slack, Telegram…) so you can drive them from anywhere.",
+    history:
+      "Every chat you have with a CLI is saved on your own machine. agentpack reads those files — it never uploads them — and adds up what the tokens cost.",
   },
 
+  /**
+   * Quick setup, read top to bottom: one decision, one optional detour, one
+   * destination. The old four-tile metric strip is gone — it restated the
+   * selection panel and the change tray, so the same three numbers appeared
+   * three times on one screen.
+   */
   presetsScreen: {
     title: "Choose a preset",
     subtitle: "A preset pre-fills your selections; you can still adjust each step.",
-    summaryLabel: "Preset selection summary",
     actionsLabel: "Selected items",
     catalogPanel: "Preset and component selection",
-    metricPreset: "Active preset",
-    metricClis: "CLIs",
-    metricSkills: "Skills",
-    metricMcp: "MCP servers",
-    customValue: "Custom",
+    /** Step 01 — the only decision someone new has to make. */
+    stepPick: "Start from a preset",
+    stepPickHint: "One click stages everything. Most people want Recommended.",
+    /** Marks the default row, so it can't just repeat the word "Recommended". */
+    startHereTag: "Start here",
+    /** The mono readout on each row: what that preset stages, in numbers. */
+    presetCounts: (clis: number, skills: number, mcps: number) =>
+      [
+        `${clis} ${clis === 1 ? "CLI" : "CLIs"}`,
+        skills > 0 ? `${skills} ${skills === 1 ? "skill" : "skills"}` : null,
+        `${mcps} MCP ${mcps === 1 ? "server" : "servers"}`,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    presetCountsCustom: "Nothing pre-selected",
+    /** Step 02 — the three checklists, folded away until they are asked for. */
+    stepTune: "Fine-tune",
+    stepTuneTag: "Optional",
+    stepTuneHint: (clis: number, skills: number, mcps: number) =>
+      `Tick items yourself — ${clis} CLIs, ${skills} skills and ${mcps} MCP servers in the catalog.`,
+    tuneShow: "Customise",
+    tuneHide: "Hide",
+    /** Step 03 — states what the change tray does before it is pressed. */
+    stepReview: "Review and install",
+    stepReviewHint:
+      "agentpack lists every command and file first. Nothing is written until you approve it.",
+    reviewAction: (n: number) => `Review ${n} changes`,
+    selectedCount: (n: number) => `${n} items staged`,
+    emptyHint: "Pick a preset above to stage an install.",
   },
 
   presets: {
@@ -286,7 +321,7 @@ export const en = {
     summaryLabel: "CLI status summary",
     actionsLabel: "CLI selection guidance",
     catalogPanel: "CLI catalog",
-    overviewTitle: "Selection overview",
+    overviewTitle: "How installing works",
     overviewHint: "Selections are staged in the change tray and reviewed before installation.",
     metricCatalog: "Catalog",
     metricInstalled: "Installed",
@@ -319,7 +354,6 @@ export const en = {
     metricCatalog: "Runtimes",
     metricInstalled: "Installed",
     metricMissing: "Missing",
-    metricDetected: "Checked",
     metricPending: "Waiting for desktop detection",
     detecting: "Detecting installed runtimes…",
     notTauri: "Runtime detection needs the desktop app — here the versions below stay blank.",
@@ -606,6 +640,10 @@ export const en = {
     filterAuth: "Authentication",
     filterAnyAuth: "Any authentication",
     filterNoKey: "No key required",
+    /** The one button the three refinement selects fold into. */
+    filtersLabel: "Filters",
+    filtersReset: "Clear filters",
+    sortLabel: "Sort by",
     needsKeyBadge: "key",
     docs: "Docs",
     addNow: "Add now",
@@ -642,10 +680,18 @@ export const en = {
     statTotal: "Catalog",
     statInstalled: "Installed",
     statNeedsKey: "Needs key",
+    /** Why the per-target counts read "—" before the first scan lands. */
+    statPending: "Waiting for the first scan of your config files",
     summaryLabel: "MCP summary",
     actionsLabel: "MCP management views",
     catalogPanel: "MCP catalog",
-    installedActionHint: "Search, test, edit, copy, or remove servers already on disk.",
+    installedPanel: "Configured MCP servers",
+    installedListLabel: "Configured MCP servers",
+    /** Said once above the list, so no row has to explain its own chips. */
+    catalogHint:
+      "Each row lists the agents it can be added to. Click one to add the server there; click it again to remove it.",
+    keyAdd: (envVar: string) => `Add API key (${envVar})`,
+    catalogActionHint: "Browse the built-in catalog and add a server to any agent.",
     matrixActionHint: "Compare Claude Code, Codex, and OpenCode side by side.",
     addActionHint: "Create a stdio, HTTP, or SSE server, or import JSON and commands.",
     detailPanel: "MCP management details",
@@ -663,7 +709,8 @@ export const en = {
     hideKey: "Hide key",
     installedOn: "Installed on",
     // Installed tab
-    empty: "No MCP servers configured yet. Add one from the Catalog or Add-custom tab.",
+    empty: "No MCP servers configured yet. Add one from the built-in catalog.",
+    emptyBrowse: "Browse the catalog",
     emptyFiltered: "No servers match your filter.",
     sortName: "Name",
     sortTargets: "Most targets",
@@ -785,7 +832,6 @@ export const en = {
     actionsLabel: "Network discovery",
     proxyPanel: "Proxy configuration",
     mirrorsPanel: "Package and download mirrors",
-    metricMode: "Proxy mode",
     metricCandidates: "Detected proxies",
     metricReachable: "Reachable mirrors",
     metricScan: "Scan status",
@@ -799,8 +845,7 @@ export const en = {
 
     discovery: {
       title: "Detected proxies",
-      subtitle:
-        "Scans your environment variables, the OS proxy panel, npm/git config and the ports the common proxy apps listen on.",
+      subtitle: "Looks in env vars, OS settings, npm/git config and the usual local ports.",
       scan: "Scan again",
       scanning: "Scanning…",
       empty: "No proxy found on this machine. Enter one manually below if you have one.",
@@ -1388,7 +1433,8 @@ export const en = {
     mcp: "MCP servers",
     network: "Network / mirrors",
     cleanup: "Clean up",
-    saveConfig: "Save current setup as config",
+    preferences: "Preferences",
+    saveConfig: "Profiles & backup",
     about: "About & updates",
     exit: "Exit",
     progress: (done: number, total: number, secs: number) => `${done}/${total} done · ${secs}s`,
@@ -1426,6 +1472,10 @@ export const en = {
     scanIssueCount: (count: number) => `${count} scan issue${count === 1 ? "" : "s"}`,
     searchPlaceholder: "Search skills…",
     filterAll: "All",
+    /** The one button the status and sort selects fold into. */
+    filtersLabel: "Filters",
+    filtersReset: "Clear filters",
+    sortLabel: "Sort by",
     statusFilter: "Status",
     statusAll: "All statuses",
     statusManaged: "Managed",
@@ -1445,10 +1495,17 @@ export const en = {
     bundledBadge: "bundled",
     nameMismatchBadge: (name: string) => `name: ${name}`,
     empty: "No skills found in any agent directory.",
+    emptyBrowse: "Install a bundled skill",
+    /** Names the presence dots for a screen reader — a colour is not a label. */
+    installedOn: "Installed in",
     emptyFiltered: "No skills match the current filter.",
     view: "View",
     actions: "Actions",
     copyTo: (target: string) => `Copy to ${target}`,
+    installInto: (target: string) => `Install into ${target}`,
+    /** Said once above the bundled list, so no row explains its own chips. */
+    catalogHint:
+      "Each row lists the agents a skill can be installed into. Click one to install it there; click it again to remove it.",
     deleteFrom: (source: string) => `Delete from ${source}`,
     deleteConfirmTitle: (name: string) => `Delete skill "${name}"?`,
     deleteConfirmBody: (path: string) =>
@@ -1634,23 +1691,40 @@ export const en = {
   /** Account and relay management, with native and cc-switch storage. */
   ccswitch: {
     menuTitle: "Accounts & relays",
+    /** The first-run checklist. Its steps differ per storage backend. */
+    guideTitle: "Set up account switching",
+    guideHint:
+      "A provider is one endpoint a CLI talks to — your official account, or a relay that stands in for it. Add one, make it current, and Claude Code, Codex and OpenCode are pointed at it.",
+    guideProgress: (done: number, total: number) => `${done} of ${total} done`,
+    stepInstallTitle: "Install the cc-switch app",
+    stepInstallDesc:
+      "Compatibility mode reads cc-switch's own database, so the app has to exist on this machine.",
+    stepDatabaseTitle: "Create the provider database",
+    stepDatabaseDesc: "One SQLite file under ~/.cc-switch holds every provider row.",
+    stepProviderTitle: "Add your first provider",
+    stepProviderDesc:
+      "Pick an official login or a relay preset from Quick add, or fill the form in yourself.",
+    stepProviderDone: (n: number) => (n === 1 ? "1 provider saved" : `${n} providers saved`),
+    stepCurrentTitle: "Point your CLIs at it",
+    stepCurrentDesc:
+      "Making a provider current writes it into that app's live config — the CLI uses it on its next run.",
+    stepCurrentDone: (n: number) =>
+      n === 1 ? "1 app is pointed at a provider" : `${n} apps are pointed at a provider`,
     backendTitle: "Provider storage",
     backendHint:
       "Choose where provider and account-switch records live. Both modes update the same Claude Code, Codex, and OpenCode config files.",
     backendNative: "Agentpack native",
+    backendRecommended: "Recommended",
     backendCcSwitch: "CC Switch compatible",
     backendNativeHint:
       "Independent mode. Records live in ~/.agentpack/providers.json; CC Switch is not required.",
     backendCcSwitchHint:
       "Compatibility mode. Reads and writes ~/.cc-switch/cc-switch.db so both apps see the same providers.",
-    nativeReady: "Native provider store ready",
-    nativeReadyHint:
-      "No companion app is required. Changes are atomic and each write snapshots the provider store plus all three live CLI configs.",
     install: "Install / check cc-switch",
     visibleApps: "Visible apps (show only Claude & Codex)",
     providers: "Provider management",
-    detected: "✔ cc-switch detected",
-    notDetected: "○ cc-switch not detected",
+    detected: "cc-switch detected",
+    notDetected: "cc-switch not detected",
     visibleTitle: "Apps shown in cc-switch",
     visibleHint: "space toggle · enter apply · esc back",
     appLabels: {
@@ -1663,6 +1737,17 @@ export const en = {
       hermes: "Hermes",
     } as Record<string, string>,
     providersTitle: "Accounts and relay providers",
+    providersCount: (n: number) => (n === 1 ? "1 provider" : `${n} providers`),
+    providerToolbarLabel: "Filter providers",
+    columnEndpoint: "Endpoint",
+    columnActions: "Actions",
+    emptyHint:
+      "Nothing is stored yet. Quick add fills the form in for the common cases; Add provider starts from blank.",
+    quickAddTitle: "Quick add",
+    quickAddHint: "Opens the form pre-filled. Nothing is written until you save it.",
+    quickAddOfficial: "Official logins",
+    quickAddPresets: "Relay presets",
+    quickAddAllOfficial: "Every app already has an official-login row.",
     providerSearch: "Search providers…",
     providerAppFilter: "Application",
     providerAllApps: "All applications",
@@ -1681,7 +1766,8 @@ export const en = {
     metricProviders: "Providers",
     metricCurrent: "Current",
     metricAccounts: "Profiles",
-    metricBackend: "Storage",
+    /** The cc-switch app is irrelevant while the native backend is selected. */
+    metricNotUsed: "Not used",
     metricCcSwitch: "CC Switch",
     metricDatabase: "Database",
     runtimeWarning: (current: string, min: string) =>
@@ -1773,7 +1859,7 @@ export const en = {
     restoreFailed: "Restore failed. See the logs for details.",
     loadFailed: "Couldn't read the provider state. Click Refresh to retry.",
     empty: "No providers yet.",
-    addProvider: "+ Add provider",
+    addProvider: "Add provider",
     addRecommended: (label: string) => `★ Add recommended: ${label}`,
     current: "current",
     rowActionEdit: "Edit",
@@ -1811,19 +1897,37 @@ export const en = {
   /** cc-connect management screens (bridge local agents to chat platforms). */
   ccconnect: {
     menuTitle: "cc-connect management",
+    /** The first-run checklist: install, configure, start, open. In that order. */
+    guideTitle: "Get cc-connect running",
+    guideHint:
+      "cc-connect runs a small bridge on this machine. Once it is configured and started, the dashboard below is where projects, providers and chat platforms are wired up.",
+    guideProgress: (done: number, total: number) => `${done} of ${total} done`,
+    stepInstallTitle: "Install cc-connect",
+    stepInstallDesc: "The bridge ships as a command-line package; agentpack installs it for you.",
+    stepConfigTitle: "Configure a project",
+    stepConfigDesc:
+      "config.toml needs at least one [[projects]] entry naming a folder and a chat platform. Create config writes a filled-in starting point.",
+    stepConfigDone: (n: number) => (n === 1 ? "1 project configured" : `${n} projects configured`),
+    stepStartTitle: "Start the bridge",
+    stepStartDesc: "Runs in the background and keeps your projects connected.",
+    stepOpenTitle: "Open the dashboard",
     summaryLabel: "cc-connect summary",
     actionsLabel: "cc-connect endpoints",
     metricVersion: "Installed version",
-    metricStatus: "Service",
     metricProjects: "Projects",
     metricPlatforms: "Platforms",
     metricManagement: "Management",
     metricBridge: "Bridge",
     metricWebhook: "Webhook",
+    /** The aside's endpoint list — three ports, one panel, not three cards. */
+    endpointsTitle: "Local endpoints",
+    endpointsHint: "The ports cc-connect opens on this machine.",
+    endpointEnabled: "enabled",
+    endpointDisabled: "disabled",
     metricAgents: "Agent types",
     install: "Install / check cc-connect",
-    detected: "✔ cc-connect detected",
-    notDetected: "○ cc-connect not detected",
+    detected: "cc-connect detected",
+    notDetected: "cc-connect not detected",
     checking: "Checking cc-connect…",
     refresh: "Refresh",
     uninstall: "Uninstall",
@@ -1832,20 +1936,19 @@ export const en = {
     serviceTitle: "Bridge service",
     serviceHint:
       "Runs the cc-connect bridge in the background. Once web admin is enabled it serves the management dashboard, and it keeps running to bridge your configured projects to chat platforms.",
-    running: "● running",
-    stopped: "○ stopped",
+    running: "running",
+    stopped: "stopped",
     start: "Start",
     stop: "Stop",
     startFailed:
       "Couldn't start cc-connect. Check config.toml — it exits at once on a config it can't load.",
     stopFailed: "Couldn't stop cc-connect. Stop it manually, then click Refresh.",
-    noProjects: "○ no project configured",
+    noProjects: "no project configured",
     needsProject:
       "cc-connect won't start until config.toml declares at least one [[projects]] entry with a platform — it refuses the config before opening any port. Use Create config for a filled-in starting point, then replace the placeholders.",
     daemonNote:
       "Installed cc-connect as a system service? Manage it with `cc-connect daemon start/stop` instead — this app drives the plain background process.",
     dryRunBlocked: "Preview mode is on — starting or stopping the service is disabled.",
-    webTitle: "Web dashboard",
     webUrl: (url: string) => `Served at ${url} while the bridge runs with web admin enabled.`,
     openWeb: "Open dashboard",
     enableAndOpen: "Enable & open dashboard",
@@ -1867,11 +1970,11 @@ export const en = {
       "The dashboard is off by default. One click enables the management server and the bridge, starts the service and opens it right here — already logged in — so you can edit projects, providers and platforms without leaving the app.",
     webReadyHint:
       "Opens the dashboard in a panel here, pre-authenticated (via a login token), starting the service first if it isn't running. Use In browser to hand the same page to your browser instead.",
-    managementEnabled: "✔ web admin enabled",
-    managementDisabled: "○ web admin disabled",
+    managementEnabled: "web admin enabled",
+    managementDisabled: "web admin disabled",
     configTitle: "Configuration",
-    configInitialized: "✔ config.toml present",
-    configMissing: "○ not initialized — cc-connect creates it on first start",
+    configInitialized: "config.toml present",
+    configMissing: "not initialized — cc-connect creates it on first start",
     reveal: "Show in folder",
     loadFailed: "Couldn't read the cc-connect state. Click Refresh to retry.",
     configEdit: "Edit config",
@@ -2053,6 +2156,20 @@ export const en = {
     exhausting: "Likely to exhaust soon",
     pendingAlerts: "Pending alerts",
     searchAccounts: "Search username or display name",
+    search: "Search",
+    filters: "Filters",
+    clearFilters: "Clear filters",
+    removeFilter: (name: string) => `Remove filter: ${name}`,
+    accountsTotal: (count: number) => `${count} accounts`,
+    pageSummary: (page: number, pages: number) => `Page ${page} of ${pages}`,
+    clearSelection: "Clear selection",
+    writeDenied: "This connection has no account write scope.",
+    root: "Root",
+    admin: "Admin",
+    user: "User",
+    independent: "Independent",
+    childOf: (id: number) => `Child of #${id}`,
+    childrenCount: (count: number) => `${count} ${count === 1 ? "child" : "children"}`,
     allStates: "All lifecycle states",
     active: "Active",
     closing: "Closing",
@@ -2084,6 +2201,18 @@ export const en = {
     child: "Child",
     allRoles: "All roles",
     sortAccounts: "Sort accounts",
+    sortOrder: "Sort order",
+    ascending: "Oldest / A–Z first",
+    descending: "Newest / Z–A first",
+    sortByColumn: (column: string) => `Sort by ${column}`,
+    exportAccounts: "Export page",
+    viewChildren: "View child accounts",
+    childrenOf: (name: string) => `Children of ${name}`,
+    treeScope: "Relationships are drawn from the accounts on this page only.",
+    moreChildren: (count: number) => `${count} more`,
+    created: "Created",
+    noChildren: "No child accounts.",
+    noActiveSessions: "No active billing sessions.",
     newest: "Newest",
     lastLogin: "Last login",
     username: "Username",
@@ -2218,7 +2347,9 @@ export const en = {
     statusSummary: "Personal account status",
     supportingActions: "Personal account controls",
     apiVersion: "Personal API",
-    currentView: "Current view",
+    balanceSummary: "Balance summary",
+    accessSummary: "Access & activity",
+    usedShare: (percent: string) => `${percent} used`,
     packageLabel: "Personal package",
     isolationNote:
       "This connection can access only the paired user. It cannot call administrator or child-account operations.",
@@ -2252,6 +2383,7 @@ export const en = {
     profile: "Profile",
     displayName: "Display name",
     saveProfile: "Save profile",
+    profileEditDisabled: "This server does not allow editing your profile from the desktop app.",
     ledger: "Balance ledger",
     ledgerHint: "Only transactions involving your account are shown.",
     noTransactions: "No balance transactions yet.",
@@ -2399,9 +2531,6 @@ export const en = {
    */
   diagnostics: {
     title: "Needs your attention",
-    clean: "Nothing needs attention.",
-    cleanDetail: "Every config parsed, every installed tool is current.",
-    notScanned: "Run the desktop app to check this machine.",
     severity: {
       critical: "Blocking",
       warning: "Worth a look",
@@ -2412,6 +2541,7 @@ export const en = {
     open: "Open",
     setUp: "Set one up",
     openNetwork: "Open network",
+    openRuntimes: "Open Runtimes",
     degradedTitle: "Some of this machine couldn't be read",
     degradedDetail:
       "A config file was locked or unreadable, so everything below was worked out from a partial view. Installs are held back until a clean scan lands.",
@@ -2426,6 +2556,9 @@ export const en = {
       "The network check reached neither the direct route nor any proxy it found. Installs will fail until that changes.",
     upgradeTitle: (tool: string, version: string) => `${tool} ${version} is out`,
     upgradeFrom: (version: string) => `You have ${version}.`,
+    /** The update exists but npm would refuse it on this machine's Node. */
+    nodeFloorDetail: (need: number, found: string) =>
+      `npm needs Node ${need} or newer for this update, and this machine has Node ${found}.`,
   },
 
   /** The overview's record of what this app has actually done to the machine. */
@@ -2466,11 +2599,8 @@ export const en = {
     light: "Light",
     dark: "Dark",
     system: "System",
-    language: "Language",
     preview: "Preview (dry-run)",
     settings: "Settings",
-    osOverride: "OS",
-    osAuto: "Auto",
     // Custom window controls (Windows/Linux frameless window).
     minimize: "Minimize",
     maximize: "Maximize",
@@ -2495,6 +2625,11 @@ export const en = {
     uninstallNow: "Uninstall now",
     installMethod: "Install method",
     apply: "Apply",
+    /** The four SetupSteps states as words — the marker itself is only colour. */
+    setupDone: "done",
+    setupCurrent: "do this next",
+    setupWaiting: "waiting on the step above",
+    setupBlocked: "needs attention",
     add: "Add",
     edit: "Edit",
     delete: "Delete",
@@ -2522,8 +2657,6 @@ export const en = {
     statusSummary: "Environment status",
     supporting: "Usage and activity",
     systemInventory: "System inventory",
-    systemInventoryHint:
-      "Read-only state from the tools and configuration already on this machine.",
     refresh: "Rescan",
     scanning: "Scanning your environment…",
     notTauri: "Run the desktop app to scan your real environment.",
@@ -2531,7 +2664,6 @@ export const en = {
     runtimeChecking: "Checking desktop runtime…",
     partialScan: "Scan incomplete",
     overviewTools: "Tools",
-    overviewAttention: "Attention",
     overviewMcp: "MCP",
     overviewSkills: "Skills",
     overviewProviders: "Providers",
@@ -2563,10 +2695,18 @@ export const en = {
     healthAllGoodHint: "No updates pending and every config file parses.",
     healthNeedsAttention: (n: number) =>
       n === 1 ? "1 item needs attention" : `${n} items need attention`,
+    healthNeedsAttentionHint:
+      "Each fix below is staged in the review panel before anything is written.",
+    scannedAt: (time: string) => `scanned ${time}`,
     healthUpgrade: (name: string, version: string) => `${name} can be upgraded to ${version}`,
     healthConfig: (file: string, state: string) => `${file} is ${state}`,
+    /** Accessible name for a status readout, which is also a way into a section. */
+    /** Spoken stand-in for the em dash, so a readout never reads "dash dash". */
+    readoutUnknown: "not measured",
+    readoutAction: (label: string, value: string, section: string) =>
+      `${label}: ${value} — open ${section}`,
     // Truncated overview lists link out to the section that owns them.
-    viewAll: (n: number) => `${n} total · View all →`,
+    viewAll: (n: number) => `${n} total · View all`,
     // Spend card: the one number on this page that isn't about configuration.
     spend: {
       title: "Spend this month",
@@ -2605,6 +2745,44 @@ export const en = {
     emptyHint: "Once you chat with a CLI, its sessions show up here.",
     emptyFiltered: "No sessions match your filters.",
     scanError: (source: string, message: string) => `Couldn't read ${source}: ${message}`,
+
+    /**
+     * The header band: what the scan found, before any filter is applied. Read
+     * as a sentence of measured facts, the way every other workbench states its
+     * summary — never as a row of stat tiles.
+     */
+    summaryLabel: "Chat history summary",
+    /**
+     * Each label carries its own scope ("All …"), because the usage dashboard
+     * one tab down states the same quantities for a chosen period. Two figures
+     * called "Total tokens" on one screen, disagreeing, is worse than no
+     * summary at all.
+     */
+    statAllSessions: "All sessions",
+    statAllTokens: "All tokens",
+    statAllSpend: "Total spend",
+    statLastActive: "Last active",
+    statLastActiveNever: "never",
+    /** Which of the three CLIs actually have transcripts on this machine. */
+    statSources: "Tools",
+    summaryNote: "The filters below change the list only, never these totals.",
+
+    /** The two views, each with the one line that says what it answers. */
+    tabSessionsHint: "Every conversation, newest first. Open one to read the whole transcript.",
+    tabUsageHint: "Charts and totals for a period you choose.",
+    viewLabel: "History view",
+
+    /** The session list and its toolbar. */
+    listPanel: "Sessions",
+    filtersLabel: "Sort & filter",
+    filtersReset: "Reset",
+    clearDay: "Clear day filter",
+    /** Row meta, labelled rather than run together — a bare "1.2M" beside a
+        bare "$3.40" tells a newcomer nothing about which is which. */
+    rowTokens: (tokens: string) => `${tokens} tokens`,
+    rowCostEst: (cost: string) => `~${cost}`,
+    listCount: (shown: number, total: number) =>
+      shown === total ? `${total} sessions` : `${shown} of ${total} sessions`,
     /** Session sources — display names. */
     sources: {
       claude: "Claude Code",
@@ -2718,6 +2896,10 @@ export const en = {
     seriesLoading: "Loading per-message usage…",
 
     // --- Range + granularity ---
+    /** Names the pill row, so it isn't six unexplained words in a strip. */
+    periodLabel: "Period",
+    /** Groups the two format buttons under one caption. */
+    exportLabel: "Export",
     ranges: {
       today: "Today",
       "7d": "7 days",
@@ -2862,21 +3044,22 @@ export const en = {
   /** About & self-update section (app version, check/download/install). */
   about: {
     title: "About & updates",
-    subtitle: "App version and in-app updates.",
+    subtitle: "Which build this is, and how it gets the next one.",
+    actionsLabel: "Project links and locations",
+    updatePanel: "Application updates",
+    locationsTitle: "Configuration folders",
+    locationsHint: "Open the folders the installed coding agents keep their config in.",
+    locationsUnavailable: "Configuration folders are available in the desktop app.",
+    sourceTitle: "Project",
+    sourceHint: "Release notes, issues and the changelog live on GitHub.",
     summaryLabel: "Application status summary",
-    actionsLabel: "Application locations",
-    settingsPanel: "Application preferences",
-    locationsTitle: "Configuration locations",
-    locationsHint: "Open the configuration folders managed by the installed coding agents.",
-    locationsUnavailable: "Configuration locations are available in the desktop app.",
     metricVersion: "Version",
     metricSystem: "System",
     metricUpdate: "Update",
-    metricLanguage: "Language",
+    metricChecked: "Checked",
     updateNotChecked: "Not checked",
     updateCurrent: "Current",
     updateFailed: "Check failed",
-    shortcutDesktopOnly: "The global hotkey can only be registered by the desktop app.",
     systemLoading: "Reading system information",
     systemUnavailable: "System information is only available in the desktop app",
     unknownError: "Unknown system error",
@@ -2895,11 +3078,6 @@ export const en = {
     skipVersion: "Skip this version",
     viewOnGitHub: "View on GitHub",
     checkFailed: "Update check failed. Please try again later.",
-    osOverrideHint: "Build install commands for a different OS than this one.",
-    autoCheckLabel: "Check for updates on startup",
-    summonShortcutLabel: "Global hotkey",
-    summonShortcutHint: "Bring agentpack to the front from anywhere with",
-    shortcutTaken: (accel: string) => `${accel} is already used by another app.`,
     lastChecked: (when: string) => `Last checked: ${when}`,
     never: "never",
     configFolders: "Config folders",
@@ -2909,17 +3087,97 @@ export const en = {
     notifyBody: (v: string) => `agentpack ${v} is ready to install.`,
   },
 
+  /**
+   * Preferences — everything about how the app itself behaves, split out of
+   * About so that screen is only about which build you are running.
+   */
+  preferences: {
+    title: "Preferences",
+    subtitle: "How agentpack looks, where it opens, and what it may do on its own.",
+    summaryLabel: "Preference summary",
+    actionsLabel: "Guidance and defaults",
+    panelLabel: "Application preferences",
+
+    metricTheme: "Theme",
+    metricScale: "Scale",
+    metricStartup: "Opens on",
+    metricLanguage: "Language",
+
+    appearanceTitle: "Appearance",
+    appearanceHint: "Applied to this window as you change it.",
+    themeLabel: "Theme",
+    themeHint: "System follows the OS; the header's toggle flips between the other two.",
+    themeSystem: "System",
+    themeLight: "Light",
+    themeDark: "Dark",
+    languageLabel: "Language",
+    languageHint: "Every screen, the run log included.",
+    scaleLabel: "Interface scale",
+    scaleHint: "Resizes text, controls and spacing together.",
+    scaleValue: (pct: number) => `${pct}%`,
+    scaleDefault: (pct: number) => `${pct}% · default`,
+    motionLabel: "Reduce motion",
+    motionHint:
+      "Collapses panel fades and the tray slide. Your system setting already does this — turn it on for agentpack alone.",
+
+    startupTitle: "Startup",
+    startupSectionLabel: "Open on",
+    startupSectionHint: "The screen agentpack shows when it launches.",
+    startupDefault: "Overview (default)",
+    autoCheckLabel: "Check for updates on startup",
+    autoCheckHint: "One request to the release feed, at launch.",
+    quickStartLabel: "Show the quick-start card",
+    quickStartHint: "The overview's setup shortcut, shown while no assistant is installed.",
+
+    systemTitle: "This machine",
+    hotkeyLabel: "Global hotkey",
+    hotkeyHint: "Bring agentpack to the front from anywhere with",
+    hotkeyTaken: (accel: string) => `${accel} is already used by another app.`,
+    hotkeyDesktopOnly: "The global hotkey can only be registered by the desktop app.",
+    osLabel: "Build commands for",
+    osHint: "Write install commands for a different OS than this one.",
+    osAuto: "This machine",
+
+    guidanceTitle: "Guided help",
+    guidanceHint: "Walk the workspaces again, or reopen the first-run wizard.",
+    defaultsTitle: "Restore defaults",
+    defaultsHint:
+      "Resets the preferences on this page only. Profiles, providers, network settings and installed tools are untouched.",
+    defaultsAction: "Restore defaults",
+    defaultsDone: "Preferences restored to their defaults.",
+
+    webNote: "Preferences apply to this window. The desktop app remembers them between launches.",
+  },
+
   /** Multi-profile management (save / switch named setups). */
   profiles: {
-    title: "Profiles",
-    subtitle: "Save and switch between named setups.",
+    title: "Profiles & backup",
+    subtitle: "Save this machine's setup under a name, or move the whole thing elsewhere.",
+    summaryLabel: "Saved setup summary",
+    actionsLabel: "Backup and config-file actions",
+    listPanel: "Saved profiles",
+    listTitle: "Profiles",
+    listHint:
+      "A profile is a snapshot of the current selection — CLIs, skills, MCP servers and their keys.",
+    metricSaved: "Profiles",
+    metricActive: "Active",
+    metricSelection: "Current selection",
+    none: "none",
     saveAs: "Save current as profile",
     namePlaceholder: "Profile name",
     apply: "Apply",
     rename: "Rename",
+    renameLabel: (name: string) => `New name for ${name}`,
+    renameCommit: "Save name",
+    renameCancel: "Cancel rename",
     delete: "Delete",
     current: "current",
     empty: "No profiles saved yet.",
+    emptyHint:
+      "Name the current selection above and it lands here, ready to re-apply on this machine or another one.",
+    savedAt: (when: string) => `Saved ${when}`,
+    fileTitle: "Config file",
+    fileHint: "The plan-only format the headless CLI reads.",
     applied: (name: string) => `Applied profile "${name}"`,
     saved: (name: string) => `Saved profile "${name}"`,
     deleted: (name: string) => `Deleted profile "${name}"`,
