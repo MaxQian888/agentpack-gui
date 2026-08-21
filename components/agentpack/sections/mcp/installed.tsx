@@ -1,11 +1,8 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { Copy, Eye, MoreHorizontal, Pencil, Play, Search, Trash2 } from "lucide-react"
+import { Copy, Eye, MoreHorizontal, Pencil, Play, Trash2 } from "lucide-react"
 import { toast } from "sonner"
-import { Badge } from "@/components/ui/badge"
-import { Card } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -32,7 +29,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { useIncremental } from "@/hooks/use-incremental"
@@ -50,7 +46,9 @@ import { commandOnPath, probeHost, readTextFile } from "@/lib/tauri/commands"
 import type { McpTarget } from "@/lib/agentpack/types"
 import { useRunnerCtx } from "../../run/runner-context"
 import type { DashboardScan } from "../dashboard"
-import { installedRows, MCP_TARGETS, TargetDot, type McpRow } from "./helpers"
+import { CapabilityEmpty, CapabilityList, CapabilityRow } from "../capability-list"
+import { FilterField, FilterToolbar, MoreFilters, ScopeChip, SearchField } from "../filter-bar"
+import { installedRows, MCP_TARGETS, PresenceDots, TargetDot, type McpRow } from "./helpers"
 import { CustomServerForm, type CustomFormValue } from "./custom-form"
 import { McpDetailDialog } from "./detail-dialog"
 
@@ -60,9 +58,12 @@ type Sort = "name" | "targets"
 export function InstalledTab({
   scan,
   refresh,
+  onBrowseCatalog,
 }: {
   scan: DashboardScan | null
   refresh: () => void
+  /** Opens the built-in catalog — the empty state's one next step. */
+  onBrowseCatalog?: () => void
 }) {
   const t = useT()
   const m = t.mcp
@@ -172,122 +173,119 @@ export function InstalledTab({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        {SOURCES.map((s) => (
-          <button
+      {/* The scope chips carry the per-agent counts the summary strip used to
+          restate, and their dots are the legend the rows' presence dots read
+          against — so the same three facts are stated once, on the control that
+          acts on them. */}
+      <FilterToolbar
+        scope={SOURCES.map((s) => (
+          <ScopeChip
             key={s}
-            type="button"
-            onClick={() => setSource(s)}
-            className={cn(
-              "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors",
-              source === s
-                ? "border-primary bg-primary/10 font-medium"
-                : "text-muted-foreground hover:bg-accent/40"
-            )}
-          >
-            {s !== "all" ? <TargetDot target={s} on /> : null}
-            {s === "all" ? m.filterAll : m.targets[s]}
-            <span className="text-muted-foreground">{s === "all" ? rows.length : counts[s]}</span>
-          </button>
+            active={source === s}
+            onSelect={() => setSource(s)}
+            dot={s !== "all" ? <TargetDot target={s} on /> : undefined}
+            label={s === "all" ? m.filterAll : m.targets[s]}
+            count={s === "all" ? rows.length : counts[s]}
+          />
         ))}
-        <div className="ml-auto flex items-center gap-2">
-          <div className="relative">
-            <Search className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={m.searchPlaceholder}
-              className="w-56 pl-8"
-            />
-          </div>
-          <Select value={sort} onValueChange={(v) => setSort(v as Sort)}>
-            <SelectTrigger size="sm" className="w-36">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="name">{m.sortName}</SelectItem>
-              <SelectItem value="targets">{m.sortTargets}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+      >
+        <SearchField value={query} onChange={setQuery} label={m.searchPlaceholder} />
+        <MoreFilters
+          label={m.filtersLabel}
+          resetLabel={m.filtersReset}
+          active={sort === "name" ? 0 : 1}
+          onReset={() => setSort("name")}
+        >
+          <FilterField label={m.sortLabel}>
+            <Select value={sort} onValueChange={(v) => setSort(v as Sort)}>
+              <SelectTrigger size="sm" className="w-full" aria-label={m.sortLabel}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="name">{m.sortName}</SelectItem>
+                <SelectItem value="targets">{m.sortTargets}</SelectItem>
+              </SelectContent>
+            </Select>
+          </FilterField>
+        </MoreFilters>
+      </FilterToolbar>
 
       {filtered.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
-          {rows.length === 0 ? m.empty : m.emptyFiltered}
-        </div>
+        <CapabilityEmpty
+          message={rows.length === 0 ? m.empty : m.emptyFiltered}
+          action={
+            rows.length === 0 && onBrowseCatalog ? (
+              <Button variant="outline" size="sm" onClick={onBrowseCatalog}>
+                {m.emptyBrowse}
+              </Button>
+            ) : null
+          }
+        />
       ) : (
-        <div className="flex flex-col gap-2">
-          {filtered.slice(0, visible).map((row) => {
-            const present = MCP_TARGETS.filter((tg) => row.presence[tg])
-            return (
-              <Card key={row.id} className="gap-2 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setDetailId(row.id)}
-                    className="min-w-0 flex-1 text-left"
-                  >
-                    <span className="font-medium">{titleOf(row.id)}</span>
-                    {titleOf(row.id) !== row.id ? (
-                      <span className="ml-2 font-mono text-xs text-muted-foreground">{row.id}</span>
-                    ) : null}
-                  </button>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon-sm" aria-label={m.actions}>
-                        <MoreHorizontal className="size-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onSelect={() => setDetailId(row.id)}>
-                        <Eye className="size-4" /> {m.view}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onSelect={() => void testRow(row)}>
-                        <Play className="size-4" /> {m.test}
-                      </DropdownMenuItem>
-                      {!row.known ? (
+        <>
+          <CapabilityList label={m.installedListLabel}>
+            {filtered.slice(0, visible).map((row) => {
+              const present = MCP_TARGETS.filter((tg) => row.presence[tg])
+              return (
+                <CapabilityRow
+                  key={row.id}
+                  title={titleOf(row.id)}
+                  onOpen={() => setDetailId(row.id)}
+                  tags={
+                    <>
+                      {titleOf(row.id) !== row.id ? (
+                        <span className="font-mono [overflow-wrap:anywhere]">{row.id}</span>
+                      ) : null}
+                      <span>{row.known ? m.bundledBadge : m.customBadge}</span>
+                    </>
+                  }
+                  status={<PresenceDots presence={row.presence} />}
+                  actions={
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon-sm" aria-label={m.actions}>
+                          <MoreHorizontal className="size-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
                         <DropdownMenuItem onSelect={() => setDetailId(row.id)}>
-                          <Pencil className="size-4" /> {m.edit}
+                          <Eye className="size-4" /> {m.view}
                         </DropdownMenuItem>
-                      ) : null}
-                      {MCP_TARGETS.filter((tg) => !row.presence[tg]).length > 0 ? (
+                        <DropdownMenuItem onSelect={() => void testRow(row)}>
+                          <Play className="size-4" /> {m.test}
+                        </DropdownMenuItem>
+                        {!row.known ? (
+                          <DropdownMenuItem onSelect={() => setDetailId(row.id)}>
+                            <Pencil className="size-4" /> {m.edit}
+                          </DropdownMenuItem>
+                        ) : null}
+                        {MCP_TARGETS.filter((tg) => !row.presence[tg]).length > 0 ? (
+                          <DropdownMenuSeparator />
+                        ) : null}
+                        {MCP_TARGETS.filter((tg) => !row.presence[tg]).map((tg) => (
+                          <DropdownMenuItem key={tg} onSelect={() => void copyTo(row, tg)}>
+                            <Copy className="size-4" /> {m.copyToTarget(m.targets[tg])}
+                          </DropdownMenuItem>
+                        ))}
                         <DropdownMenuSeparator />
-                      ) : null}
-                      {MCP_TARGETS.filter((tg) => !row.presence[tg]).map((tg) => (
-                        <DropdownMenuItem key={tg} onSelect={() => void copyTo(row, tg)}>
-                          <Copy className="size-4" /> {m.copyToTarget(m.targets[tg])}
-                        </DropdownMenuItem>
-                      ))}
-                      <DropdownMenuSeparator />
-                      {present.map((tg) => (
-                        <DropdownMenuItem
-                          key={tg}
-                          variant="destructive"
-                          onSelect={() => setConfirm({ row, target: tg })}
-                        >
-                          <Trash2 className="size-4" /> {m.removeFromTarget(m.targets[tg])}
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {present.map((tg) => (
-                    <Badge key={tg} variant="outline" className="gap-1.5 font-normal">
-                      <TargetDot target={tg} on />
-                      {m.targets[tg]}
-                    </Badge>
-                  ))}
-                  <Badge variant="secondary" className="font-normal">
-                    {row.known ? m.bundledBadge : m.customBadge}
-                  </Badge>
-                </div>
-              </Card>
-            )
-          })}
+                        {present.map((tg) => (
+                          <DropdownMenuItem
+                            key={tg}
+                            variant="destructive"
+                            onSelect={() => setConfirm({ row, target: tg })}
+                          >
+                            <Trash2 className="size-4" /> {m.removeFromTarget(m.targets[tg])}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  }
+                />
+              )
+            })}
+          </CapabilityList>
           {hasMore ? <div ref={sentinelRef} className="h-8" /> : null}
-        </div>
+        </>
       )}
 
       <McpDetailDialog

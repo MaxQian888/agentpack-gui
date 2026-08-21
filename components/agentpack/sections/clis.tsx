@@ -17,17 +17,18 @@ import {
   upgradeCommandFor,
 } from "@/lib/agentpack/registry"
 import { cliInstallStep } from "@/lib/agentpack/plan"
-import { extractSemver, isUpgradeAvailable } from "@/lib/agentpack/version"
+import { extractSemver, isUpgradeAvailable, majorVersion } from "@/lib/agentpack/version"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "./capability-workbench"
+import { CapabilityTile, CapabilityWorkbench } from "./capability-workbench"
+import { SectionStatus } from "./section-status"
 import { HelpTip } from "../help-tip"
 import { useRunnerCtx } from "../run/runner-context"
 import { DesktopOnlyNote } from "../desktop-only-note"
 import { useMounted } from "@/hooks/use-mounted"
 import { isTauri } from "@/lib/tauri"
 
-export function ClisSection() {
+export function ClisSection({ onOpenRuntimes }: { onOpenRuntimes?: () => void } = {}) {
   const t = useT()
   const clis = useAppStore((s) => s.plan.clis)
   const cliMethods = useAppStore((s) => s.plan.cliMethods)
@@ -48,7 +49,32 @@ export function ClisSection() {
     return isUpgradeAvailable(detected?.version, latestVersions[tool.id])
   }).length
 
+  // Node as this machine reports it, for the `engines.node` floors below.
+  const nodeVersion = detections["node"]?.installed ? detections["node"].version : undefined
+  const nodeMajor = majorVersion(nodeVersion)
+
+  /**
+   * The Node major this tool's npm update needs and this machine doesn't have,
+   * or undefined when the update is safe to stage.
+   *
+   * npm rejects a package whose `engines.node` floor is above the Node here, and
+   * it does it mid-install with EBADENGINE buried in its output. Upgrade below
+   * goes straight to `cliInstallStep`, so it never passes the floor check
+   * `buildSteps` does — the same hole `diagnostics.ts` closes for the overview.
+   *
+   * Only the npm path: a native install upgrades through its own installer,
+   * where Node's version is irrelevant. An unknown manager counts as npm because
+   * that is exactly what `upgradeCommandFor` would run.
+   */
+  const blockingNodeFloor = (tool: (typeof CLI_TOOLS)[number]) => {
+    const floor = tool.minNodeMajor
+    const npmPath = !!tool.npmPackage && cliManagers[tool.id] !== "native"
+    if (!npmPath || floor === undefined || nodeMajor === undefined) return undefined
+    return nodeMajor < floor ? floor : undefined
+  }
+
   const upgradeNow = (tool: (typeof CLI_TOOLS)[number]) => {
+    if (blockingNodeFloor(tool) !== undefined) return
     const cmd = upgradeCommandFor(tool, effectiveOS(), cliManagers[tool.id])
     if (!cmd) return
     void run([cliInstallStep(tool.id, cmd, true, t)])
@@ -59,23 +85,18 @@ export function ClisSection() {
       title={t.tools.title}
       subtitle={t.tools.subtitle}
       help={<HelpTip text={t.help.cli} />}
-      summaryLabel={t.tools.summaryLabel}
       actionsLabel={t.tools.actionsLabel}
-      metrics={
-        <>
-          <CapabilityMetric label={t.tools.metricCatalog} value={CLI_TOOLS.length} />
-          <CapabilityMetric
-            label={t.tools.metricInstalled}
-            value={detectionsMeasured ? installedCount : "—"}
-            detail={detectionsMeasured ? undefined : t.tools.metricPending}
-          />
-          <CapabilityMetric label={t.tools.metricSelected} value={clis.length} />
-          <CapabilityMetric
-            label={t.tools.metricUpdates}
-            value={detectionsMeasured ? updateCount : "—"}
-            detail={detectionsMeasured ? undefined : t.tools.metricPending}
-          />
-        </>
+      lead={
+        <SectionStatus
+          label={t.tools.summaryLabel}
+          facts={[
+            { label: t.tools.metricCatalog, value: CLI_TOOLS.length },
+            { label: t.tools.metricInstalled, value: detectionsMeasured ? installedCount : "—" },
+            { label: t.tools.metricUpdates, value: detectionsMeasured ? updateCount : "—" },
+            { label: t.tools.metricSelected, value: clis.length },
+          ]}
+          notes={[detectionsMeasured ? null : t.tools.metricPending]}
+        />
       }
       primary={
         <section aria-label={t.tools.catalogPanel} className="min-w-0 rounded-lg border">
@@ -102,6 +123,10 @@ export function ClisSection() {
                   const d = detections[tool.id]
                   const latest = latestVersions[tool.id]
                   const canUpgrade = !tool.gui && isUpgradeAvailable(d?.version, latest)
+                  // The update is real; npm just can't be the one to apply it.
+                  // Gated on the same detection as the Upgrade button it replaces,
+                  // so the note below can never outlive the row's install badge.
+                  const nodeFloor = canUpgrade && d?.installed ? blockingNodeFloor(tool) : undefined
                   const upToDate = !tool.gui && !!latest && !canUpgrade
                   const checked = clis.includes(tool.id)
                   const methods = installMethodsFor(tool, effectiveOS())
@@ -136,13 +161,19 @@ export function ClisSection() {
                                 {d.version ? ` · ${extractSemver(d.version) ?? d.version}` : ""}
                               </Badge>
                               {canUpgrade ? (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => upgradeNow(tool)}
-                                >
-                                  {t.shell.upgrade}
-                                </Button>
+                                nodeFloor === undefined ? (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => upgradeNow(tool)}
+                                  >
+                                    {t.shell.upgrade}
+                                  </Button>
+                                ) : onOpenRuntimes ? (
+                                  <Button variant="outline" size="sm" onClick={onOpenRuntimes}>
+                                    {t.diagnostics.openRuntimes}
+                                  </Button>
+                                ) : null
                               ) : upToDate ? (
                                 <Badge
                                   variant="outline"
@@ -162,6 +193,14 @@ export function ClisSection() {
                           )
                         ) : null}
                       </div>
+                      {nodeFloor !== undefined ? (
+                        <p className="mt-2 pl-7 text-xs text-muted-foreground">
+                          {t.diagnostics.nodeFloorDetail(
+                            nodeFloor,
+                            nodeVersion ?? String(nodeMajor)
+                          )}
+                        </p>
+                      ) : null}
                       {showMethodPicker ? (
                         <div className="flex flex-col gap-1 border-t pt-3 pl-7">
                           <div className="flex min-w-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center">
@@ -201,17 +240,7 @@ export function ClisSection() {
       }
       aside={
         <CapabilityTile title={t.tools.overviewTitle} description={t.tools.overviewHint}>
-          <dl className="divide-y text-sm">
-            <div className="flex items-center justify-between gap-3 py-2">
-              <dt className="text-muted-foreground">{t.tools.metricSelected}</dt>
-              <dd className="font-mono tabular-nums">{clis.length}</dd>
-            </div>
-            <div className="flex items-center justify-between gap-3 py-2">
-              <dt className="text-muted-foreground">{t.tools.metricUpdates}</dt>
-              <dd className="font-mono tabular-nums">{detectionsMeasured ? updateCount : "—"}</dd>
-            </div>
-          </dl>
-          <p className="border-t pt-3 text-xs text-muted-foreground">{t.tools.upgradeNote}</p>
+          <p className="text-xs text-muted-foreground">{t.tools.upgradeNote}</p>
         </CapabilityTile>
       }
     />

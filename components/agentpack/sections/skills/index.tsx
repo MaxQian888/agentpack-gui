@@ -7,8 +7,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { isTauri } from "@/lib/tauri"
 import { useT } from "@/lib/i18n/provider"
-import { SKILL_REGISTRY_IDS } from "@/lib/agentpack/scan"
-import { countsBySource, groupSkills } from "@/lib/skills/browse"
+import { groupSkills } from "@/lib/skills/browse"
 import { isManaged } from "@/lib/skills/updates"
 import type { SkillsScanResult } from "@/lib/skills/types"
 import { HelpTip } from "../../help-tip"
@@ -16,7 +15,9 @@ import { InstalledSkillsTab } from "./installed"
 import { CatalogTab } from "./catalog"
 import { AddSkillsTab } from "./add"
 import { DesktopOnlyNote } from "../../desktop-only-note"
-import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "../capability-workbench"
+import { CapabilityWorkbench } from "../capability-workbench"
+import { SectionNav } from "../section-nav"
+import { SectionStatus } from "../section-status"
 
 /**
  * Skills manager: browse everything installed across the four global skills
@@ -40,13 +41,7 @@ export function SkillsSection({ scan, loading, refresh }: SkillsSectionProps) {
   const stats = useMemo(() => {
     if (!scan) return null
     const rows = groupSkills(scan.skills)
-    const counts = countsBySource(scan.skills)
-    return {
-      total: rows.length,
-      counts,
-      bundled: rows.filter((r) => SKILL_REGISTRY_IDS.includes(r.dirName)).length,
-      managed: rows.filter(isManaged).length,
-    }
+    return { total: rows.length, managed: rows.filter(isManaged).length }
   }, [scan])
 
   const notTauri = <DesktopOnlyNote>{sb.notTauri}</DesktopOnlyNote>
@@ -64,7 +59,12 @@ export function SkillsSection({ scan, loading, refresh }: SkillsSectionProps) {
   ) : (
     <section aria-label={sb.installedPanel} className="min-w-0">
       <h3 className="mb-3 font-medium">{sb.tabInstalled}</h3>
-      <InstalledSkillsTab scan={scan} refresh={refresh} onUpdateCountChange={setUpdateCount} />
+      <InstalledSkillsTab
+        scan={scan}
+        refresh={refresh}
+        onUpdateCountChange={setUpdateCount}
+        onBrowseCatalog={() => setDetail("catalog")}
+      />
     </section>
   )
 
@@ -99,51 +99,49 @@ export function SkillsSection({ scan, loading, refresh }: SkillsSectionProps) {
           {sb.refresh}
         </Button>
       }
-      summaryLabel={sb.summaryLabel}
       actionsLabel={sb.actionsLabel}
-      metrics={
+      lead={
+        /* Three facts, not six with a seventh line of per-root counts under
+           them. "Sources 2" and its breakdown said nothing the scope chips
+           below don't say while also filtering; "Bundled" is a tag on the rows
+           that have it. Scan issues appear only when there are some — a fact
+           worth a headline exactly when it isn't zero. */
         stats ? (
-          <>
-            <CapabilityMetric label={sb.statTotal} value={stats.total} />
-            <CapabilityMetric
-              label={sb.statSources}
-              value={Object.values(stats.counts).filter((count) => count > 0).length}
-              detail={Object.entries(stats.counts)
-                .map(([source, count]) => `${sb.sources[source]} ${count}`)
-                .join(" · ")}
-            />
-            <CapabilityMetric label={sb.statManaged} value={stats.managed} />
-            <CapabilityMetric label={sb.statUpdates} value={updateCount} />
-            <CapabilityMetric label={sb.statScanIssues} value={scan?.errors.length ?? 0} />
-            <CapabilityMetric label={sb.statBundled} value={stats.bundled} />
-          </>
-        ) : null
+          <SectionStatus
+            label={sb.summaryLabel}
+            facts={[
+              { label: sb.statTotal, value: stats.total },
+              { label: sb.statManaged, value: stats.managed },
+              { label: sb.statUpdates, value: updateCount },
+              ...(scan && scan.errors.length > 0
+                ? [{ label: sb.statScanIssues, value: scan.errors.length }]
+                : []),
+            ]}
+          />
+        ) : undefined
       }
       primary={primary}
       aside={
         tauri ? (
-          <>
-            <CapabilityTile
-              title={sb.tabCatalog}
-              description={sb.catalogActionHint}
-              active={detail === "catalog"}
-              action={
-                <Button variant="outline" size="sm" onClick={() => setDetail("catalog")}>
-                  {sb.tabCatalog}
-                </Button>
-              }
-            />
-            <CapabilityTile
-              title={sb.tabAdd}
-              description={sb.addActionHint}
-              active={detail === "add"}
-              action={
-                <Button variant="outline" size="sm" onClick={() => setDetail("add")}>
-                  {sb.tabAdd}
-                </Button>
-              }
-            />
-          </>
+          <SectionNav
+            className="min-[768px]:max-[1099px]:col-span-2"
+            choices={[
+              {
+                id: "skills-catalog",
+                title: sb.tabCatalog,
+                description: sb.catalogActionHint,
+                active: detail === "catalog",
+                onSelect: () => setDetail("catalog"),
+              },
+              {
+                id: "skills-add",
+                title: sb.tabAdd,
+                description: sb.addActionHint,
+                active: detail === "add",
+                onSelect: () => setDetail("add"),
+              },
+            ]}
+          />
         ) : null
       }
       detail={detailPanel}

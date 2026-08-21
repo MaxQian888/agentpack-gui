@@ -1,9 +1,8 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Check, Plus, Search } from "lucide-react"
+import { Check, Plus } from "lucide-react"
 import { toast } from "sonner"
-import { Input } from "@/components/ui/input"
 import {
   Table,
   TableBody,
@@ -41,6 +40,8 @@ import {
 import type { McpTarget } from "@/lib/agentpack/types"
 import { useRunnerCtx } from "../../run/runner-context"
 import type { DashboardScan } from "../dashboard"
+import { CapabilityEmpty } from "../capability-list"
+import { SearchField } from "../filter-bar"
 import { installedRows, MCP_TARGETS, TargetDot, type McpRow } from "./helpers"
 
 /** Read each installed server's on-disk spec once (first present target wins). */
@@ -143,8 +144,12 @@ export function MatrixTab({ scan, refresh }: { scan: DashboardScan | null; refre
         title={on ? m.removeFromTarget(m.targets[tg]) : m.copyToTarget(m.targets[tg])}
         onClick={() => (on ? setConfirm({ row, target: tg }) : void addTo(row, tg))}
         className={cn(
-          "flex size-7 items-center justify-center rounded-full border transition-colors",
-          on ? "border-primary bg-primary/10" : "text-muted-foreground hover:bg-accent/40",
+          "flex size-7 items-center justify-center rounded-md border",
+          "transition-colors duration-(--hm-dur-fast) ease-(--hm-ease-out)",
+          "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none",
+          on
+            ? "border-[var(--hm-accent)] bg-[var(--hm-accent-soft)] text-[var(--hm-accent)]"
+            : "text-muted-foreground hover:bg-muted",
           disabled && "cursor-not-allowed opacity-40"
         )}
       >
@@ -157,23 +162,18 @@ export function MatrixTab({ scan, refresh }: { scan: DashboardScan | null; refre
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">{m.matrixHint}</p>
-        <div className="relative">
-          <Search className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={m.searchPlaceholder}
-            className="w-56 pl-8"
-          />
-        </div>
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+        <p className="min-w-0 flex-1 basis-64 text-sm text-muted-foreground">{m.matrixHint}</p>
+        <SearchField
+          value={query}
+          onChange={setQuery}
+          label={m.searchPlaceholder}
+          className="max-w-56 flex-none"
+        />
       </div>
 
       {filtered.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
-          {rows.length === 0 ? m.empty : m.emptyFiltered}
-        </div>
+        <CapabilityEmpty message={rows.length === 0 ? m.empty : m.emptyFiltered} />
       ) : isMobile ? (
         // Narrow / split window: the grid becomes a per-server card with the
         // target toggles stacked, so nothing overflows horizontally.

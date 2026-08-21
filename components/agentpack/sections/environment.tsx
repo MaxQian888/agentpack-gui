@@ -23,7 +23,8 @@ import { extractSemver } from "@/lib/agentpack/version"
 import { openUrl } from "@/lib/tauri/system"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "./capability-workbench"
+import { CapabilityTile, CapabilityWorkbench } from "./capability-workbench"
+import { SectionStatus } from "./section-status"
 import { HelpTip } from "../help-tip"
 import { useRunnerCtx } from "../run/runner-context"
 import { DesktopOnlyNote } from "../desktop-only-note"
@@ -47,7 +48,6 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
   // PATH, or an install done outside agentpack, only shows up after a fresh scan.
   const [refreshing, setRefreshing] = useState(false)
   const detectionsMeasured = RUNTIMES.every((runtime) => detections[runtime.id] !== undefined)
-  const detectedCount = RUNTIMES.filter((runtime) => detections[runtime.id]).length
   const installedCount = RUNTIMES.filter((runtime) => detections[runtime.id]?.installed).length
   const missingCount = RUNTIMES.filter(
     (runtime) => detections[runtime.id] && !detections[runtime.id]?.installed
@@ -83,27 +83,20 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
       title={t.environment.title}
       subtitle={t.environment.subtitle}
       help={<HelpTip text={t.help.runtime} />}
-      summaryLabel={t.environment.summaryLabel}
       actionsLabel={t.environment.actionsLabel}
-      metrics={
-        <>
-          <CapabilityMetric label={t.environment.metricCatalog} value={RUNTIMES.length} />
-          <CapabilityMetric
-            label={t.environment.metricDetected}
-            value={detectionsMeasured ? detectedCount : "—"}
-            detail={detectionsMeasured ? undefined : t.environment.metricPending}
-          />
-          <CapabilityMetric
-            label={t.environment.metricInstalled}
-            value={detectionsMeasured ? installedCount : "—"}
-            detail={detectionsMeasured ? undefined : t.environment.metricPending}
-          />
-          <CapabilityMetric
-            label={t.environment.metricMissing}
-            value={detectionsMeasured ? missingCount : "—"}
-            detail={detectionsMeasured ? undefined : t.environment.metricPending}
-          />
-        </>
+      lead={
+        <SectionStatus
+          label={t.environment.summaryLabel}
+          facts={[
+            { label: t.environment.metricCatalog, value: RUNTIMES.length },
+            {
+              label: t.environment.metricInstalled,
+              value: detectionsMeasured ? installedCount : "—",
+            },
+            { label: t.environment.metricMissing, value: detectionsMeasured ? missingCount : "—" },
+          ]}
+          notes={[detectionsMeasured ? null : t.environment.metricPending]}
+        />
       }
       primary={
         <section aria-label={t.environment.catalogPanel} className="min-w-0 rounded-lg border">
@@ -263,20 +256,7 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
               </Button>
             ) : null
           }
-        >
-          <dl className="divide-y text-sm">
-            <div className="flex items-center justify-between gap-3 py-2">
-              <dt className="text-muted-foreground">{t.environment.metricInstalled}</dt>
-              <dd className="font-mono tabular-nums">
-                {detectionsMeasured ? installedCount : "—"}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-3 py-2">
-              <dt className="text-muted-foreground">{t.environment.metricMissing}</dt>
-              <dd className="font-mono tabular-nums">{detectionsMeasured ? missingCount : "—"}</dd>
-            </div>
-          </dl>
-        </CapabilityTile>
+        />
       }
     />
   )

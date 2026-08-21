@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
@@ -16,13 +16,21 @@ import { InstalledTab } from "./installed"
 import { MatrixTab } from "./matrix"
 import { AddCustomTab } from "./add-custom"
 import { DesktopOnlyNote } from "../../desktop-only-note"
-import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "../capability-workbench"
+import { CapabilityWorkbench } from "../capability-workbench"
+import { SectionNav } from "../section-nav"
+import { SectionStatus } from "../section-status"
 
 /**
- * MCP manager: browse the built-in catalog, manage everything configured on disk
- * across Claude Code / Codex / OpenCode, and add custom servers. Prop-driven like
- * Skills / History — `ShellBody` owns the shared dashboard scan, so this section
- * and the dashboard never disagree about what's installed.
+ * MCP manager: what's configured on disk across Claude Code / Codex / OpenCode
+ * first, then the built-in catalog, the per-agent overview and custom servers.
+ * Prop-driven like Skills / History — `ShellBody` owns the shared dashboard scan,
+ * so this section and the dashboard never disagree about what's installed.
+ *
+ * The primary panel is the inventory, not the catalog. It used to be the other
+ * way round, which meant opening the section showed fifteen things you could
+ * install and hid the ones you already had behind a nav item — the reverse of
+ * the order design.md § 1 fixes ("reads the machine's state, proposes changes").
+ * It also matches Skills, so the two capability workspaces now read the same way.
  */
 export interface McpSectionProps {
   scan: DashboardScan | null
@@ -34,10 +42,10 @@ export function McpSection({ scan, loading, refresh }: McpSectionProps) {
   const t = useT()
   const m = t.mcp
   const tauri = isTauri()
-  const [detail, setDetail] = useState<"installed" | "matrix" | "add" | null>(null)
+  const [detail, setDetail] = useState<"catalog" | "matrix" | "add" | null>(null)
 
   const total = MCP_SERVERS.length
-  const rows = installedRows(scan)
+  const rows = useMemo(() => installedRows(scan), [scan])
   const installed = scan ? rows.length : null
   const needsKey = MCP_SERVERS.filter((s) => s.keyEnv).length
 
@@ -51,9 +59,13 @@ export function McpSection({ scan, loading, refresh }: McpSectionProps) {
   const primary = !tauri ? (
     <DesktopOnlyNote>{m.notTauri}</DesktopOnlyNote>
   ) : (
-    <section aria-label={m.catalogPanel} className="min-w-0">
-      <h3 className="mb-3 font-medium">{m.tabCatalog}</h3>
-      {scan === null && loading ? loadingPanel : <CatalogTab scan={scan} refresh={refresh} />}
+    <section aria-label={m.installedPanel} className="min-w-0">
+      <h3 className="mb-3 font-medium">{m.tabInstalled}</h3>
+      {scan === null && loading ? (
+        loadingPanel
+      ) : (
+        <InstalledTab scan={scan} refresh={refresh} onBrowseCatalog={() => setDetail("catalog")} />
+      )}
     </section>
   )
 
@@ -61,12 +73,12 @@ export function McpSection({ scan, loading, refresh }: McpSectionProps) {
     tauri && detail ? (
       <section aria-label={m.detailPanel} className="min-w-0 border-t pt-5">
         <h3 className="mb-4 text-lg font-medium">
-          {detail === "installed" ? m.tabInstalled : detail === "matrix" ? m.tabMatrix : m.tabAdd}
+          {detail === "catalog" ? m.tabCatalog : detail === "matrix" ? m.tabMatrix : m.tabAdd}
         </h3>
         {scan === null && loading ? (
           loadingPanel
-        ) : detail === "installed" ? (
-          <InstalledTab scan={scan} refresh={refresh} />
+        ) : detail === "catalog" ? (
+          <CatalogTab scan={scan} refresh={refresh} />
         ) : detail === "matrix" ? (
           <MatrixTab scan={scan} refresh={refresh} />
         ) : (
@@ -92,62 +104,50 @@ export function McpSection({ scan, loading, refresh }: McpSectionProps) {
           {m.refresh}
         </Button>
       }
-      summaryLabel={m.summaryLabel}
       actionsLabel={m.actionsLabel}
-      metrics={
-        <>
-          <CapabilityMetric label={m.statTotal} value={total} />
-          <CapabilityMetric label={m.statInstalled} value={installed ?? "—"} />
-          <CapabilityMetric label={m.statNeedsKey} value={needsKey} />
-          <CapabilityMetric
-            label={m.targets.claude}
-            value={scan ? rows.filter((row) => row.presence.claude).length : "—"}
-          />
-          <CapabilityMetric
-            label={m.targets.codex}
-            value={scan ? rows.filter((row) => row.presence.codex).length : "—"}
-          />
-          <CapabilityMetric
-            label={m.targets.opencode}
-            value={scan ? rows.filter((row) => row.presence.opencode).length : "—"}
-          />
-        </>
+      lead={
+        /* Three facts, not six. The per-agent counts that used to sit here are
+           on the inventory's own scope chips, where they also filter — the same
+           number stated once, on the control that acts on it. */
+        <SectionStatus
+          label={m.summaryLabel}
+          facts={[
+            { label: m.statInstalled, value: installed ?? "—" },
+            { label: m.statTotal, value: total },
+            { label: m.statNeedsKey, value: needsKey },
+          ]}
+          notes={[scan ? null : m.statPending]}
+        />
       }
       primary={primary}
       aside={
         tauri ? (
-          <>
-            <CapabilityTile
-              title={m.tabInstalled}
-              description={m.installedActionHint}
-              active={detail === "installed"}
-              action={
-                <Button variant="outline" size="sm" onClick={() => setDetail("installed")}>
-                  {m.tabInstalled}
-                </Button>
-              }
-            />
-            <CapabilityTile
-              title={m.tabMatrix}
-              description={m.matrixActionHint}
-              active={detail === "matrix"}
-              action={
-                <Button variant="outline" size="sm" onClick={() => setDetail("matrix")}>
-                  {m.tabMatrix}
-                </Button>
-              }
-            />
-            <CapabilityTile
-              title={m.tabAdd}
-              description={m.addActionHint}
-              active={detail === "add"}
-              action={
-                <Button variant="outline" size="sm" onClick={() => setDetail("add")}>
-                  {m.tabAdd}
-                </Button>
-              }
-            />
-          </>
+          <SectionNav
+            className="min-[768px]:max-[1099px]:col-span-2"
+            choices={[
+              {
+                id: "mcp-catalog",
+                title: m.tabCatalog,
+                description: m.catalogActionHint,
+                active: detail === "catalog",
+                onSelect: () => setDetail("catalog"),
+              },
+              {
+                id: "mcp-matrix",
+                title: m.tabMatrix,
+                description: m.matrixActionHint,
+                active: detail === "matrix",
+                onSelect: () => setDetail("matrix"),
+              },
+              {
+                id: "mcp-add",
+                title: m.tabAdd,
+                description: m.addActionHint,
+                active: detail === "add",
+                onSelect: () => setDetail("add"),
+              },
+            ]}
+          />
         ) : null
       }
       detail={detailPanel}

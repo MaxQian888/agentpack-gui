@@ -48,18 +48,20 @@ function renderSection(loading = false, value: DashboardScan | null = scan()) {
   )
 }
 
-it("renders the catalog workbench with tiled management actions", () => {
+it("leads with what is configured, and offers the catalog alongside", () => {
   renderSection()
   expect(screen.getByRole("region", { name: /MCP summary/i })).toBeInTheDocument()
+  // The inventory is the primary panel; the catalog is one of the aside views.
+  expect(screen.getByRole("list", { name: en.mcp.installedListLabel })).toBeInTheDocument()
   const actions = within(screen.getByRole("complementary", { name: /MCP management views/i }))
-  expect(actions.getByRole("button", { name: /^Installed$/i })).toBeInTheDocument()
+  expect(actions.getByRole("button", { name: /^Catalog$/i })).toBeInTheDocument()
   expect(actions.getByRole("button", { name: /Overview/i })).toBeInTheDocument()
   expect(actions.getByRole("button", { name: /Add custom/i })).toBeInTheDocument()
   // Stat strip: the catalog total tracks the registry size.
   expect(screen.getByText(String(MCP_SERVERS.length))).toBeInTheDocument()
 })
 
-it("counts custom MCP servers in installed and target coverage metrics", () => {
+it("counts custom MCP servers as installed, and per target on the scope chips", () => {
   renderSection(
     false,
     scan({
@@ -69,14 +71,18 @@ it("counts custom MCP servers in installed and target coverage metrics", () => {
   )
   const summary = within(screen.getByRole("region", { name: /MCP summary/i }))
   expect(summary.getByText(en.mcp.statInstalled).parentElement).toHaveTextContent("2")
-  expect(summary.getByText(en.mcp.targets.claude).parentElement).toHaveTextContent("2")
-  expect(summary.getByText(en.mcp.targets.codex).parentElement).toHaveTextContent("1")
+  // The per-target counts moved onto the chips that filter by them, so the
+  // summary states three facts rather than restating these two.
+  expect(summary.queryByText(en.mcp.targets.claude)).not.toBeInTheDocument()
+  expect(screen.getByRole("button", { name: /Claude Code 2/ })).toBeInTheDocument()
+  expect(screen.getByRole("button", { name: /Codex 1/ })).toBeInTheDocument()
 })
 
 it("shows unknown MCP coverage while the first scan is pending", () => {
   renderSection(true, null)
   const summary = within(screen.getByRole("region", { name: /MCP summary/i }))
-  expect(summary.getAllByText("—")).toHaveLength(4)
+  expect(summary.getAllByText("—")).toHaveLength(1)
+  expect(summary.getByText(en.mcp.statPending)).toBeInTheDocument()
 })
 
 it("shows a not-desktop notice when not running under Tauri", () => {
@@ -84,4 +90,5 @@ it("shows a not-desktop notice when not running under Tauri", () => {
   renderSection()
   expect(screen.getByText(/only available in the desktop app/i)).toBeInTheDocument()
   expect(screen.queryByRole("button", { name: /Add custom/i })).not.toBeInTheDocument()
+  expect(screen.queryByRole("list", { name: en.mcp.installedListLabel })).not.toBeInTheDocument()
 })

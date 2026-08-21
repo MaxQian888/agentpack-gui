@@ -8,7 +8,8 @@ import { scanNetwork } from "@/lib/agentpack/network/scan"
 import type { ProxyMode } from "@/lib/agentpack/types"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-import { CapabilityMetric, CapabilityWorkbench } from "../capability-workbench"
+import { CapabilityWorkbench } from "../capability-workbench"
+import { SectionStatus } from "../section-status"
 import { HelpTip } from "../../help-tip"
 import { DiscoveryCard } from "./discovery-card"
 import { ProxyCard } from "./proxy-card"
@@ -35,7 +36,6 @@ export function NetworkSection() {
   const setNetworkProbe = useAppStore((s) => s.setNetworkProbe)
   const setNetworkProbing = useAppStore((s) => s.setNetworkProbing)
   const [scanError, setScanError] = useState<string | null>(null)
-  const proxyMode = useAppStore((s) => s.plan.network.proxy?.mode ?? "off")
   const reachableMirrors = probe
     ? [...probe.npm, ...probe.gh, ...probe.pypi, ...probe.brew].filter((item) => item.result?.ok)
         .length
@@ -87,22 +87,20 @@ export function NetworkSection() {
       title={t.network.title}
       subtitle={t.network.ask}
       help={<HelpTip text={t.help.network} />}
-      summaryLabel={t.network.summaryLabel}
       actionsLabel={t.network.actionsLabel}
-      metrics={
-        <>
-          <CapabilityMetric label={t.network.metricMode} value={t.network.proxy.mode[proxyMode]} />
-          <CapabilityMetric
-            label={t.network.metricCandidates}
-            value={probe?.proxies.length ?? "—"}
-          />
-          <CapabilityMetric label={t.network.metricReachable} value={reachableMirrors ?? "—"} />
-          <CapabilityMetric
-            label={t.network.metricScan}
-            value={scanStatus}
-            detail={scanError ? t.network.scanError(scanError) : undefined}
-          />
-        </>
+      lead={
+        /* Proxy mode is deliberately absent: the ProxyCard directly below states
+           it in its own badge, and a summary that repeats the panel under it is
+           the habit this line replaced. */
+        <SectionStatus
+          label={t.network.summaryLabel}
+          facts={[
+            { label: t.network.metricCandidates, value: probe?.proxies.length ?? "—" },
+            { label: t.network.metricReachable, value: reachableMirrors ?? "—" },
+            { label: t.network.metricScan, value: scanStatus },
+          ]}
+          notes={[scanError ? t.network.scanError(scanError) : null]}
+        />
       }
       primary={
         <section aria-label={t.network.proxyPanel} className="min-w-0">

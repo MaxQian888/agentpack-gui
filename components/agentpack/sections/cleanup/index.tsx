@@ -40,7 +40,8 @@ import { isTauri } from "@/lib/tauri"
 import { cleanupQuarantineList, isProcessRunning, type QuarantineEntry } from "@/lib/tauri/commands"
 import { useAppStore } from "@/store/app-store"
 import { useMounted } from "@/hooks/use-mounted"
-import { CapabilityMetric, CapabilityWorkbench } from "../capability-workbench"
+import { CapabilityWorkbench } from "../capability-workbench"
+import { SectionStatus } from "../section-status"
 import { DesktopOnlyNote } from "../../desktop-only-note"
 import { useRunnerCtx } from "../../run/runner-context"
 import { scanCleanup, type CleanupScanResult } from "./scan"
@@ -250,47 +251,40 @@ export function CleanupSection() {
           {scanning ? t.cleanup.scanning : t.cleanup.scan}
         </Button>
       }
-      summaryLabel={t.cleanup.summaryLabel}
       actionsLabel={t.cleanup.actionsLabel}
-      metrics={
-        <>
-          <CapabilityMetric
-            label={t.cleanup.metricReclaimable}
-            value={diskMeasured ? formatBytes(reclaimable) : "—"}
-            detail={
-              diskMeasured
-                ? undefined
-                : scanError
-                  ? t.cleanup.scanFailed(scanError)
-                  : t.cleanup.metricPending
-            }
-          />
-          <CapabilityMetric
-            label={t.cleanup.metricTargets}
-            value={diskMeasured ? shown.length + configTargets.length : "—"}
-            detail={
-              diskMeasured
-                ? undefined
-                : scanError
-                  ? t.cleanup.scanFailed(scanError)
-                  : t.cleanup.metricPending
-            }
-          />
-          <CapabilityMetric label={t.cleanup.metricSelected} value={selected.size} />
-          <CapabilityMetric
-            label={t.cleanup.metricTrash}
-            value={trashStatus === "ready" && isTauri() ? trash.length : "—"}
-            detail={
-              trashStatus === "ready" && isTauri()
-                ? undefined
-                : trashStatus === "error"
-                  ? t.cleanup.metricReadFailed(trashError ?? t.cleanup.trash.unknownError)
-                  : trashStatus === "unavailable"
-                    ? t.cleanup.metricUnavailable
-                    : t.cleanup.metricPending
-            }
-          />
-        </>
+      lead={
+        <SectionStatus
+          label={t.cleanup.summaryLabel}
+          facts={[
+            {
+              label: t.cleanup.metricReclaimable,
+              value: diskMeasured ? formatBytes(reclaimable) : "—",
+            },
+            {
+              label: t.cleanup.metricTargets,
+              value: diskMeasured ? shown.length + configTargets.length : "—",
+            },
+            { label: t.cleanup.metricSelected, value: selected.size },
+            {
+              label: t.cleanup.metricTrash,
+              value: trashStatus === "ready" && isTauri() ? trash.length : "—",
+            },
+          ]}
+          notes={[
+            diskMeasured
+              ? null
+              : scanError
+                ? t.cleanup.scanFailed(scanError)
+                : t.cleanup.metricPending,
+            trashStatus === "ready" && isTauri()
+              ? null
+              : trashStatus === "error"
+                ? t.cleanup.metricReadFailed(trashError ?? t.cleanup.trash.unknownError)
+                : trashStatus === "unavailable"
+                  ? t.cleanup.metricUnavailable
+                  : t.cleanup.metricPending,
+          ]}
+        />
       }
       primary={
         <section aria-label={t.cleanup.targetsPanel} className="flex min-w-0 flex-col gap-4">
@@ -351,7 +345,11 @@ export function CleanupSection() {
             </p>
           </Card>
 
-          {scanned && !scanError && shown.length === 0 && configTargets.length === 0 ? (
+          {/* `diskMeasured`, not `scanned`: in web mode the scan short-circuits
+              without ever reaching the disk, and "nothing to clean" printed
+              under "there is no machine to scan" is the app asserting a fact it
+              didn't measure. Rule 1 of this section — the scan is truth. */}
+          {diskMeasured && shown.length === 0 && configTargets.length === 0 ? (
             <div className="rounded-lg border p-5">
               <p className="text-sm">{t.cleanup.empty}</p>
               <p className="mt-1 text-xs text-muted-foreground">{t.cleanup.emptyHint}</p>

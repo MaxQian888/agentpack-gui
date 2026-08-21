@@ -12,7 +12,7 @@ jest.mock("@/lib/tauri/commands", () => ({
 }))
 jest.mock("@/lib/tauri/dialog", () => ({ pickFolder: jest.fn(async () => null) }))
 
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
@@ -61,11 +61,29 @@ it("renders the installed workbench with tiled catalog and add actions", async (
   expect(screen.getByRole("region", { name: en.skillsBrowser.summaryLabel })).toBeInTheDocument()
   expect(screen.getByRole("button", { name: en.skillsBrowser.tabCatalog })).toBeInTheDocument()
   expect(screen.getByRole("button", { name: en.skillsBrowser.tabAdd })).toBeInTheDocument()
-  expect(screen.getByText(en.skillsBrowser.statSources)).toBeInTheDocument()
+  expect(screen.getByText(en.skillsBrowser.statTotal)).toBeInTheDocument()
+  expect(screen.getByText(en.skillsBrowser.statManaged)).toBeInTheDocument()
   expect(screen.getByText(en.skillsBrowser.statUpdates)).toBeInTheDocument()
+  // A failed scan is a headline fact exactly when there is one.
   expect(screen.getByText(en.skillsBrowser.statScanIssues)).toBeInTheDocument()
   expect(screen.getByText(/Scan failed for Codex: boom/)).toBeInTheDocument()
   await waitFor(() => expect(readTextFile).toHaveBeenCalled())
+})
+
+it("keeps the summary to three facts when every root scanned cleanly", async () => {
+  renderSection({ skills: [], errors: [] })
+  const summary = within(screen.getByRole("region", { name: en.skillsBrowser.summaryLabel }))
+  expect(summary.queryByText(en.skillsBrowser.statScanIssues)).not.toBeInTheDocument()
+  // "Sources" and its per-root breakdown moved onto the scope chips, which
+  // carry the same counts and also filter by them.
+  expect(summary.queryByText(en.skillsBrowser.statSources)).not.toBeInTheDocument()
+  await waitFor(() => expect(readTextFile).toHaveBeenCalled())
+})
+
+it("offers the bundled catalog as the empty state's next step", async () => {
+  renderSection({ skills: [], errors: [] })
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.emptyBrowse }))
+  expect(await screen.findByText(en.catalog.skills["rust"].title)).toBeInTheDocument()
 })
 
 it("shows the empty state when no skills exist anywhere", async () => {

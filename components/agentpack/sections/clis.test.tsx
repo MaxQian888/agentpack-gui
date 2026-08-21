@@ -9,14 +9,14 @@ import { en } from "@/lib/i18n/en"
 
 beforeEach(() => {
   useAppStore.getState().resetPlan()
-  useAppStore.setState({ detections: {}, latestVersions: {} })
+  useAppStore.setState({ detections: {}, latestVersions: {}, cliManagers: {} })
 })
 
-function renderClis() {
+function renderClis(props: { onOpenRuntimes?: () => void } = {}) {
   return render(
     <I18nProvider>
       <RunnerHarness autoApply>
-        <ClisSection />
+        <ClisSection {...props} />
       </RunnerHarness>
     </I18nProvider>
   )
@@ -67,6 +67,67 @@ it("runs an upgrade step when the upgrade button is clicked", async () => {
   renderClis()
   await userEvent.click(screen.getByRole("button", { name: /Upgrade/i }))
   expect(useAppStore.getState().panelOpen).toBe(true)
+})
+
+it("refuses an upgrade npm would reject on this Node, and points at Runtimes", async () => {
+  // claude-code declares an engines.node floor of 22; this machine has 18, so
+  // Upgrade would stage a command that dies mid-install with EBADENGINE. The
+  // row still says an update exists — it just sends you to the fix that
+  // unblocks it, exactly as the overview's diagnostics do.
+  useAppStore.setState({
+    detections: {
+      "claude-code": { installed: true, version: "1.0.0" },
+      node: { installed: true, version: "v18.19.0" },
+    },
+    latestVersions: { "claude-code": "2.0.0" },
+    paths: { os: "mac" } as never,
+    panelOpen: false,
+  })
+  const onOpenRuntimes = jest.fn()
+  renderClis({ onOpenRuntimes })
+
+  expect(screen.queryByRole("button", { name: /Upgrade/i })).not.toBeInTheDocument()
+  expect(screen.getByText(en.diagnostics.nodeFloorDetail(22, "v18.19.0"))).toBeInTheDocument()
+
+  await userEvent.click(screen.getByRole("button", { name: en.diagnostics.openRuntimes }))
+  expect(onOpenRuntimes).toHaveBeenCalled()
+  // Nothing was staged: the review panel never opened.
+  expect(useAppStore.getState().panelOpen).toBe(false)
+})
+
+it("keeps the upgrade when Node clears the floor", () => {
+  useAppStore.setState({
+    detections: {
+      "claude-code": { installed: true, version: "1.0.0" },
+      node: { installed: true, version: "v22.14.0" },
+    },
+    latestVersions: { "claude-code": "2.0.0" },
+  })
+  renderClis()
+  expect(screen.getByRole("button", { name: /Upgrade/i })).toBeInTheDocument()
+})
+
+it("leaves a native install alone, because its upgrade never touches npm", () => {
+  useAppStore.setState({
+    detections: {
+      "claude-code": { installed: true, version: "1.0.0" },
+      node: { installed: true, version: "v18.19.0" },
+    },
+    latestVersions: { "claude-code": "2.0.0" },
+    cliManagers: { "claude-code": "native" },
+  })
+  renderClis()
+  expect(screen.getByRole("button", { name: /Upgrade/i })).toBeInTheDocument()
+})
+
+it("says nothing about Node when Node itself was never detected", () => {
+  // Absent is not the same as too old — an install picks up a current LTS.
+  useAppStore.setState({
+    detections: { "claude-code": { installed: true, version: "1.0.0" } },
+    latestVersions: { "claude-code": "2.0.0" },
+  })
+  renderClis()
+  expect(screen.getByRole("button", { name: /Upgrade/i })).toBeInTheDocument()
 })
 
 it("shows a not-found badge for a detected-but-missing tool", () => {

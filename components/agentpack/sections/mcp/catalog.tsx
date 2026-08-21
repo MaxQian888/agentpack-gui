@@ -1,11 +1,8 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { ExternalLink, Info, Search } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
+import { ExternalLink, Info, KeyRound, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Select,
@@ -31,7 +28,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { MCP_CATEGORY_ORDER, MCP_SERVERS } from "@/lib/agentpack/registry"
@@ -43,6 +39,13 @@ import { registryFetch } from "@/lib/tauri/commands"
 import { openUrl } from "@/lib/tauri/system"
 import { useRunnerCtx } from "../../run/runner-context"
 import type { DashboardScan } from "../dashboard"
+import {
+  CapabilityEmpty,
+  CapabilityGroupHeading,
+  CapabilityList,
+  CapabilityRow,
+} from "../capability-list"
+import { FilterField, FilterToolbar, MoreFilters, ScopeChip, SearchField } from "../filter-bar"
 import { anyPresent, existingIds, KeyInput, presenceOf, TargetToggles } from "./helpers"
 import { McpDetailDialog } from "./detail-dialog"
 import { CustomServerForm, type CustomFormValue } from "./custom-form"
@@ -70,6 +73,10 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
   const [auth, setAuth] = useState<AuthFilter>("all")
   const [detailId, setDetailId] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<{ server: McpServer; target: McpTarget } | null>(null)
+  // Which key fields are open. A server that needs a key gets a disclosure
+  // rather than a permanent password field: five of them stacked down the
+  // catalog read as a form to fill in before you may browse.
+  const [keyOpen, setKeyOpen] = useState<Set<string>>(new Set())
 
   // Online registry search (on-demand; the featured catalog above stays offline).
   const [regResults, setRegResults] = useState<RegistryCandidate[]>([])
@@ -157,22 +164,37 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
     refresh()
   }
 
-  const matches = (server: McpServer): boolean => {
-    const meta = t.catalog.mcp[server.id]
+  /** Everything except the status chips — so those can carry faceted counts. */
+  const matchesBase = (server: McpServer): boolean => {
     if (q) {
+      const meta = t.catalog.mcp[server.id]
       const hay = `${server.id} ${meta?.title ?? ""} ${meta?.purpose ?? ""}`.toLowerCase()
       if (!hay.includes(q)) return false
     }
     if (transport !== "all" && server.transport !== transport) return false
     if (auth === "key" && !server.keyEnv) return false
     if (auth === "none" && server.keyEnv) return false
-    const presence = presenceOf(scan, server.id)
-    const installed = target === "all" ? anyPresent(presence) : presence[target]
-    if (filter === "installed") return installed
-    if (filter === "notInstalled") return !installed
-    if (filter === "needsKey") return !!server.keyEnv
     return true
   }
+
+  const matchesFilter = (server: McpServer, f: Filter): boolean => {
+    if (f === "needsKey") return !!server.keyEnv
+    if (f === "all") return true
+    const presence = presenceOf(scan, server.id)
+    const installed = target === "all" ? anyPresent(presence) : presence[target]
+    return f === "installed" ? installed : !installed
+  }
+
+  const matches = (server: McpServer): boolean =>
+    matchesBase(server) && matchesFilter(server, filter)
+
+  /* eslint-disable react-hooks/exhaustive-deps */
+  const counts = useMemo(() => {
+    const base = MCP_SERVERS.filter(matchesBase)
+    return Object.fromEntries(
+      FILTERS.map((f) => [f, base.filter((s) => matchesFilter(s, f)).length])
+    ) as Record<Filter, number>
+  }, [scan, q, target, transport, auth])
 
   const groups = useMemo(
     () =>
@@ -180,168 +202,206 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
         cat,
         servers: MCP_SERVERS.filter((s) => s.category === cat && matches(s)),
       })).filter((g) => g.servers.length > 0),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [scan, q, filter, target, transport, auth]
   )
+  /* eslint-enable react-hooks/exhaustive-deps */
 
-  const nothing = groups.length === 0
+  const advanced =
+    (target !== "all" ? 1 : 0) + (transport !== "all" ? 1 : 0) + (auth !== "all" ? 1 : 0)
+  const resetAdvanced = () => {
+    setTarget("all")
+    setTransport("all")
+    setAuth("all")
+  }
+
+  const toggleKey = (id: string) =>
+    setKeyOpen((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  const filterLabel = (f: Filter) =>
+    f === "all"
+      ? m.filterAll
+      : f === "installed"
+        ? m.filterInstalled
+        : f === "notInstalled"
+          ? m.filterNotInstalled
+          : m.filterNeedsKey
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-2">
-        {FILTERS.map((f) => (
-          <button
+      <FilterToolbar
+        scope={FILTERS.map((f) => (
+          <ScopeChip
             key={f}
-            type="button"
-            onClick={() => {
+            active={filter === f}
+            count={counts[f]}
+            label={filterLabel(f)}
+            onSelect={() => {
               setFilter(f)
               if (f !== "installed" && f !== "notInstalled") setTarget("all")
             }}
-            className={cn(
-              "rounded-full border px-3 py-1 text-xs transition-colors",
-              filter === f
-                ? "border-primary bg-primary/10 font-medium"
-                : "text-muted-foreground hover:bg-accent/40"
-            )}
-          >
-            {f === "all"
-              ? m.filterAll
-              : f === "installed"
-                ? m.filterInstalled
-                : f === "notInstalled"
-                  ? m.filterNotInstalled
-                  : m.filterNeedsKey}
-          </button>
-        ))}
-        <Select value={target} onValueChange={(value) => setTarget(value as TargetFilter)}>
-          <SelectTrigger
-            size="sm"
-            className="w-36"
-            aria-label={m.filterTarget}
-            disabled={filter !== "installed" && filter !== "notInstalled"}
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{m.filterAnyTarget}</SelectItem>
-            <SelectItem value="claude">{m.targets.claude}</SelectItem>
-            <SelectItem value="codex">{m.targets.codex}</SelectItem>
-            <SelectItem value="opencode">{m.targets.opencode}</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={transport} onValueChange={(value) => setTransport(value as TransportFilter)}>
-          <SelectTrigger size="sm" className="w-40" aria-label={m.filterTransport}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{m.filterAnyTransport}</SelectItem>
-            <SelectItem value="stdio">{m.transportStdio}</SelectItem>
-            <SelectItem value="http">{m.transportHttp}</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={auth} onValueChange={(value) => setAuth(value as AuthFilter)}>
-          <SelectTrigger size="sm" className="w-44" aria-label={m.filterAuth}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{m.filterAnyAuth}</SelectItem>
-            <SelectItem value="key">{m.filterNeedsKey}</SelectItem>
-            <SelectItem value="none">{m.filterNoKey}</SelectItem>
-          </SelectContent>
-        </Select>
-        <div className="relative ml-auto">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            aria-label={m.searchPlaceholder}
-            placeholder={m.searchPlaceholder}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-56 pl-8"
           />
-        </div>
-      </div>
+        ))}
+      >
+        <SearchField value={search} onChange={setSearch} label={m.searchPlaceholder} />
+        <MoreFilters
+          label={m.filtersLabel}
+          resetLabel={m.filtersReset}
+          active={advanced}
+          onReset={resetAdvanced}
+        >
+          <FilterField label={m.filterTarget}>
+            <Select value={target} onValueChange={(value) => setTarget(value as TargetFilter)}>
+              <SelectTrigger
+                size="sm"
+                className="w-full"
+                aria-label={m.filterTarget}
+                disabled={filter !== "installed" && filter !== "notInstalled"}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{m.filterAnyTarget}</SelectItem>
+                <SelectItem value="claude">{m.targets.claude}</SelectItem>
+                <SelectItem value="codex">{m.targets.codex}</SelectItem>
+                <SelectItem value="opencode">{m.targets.opencode}</SelectItem>
+              </SelectContent>
+            </Select>
+          </FilterField>
+          <FilterField label={m.filterTransport}>
+            <Select
+              value={transport}
+              onValueChange={(value) => setTransport(value as TransportFilter)}
+            >
+              <SelectTrigger size="sm" className="w-full" aria-label={m.filterTransport}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{m.filterAnyTransport}</SelectItem>
+                <SelectItem value="stdio">{m.transportStdio}</SelectItem>
+                <SelectItem value="http">{m.transportHttp}</SelectItem>
+              </SelectContent>
+            </Select>
+          </FilterField>
+          <FilterField label={m.filterAuth}>
+            <Select value={auth} onValueChange={(value) => setAuth(value as AuthFilter)}>
+              <SelectTrigger size="sm" className="w-full" aria-label={m.filterAuth}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{m.filterAnyAuth}</SelectItem>
+                <SelectItem value="key">{m.filterNeedsKey}</SelectItem>
+                <SelectItem value="none">{m.filterNoKey}</SelectItem>
+              </SelectContent>
+            </Select>
+          </FilterField>
+        </MoreFilters>
+      </FilterToolbar>
 
-      {nothing ? (
-        <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
-          {m.noResults}
-        </div>
-      ) : null}
+      {/* Said once, above the list, instead of implied forty times by forty rows
+          of unlabelled chips: what the per-agent buttons in each row do. */}
+      <p className="text-sm text-muted-foreground">{m.catalogHint}</p>
 
-      {groups.map((group) => (
-        <div key={group.cat} className="flex flex-col gap-3">
-          <h3 className="text-sm font-medium text-muted-foreground">
-            {m.categories[group.cat]}
-            <span className="ml-2 text-xs font-normal opacity-70">{group.servers.length}</span>
-          </h3>
-          {group.servers.map((server) => {
-            const meta = t.catalog.mcp[server.id]
-            const presence = presenceOf(scan, server.id)
-            return (
-              <Card key={server.id} className="gap-3 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">{meta?.title ?? server.id}</span>
-                      <Badge variant="outline" className="font-normal text-muted-foreground">
-                        {server.transport}
-                      </Badge>
-                      {server.keyEnv ? (
-                        <Badge variant="outline" className="font-normal text-muted-foreground">
-                          {m.needsKeyBadge}
-                        </Badge>
-                      ) : null}
-                      {server.docsUrl ? (
-                        <button
-                          type="button"
-                          onClick={() => void openUrl(server.docsUrl!)}
-                          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                        >
-                          {m.docs}
-                          <ExternalLink className="size-3" />
-                        </button>
-                      ) : null}
-                    </div>
-                    <p className="mt-1 text-sm text-muted-foreground">{meta?.purpose}</p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={m.view}
-                    onClick={() => setDetailId(server.id)}
-                  >
-                    <Info className="size-4" />
-                  </Button>
-                </div>
-                <TargetToggles
-                  presence={presence}
-                  disabled={claudeDisabled ? { claude: m.claudeMissing } : undefined}
-                  onToggle={(target, installed) =>
-                    installed ? setConfirm({ server, target }) : void addOne(server, target)
-                  }
+      {groups.length === 0 ? (
+        <CapabilityEmpty message={m.noResults} />
+      ) : (
+        <CapabilityList label={m.catalogPanel}>
+          {groups.map((group) => (
+            <li key={group.cat} className="min-w-0">
+              <ul className="min-w-0">
+                <CapabilityGroupHeading
+                  title={m.categories[group.cat]}
+                  count={group.servers.length}
                 />
-                {server.keyEnv ? (
-                  <KeyInput
-                    ariaLabel={`${server.id} ${server.keyEnv}`}
-                    placeholder={server.keyEnv}
-                    value={plan.mcpKeys[server.id] ?? ""}
-                    onChange={(v) => setMcpKey(server.id, v)}
-                  />
-                ) : null}
-              </Card>
-            )
-          })}
-        </div>
-      ))}
+                {group.servers.map((server) => {
+                  const meta = t.catalog.mcp[server.id]
+                  const presence = presenceOf(scan, server.id)
+                  const key = plan.mcpKeys[server.id] ?? ""
+                  const showKey = keyOpen.has(server.id) || key !== ""
+                  return (
+                    <CapabilityRow
+                      key={server.id}
+                      title={meta?.title ?? server.id}
+                      onOpen={() => setDetailId(server.id)}
+                      tags={
+                        <>
+                          <span className="font-mono">{server.transport}</span>
+                          {server.docsUrl ? (
+                            <button
+                              type="button"
+                              onClick={() => void openUrl(server.docsUrl!)}
+                              className="inline-flex items-center gap-1 rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none"
+                            >
+                              {m.docs}
+                              <ExternalLink aria-hidden="true" className="size-3" />
+                            </button>
+                          ) : null}
+                        </>
+                      }
+                      description={meta?.purpose}
+                      actions={
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={m.view}
+                          onClick={() => setDetailId(server.id)}
+                        >
+                          <Info className="size-4" />
+                        </Button>
+                      }
+                    >
+                      <div className="flex min-w-0 flex-col gap-2">
+                        <TargetToggles
+                          presence={presence}
+                          disabled={claudeDisabled ? { claude: m.claudeMissing } : undefined}
+                          onToggle={(target, installed) =>
+                            installed ? setConfirm({ server, target }) : void addOne(server, target)
+                          }
+                        />
+                        {server.keyEnv && !showKey ? (
+                          <button
+                            type="button"
+                            onClick={() => toggleKey(server.id)}
+                            className="flex w-fit items-center gap-1.5 rounded-sm text-xs text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none"
+                          >
+                            <KeyRound aria-hidden="true" className="size-3.5" />
+                            {m.keyAdd(server.keyEnv)}
+                          </button>
+                        ) : null}
+                        {server.keyEnv && showKey ? (
+                          <KeyInput
+                            ariaLabel={`${server.id} ${server.keyEnv}`}
+                            placeholder={server.keyEnv}
+                            value={key}
+                            onChange={(v) => setMcpKey(server.id, v)}
+                          />
+                        ) : null}
+                      </div>
+                    </CapabilityRow>
+                  )
+                })}
+              </ul>
+            </li>
+          ))}
+        </CapabilityList>
+      )}
 
       {isTauri() && q.length >= 2 ? (
         <div className="flex flex-col gap-3">
-          <h3 className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+          <h4 className="flex items-center gap-2 text-sm font-medium">
+            <Search aria-hidden="true" className="size-4 text-muted-foreground" />
             {m.registryTitle}
             {regResults.length ? (
-              <span className="text-xs font-normal opacity-70">{regResults.length}</span>
+              <span className="font-mono text-xs font-normal tabular-nums text-muted-foreground">
+                {regResults.length}
+              </span>
             ) : null}
             {regLoading ? <Spinner className="size-3.5" /> : null}
-          </h3>
+          </h4>
           {regError ? (
             <p className="text-sm text-muted-foreground">{m.registryError}</p>
           ) : regLoading && regResults.length === 0 ? (
@@ -350,54 +410,45 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
             <p className="text-sm text-muted-foreground">{m.registryEmpty}</p>
           ) : (
             <>
-              {regResults.map((c) => (
-                <Card key={c.name} className="gap-2 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">{c.title}</span>
-                        {c.spec ? (
-                          <Badge variant="outline" className="font-normal text-muted-foreground">
-                            {c.spec.transport}
-                          </Badge>
-                        ) : null}
+              <CapabilityList label={m.registryTitle}>
+                {regResults.map((c) => (
+                  <CapabilityRow
+                    key={c.name}
+                    title={c.title}
+                    tags={
+                      <>
+                        {c.spec ? <span className="font-mono">{c.spec.transport}</span> : null}
+                        <span className="font-mono [overflow-wrap:anywhere]">{c.name}</span>
                         {c.docsUrl ? (
                           <button
                             type="button"
                             onClick={() => void openUrl(c.docsUrl!)}
-                            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                            className="inline-flex items-center gap-1 rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none"
                           >
                             {m.docs}
-                            <ExternalLink className="size-3" />
+                            <ExternalLink aria-hidden="true" className="size-3" />
                           </button>
                         ) : null}
-                        <span className="truncate font-mono text-xs text-muted-foreground">
-                          {c.name}
+                      </>
+                    }
+                    description={c.description}
+                    actions={
+                      c.spec ? (
+                        <Button size="sm" variant="outline" onClick={() => setAddCand(c)}>
+                          {m.registryAdd}
+                        </Button>
+                      ) : (
+                        <span
+                          title={m.registryUnsupportedOci}
+                          className="text-xs text-muted-foreground"
+                        >
+                          {c.unsupported}
                         </span>
-                      </div>
-                      <p className="mt-1 text-sm text-muted-foreground">{c.description}</p>
-                    </div>
-                    {c.spec ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="shrink-0"
-                        onClick={() => setAddCand(c)}
-                      >
-                        {m.registryAdd}
-                      </Button>
-                    ) : (
-                      <Badge
-                        variant="outline"
-                        className="shrink-0 font-normal text-muted-foreground"
-                        title={m.registryUnsupportedOci}
-                      >
-                        {c.unsupported}
-                      </Badge>
-                    )}
-                  </div>
-                </Card>
-              ))}
+                      )
+                    }
+                  />
+                ))}
+              </CapabilityList>
               {regCursor ? (
                 <Button
                   variant="outline"

@@ -9,15 +9,11 @@ import {
   FolderOpen,
   MoreHorizontal,
   RefreshCw,
-  Search,
   Trash2,
 } from "lucide-react"
 import { toast } from "sonner"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Select,
@@ -76,25 +72,61 @@ import { indexUpdates, isManaged, rowUpdateTargets, updateQueries } from "@/lib/
 import { skillDestPath, skillsDirFor } from "@/lib/skills/paths"
 import type { SkillRow, SkillSource, SkillsScanResult, SkillUpdateResult } from "@/lib/skills/types"
 import { useRunnerCtx } from "../../run/runner-context"
+import { CapabilityEmpty, CapabilityList, CapabilityRow, RowChip } from "../capability-list"
+import { FilterField, FilterToolbar, MoreFilters, ScopeChip, SearchField } from "../filter-bar"
 import { SkillDetailDialog } from "./skill-detail-dialog"
 import { BackupsDialog } from "./backups-dialog"
 import { useInstallGuard } from "./install-conflict-dialog"
 
-/** Per-source dot colors (claude/codex/opencode match the history palette). */
+/**
+ * Per-source dot colours — the design system's per-CLI identity tokens.
+ *
+ * These were four hex literals, the one thing design.md § 11 forbids outside
+ * `tokens.css`: they ignored the theme (light-mode chroma on the dark band) and
+ * drifted from the same colours the history dashboard draws for the same three
+ * CLIs. `agents` is the shared `~/.agents` root rather than a fourth CLI, which
+ * is why it takes the leftover hue rather than a brand one.
+ */
 export const SKILL_SOURCE_COLORS: Record<SkillSource, string> = {
-  claude: "#d97757",
-  codex: "#10a37f",
-  opencode: "#8b5cf6",
-  agents: "#eab308",
+  claude: "var(--hm-source-claude)",
+  codex: "var(--hm-source-codex)",
+  opencode: "var(--hm-source-opencode)",
+  agents: "var(--hm-source-agents)",
 }
 
-function SourceDot({ source }: { source: SkillSource }) {
+function SourceDot({ source, on = true }: { source: SkillSource; on?: boolean }) {
   return (
     <span
       aria-hidden
-      className="size-2.5 shrink-0 rounded-full"
-      style={{ backgroundColor: SKILL_SOURCE_COLORS[source] }}
+      className={cn(
+        "size-2.5 shrink-0 rounded-(--hm-radius-dot)",
+        !on && "border border-muted-foreground/50"
+      )}
+      style={on ? { backgroundColor: SKILL_SOURCE_COLORS[source] } : undefined}
     />
+  )
+}
+
+/**
+ * Which roots hold this skill, as one dot per root.
+ *
+ * Replaces the up-to-four `<Badge>`s each row carried, whose labels repeated the
+ * scope chips directly above them. The group carries one accessible label naming
+ * the roots in words — a colour is not a label — and the chips are its legend.
+ */
+function SkillPresenceDots({ row, label }: { row: SkillRow; label: string }) {
+  const sb = useT().skillsBrowser
+  const on = SKILL_SOURCES.filter((source) => row.entries[source])
+  return (
+    <span
+      className="flex shrink-0 items-center gap-1"
+      aria-label={`${label}: ${on.map((source) => sb.sources[source]).join(", ")}`}
+      title={on.map((source) => sb.sources[source]).join(" · ")}
+    >
+      {SKILL_SOURCES.map((source) => (
+        <SourceDot key={source} source={source} on={!!row.entries[source]} />
+      ))}
+    </span>
   )
 }
 
@@ -115,10 +147,13 @@ export function InstalledSkillsTab({
   scan,
   refresh,
   onUpdateCountChange,
+  onBrowseCatalog,
 }: {
   scan: SkillsScanResult
   refresh: () => void
   onUpdateCountChange?: (count: number) => void
+  /** Opens the bundled catalog — the empty state's one next step. */
+  onBrowseCatalog?: () => void
 }) {
   const t = useT()
   const sb = t.skillsBrowser
@@ -378,58 +413,62 @@ export function InstalledSkillsTab({
         </Button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        {(["all", ...SKILL_SOURCES] as const).map((s) => (
-          <button
+      {/* The scope chips carry the per-root counts the summary strip used to
+          restate under it, and their dots legend the rows' presence dots. The
+          status and sort selects that used to sit beside them fold into one
+          button, so the row that decides "which agent?" reads on its own. */}
+      <FilterToolbar
+        scope={(["all", ...SKILL_SOURCES] as const).map((s) => (
+          <ScopeChip
             key={s}
-            type="button"
-            onClick={() => setSource(s)}
-            className={cn(
-              "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs",
-              source === s ? "border-primary bg-primary/10 font-medium" : "hover:bg-accent/40"
-            )}
-          >
-            {s !== "all" ? <SourceDot source={s} /> : null}
-            {s === "all" ? sb.filterAll : sb.sources[s]}
-            <span className="text-muted-foreground">{s === "all" ? rows.length : counts[s]}</span>
-          </button>
+            active={source === s}
+            onSelect={() => setSource(s)}
+            dot={s !== "all" ? <SourceDot source={s} /> : undefined}
+            label={s === "all" ? sb.filterAll : sb.sources[s]}
+            count={s === "all" ? rows.length : counts[s]}
+          />
         ))}
-        <div className="ml-auto flex items-center gap-2">
-          <Select
-            value={statusFilter}
-            onValueChange={(value) => setStatusFilter(value as SkillStatusFilter)}
-          >
-            <SelectTrigger size="sm" className="w-44" aria-label={sb.statusFilter}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{sb.statusAll}</SelectItem>
-              <SelectItem value="managed">{sb.statusManaged}</SelectItem>
-              <SelectItem value="unmanaged">{sb.statusUnmanaged}</SelectItem>
-              <SelectItem value="updates">{sb.statusUpdates}</SelectItem>
-              <SelectItem value="issues">{sb.statusIssues}</SelectItem>
-            </SelectContent>
-          </Select>
-          <div className="relative">
-            <Search className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={sb.searchPlaceholder}
-              className="w-56 pl-8"
-            />
-          </div>
-          <Select value={sort} onValueChange={(v) => setSort(v as SkillSort)}>
-            <SelectTrigger size="sm" className="w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="name">{sb.sortName}</SelectItem>
-              <SelectItem value="modified">{sb.sortModified}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+      >
+        <SearchField value={query} onChange={setQuery} label={sb.searchPlaceholder} />
+        <MoreFilters
+          label={sb.filtersLabel}
+          resetLabel={sb.filtersReset}
+          active={(statusFilter === "all" ? 0 : 1) + (sort === "name" ? 0 : 1)}
+          onReset={() => {
+            setStatusFilter("all")
+            setSort("name")
+          }}
+        >
+          <FilterField label={sb.statusFilter}>
+            <Select
+              value={statusFilter}
+              onValueChange={(value) => setStatusFilter(value as SkillStatusFilter)}
+            >
+              <SelectTrigger size="sm" className="w-full" aria-label={sb.statusFilter}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{sb.statusAll}</SelectItem>
+                <SelectItem value="managed">{sb.statusManaged}</SelectItem>
+                <SelectItem value="unmanaged">{sb.statusUnmanaged}</SelectItem>
+                <SelectItem value="updates">{sb.statusUpdates}</SelectItem>
+                <SelectItem value="issues">{sb.statusIssues}</SelectItem>
+              </SelectContent>
+            </Select>
+          </FilterField>
+          <FilterField label={sb.sortLabel}>
+            <Select value={sort} onValueChange={(v) => setSort(v as SkillSort)}>
+              <SelectTrigger size="sm" className="w-full" aria-label={sb.sortLabel}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="name">{sb.sortName}</SelectItem>
+                <SelectItem value="modified">{sb.sortModified}</SelectItem>
+              </SelectContent>
+            </Select>
+          </FilterField>
+        </MoreFilters>
+      </FilterToolbar>
 
       {scan.errors.length > 0 && (statusFilter === "all" || statusFilter === "issues") ? (
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
@@ -493,152 +532,131 @@ export function InstalledSkillsTab({
       ) : null}
 
       {filtered.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
-          {rows.length === 0 ? sb.empty : sb.emptyFiltered}
-        </div>
+        <CapabilityEmpty
+          message={rows.length === 0 ? sb.empty : sb.emptyFiltered}
+          action={
+            rows.length === 0 && onBrowseCatalog ? (
+              <Button variant="outline" size="sm" onClick={onBrowseCatalog}>
+                {sb.emptyBrowse}
+              </Button>
+            ) : null
+          }
+        />
       ) : (
-        <div className="flex flex-col gap-2">
-          {filtered.slice(0, visible).map((row) => {
-            const present = SKILL_SOURCES.filter((s) => row.entries[s])
-            const missing = SKILL_SOURCES.filter((s) => !row.entries[s])
-            const anySymlink = present.some((s) => row.entries[s]?.isSymlink)
-            const status = overrides[row.name]
-            const hasUpdate = rowUpdateTargets(row, updates).length > 0
-            const entryPath = primaryEntry(row)?.path
-            return (
-              <Card key={row.dirName} className="gap-2 p-4">
-                <div className="flex items-start gap-3">
-                  <Checkbox
-                    className="mt-1 shrink-0"
-                    checked={selected.has(row.dirName)}
-                    onCheckedChange={() => toggleSelect(row.dirName)}
-                    aria-label={sb.selectRow}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setDetail(row)}
-                    className="min-w-0 flex-1 text-left"
-                  >
-                    <span className="font-medium">{row.name}</span>
-                    {row.description ? (
-                      <p className="line-clamp-2 text-sm text-muted-foreground">
-                        {row.description}
-                      </p>
-                    ) : null}
-                  </button>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon-sm" aria-label={sb.actions}>
-                        <MoreHorizontal className="size-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onSelect={() => setDetail(row)}>
-                        <Eye className="size-4" /> {sb.view}
-                      </DropdownMenuItem>
+        <>
+          <CapabilityList label={sb.installedPanel}>
+            {filtered.slice(0, visible).map((row) => {
+              const present = SKILL_SOURCES.filter((s) => row.entries[s])
+              const missing = SKILL_SOURCES.filter((s) => !row.entries[s])
+              const anySymlink = present.some((s) => row.entries[s]?.isSymlink)
+              const status = overrides[row.name]
+              const hasUpdate = rowUpdateTargets(row, updates).length > 0
+              const entryPath = primaryEntry(row)?.path
+              const contentOnly = !!deferredQuery.trim() && matchRow(row, deferredQuery).contentOnly
+              return (
+                <CapabilityRow
+                  key={row.dirName}
+                  lead={
+                    <Checkbox
+                      checked={selected.has(row.dirName)}
+                      onCheckedChange={() => toggleSelect(row.dirName)}
+                      aria-label={sb.selectRow}
+                    />
+                  }
+                  title={row.name}
+                  onOpen={() => setDetail(row)}
+                  description={row.description}
+                  /* Facts set as muted text; only state worth acting on draws a
+                     chip. That ordering is the whole point — a row with an
+                     update now looks different from a row that is merely
+                     bundled, which eight identical badges could never show. */
+                  tags={
+                    <>
+                      {SKILL_REGISTRY_IDS.includes(row.dirName) ? (
+                        <span>{sb.bundledBadge}</span>
+                      ) : null}
+                      {anySymlink ? <span>{sb.symlinkBadge}</span> : null}
+                      {contentOnly ? <span>{sb.contentMatch}</span> : null}
                       {hasUpdate ? (
-                        <DropdownMenuItem onSelect={() => void updateRow(row)}>
-                          <DownloadCloud className="size-4" /> {sb.update}
+                        <RowChip tone="accent" icon={<DownloadCloud className="size-3" />}>
+                          {sb.updateAvailable}
+                        </RowChip>
+                      ) : null}
+                      {row.nameMismatch ? (
+                        <RowChip tone="warn">{sb.nameMismatchBadge(row.name)}</RowChip>
+                      ) : null}
+                      {status?.visibility && status.visibility !== "on" ? (
+                        <RowChip tone="warn">{sb.visibility[status.visibility]}</RowChip>
+                      ) : null}
+                      {status?.permission && status.permission !== "allow" ? (
+                        <RowChip tone="warn">{sb.permission[status.permission]}</RowChip>
+                      ) : null}
+                    </>
+                  }
+                  status={<SkillPresenceDots row={row} label={sb.installedOn} />}
+                  actions={
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon-sm" aria-label={sb.actions}>
+                          <MoreHorizontal className="size-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onSelect={() => setDetail(row)}>
+                          <Eye className="size-4" /> {sb.view}
                         </DropdownMenuItem>
-                      ) : null}
-                      {entryPath && isTauri() ? (
-                        <>
-                          <DropdownMenuItem onSelect={() => void revealPath(entryPath)}>
-                            <FolderOpen className="size-4" /> {sb.revealInFolder}
+                        {hasUpdate ? (
+                          <DropdownMenuItem onSelect={() => void updateRow(row)}>
+                            <DownloadCloud className="size-4" /> {sb.update}
                           </DropdownMenuItem>
-                          <DropdownMenuItem onSelect={() => void openPath(`${entryPath}/SKILL.md`)}>
-                            <FileText className="size-4" /> {sb.openSkillMd}
-                          </DropdownMenuItem>
-                        </>
-                      ) : null}
-                      {missing.length > 0 ? (
-                        <>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuLabel className="text-xs text-muted-foreground">
-                            {sb.copyTo("…")}
-                          </DropdownMenuLabel>
-                          {missing.map((target) => (
-                            <DropdownMenuItem
-                              key={target}
-                              onSelect={() => void copyTo(row, target)}
-                            >
-                              <Copy className="size-4" /> {sb.copyTo(sb.sources[target])}
+                        ) : null}
+                        {entryPath && isTauri() ? (
+                          <>
+                            <DropdownMenuItem onSelect={() => void revealPath(entryPath)}>
+                              <FolderOpen className="size-4" /> {sb.revealInFolder}
                             </DropdownMenuItem>
-                          ))}
-                        </>
-                      ) : null}
-                      <DropdownMenuSeparator />
-                      {present.map((from) => (
-                        <DropdownMenuItem
-                          key={from}
-                          variant="destructive"
-                          onSelect={() => setToDelete({ row, source: from })}
-                        >
-                          <Trash2 className="size-4" /> {sb.deleteFrom(sb.sources[from])}
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {present.map((s) => (
-                    <Badge key={s} variant="outline" className="gap-1.5 font-normal">
-                      <SourceDot source={s} />
-                      {sb.sources[s]}
-                    </Badge>
-                  ))}
-                  {hasUpdate ? (
-                    <Badge className="gap-1 bg-blue-600 font-normal text-white hover:bg-blue-600 dark:bg-blue-500">
-                      <DownloadCloud className="size-3" />
-                      {sb.updateAvailable}
-                    </Badge>
-                  ) : null}
-                  {status?.visibility && status.visibility !== "on" ? (
-                    <Badge
-                      variant="outline"
-                      className="font-normal text-amber-600 dark:text-amber-400"
-                    >
-                      {sb.visibility[status.visibility]}
-                    </Badge>
-                  ) : null}
-                  {status?.permission && status.permission !== "allow" ? (
-                    <Badge
-                      variant="outline"
-                      className="font-normal text-amber-600 dark:text-amber-400"
-                    >
-                      {sb.permission[status.permission]}
-                    </Badge>
-                  ) : null}
-                  {anySymlink ? (
-                    <Badge variant="secondary" className="font-normal">
-                      {sb.symlinkBadge}
-                    </Badge>
-                  ) : null}
-                  {SKILL_REGISTRY_IDS.includes(row.dirName) ? (
-                    <Badge variant="secondary" className="font-normal">
-                      {sb.bundledBadge}
-                    </Badge>
-                  ) : null}
-                  {row.nameMismatch ? (
-                    <Badge
-                      variant="outline"
-                      className="font-normal text-amber-600 dark:text-amber-400"
-                    >
-                      {sb.nameMismatchBadge(row.name)}
-                    </Badge>
-                  ) : null}
-                  {deferredQuery.trim() && matchRow(row, deferredQuery).contentOnly ? (
-                    <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
-                      <Search className="size-3" />
-                      {sb.contentMatch}
-                    </Badge>
-                  ) : null}
-                </div>
-              </Card>
-            )
-          })}
+                            <DropdownMenuItem
+                              onSelect={() => void openPath(`${entryPath}/SKILL.md`)}
+                            >
+                              <FileText className="size-4" /> {sb.openSkillMd}
+                            </DropdownMenuItem>
+                          </>
+                        ) : null}
+                        {missing.length > 0 ? (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuLabel className="text-xs text-muted-foreground">
+                              {sb.copyTo("…")}
+                            </DropdownMenuLabel>
+                            {missing.map((target) => (
+                              <DropdownMenuItem
+                                key={target}
+                                onSelect={() => void copyTo(row, target)}
+                              >
+                                <Copy className="size-4" /> {sb.copyTo(sb.sources[target])}
+                              </DropdownMenuItem>
+                            ))}
+                          </>
+                        ) : null}
+                        <DropdownMenuSeparator />
+                        {present.map((from) => (
+                          <DropdownMenuItem
+                            key={from}
+                            variant="destructive"
+                            onSelect={() => setToDelete({ row, source: from })}
+                          >
+                            <Trash2 className="size-4" /> {sb.deleteFrom(sb.sources[from])}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  }
+                />
+              )
+            })}
+          </CapabilityList>
           {hasMore ? <div ref={sentinelRef} className="h-8" /> : null}
-        </div>
+        </>
       )}
 
       <SkillDetailDialog

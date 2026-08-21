@@ -1,37 +1,66 @@
 "use client"
 
-import { Server, Terminal, Wrench } from "lucide-react"
+import { useState } from "react"
+import { ArrowRight, Check, ChevronDown, Server, Terminal, Wrench } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { clisByKind, MCP_SERVERS, SKILLS } from "@/lib/agentpack/registry"
-import { matchPreset, mcpTargetsFor, PRESETS, skillTargetsFor } from "@/lib/agentpack/presets"
+import { clisByKind, CLI_TOOLS, MCP_SERVERS, SKILLS } from "@/lib/agentpack/registry"
+import {
+  matchPreset,
+  mcpTargetsFor,
+  presetSelection,
+  PRESETS,
+  skillTargetsFor,
+} from "@/lib/agentpack/presets"
+import { countSelections } from "@/lib/agentpack/plan"
 import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "./capability-workbench"
+import { CapabilityTile, CapabilityWorkbench } from "./capability-workbench"
 import { HelpTip } from "../help-tip"
 import { KeyInput } from "./mcp/helpers"
 
-const OPTIONS = ["custom", ...PRESETS.map((p) => p.id)] as const
+/** The bundle this page opens pointing at, and the one row that gets a marker. */
+const DEFAULT_PRESET = "recommended"
 
 /**
- * Quick config — the first stop in Install & repair.
- *
- * This used to be a modal: a bundle picker, three checklists, a preview switch
- * and an install button, all inside one dialog that ran out of room at the
- * 900px window floor and hid the app behind itself while you used it. It is now
- * a workspace. Same selections, same store mutations — but the checklists get a
- * tab each instead of a third of a column, and the outcome of your choices is
- * stated beside them instead of being a number in a footer.
- *
- * Nothing here starts a run. Selecting writes to the shared plan, and the
- * change tray at the bottom of the shell is the only way onward — to the review
- * panel, never straight to disk.
+ * The rows of step 01, in the order someone reads them: the answer first, then
+ * the two edges it sits between, then "I'll pick myself". "custom" is not a
+ * bundle — it is the empty plan — so it is appended rather than living in
+ * `PRESETS`.
  */
-export function PresetsSection() {
+const OPTIONS: readonly string[] = [
+  DEFAULT_PRESET,
+  ...PRESETS.map((p) => p.id).filter((id) => id !== DEFAULT_PRESET),
+  "custom",
+]
+
+/**
+ * Quick setup — the first stop in Install & repair, and the one screen a
+ * newcomer has to get through.
+ *
+ * It reads as three numbered blocks in a single panel: **pick a preset**,
+ * **fine-tune** (folded away), **review and install**. That shape replaced a
+ * four-tile metric strip over a bundle chip row over three always-open
+ * checklists. The strip is gone outright — design.md bans the row of uniform
+ * stat cards, and here it was also redundant three ways over: the same counts
+ * were already in the selection panel beside it and in the change tray below
+ * it. The chips are now ruled rows that state what each preset installs, so
+ * the difference between Minimal and Everything can be read instead of
+ * discovered by clicking. And the sixteen-CLI checklist starts closed, because
+ * it is the answer to a question a first-time user has not asked yet.
+ *
+ * Nothing here starts a run. Selecting writes to the shared plan; step 03 and
+ * the change tray both lead to the review panel, which is the only door to
+ * disk.
+ */
+export function PresetsSection({ onReview }: { onReview?: () => void }) {
   const t = useT()
   const d = t.installDialog
+  const ps = t.presetsScreen
   const plan = useAppStore((s) => s.plan)
   const toggleCli = useAppStore((s) => s.toggleCli)
   const setSkill = useAppStore((s) => s.setSkill)
@@ -42,13 +71,17 @@ export function PresetsSection() {
   const resetPlan = useAppStore((s) => s.resetPlan)
   const detections = useAppStore((s) => s.detections)
 
+  // Closed on arrival. Picking "Custom" opens it, because "choose everything
+  // manually" with nothing on screen to choose from is a dead end.
+  const [tuning, setTuning] = useState(false)
+
   const selectedClis = new Set(plan.clis)
   const selectedSkills = new Set(plan.skills.map((s) => s.id))
   const selectedMcps = new Set(plan.mcps.map((m) => m.id))
   const anyPicked = selectedClis.size + selectedSkills.size + selectedMcps.size > 0
-  // Derived from the plan rather than remembered locally, so the active chip
+  // Derived from the plan rather than remembered locally, so the active row
   // agrees with what will actually be installed — including a bundle the user
-  // has since edited item by item. An empty plan matches no chip: it isn't a
+  // has since edited item by item. An empty plan matches no row: it isn't a
   // "Custom" choice the user has made yet.
   const activePreset = anyPicked ? matchPreset(plan) : null
 
@@ -58,7 +91,14 @@ export function PresetsSection() {
   const targetNames = (targets: readonly string[]) =>
     targets.map((tg) => t.mcp.targets[tg] ?? tg).join(" · ")
 
-  const choosePreset = (id: string) => (id === "custom" ? resetPlan() : applyPreset(id))
+  const choosePreset = (id: string) => {
+    if (id === "custom") {
+      resetPlan()
+      setTuning(true)
+      return
+    }
+    applyPreset(id)
+  }
 
   // Changing the CLI selection re-points what's already ticked, so the "writes to"
   // line below never promises an agent the user just unticked.
@@ -75,151 +115,164 @@ export function PresetsSection() {
 
   return (
     <CapabilityWorkbench
-      title={t.presetsScreen.title}
-      subtitle={t.presetsScreen.subtitle}
+      title={ps.title}
+      subtitle={ps.subtitle}
       help={<HelpTip text={t.help.preset} />}
-      summaryLabel={t.presetsScreen.summaryLabel}
-      actionsLabel={t.presetsScreen.actionsLabel}
-      metrics={
-        <>
-          <CapabilityMetric
-            label={t.presetsScreen.metricPreset}
-            value={
-              activePreset
-                ? activePreset === "custom"
-                  ? t.presetsScreen.customValue
-                  : (t.presets[activePreset]?.title ?? activePreset)
-                : "—"
-            }
-          />
-          <CapabilityMetric label={t.presetsScreen.metricClis} value={selectedClis.size} />
-          <CapabilityMetric label={t.presetsScreen.metricSkills} value={selectedSkills.size} />
-          <CapabilityMetric label={t.presetsScreen.metricMcp} value={selectedMcps.size} />
-        </>
-      }
+      actionsLabel={ps.actionsLabel}
       primary={
-        <section
-          aria-label={t.presetsScreen.catalogPanel}
-          className="min-w-0 rounded-lg border p-4"
-        >
-          {/* Bundle chips — a shortcut that pre-fills the checklists below. */}
-          <div className="flex flex-col gap-2 border-b pb-4">
-            <div className="text-sm font-medium">{d.presetLabel}</div>
-            <div className="flex flex-wrap gap-2">
-              {OPTIONS.map((id) => {
-                const active = activePreset === id
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => choosePreset(id)}
-                    className={cn(
-                      "rounded-[var(--hm-radius-control)] border px-3 py-1.5 text-sm",
-                      "transition-colors duration-(--hm-dur-fast) ease-(--hm-ease-out)",
-                      active
-                        ? "border-[var(--hm-accent)] bg-[var(--hm-accent-soft)] font-medium text-[var(--hm-accent)]"
-                        : "text-muted-foreground hover:text-foreground"
-                    )}
-                  >
-                    {id === "custom" ? d.custom : (t.presets[id]?.title ?? id)}
-                  </button>
-                )
-              })}
-            </div>
-            {/* The description of whichever bundle is active, stated once. It used
-            to be a `title` on each chip, which both hid it from the keyboard
-            and — because a title wins the accessible-name computation —
-            replaced "Recommended" with a sentence for screen-reader users. */}
-            <p className="min-h-5 text-sm text-muted-foreground" aria-live="polite">
-              {activePreset ? (t.presets[activePreset]?.description ?? "") : ""}
-            </p>
-          </div>
-
-          {/* The checklists get the width; the summary is a column of its own from
-          1100px up. Below that the change tray already states the count, so a
-          second summary would just be the same number twice. */}
-          <Tabs defaultValue="clis" className="min-w-0 pt-4">
-            <TabsList>
-              <TabsTrigger value="clis">{d.clis}</TabsTrigger>
-              <TabsTrigger value="skills">{d.skills}</TabsTrigger>
-              <TabsTrigger value="mcp">{d.mcp}</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="clis">
-              {/* One block per kind, so the agents aren't interleaved with the
-                tools that manage them (see `clisByKind`). */}
-              {clisByKind().map(({ kind, tools }) => (
-                <Group key={kind} icon={Terminal} title={t.tools.kinds[kind] ?? kind}>
-                  {tools.map((tool) => (
-                    <CheckRow
-                      key={tool.id}
-                      id={`qi-cli-${tool.id}`}
-                      label={label.cli(tool.id)}
-                      checked={selectedClis.has(tool.id)}
-                      installed={detections[tool.id]?.installed}
-                      installedLabel={t.envcheck.installed}
-                      onToggle={() => toggleCliAndRetarget(tool.id)}
-                    />
-                  ))}
-                </Group>
+        <section aria-label={ps.catalogPanel} className="min-w-0 rounded-lg border">
+          <Step n="01" title={ps.stepPick} hint={ps.stepPickHint}>
+            {/* Ruled rows rather than chips or a card grid: a preset has a name,
+                a sentence and a size, and all three have to be readable before
+                the click, not after it. */}
+            <div className="mt-3 -mx-4 border-t md:-mx-5">
+              {OPTIONS.map((id) => (
+                <PresetRow
+                  key={id}
+                  id={id}
+                  title={id === "custom" ? d.custom : (t.presets[id]?.title ?? id)}
+                  description={t.presets[id]?.description ?? ""}
+                  counts={
+                    id === "custom" ? ps.presetCountsCustom : presetCounts(id, ps.presetCounts)
+                  }
+                  tag={id === DEFAULT_PRESET ? ps.startHereTag : undefined}
+                  active={activePreset === id}
+                  onPick={() => choosePreset(id)}
+                />
               ))}
-            </TabsContent>
+            </div>
+          </Step>
 
-            <TabsContent value="skills">
-              <Group icon={Wrench} title={d.skills} note={d.writesTo(targetNames(skillTargets))}>
-                {SKILLS.map((skill) => (
-                  <CheckRow
-                    key={skill.id}
-                    id={`qi-skill-${skill.id}`}
-                    label={label.skill(skill.id)}
-                    checked={selectedSkills.has(skill.id)}
-                    onToggle={() =>
-                      setSkill(skill.id, selectedSkills.has(skill.id) ? [] : skillTargets)
-                    }
-                  />
-                ))}
-              </Group>
-            </TabsContent>
+          <Collapsible open={tuning} onOpenChange={setTuning}>
+            <Step
+              n="02"
+              title={ps.stepTune}
+              tag={ps.stepTuneTag}
+              hint={ps.stepTuneHint(CLI_TOOLS.length, SKILLS.length, MCP_SERVERS.length)}
+              action={
+                <CollapsibleTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    {tuning ? ps.tuneHide : ps.tuneShow}
+                    <ChevronDown
+                      aria-hidden="true"
+                      className={cn(
+                        "size-4 transition-transform duration-(--hm-dur-fast) ease-(--hm-ease-out)",
+                        tuning && "rotate-180"
+                      )}
+                    />
+                  </Button>
+                </CollapsibleTrigger>
+              }
+              bordered
+            >
+              <CollapsibleContent>
+                <Tabs defaultValue="clis" className="min-w-0 pt-4">
+                  <TabsList>
+                    <TabsTrigger value="clis">{d.clis}</TabsTrigger>
+                    <TabsTrigger value="skills">{d.skills}</TabsTrigger>
+                    <TabsTrigger value="mcp">{d.mcp}</TabsTrigger>
+                  </TabsList>
 
-            <TabsContent value="mcp">
-              <Group icon={Server} title={d.mcp} note={d.writesTo(targetNames(mcpTargets))}>
-                {MCP_SERVERS.map((server) => {
-                  const checked = selectedMcps.has(server.id)
-                  return (
-                    <div key={server.id} className="flex flex-col gap-1">
-                      <CheckRow
-                        id={`qi-mcp-${server.id}`}
-                        label={label.mcp(server.id)}
-                        checked={checked}
-                        badge={server.keyEnv ? t.mcp.needsKeyBadge : undefined}
-                        onToggle={() => setMcp(server.id, checked ? [] : mcpTargets)}
-                      />
-                      {/* Ask for the key here rather than sending the user to the MCP
-                        page: a bundle can select a key-gated server (context7,
-                        github), and without one the server installs degraded. */}
-                      {checked && server.keyEnv ? (
-                        <div className="pl-6">
-                          <KeyInput
-                            ariaLabel={`${server.id} ${server.keyEnv}`}
-                            placeholder={server.keyEnv}
-                            value={plan.mcpKeys[server.id] ?? ""}
-                            onChange={(v) => setMcpKey(server.id, v)}
+                  <TabsContent value="clis">
+                    {/* One block per kind, so the agents aren't interleaved with the
+                        tools that manage them (see `clisByKind`). */}
+                    {clisByKind().map(({ kind, tools }) => (
+                      <Group key={kind} icon={Terminal} title={t.tools.kinds[kind] ?? kind}>
+                        {tools.map((tool) => (
+                          <CheckRow
+                            key={tool.id}
+                            id={`qi-cli-${tool.id}`}
+                            label={label.cli(tool.id)}
+                            checked={selectedClis.has(tool.id)}
+                            installed={detections[tool.id]?.installed}
+                            installedLabel={t.envcheck.installed}
+                            onToggle={() => toggleCliAndRetarget(tool.id)}
                           />
-                        </div>
-                      ) : null}
-                    </div>
-                  )
-                })}
-              </Group>
-            </TabsContent>
-          </Tabs>
+                        ))}
+                      </Group>
+                    ))}
+                  </TabsContent>
+
+                  <TabsContent value="skills">
+                    <Group
+                      icon={Wrench}
+                      title={d.skills}
+                      note={d.writesTo(targetNames(skillTargets))}
+                    >
+                      {SKILLS.map((skill) => (
+                        <CheckRow
+                          key={skill.id}
+                          id={`qi-skill-${skill.id}`}
+                          label={label.skill(skill.id)}
+                          checked={selectedSkills.has(skill.id)}
+                          onToggle={() =>
+                            setSkill(skill.id, selectedSkills.has(skill.id) ? [] : skillTargets)
+                          }
+                        />
+                      ))}
+                    </Group>
+                  </TabsContent>
+
+                  <TabsContent value="mcp">
+                    <Group icon={Server} title={d.mcp} note={d.writesTo(targetNames(mcpTargets))}>
+                      {MCP_SERVERS.map((server) => {
+                        const checked = selectedMcps.has(server.id)
+                        return (
+                          <div key={server.id} className="flex flex-col gap-1">
+                            <CheckRow
+                              id={`qi-mcp-${server.id}`}
+                              label={label.mcp(server.id)}
+                              checked={checked}
+                              badge={server.keyEnv ? t.mcp.needsKeyBadge : undefined}
+                              onToggle={() => setMcp(server.id, checked ? [] : mcpTargets)}
+                            />
+                            {/* Ask for the key here rather than sending the user to the MCP
+                                page: a bundle can select a key-gated server (context7,
+                                github), and without one the server installs degraded. */}
+                            {checked && server.keyEnv ? (
+                              <div className="pl-6">
+                                <KeyInput
+                                  ariaLabel={`${server.id} ${server.keyEnv}`}
+                                  placeholder={server.keyEnv}
+                                  value={plan.mcpKeys[server.id] ?? ""}
+                                  onChange={(v) => setMcpKey(server.id, v)}
+                                />
+                              </div>
+                            ) : null}
+                          </div>
+                        )
+                      })}
+                    </Group>
+                  </TabsContent>
+                </Tabs>
+              </CollapsibleContent>
+            </Step>
+          </Collapsible>
+
+          {/* Step 03 names the destination before the user gets there: the
+              review panel, never disk. The change tray carries the same action
+              as the workspace's one primary button, so this one is outlined. */}
+          <Step n="03" title={ps.stepReview} hint={ps.stepReviewHint} bordered>
+            <div className="mt-3">
+              {anyPicked && onReview ? (
+                <Button variant="outline" size="sm" onClick={onReview}>
+                  {ps.reviewAction(countSelections(plan))}
+                  <ArrowRight className="size-4" aria-hidden="true" />
+                </Button>
+              ) : (
+                <p className="text-sm text-muted-foreground">{ps.emptyHint}</p>
+              )}
+            </div>
+          </Step>
         </section>
       }
       aside={
         <CapabilityTile title={d.summary}>
           {anyPicked ? (
             <dl className="flex flex-col gap-3 text-sm">
+              <div className="font-mono text-[var(--hm-text-2xs)] tracking-[var(--hm-tracking-mono)] text-muted-foreground uppercase tabular-nums">
+                {ps.selectedCount(countSelections(plan))}
+              </div>
               <SummaryGroup title={d.clis} items={plan.clis.map(label.cli)} />
               <SummaryGroup title={d.skills} items={plan.skills.map((s) => label.skill(s.id))} />
               <SummaryGroup title={d.mcp} items={plan.mcps.map((m) => label.mcp(m.id))} />
@@ -230,6 +283,147 @@ export function PresetsSection() {
         </CapabilityTile>
       }
     />
+  )
+}
+
+/** What a preset stages, as one mono line. Empty for an id with no bundle. */
+function presetCounts(id: string, sentence: (c: number, s: number, m: number) => string): string {
+  const picked = presetSelection(id)
+  return picked ? sentence(picked.clis.length, picked.skills.length, picked.mcps.length) : ""
+}
+
+/**
+ * One numbered block of the flow. The number is mono and accent because it is
+ * the only thing on the row the eye has to find; everything else is ink.
+ * `bordered` draws the section rule that separates it from the block above —
+ * a rule rather than a second box, since a panel inside a panel is a smell.
+ */
+function Step({
+  n,
+  title,
+  tag,
+  hint,
+  action,
+  bordered,
+  children,
+}: {
+  n: string
+  title: string
+  /** Short qualifier after the title, e.g. "Optional". */
+  tag?: string
+  hint?: string
+  action?: React.ReactNode
+  bordered?: boolean
+  children?: React.ReactNode
+}) {
+  return (
+    <div className={cn("min-w-0 p-4 md:p-5", bordered && "border-t")}>
+      <div className="flex min-w-0 items-center justify-between gap-3">
+        {/* The number rides the title line rather than a column of its own, so
+            the hint and the step's content share one left edge with everything
+            else in the panel. */}
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span
+            aria-hidden="true"
+            className="shrink-0 font-mono text-[var(--hm-text-xs)] text-[var(--hm-accent)] tabular-nums"
+          >
+            {n}
+          </span>
+          <h3 className="font-medium">{title}</h3>
+          {tag ? (
+            <span className="rounded-[var(--hm-radius-control)] border px-1.5 font-mono text-[var(--hm-text-2xs)] tracking-[var(--hm-tracking-mono)] text-muted-foreground uppercase">
+              {tag}
+            </span>
+          ) : null}
+        </div>
+        {action ? <div className="shrink-0">{action}</div> : null}
+      </div>
+      {hint ? <p className="mt-1 text-sm text-muted-foreground">{hint}</p> : null}
+      {children}
+    </div>
+  )
+}
+
+/**
+ * One preset, as a full-bleed ruled row: name, what it is for, and how big it
+ * is. Still a toggle button rather than a radio — the row means "make the plan
+ * be this", and pressing the one that is already active is a no-op, not a
+ * second state. The description is wired up with `aria-describedby` so the
+ * accessible name stays the preset's name.
+ */
+function PresetRow({
+  id,
+  title,
+  description,
+  counts,
+  tag,
+  active,
+  onPick,
+}: {
+  id: string
+  title: string
+  description: string
+  counts: string
+  /** Marker on the default row, e.g. "Start here". */
+  tag?: string
+  active: boolean
+  onPick: () => void
+}) {
+  const descId = `qi-preset-${id}-desc`
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      aria-label={title}
+      aria-describedby={description ? descId : undefined}
+      onClick={onPick}
+      className={cn(
+        "flex w-full min-w-0 items-start gap-3 border-b px-4 py-3 text-left last:border-b-0 md:px-5",
+        "transition-colors duration-(--hm-dur-fast) ease-(--hm-ease-out)",
+        "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none",
+        active ? "bg-[var(--hm-accent-soft)]" : "hover:bg-muted"
+      )}
+    >
+      <span className="min-w-0 flex-1">
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="font-medium">{title}</span>
+          {/* The marker is advice for someone who hasn't chosen yet, so it steps
+              aside for the tick once they have — which also keeps accent text
+              off the accent wash, where it clears 4.5:1 by too little. */}
+          {tag && !active ? (
+            <span className="rounded-[var(--hm-radius-control)] bg-[var(--hm-accent-soft)] px-1.5 font-mono text-[var(--hm-text-2xs)] tracking-[var(--hm-tracking-mono)] text-[var(--hm-accent)] uppercase">
+              {tag}
+            </span>
+          ) : null}
+        </span>
+        {description ? (
+          <span
+            id={descId}
+            className={cn(
+              "mt-0.5 block text-sm",
+              active ? "text-[var(--hm-ink-2)]" : "text-muted-foreground"
+            )}
+          >
+            {description}
+          </span>
+        ) : null}
+        <span
+          className={cn(
+            "mt-1 block font-mono text-[var(--hm-text-2xs)] tabular-nums [overflow-wrap:anywhere]",
+            active ? "text-[var(--hm-ink-2)]" : "text-muted-foreground"
+          )}
+        >
+          {counts}
+        </span>
+      </span>
+      <Check
+        aria-hidden="true"
+        className={cn(
+          "mt-0.5 size-4 shrink-0 text-[var(--hm-accent)]",
+          active ? "opacity-100" : "opacity-0"
+        )}
+      />
+    </button>
   )
 }
 

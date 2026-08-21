@@ -74,33 +74,63 @@ it("clicking an installed target asks to confirm removal", async () => {
 
 it("the needs-key filter narrows to keyed servers", async () => {
   renderCatalog()
-  await userEvent.click(screen.getByRole("button", { name: /Needs key/i }))
+  await userEvent.click(screen.getByRole("button", { name: /^Needs key \d+$/i }))
   // context7 needs a key and stays; memory (no key) is filtered out.
   expect(screen.getByText("Context7")).toBeInTheDocument()
   expect(screen.queryByText(/knowledge graph/i)).not.toBeInTheDocument()
 })
 
+/** Open the refinement popover if it isn't already showing its controls. */
+async function openFilters() {
+  if (!screen.queryByRole("combobox", { name: "Transport" })) {
+    await userEvent.click(screen.getByRole("button", { name: /^Filters/ }))
+  }
+}
+
+async function pick(control: string, option: string) {
+  await openFilters()
+  await userEvent.click(await screen.findByRole("combobox", { name: control }))
+  await userEvent.click(await screen.findByRole("option", { name: option }))
+}
+
 it("filters the catalog by target context, transport, and authentication", async () => {
   renderCatalog()
+  await openFilters()
   expect(screen.getByRole("combobox", { name: "Target" })).toBeDisabled()
+  await userEvent.keyboard("{Escape}")
 
-  await userEvent.click(screen.getByRole("button", { name: /^Installed$/i }))
+  await userEvent.click(screen.getByRole("button", { name: /^Installed 1$/i }))
+  await openFilters()
   expect(screen.getByRole("combobox", { name: "Target" })).toBeEnabled()
-  await userEvent.click(screen.getByRole("combobox", { name: "Target" }))
-  await userEvent.click(screen.getByRole("option", { name: "Claude Code" }))
+  await pick("Target", "Claude Code")
   expect(screen.getByText("Context7")).toBeInTheDocument()
 
-  await userEvent.click(screen.getByRole("button", { name: /^All$/i }))
-  await userEvent.click(screen.getByRole("combobox", { name: "Transport" }))
-  await userEvent.click(screen.getByRole("option", { name: "Remote (HTTP)" }))
+  await userEvent.keyboard("{Escape}")
+  await userEvent.click(screen.getByRole("button", { name: /^All \d+$/i }))
+  await pick("Transport", "Remote (HTTP)")
   expect(screen.queryByText("Context7")).not.toBeInTheDocument()
 
-  await userEvent.click(screen.getByRole("combobox", { name: "Transport" }))
-  await userEvent.click(screen.getByRole("option", { name: "Any transport" }))
-  await userEvent.click(screen.getByRole("combobox", { name: "Authentication" }))
-  await userEvent.click(screen.getByRole("option", { name: "No key required" }))
+  await pick("Transport", "Any transport")
+  await pick("Authentication", "No key required")
   expect(screen.queryByText("Context7")).not.toBeInTheDocument()
   expect(screen.getByText(/knowledge graph/i)).toBeInTheDocument()
+})
+
+it("counts the folded filters on their button, so none can hide rows silently", async () => {
+  renderCatalog()
+  expect(screen.getByRole("button", { name: /^Filters$/ })).toBeInTheDocument()
+  await pick("Transport", "Remote (HTTP)")
+  expect(screen.getByRole("button", { name: /^Filters 1$/ })).toBeInTheDocument()
+  await userEvent.click(screen.getByRole("button", { name: /Clear filters/ }))
+  expect(screen.getByRole("button", { name: /^Filters$/ })).toBeInTheDocument()
+  expect(screen.getByText("Context7")).toBeInTheDocument()
+})
+
+it("carries a faceted count on every scope chip", () => {
+  renderCatalog()
+  // context7 is installed on Claude in the fixture scan; the rest are not.
+  expect(screen.getByRole("button", { name: /^Installed 1$/ })).toBeInTheDocument()
+  expect(screen.getByRole("button", { name: /^Not installed \d+$/ })).toBeInTheDocument()
 })
 
 it("confirming removal runs the remove step and syncs the plan", async () => {
@@ -114,6 +144,18 @@ it("confirming removal runs the remove step and syncs the plan", async () => {
   expect(steps.some((s) => s.id === "mcp-remove-claude-context7")).toBe(true)
   const entry = useAppStore.getState().plan.mcps.find((x) => x.id === "context7")
   expect(entry?.targets ?? []).not.toContain("claude")
+})
+
+it("hides the API key field behind a disclosure until it is wanted", async () => {
+  renderCatalog()
+  await userEvent.type(screen.getByLabelText(/Search MCP servers/i), "context7")
+  // A password field on every keyed row reads as a form to fill in before you
+  // may browse; the row offers the env var by name instead.
+  expect(screen.queryByLabelText(/context7 /)).not.toBeInTheDocument()
+  await userEvent.click(screen.getByRole("button", { name: /Add API key/ }))
+  const field = await screen.findByLabelText(/^context7 /)
+  await userEvent.type(field, "sk-test")
+  expect(useAppStore.getState().plan.mcpKeys["context7"]).toBe("sk-test")
 })
 
 it("shows the no-results state when the search matches nothing", async () => {

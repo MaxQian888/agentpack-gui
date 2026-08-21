@@ -95,7 +95,20 @@ function renderTab(refresh = jest.fn()) {
   return refresh
 }
 
-it("groups skills into rows with source, symlink and bundled badges", async () => {
+/**
+ * Pick a status — the select moved inside the refinement popover, which stays
+ * open after a choice, so only open it when it isn't already.
+ */
+async function pickStatus(label: string) {
+  const name = en.skillsBrowser.statusFilter
+  if (!screen.queryByRole("combobox", { name })) {
+    await userEvent.click(screen.getByRole("button", { name: /Filters/ }))
+  }
+  await userEvent.click(await screen.findByRole("combobox", { name }))
+  await userEvent.click(await screen.findByRole("option", { name: label }))
+}
+
+it("groups skills into rows with source, symlink and bundled tags", async () => {
   renderTab()
   // caveman + tauri-v2 + rust = 3 rows (caveman groups claude + agents).
   expect(screen.getByText("caveman")).toBeInTheDocument()
@@ -113,20 +126,25 @@ it("filters by source pill and by search query", async () => {
   expect(screen.getByText("tauri-v2")).toBeInTheDocument()
 
   await userEvent.click(screen.getByRole("button", { name: /All/ }))
-  await userEvent.type(screen.getByPlaceholderText(en.skillsBrowser.searchPlaceholder), "cave")
+  await userEvent.type(screen.getByLabelText(en.skillsBrowser.searchPlaceholder), "cave")
   expect(screen.getByText("caveman")).toBeInTheDocument()
   expect(screen.queryByText("tauri-v2")).not.toBeInTheDocument()
 })
 
 it("filters installed skills by management and issue status", async () => {
   renderTab()
-  await userEvent.click(screen.getByRole("combobox", { name: en.skillsBrowser.statusFilter }))
+  await userEvent.click(screen.getByRole("button", { name: /Filters/ }))
+  await userEvent.click(
+    await screen.findByRole("combobox", { name: en.skillsBrowser.statusFilter })
+  )
   expect(screen.getByRole("option", { name: en.skillsBrowser.statusManaged })).toBeInTheDocument()
   expect(screen.getByRole("option", { name: en.skillsBrowser.statusUnmanaged })).toBeInTheDocument()
   expect(screen.getByRole("option", { name: en.skillsBrowser.statusUpdates })).toBeInTheDocument()
   expect(screen.getByRole("option", { name: en.skillsBrowser.statusIssues })).toBeInTheDocument()
   await userEvent.click(screen.getByRole("option", { name: en.skillsBrowser.statusManaged }))
   expect(screen.getByText(en.skillsBrowser.emptyFiltered)).toBeInTheDocument()
+  // The folded filter announces itself, so it can never silently hide rows.
+  expect(screen.getByRole("button", { name: /Filters 1/ })).toBeInTheDocument()
 })
 
 it("treats divergent copies across skill sources as a conflict", async () => {
@@ -151,8 +169,7 @@ it("treats divergent copies across skill sources as a conflict", async () => {
       </RunnerHarness>
     </I18nProvider>
   )
-  await userEvent.click(screen.getByRole("combobox", { name: en.skillsBrowser.statusFilter }))
-  await userEvent.click(screen.getByRole("option", { name: en.skillsBrowser.statusIssues }))
+  await pickStatus(en.skillsBrowser.statusIssues)
   expect(screen.getByText("shared")).toBeInTheDocument()
 })
 
@@ -170,17 +187,15 @@ it("shows scan errors only in the all and issues status views", async () => {
   )
 
   expect(screen.getByText(message)).toBeInTheDocument()
-  await userEvent.click(screen.getByRole("combobox", { name: en.skillsBrowser.statusFilter }))
-  await userEvent.click(screen.getByRole("option", { name: en.skillsBrowser.statusUnmanaged }))
+  await pickStatus(en.skillsBrowser.statusUnmanaged)
   expect(screen.queryByText(message)).not.toBeInTheDocument()
-  await userEvent.click(screen.getByRole("combobox", { name: en.skillsBrowser.statusFilter }))
-  await userEvent.click(screen.getByRole("option", { name: en.skillsBrowser.statusIssues }))
+  await pickStatus(en.skillsBrowser.statusIssues)
   expect(screen.getByText(message)).toBeInTheDocument()
 })
 
 it("shows the filtered-empty state when nothing matches", async () => {
   renderTab()
-  await userEvent.type(screen.getByPlaceholderText(en.skillsBrowser.searchPlaceholder), "zzz")
+  await userEvent.type(screen.getByLabelText(en.skillsBrowser.searchPlaceholder), "zzz")
   expect(screen.getByText(en.skillsBrowser.emptyFiltered)).toBeInTheDocument()
 })
 

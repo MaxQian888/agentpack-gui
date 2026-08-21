@@ -149,8 +149,11 @@ it("renders no re-detect button when no refresh handler is passed", () => {
 it("shows unmeasured runtime totals until detection has completed", () => {
   renderEnv()
 
+  // Two of the three facts are unmeasured; the catalog size is a real number,
+  // and the one reason they're unmeasured is stated once for the line.
   const summary = screen.getByRole("region", { name: en.environment.summaryLabel })
-  expect(within(summary).getAllByText("—")).toHaveLength(3)
+  expect(within(summary).getAllByText("—")).toHaveLength(2)
+  expect(within(summary).getByText(en.environment.metricPending)).toBeInTheDocument()
 })
 
 it("replaces the re-detect label while detection is running", async () => {

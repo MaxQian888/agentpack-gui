@@ -21,11 +21,18 @@ import type { DashboardScan } from "../dashboard"
 /** The three MCP write targets, in display order (canonical list lives with the types). */
 export { MCP_TARGETS }
 
-/** Per-target dot colors — shared with the skills/history source palette. */
+/**
+ * Per-target dot colours — the design system's per-CLI identity tokens.
+ *
+ * These were three hex literals, which is the one thing design.md § 11 forbids
+ * anywhere but `tokens.css`: they ignored the theme, so the dots kept their
+ * light-mode chroma on the dark band, and they drifted from the same three
+ * colours the history dashboard draws.
+ */
 export const MCP_TARGET_COLORS: Record<McpTarget, string> = {
-  claude: "#d97757",
-  codex: "#10a37f",
-  opencode: "#8b5cf6",
+  claude: "var(--hm-source-claude)",
+  codex: "var(--hm-source-codex)",
+  opencode: "var(--hm-source-opencode)",
 }
 
 /** Whether a server id is configured on each target. */
@@ -207,7 +214,10 @@ export function TargetDot({ target, on }: { target: McpTarget; on: boolean }) {
   return (
     <span
       aria-hidden
-      className={cn("size-2.5 shrink-0 rounded-full", !on && "border border-muted-foreground/50")}
+      className={cn(
+        "size-2.5 shrink-0 rounded-(--hm-radius-dot)",
+        !on && "border border-muted-foreground/50"
+      )}
       style={on ? { backgroundColor: MCP_TARGET_COLORS[target] } : undefined}
     />
   )
@@ -242,8 +252,14 @@ export function TargetToggles({
             onClick={() => onToggle(target, on)}
             title={dis ?? (on ? t.removeFromTarget(label) : t.addToTarget(label))}
             className={cn(
-              "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors",
-              on ? "border-primary bg-primary/10 font-medium" : "hover:bg-accent/40",
+              // 6px, not a pill: design.md § 5 puts pills on status dots and
+              // count bubbles only, and these are buttons.
+              "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs",
+              "transition-colors duration-(--hm-dur-fast) ease-(--hm-ease-out)",
+              "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none",
+              on
+                ? "border-[var(--hm-accent)] bg-[var(--hm-accent-soft)] font-medium text-[var(--hm-ink)]"
+                : "text-muted-foreground hover:bg-muted",
               dis && "cursor-not-allowed opacity-50"
             )}
           >
@@ -294,14 +310,31 @@ export function KeyInput({
   )
 }
 
-/** A compact stat tile for the header strip (dashboard idiom, violet MCP tint). */
-export function StatTile({ label, value }: { label: string; value: number }) {
+/**
+ * Where a server is configured, as one dot per target.
+ *
+ * This replaces the row of `<Badge>`s each installed row used to carry — up to
+ * three bordered pills repeating names the scope chips above already spell out.
+ * The dots inherit that legend, so the row keeps the fact and spends a tenth of
+ * the width on it; the whole group carries one accessible label naming the
+ * targets in words, because a colour is not a label.
+ */
+export function PresenceDots({ presence }: { presence: McpPresence }) {
+  const t = useT().mcp
+  const on = MCP_TARGETS.filter((target) => presence[target])
   return (
-    <div className="flex items-center gap-3 rounded-lg border p-3">
-      <div className="flex flex-col">
-        <span className="text-2xl font-semibold tabular-nums">{value}</span>
-        <span className="text-xs text-muted-foreground">{label}</span>
-      </div>
-    </div>
+    <span
+      className="flex shrink-0 items-center gap-1"
+      title={on.map((target) => t.targets[target]).join(" · ")}
+      aria-label={
+        on.length === 0
+          ? t.detailNotConfigured
+          : `${t.detailPresence}: ${on.map((target) => t.targets[target]).join(", ")}`
+      }
+    >
+      {MCP_TARGETS.map((target) => (
+        <TargetDot key={target} target={target} on={presence[target]} />
+      ))}
+    </span>
   )
 }

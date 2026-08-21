@@ -55,10 +55,10 @@ afterEach(() => {
   ;(readTextFile as jest.Mock).mockImplementation(async () => "{}")
 })
 
-function renderInstalled(s: DashboardScan | null = scan()) {
+function renderInstalled(s: DashboardScan | null = scan(), onBrowseCatalog?: () => void) {
   return render(
     <I18nProvider>
-      <InstalledTab scan={s} refresh={() => {}} />
+      <InstalledTab scan={s} refresh={() => {}} onBrowseCatalog={onBrowseCatalog} />
     </I18nProvider>
   )
 }
@@ -71,11 +71,23 @@ it("lists catalog and custom servers with their id shown for customs", () => {
   expect(screen.getByRole("button", { name: /Codex\s*1/i })).toBeInTheDocument()
 })
 
-it("shows the empty state when nothing is configured", () => {
+it("names each row's targets in words, not colour alone", () => {
+  renderInstalled()
+  // One dot group per row replaces the row of per-target badges; the group
+  // carries the names so the colours are decoration, not the only signal.
+  expect(screen.getByLabelText("Configured on: Claude Code")).toBeInTheDocument()
+  expect(screen.getByLabelText("Configured on: Codex")).toBeInTheDocument()
+})
+
+it("shows the empty state, with the catalog as its next step", async () => {
+  const browse = jest.fn()
   renderInstalled(
-    scan({ claudeMcps: { known: [], custom: [] }, codexMcps: { known: [], custom: [] } })
+    scan({ claudeMcps: { known: [], custom: [] }, codexMcps: { known: [], custom: [] } }),
+    browse
   )
   expect(screen.getByText(/No MCP servers configured yet/i)).toBeInTheDocument()
+  await userEvent.click(screen.getByRole("button", { name: /Browse the catalog/i }))
+  expect(browse).toHaveBeenCalled()
 })
 
 it("removing a target confirms then runs the remove step", async () => {
@@ -124,7 +136,7 @@ it("narrows by source filter and shows the filtered-empty state on no search hit
   await userEvent.click(screen.getByRole("button", { name: /Codex\s*1/i }))
   expect(screen.queryByText("Context7")).not.toBeInTheDocument()
   expect(screen.getByText("mine")).toBeInTheDocument()
-  await userEvent.type(screen.getByPlaceholderText(/Search MCP servers/i), "zzz")
+  await userEvent.type(screen.getByLabelText(/Search MCP servers/i), "zzz")
   expect(screen.getByText(/No servers match your filter/i)).toBeInTheDocument()
 })
 

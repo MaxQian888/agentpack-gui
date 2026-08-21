@@ -56,35 +56,31 @@ function renderCatalog(scan: SkillsScanResult = emptyScan) {
   )
 }
 
-it("reveals install/uninstall actions once a target is selected", async () => {
+it("offers all four skill roots as one-click install chips", () => {
   renderCatalog()
-  expect(screen.queryByRole("button", { name: /Install now/i })).not.toBeInTheDocument()
-  await userEvent.click(screen.getAllByRole("checkbox")[0])
-  expect(screen.getAllByRole("button", { name: /Install now/i }).length).toBeGreaterThan(0)
+  // 6 bundled skills × 4 roots, each a single toggle rather than a checkbox
+  // plus a pair of buttons that only appear once it is ticked.
+  expect(screen.getAllByTitle(/^Install into /).length).toBe(24)
+  expect(screen.queryByRole("checkbox")).not.toBeInTheDocument()
 })
 
-it("offers all four skill roots as install targets", () => {
-  renderCatalog()
-  // 6 bundled skills × 4 sources.
-  expect(screen.getAllByRole("checkbox").length).toBe(24)
-})
-
-it("shows an installed badge derived from the scan", () => {
+it("marks the roots a bundled skill is already installed in", () => {
   renderCatalog(rustInstalled)
-  expect(screen.getAllByText(/Installed:/i).length).toBeGreaterThan(0)
+  expect(screen.getByTitle("Delete from Claude Code")).toBeInTheDocument()
+  expect(screen.getAllByTitle(/^Install into /).length).toBe(23)
 })
 
-it("install now runs the install step through the runner", async () => {
+it("installs into a root in one click, through the runner", async () => {
   renderCatalog()
-  await userEvent.click(screen.getAllByRole("checkbox")[0])
-  await userEvent.click(screen.getAllByRole("button", { name: /Install now/i })[0])
+  await userEvent.click(screen.getAllByTitle("Install into Claude Code")[0])
   await waitFor(() => expect(installSkill).toHaveBeenCalled())
   expect(useAppStore.getState().panelOpen).toBe(true)
 })
 
-it("uninstall now removes the skill destinations", async () => {
-  renderCatalog()
-  await userEvent.click(screen.getAllByRole("checkbox")[0])
-  await userEvent.click(screen.getAllByRole("button", { name: /Uninstall now/i })[0])
+it("confirms before removing a skill from a root", async () => {
+  renderCatalog(rustInstalled)
+  await userEvent.click(screen.getByTitle("Delete from Claude Code"))
+  expect(await screen.findByRole("alertdialog")).toBeInTheDocument()
+  await userEvent.click(screen.getByRole("button", { name: /^Delete$/ }))
   await waitFor(() => expect(removeDir).toHaveBeenCalled())
 })
