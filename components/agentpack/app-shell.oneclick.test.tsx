@@ -77,7 +77,7 @@ import { act } from "react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { toast } from "sonner"
-import { readTextFile, listSkills } from "@/lib/tauri/commands"
+import { detectCli, readTextFile, listSkills } from "@/lib/tauri/commands"
 import { useAppStore } from "@/store/app-store"
 import { AppShell } from "./app-shell"
 import { en } from "@/lib/i18n/en"
@@ -175,4 +175,30 @@ it("refuses to run at all when there is no readable scan to dedup against", asyn
   // No step list at all — better than a run that re-adds what's already there.
   await waitFor(() => expect(toast.error).toHaveBeenCalledWith(en.shell.scanFailed))
   expect(screen.queryByText(claudeMcpLabel("context7"))).not.toBeInTheDocument()
+})
+
+/**
+ * The overview's Rescan is the only way to say "I changed something outside
+ * this app, look again". It used to re-read the config files and nothing else,
+ * while the tools readout, the CLI inventory and every upgrade finding on that
+ * same page come from the CLI detections — so a CLI installed in a terminal a
+ * minute earlier stayed invisible until the next launch.
+ */
+it("re-detects the CLIs as well as the config files on Rescan", async () => {
+  render(
+    <I18nProvider>
+      <AppShell />
+    </I18nProvider>
+  )
+  await waitFor(() => expect(useAppStore.getState().paths).not.toBeNull())
+  await waitFor(() => expect(detectCli).toHaveBeenCalled())
+
+  // Forget the startup pass; only what Rescan itself does should count.
+  ;(detectCli as jest.Mock).mockClear()
+  ;(readTextFile as jest.Mock).mockClear()
+
+  await userEvent.click(screen.getByRole("button", { name: en.dashboard.refresh }))
+
+  await waitFor(() => expect(detectCli).toHaveBeenCalled())
+  await waitFor(() => expect(readTextFile).toHaveBeenCalled())
 })

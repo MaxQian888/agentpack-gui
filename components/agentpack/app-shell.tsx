@@ -31,12 +31,14 @@ import { CLI_TOOLS, RUNTIMES, runtimePkgManager, SKILLS } from "@/lib/agentpack/
 import { skillTargetsFor, type Surface } from "@/lib/agentpack/presets"
 import {
   hasTabs,
+  SECTION_KEYS,
   workspaceOf,
   type SectionKey,
   type WorkspaceKey,
 } from "@/lib/agentpack/workspaces"
 import { useAppStore } from "@/store/app-store"
 import { useT } from "@/lib/i18n/provider"
+import { useAppearance } from "@/hooks/use-appearance"
 import { Header } from "./header"
 import { WorkspaceRail } from "./sidebar-nav"
 import { WorkspaceTabs } from "./workspace-tabs"
@@ -54,6 +56,7 @@ import { CleanupSection } from "./sections/cleanup"
 import { CcSwitchSection } from "./sections/ccswitch"
 import { CcConnectSection } from "./sections/ccconnect"
 import { AboutSection } from "./sections/about"
+import { PreferencesSection } from "./sections/preferences"
 import { MoreTokenSection } from "./sections/more-token"
 import { PersonalMoreTokenSection } from "./sections/more-token/personal"
 import { ConfigIO } from "./config-io"
@@ -95,7 +98,13 @@ function ShellBody() {
   const [section, setSection] = useState<SectionKey>("dashboard")
   const [commandOpen, setCommandOpen] = useState(false)
 
+  // Whether the user has steered yet. The startup preference below only lands
+  // the app somewhere if they haven't — settings arrive asynchronously, and
+  // yanking someone off a page they already opened is worse than ignoring the
+  // preference for that launch.
+  const navigatedRef = useRef(false)
   const navigate = useCallback((next: WorkspaceKey, to: SectionKey) => {
+    navigatedRef.current = true
     setWorkspace(next)
     setSection(to)
   }, [])
@@ -105,6 +114,10 @@ function ShellBody() {
 
   const openCommand = useCallback(() => setCommandOpen(true), [])
   useCommandShortcut(openCommand)
+  // Interface scale + the reduced-motion override, applied to <html>. Reads the
+  // store, so it covers both the restore at startup and a live change made in
+  // Settings → Preferences.
+  useAppearance()
 
   // Saved wizard progress, once settings have been read. The wizard seeds its
   // state from this exactly once, so it is keyed on it below rather than gated
@@ -294,6 +307,22 @@ function ShellBody() {
     }
   }, [setDetections, setLatestVersion, setCliManager, setRuntimeOwned])
 
+  /**
+   * "Rescan" as the user means it: re-read the machine, *all* of it.
+   *
+   * The overview's tools readout, its CLI inventory and its upgrade findings
+   * come from `detections`, not from the disk scan — so a Rescan that ran only
+   * `scanEnvironment` left a CLI installed in a terminal a minute ago invisible
+   * until the next launch, under a heading that says "your real installed
+   * state". The two run together, as they already do after every applied run.
+   *
+   * `rescanDashboard` stays on its own for the section refreshes (MCP), which
+   * change config files and have no reason to re-probe thirteen binaries.
+   */
+  const rescanMachine = useCallback(async () => {
+    await Promise.all([refreshDetections(), rescanDashboard()])
+  }, [refreshDetections, rescanDashboard])
+
   useEffect(() => {
     if (!isTauri()) return
     getPaths()
@@ -322,6 +351,16 @@ function ShellBody() {
       const settings = await loadSettings()
       if (cancelled) return
       setSettings(settings)
+      // Land on the screen the user chose in Preferences. Checked against the
+      // live key list, not trusted: a section removed in a later release would
+      // otherwise leave the shell rendering nothing at all.
+      if (
+        settings.startupSection &&
+        !navigatedRef.current &&
+        SECTION_KEYS.includes(settings.startupSection)
+      ) {
+        goToSection(settings.startupSection)
+      }
       // Restore the proxy the user applied last time: the plan isn't persisted,
       // so without this agentpack's own downloads would go direct until they
       // re-applied it.
@@ -378,6 +417,7 @@ function ShellBody() {
     setUpdateState,
     setOnboardingOpen,
     probeNetworkNow,
+    goToSection,
   ])
 
   // Scan chat history once at startup — no longer gated on opening the History
@@ -569,7 +609,7 @@ function ShellBody() {
           <DashboardSection
             scan={dashboardScan}
             scanning={dashboardScanning}
-            rescan={rescanDashboard}
+            rescan={rescanMachine}
             onNavigate={goToSection}
             history={{ data: historyResult, progress: historyProgress }}
           />
@@ -610,11 +650,11 @@ function ShellBody() {
           />
         )
       case "presets":
-        return <PresetsSection />
+        return <PresetsSection onReview={reviewChanges} />
       case "environment":
         return <EnvironmentSection refresh={refreshDetections} />
       case "clis":
-        return <ClisSection />
+        return <ClisSection onOpenRuntimes={() => goToSection("environment")} />
       case "skills":
         return (
           <SkillsSection
@@ -635,6 +675,8 @@ function ShellBody() {
         return <CcSwitchSection />
       case "ccconnect":
         return <CcConnectSection />
+      case "preferences":
+        return <PreferencesSection />
       case "config":
         return <ConfigIO onOpenMcp={() => goToSection("mcp")} />
       case "about":
@@ -678,7 +720,7 @@ function ShellBody() {
         handlers={{
           navigate: (a) => navigate(a.workspace, a.section),
           quickConfig: () => navigate("install", "presets"),
-          rescan: () => void rescanDashboard(),
+          rescan: () => void rescanMachine(),
           review: () => setPanelOpen(true),
           onboarding: () => setOnboardingOpen(true),
           updates: () => goToSection("about"),

@@ -94,6 +94,9 @@ it("shows the header update badge when an update is available and opens About", 
       summonShortcut: null,
       monthlySubscriptionUsd: null,
       providerBackend: "native",
+      uiScale: 100,
+      reduceMotion: false,
+      startupSection: null,
     },
   })
   renderShell()
