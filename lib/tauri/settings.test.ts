@@ -41,6 +41,9 @@ describe("loadSettings", () => {
       summonShortcut: null,
       monthlySubscriptionUsd: null,
       providerBackend: "ccswitch",
+      uiScale: 100,
+      reduceMotion: false,
+      startupSection: null,
     })
   })
 

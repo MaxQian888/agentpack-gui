@@ -59,6 +59,16 @@
   --hm-rail-width: 11.5rem;
   --hm-rail-width-wide: 13rem;
 
+  /* The one multiplier the user is allowed over the whole scale. Every size in
+     the app is a rem, so the root size *is* the interface scale — which is why
+     these are the only px sizes here that aren't hairlines. 100% is the browser
+     default the rem scale was drawn against; the others are ±10% steps and one
+     large step for a high-DPI display read at arm's length. */
+  --hm-root-90: 14.4px;
+  --hm-root-100: 16px;
+  --hm-root-110: 17.6px;
+  --hm-root-125: 20px;
+
   /* ---- Motion ---------------------------------------------------------- */
   --hm-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --hm-ease-in: cubic-bezier(0.7, 0, 0.84, 0);
@@ -106,6 +116,9 @@
   --hm-source-claude: oklch(58% 0.13 45);
   --hm-source-codex: oklch(56% 0.1 200);
   --hm-source-opencode: oklch(56% 0.11 300);
+  /* The shared ~/.agents root is not a CLI, so it takes the one hue left over
+     between codex-teal and opencode-violet rather than a fourth brand colour. */
+  --hm-source-agents: oklch(56% 0.1 110);
 
   --hm-focus: var(--hm-accent);
   --hm-focus-width: 2px;
@@ -147,4 +160,5 @@
   --hm-source-claude: oklch(72% 0.12 45);
   --hm-source-codex: oklch(70% 0.09 200);
   --hm-source-opencode: oklch(72% 0.1 300);
+  --hm-source-agents: oklch(70% 0.09 110);
 }

@@ -3,6 +3,8 @@ import type { RepoSource } from "@/lib/skills/types"
 import type { Surface } from "@/lib/agentpack/presets"
 import type { ProxyConfig } from "@/lib/agentpack/types"
 import type { ProviderBackend } from "@/lib/agentpack/ccswitch/types"
+import type { SectionKey } from "@/lib/agentpack/workspaces"
+import { DEFAULT_UI_SCALE, type UiScale } from "@/lib/agentpack/appearance"
 
 /**
  * Where a half-finished first run got to. Written when the wizard is closed
@@ -84,6 +86,25 @@ export interface AppSettings {
   monthlySubscriptionUsd: number | null
   /** Provider record store selected in Accounts & relays. */
   providerBackend: ProviderBackend
+  /**
+   * Root font size as a percentage of the browser default, which — because
+   * every length in the app is a rem — is the interface scale for the whole
+   * window. Only the four values Preferences offers are meaningful; anything
+   * else falls back to 100 rather than writing an arbitrary size onto <html>.
+   */
+  uiScale: UiScale
+  /**
+   * Collapse animation and transition durations regardless of what the OS
+   * reports. An override in one direction only: it can turn motion off, never
+   * back on for someone whose system asked for less of it.
+   */
+  reduceMotion: boolean
+  /**
+   * Where the app lands at launch. Null = the overview dashboard, which is what
+   * every install has always done. Stored as a section key rather than a
+   * workspace so "open on Chat history" is expressible.
+   */
+  startupSection: SectionKey | null
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -99,6 +120,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   summonShortcut: null,
   monthlySubscriptionUsd: null,
   providerBackend: "native",
+  uiScale: DEFAULT_UI_SCALE,
+  reduceMotion: false,
+  startupSection: null,
 }
 
 const STORE_FILE = "settings.json"

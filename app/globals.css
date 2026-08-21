@@ -226,6 +226,25 @@
   * {
     @apply border-border outline-ring/50;
   }
+
+  /* Interface scale. Every length in the app is a rem, so the root size is the
+     only lever needed — Settings → Preferences writes `data-ui-scale` on <html>
+     and the whole workbench, hairlines included, resizes with it. The attribute
+     is absent at 100%, so an install that never touches this renders off the
+     browser default exactly as before. */
+  html {
+    font-size: var(--hm-root-100);
+  }
+  html[data-ui-scale="90"] {
+    font-size: var(--hm-root-90);
+  }
+  html[data-ui-scale="110"] {
+    font-size: var(--hm-root-110);
+  }
+  html[data-ui-scale="125"] {
+    font-size: var(--hm-root-125);
+  }
+
   body {
     @apply bg-background text-foreground;
     font-size: var(--hm-text-base);
@@ -257,6 +276,19 @@
       transition-duration: 0.01ms !important;
       scroll-behavior: auto !important;
     }
+  }
+
+  /* The same collapse, asked for explicitly. The OS setting is a preference
+     about every app; this one is about this app, for someone who wants motion
+     elsewhere and not here — so it is an override, not a mirror, and it can
+     only ever remove motion. */
+  html[data-reduce-motion="true"] *,
+  html[data-reduce-motion="true"] *::before,
+  html[data-reduce-motion="true"] *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 
   /*
