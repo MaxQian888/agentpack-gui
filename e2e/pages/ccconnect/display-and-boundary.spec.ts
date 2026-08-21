@@ -20,6 +20,10 @@ test("gates service and configuration management to the desktop runtime", async 
   await navTo(page, "ccconnect")
 
   await expect(page.getByText(NOT_IN_TAURI)).toBeVisible()
-  await expect(page.getByText("Bridge service", { exact: true })).toHaveCount(0)
-  await expect(page.getByText("Configuration", { exact: true })).toHaveCount(0)
+  // The whole setup checklist is desktop-only: web mode can't detect, configure,
+  // start or open anything, so it renders none of those rows rather than four
+  // dead ones.
+  await expect(page.getByRole("region", { name: "Get cc-connect running" })).toHaveCount(0)
+  await expect(page.getByText("Start the bridge", { exact: true })).toHaveCount(0)
+  await expect(page.getByText("Configure a project", { exact: true })).toHaveCount(0)
 })

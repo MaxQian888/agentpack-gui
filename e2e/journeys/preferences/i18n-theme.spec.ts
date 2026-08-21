@@ -5,17 +5,17 @@ test.beforeEach(async ({ page }) => openApp(page))
 
 test("switches interface language between English and Chinese", async ({ page }) => {
   // Language is a set-once preference, so it moved out of the title bar and into
-  // Settings → About with the rest of them.
+  // Settings → Preferences with the rest of them.
   // The rail's own accessible name is localized too, so it is re-queried each
   // time rather than captured once.
   const rail = (name: string) => page.getByRole("navigation", { name })
   await expect(rail("Task areas").getByRole("button", { name: "Install & repair" })).toBeVisible()
 
-  await navTo(page, "about")
-  await page.getByLabel("Language").selectOption("zh-CN")
+  await navTo(page, "preferences")
+  await page.getByRole("radio", { name: "中文" }).click()
   await expect(rail("任务分区").getByRole("button", { name: "安装与修复" })).toBeVisible()
 
-  await page.getByLabel("语言").selectOption("en")
+  await page.getByRole("radio", { name: "EN" }).click()
   await expect(rail("Task areas").getByRole("button", { name: "Install & repair" })).toBeVisible()
 })
 

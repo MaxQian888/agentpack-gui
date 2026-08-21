@@ -15,6 +15,7 @@ test("shows the skill workbench boundary in web mode", async ({ page }) => {
 test("does not expose desktop skill actions in web mode", async ({ page }) => {
   await navTo(page, "skills")
 
-  await expect(page.getByRole("button", { name: "Bundled skills" })).toHaveCount(0)
-  await expect(page.getByRole("button", { name: "Add skills" })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Bundled", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Add skills", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("list", { name: "Installed skills" })).toHaveCount(0)
 })

@@ -39,7 +39,7 @@ test("navigates through every section, via its workspace", async ({ page }) => {
   await expect(page.getByText("Cleaning needs the desktop app", { exact: false })).toBeVisible()
 
   await navTo(page, "ccswitch")
-  await expect(page.getByRole("button", { name: "+ Add provider" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Add provider" })).toBeVisible()
 
   await navTo(page, "ccconnect")
   await expect(page.getByText(NOT_IN_TAURI)).toBeVisible()

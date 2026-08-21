@@ -6,10 +6,13 @@ test.beforeEach(async ({ page }) => openApp(page))
 test("shows profile, backup, and config-file controls", async ({ page }) => {
   await navTo(page, "config")
 
-  await expect(page.getByRole("heading", { name: "Profiles" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Profiles & backup" })).toBeVisible()
+  await expect(page.getByRole("region", { name: "Saved profiles" })).toBeVisible()
   await expect(page.getByText("No profiles saved yet.")).toBeVisible()
   await expect(page.getByRole("button", { name: "Save config" })).toBeVisible()
   await expect(page.getByRole("button", { name: "Load config" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Export backup…" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Import backup…" })).toBeVisible()
 })
 
 test("gates profile and config filesystem writes to the desktop runtime", async ({ page }) => {

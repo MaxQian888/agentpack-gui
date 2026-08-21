@@ -33,10 +33,10 @@ test("a CLI can be toggled manually", async ({ page }) => {
 })
 
 test("the OS override can be changed from Settings", async ({ page }) => {
-  await navTo(page, "about")
-  await page.getByLabel("OS", { exact: true }).selectOption("win")
+  await navTo(page, "preferences")
+  await page.getByLabel("Build commands for").selectOption("win")
   // Leave and come back: the choice is held in the store, not the control.
   await navTo(page, "presets")
-  await navTo(page, "about")
-  await expect(page.getByLabel("OS", { exact: true })).toHaveValue("win")
+  await navTo(page, "preferences")
+  await expect(page.getByLabel("Build commands for")).toHaveValue("win")
 })

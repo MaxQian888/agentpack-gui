@@ -8,7 +8,9 @@ const sections = [
   { id: "environment", primary: "Runtime catalog", aside: "Runtime detection controls" },
   { id: "network", primary: "Proxy configuration", aside: "Network discovery" },
   { id: "cleanup", primary: "Cleanup targets", aside: "Cleanup recovery" },
-  { id: "about", primary: "Application preferences", aside: "Application locations" },
+  { id: "preferences", primary: "Application preferences", aside: "Guidance and defaults" },
+  { id: "config", primary: "Saved profiles", aside: "Backup and config-file actions" },
+  { id: "about", primary: "Application updates", aside: "Project links and locations" },
 ] as const
 
 for (const section of sections) {

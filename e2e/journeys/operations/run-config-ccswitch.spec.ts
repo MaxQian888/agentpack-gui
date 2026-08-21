@@ -30,7 +30,7 @@ test("save and load config are gated to the desktop runtime", async ({ page }) =
 
 test("the cc-switch provider form is gated in web mode", async ({ page }) => {
   await navTo(page, "ccswitch")
-  await expect(page.getByRole("button", { name: "+ Add provider" })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Add provider" })).toBeDisabled()
 })
 
 test("recommended provider presets are gated in web mode", async ({ page }) => {

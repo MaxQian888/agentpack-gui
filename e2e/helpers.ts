@@ -31,7 +31,8 @@ export const NAV = {
   myAccount: { workspace: "account", tab: "My account" },
   managementOverview: { workspace: "management", tab: "Operations overview" },
   history: { workspace: "usage", tab: null },
-  config: { workspace: "settings", tab: "Save current setup as config" },
+  preferences: { workspace: "settings", tab: "Preferences" },
+  config: { workspace: "settings", tab: "Profiles & backup" },
   about: { workspace: "settings", tab: "About & updates" },
 } as const satisfies Record<string, { workspace: keyof typeof WORKSPACE; tab: string | null }>
 

@@ -13,6 +13,12 @@ test("shows every preset, configurable surface, and empty selection state", asyn
   await expect(
     page.getByText("A preset pre-fills your selections; you can still adjust each step.")
   ).toBeVisible()
+  // Step 02 starts folded: sixteen CLI checkboxes are the answer to a question
+  // a first-time user has not asked yet.
+  for (const surface of ["CLIs", "Skills", "MCP servers"]) {
+    await expect(page.getByRole("tab", { name: surface, exact: true })).toHaveCount(0)
+  }
+  await page.getByRole("button", { name: "Customise" }).click()
   for (const surface of ["CLIs", "Skills", "MCP servers"]) {
     await expect(page.getByRole("tab", { name: surface, exact: true })).toBeVisible()
   }
@@ -24,6 +30,8 @@ test("applies a complete preset and Custom clears the staged plan", async ({ pag
 
   await page.getByRole("button", { name: "Recommended", exact: true }).click()
   await expect(page.getByRole("button", { name: "Review changes" })).toBeVisible()
+  // Step 03 names the same destination from the page itself, with the count.
+  await expect(page.getByRole("button", { name: "Review 8 changes" })).toBeVisible()
   await page.getByRole("button", { name: "Custom", exact: true }).click()
   await expect(page.getByRole("button", { name: "Review changes" })).toHaveCount(0)
 })
