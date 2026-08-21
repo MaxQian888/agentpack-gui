@@ -55,3 +55,20 @@ export function quotaAmountWithRaw(value: number, display: QuotaDisplaySetting):
   const fraction = (scaled % BigInt(10_000)).toString().padStart(4, "0").replace(/0+$/, "")
   return `${display.display_currency} ${sign}${whole.toString()}${fraction ? `.${fraction}` : ""} · ${raw}`
 }
+
+/**
+ * The same authoritative string as `quotaAmountWithRaw`, split so a table cell
+ * can set the converted amount on one line and the raw quota — which stays
+ * authoritative when the display rate expires — as its meta line. `raw` is null
+ * exactly when there is nothing to convert from, i.e. the primary IS the raw
+ * quota.
+ */
+export function quotaAmountParts(
+  value: number,
+  display: QuotaDisplaySetting
+): { primary: string; raw: string | null } {
+  const text = quotaAmountWithRaw(value, display)
+  const separator = text.indexOf(" · ")
+  if (separator < 0) return { primary: text, raw: null }
+  return { primary: text.slice(0, separator), raw: text.slice(separator + 3) }
+}

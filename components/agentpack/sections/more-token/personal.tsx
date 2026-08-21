@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
@@ -58,6 +59,7 @@ import {
   pairInstance,
   pollPersonalOAuth,
   quotaCurrencyLabel,
+  quotaCurrencyParts,
   sameOriginServerUrl,
   saveInstance,
   startPersonalOAuth,
@@ -258,7 +260,7 @@ export function PersonalMoreTokenSection({ view }: { view: PersonalView }) {
             label={personal.apiVersion}
             value={capabilities.data?.personal_api_version ?? "—"}
           />
-          <CapabilityMetric label={personal.currentView} value={title} />
+          <CapabilityMetric label={management.role} value={capabilities.data?.role ?? "—"} />
         </>
       }
       primary={primary}
@@ -613,6 +615,16 @@ function MetricStrip({ items }: { items: Array<{ label: string; value: string; h
   )
 }
 
+/** One label/value line in the account fact list — hairlines, not tiles. */
+function FactRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex min-w-0 items-baseline justify-between gap-4 py-2 first:pt-0 last:pb-0">
+      <dt className="shrink-0 text-xs text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 text-right text-sm [overflow-wrap:anywhere]">{children}</dd>
+    </div>
+  )
+}
+
 function PersonalAccountView({
   instance,
   capabilities,
@@ -620,7 +632,9 @@ function PersonalAccountView({
   instance: MoreTokenInstance
   capabilities: PersonalCapabilities
 }) {
-  const m = useT().personal
+  const t = useT()
+  const m = t.personal
+  const management = t.management
   const queryClient = useQueryClient()
   const overview = useQuery({
     queryKey: ["more-token", instance.id, "personal-overview"],
@@ -653,86 +667,48 @@ function PersonalAccountView({
     active_desktop_sessions: 0,
     auth_methods: ["password"],
   }
+  const lifecycle = info.account.lifecycle_state || "active"
+  const [statusTone, statusLabel] =
+    lifecycle === "archived"
+      ? (["bg-[var(--hm-neutral)]", management.archived] as const)
+      : lifecycle === "closing"
+        ? (["bg-[var(--hm-warn)]", management.closing] as const)
+        : info.account.status === 1
+          ? (["bg-[var(--hm-ok)]", management.enabled] as const)
+          : (["bg-[var(--hm-warn)]", management.disabled] as const)
+  const monogram = (info.account.display_name || info.account.username).trim().slice(0, 2)
+  const available = quotaCurrencyParts(info.balance.available, info.quota_display)
+  const usedShare =
+    info.balance.total > 0
+      ? Math.min(100, Math.round((info.balance.used / info.balance.total) * 100))
+      : 0
+  const profileEditable = !instance.readOnly && capabilities.features.profile_edit_enabled
+
   return (
-    <div className="space-y-5">
-      <MetricStrip
-        items={[
-          {
-            label: m.available,
-            value: quotaCurrencyLabel(info.balance.available, info.quota_display),
-            hint: `${m.rawQuota}: ${formatNumber(info.balance.available)}`,
-          },
-          {
-            label: m.used,
-            value: quotaCurrencyLabel(info.balance.used, info.quota_display),
-            hint: `${m.rawQuota}: ${formatNumber(info.balance.used)}`,
-          },
-          {
-            label: m.total,
-            value: quotaCurrencyLabel(info.balance.total, info.quota_display),
-            hint: `${m.rawQuota}: ${formatNumber(info.balance.total)}`,
-          },
-          { label: m.requests, value: formatNumber(info.account.request_count) },
-        ]}
-      />
-      <MetricStrip
-        items={[
-          { label: m.accountGroup, value: access.group || "—" },
-          { label: m.activeApiKeys, value: formatNumber(access.active_api_keys) },
-          { label: m.desktopSessions, value: formatNumber(security.active_desktop_sessions) },
-          { label: m.lastLogin, value: formatTime(access.last_login_at) },
-        ]}
-      />
-      <div className="grid border-y lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.7fr)]">
-        <section className="space-y-4 py-5 lg:pr-6">
-          <div>
-            <h3 className="font-medium">{m.profile}</h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              @{info.account.username} · {info.account.email || "—"}
-            </p>
-          </div>
-          <form
-            className="max-w-lg space-y-3"
-            onSubmit={(event) => {
-              event.preventDefault()
-              const form = new FormData(event.currentTarget)
-              profile.mutate(String(form.get("displayName") ?? ""))
-            }}
+    <div className="min-w-0 space-y-4">
+      <section className="min-w-0 rounded-[var(--hm-radius-surface)] border">
+        <div className="flex min-w-0 flex-wrap items-start gap-4 p-4">
+          <span
+            aria-hidden="true"
+            className="flex size-11 shrink-0 items-center justify-center rounded-[var(--hm-radius-control)] border bg-muted text-sm font-medium uppercase"
           >
-            <Label htmlFor="personal-display-name">{m.displayName}</Label>
-            <Input
-              id="personal-display-name"
-              name="displayName"
-              defaultValue={info.account.display_name}
-              maxLength={32}
-              disabled={instance.readOnly || !capabilities.features.profile_edit_enabled}
-            />
-            <Button type="submit" size="sm" disabled={profile.isPending || instance.readOnly}>
-              {m.saveProfile}
-            </Button>
-          </form>
-        </section>
-        <aside className="space-y-4 border-t py-5 lg:border-l lg:border-t-0 lg:pl-6">
-          <div>
-            <p className="text-xs text-muted-foreground">{m.memberOf}</p>
-            <p className="mt-1 text-sm font-medium">
-              {info.parent ? info.parent.display_name || info.parent.username : m.independent}
+            {monogram}
+          </span>
+          <div className="min-w-0 flex-1">
+            <h3 className="truncate text-lg font-medium">
+              {info.account.display_name || info.account.username}
+            </h3>
+            <p className="mt-0.5 flex min-w-0 flex-wrap items-baseline gap-x-2 font-mono text-xs text-muted-foreground">
+              <span>@{info.account.username}</span>
+              <span aria-hidden="true">·</span>
+              <span className="[overflow-wrap:anywhere]">{info.account.email || "—"}</span>
             </p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">{m.signInMethods}</p>
-            <div className="mt-2 flex flex-wrap gap-1">
-              {security.auth_methods.map((method) => (
-                <Badge key={method} variant="outline">
-                  {method}
-                </Badge>
-              ))}
-            </div>
           </div>
           {capabilities.features.billing_portal_enabled ? (
             <Button
               variant="outline"
               size="sm"
+              className="h-9 shrink-0"
               onClick={() => {
                 try {
                   void openUrl(
@@ -747,8 +723,143 @@ function PersonalAccountView({
               {m.openBillingPortal}
             </Button>
           ) : null}
-        </aside>
+        </div>
+        <dl className="flex min-w-0 flex-wrap items-center gap-x-6 gap-y-2 border-t px-4 py-2.5 text-xs">
+          <div className="flex min-w-0 items-center gap-2">
+            <dt className="sr-only">{management.status}</dt>
+            <dd className="flex items-center gap-2">
+              <span
+                aria-hidden="true"
+                className={`size-1.5 shrink-0 rounded-[var(--hm-radius-dot)] ${statusTone}`}
+              />
+              {statusLabel}
+            </dd>
+          </div>
+          <div className="flex min-w-0 items-center gap-2">
+            <dt className="shrink-0 text-muted-foreground">{m.accountGroup}</dt>
+            <dd className="truncate font-medium">{access.group || "—"}</dd>
+          </div>
+          <div className="flex min-w-0 items-center gap-2">
+            <dt className="shrink-0 text-muted-foreground">{m.memberOf}</dt>
+            <dd className="truncate font-medium">
+              {info.parent ? info.parent.display_name || info.parent.username : m.independent}
+            </dd>
+          </div>
+        </dl>
+      </section>
+
+      <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+        <section
+          aria-label={m.balanceSummary}
+          className="min-w-0 rounded-[var(--hm-radius-surface)] border p-4"
+        >
+          <h3 className="text-sm font-medium">{m.balanceSummary}</h3>
+          <p className="mt-3 text-xs text-muted-foreground">{m.available}</p>
+          <p className="mt-1 font-mono text-2xl font-semibold tracking-tight tabular-nums [overflow-wrap:anywhere]">
+            {available.primary}
+          </p>
+          {available.raw ? (
+            <p className="mt-1 font-mono text-xs tabular-nums text-muted-foreground">
+              {`${m.rawQuota}: ${formatNumber(info.balance.available)}`}
+            </p>
+          ) : null}
+          <Progress value={usedShare} aria-label={m.used} className="mt-4 h-1.5" />
+          <p className="mt-2 text-xs tabular-nums text-muted-foreground">
+            {m.usedShare(`${usedShare}%`)}
+          </p>
+          <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 border-t pt-3 text-xs">
+            <div className="min-w-0">
+              <dt className="text-muted-foreground">{m.used}</dt>
+              <dd className="mt-0.5 font-mono tabular-nums [overflow-wrap:anywhere]">
+                {quotaCurrencyParts(info.balance.used, info.quota_display).primary}
+              </dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-muted-foreground">{m.total}</dt>
+              <dd className="mt-0.5 font-mono tabular-nums [overflow-wrap:anywhere]">
+                {quotaCurrencyParts(info.balance.total, info.quota_display).primary}
+              </dd>
+            </div>
+          </dl>
+        </section>
+
+        <section
+          aria-label={m.accessSummary}
+          className="min-w-0 rounded-[var(--hm-radius-surface)] border p-4"
+        >
+          <h3 className="text-sm font-medium">{m.accessSummary}</h3>
+          <dl className="mt-3 min-w-0 divide-y">
+            <FactRow label={m.activeApiKeys}>
+              <span className="font-mono tabular-nums">{formatNumber(access.active_api_keys)}</span>
+            </FactRow>
+            <FactRow label={m.desktopSessions}>
+              <span className="font-mono tabular-nums">
+                {formatNumber(security.active_desktop_sessions)}
+              </span>
+            </FactRow>
+            <FactRow label={m.requests}>
+              <span className="font-mono tabular-nums">
+                {formatNumber(info.account.request_count)}
+              </span>
+            </FactRow>
+            <FactRow label={m.lastLogin}>
+              <span className="font-mono text-xs tabular-nums">
+                {formatTime(access.last_login_at)}
+              </span>
+            </FactRow>
+            <FactRow label={m.signInMethods}>
+              <span className="flex flex-wrap justify-end gap-1">
+                {security.auth_methods.map((method) => (
+                  <Badge key={method} variant="outline" className="font-normal">
+                    {method}
+                  </Badge>
+                ))}
+              </span>
+            </FactRow>
+          </dl>
+        </section>
       </div>
+
+      <section className="min-w-0 rounded-[var(--hm-radius-surface)] border p-4">
+        <h3 className="text-sm font-medium">{m.profile}</h3>
+        <form
+          className="mt-3 flex max-w-xl min-w-0 flex-wrap items-end gap-3"
+          onSubmit={(event) => {
+            event.preventDefault()
+            const form = new FormData(event.currentTarget)
+            profile.mutate(String(form.get("displayName") ?? ""))
+          }}
+        >
+          <div className="min-w-[12rem] flex-1 space-y-1.5">
+            <Label
+              htmlFor="personal-display-name"
+              className="text-xs font-normal text-muted-foreground"
+            >
+              {m.displayName}
+            </Label>
+            <Input
+              id="personal-display-name"
+              name="displayName"
+              defaultValue={info.account.display_name}
+              maxLength={32}
+              disabled={!profileEditable}
+            />
+          </div>
+          <Button
+            type="submit"
+            size="sm"
+            className="h-9"
+            disabled={profile.isPending || !profileEditable}
+          >
+            {m.saveProfile}
+          </Button>
+        </form>
+        {profileEditable ? null : (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {instance.readOnly ? management.readonlyBanner : m.profileEditDisabled}
+          </p>
+        )}
+      </section>
     </div>
   )
 }

@@ -9,9 +9,10 @@ import {
   ArrowLeftRight,
   Bell,
   Check,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   Download,
-  Ellipsis,
   KeyRound,
   ListTree,
   Network,
@@ -19,8 +20,10 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
+  SlidersHorizontal,
   Trash2,
   Unplug,
+  X,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -36,16 +39,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Progress } from "@/components/ui/progress"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
@@ -60,10 +57,12 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { DesktopOnlyNote } from "../../desktop-only-note"
 import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "../capability-workbench"
+import { AccountActionsMenu } from "./account-actions-menu"
 import { AccountDetailSheet } from "./account-detail-sheet"
 import { isTauri } from "@/lib/tauri"
 import { hasInjectedMoreTokenPort } from "@/lib/more-token/port"
 import { useT } from "@/lib/i18n/provider"
+import { cn } from "@/lib/utils"
 import { notify } from "@/lib/tauri/system"
 import {
   credentialState,
@@ -78,8 +77,12 @@ import {
   saveInstance,
 } from "@/lib/more-token/client"
 import { authorizeManagementPreview } from "@/lib/more-token/step-up"
-import { availableAccountActions } from "@/lib/more-token/accounts"
-import { quotaAmountWithRaw, quotaTransactionsCsvRows } from "@/lib/more-token/quota"
+import { accountsCsvRows } from "@/lib/more-token/accounts"
+import {
+  quotaAmountParts,
+  quotaAmountWithRaw,
+  quotaTransactionsCsvRows,
+} from "@/lib/more-token/quota"
 import type {
   Account,
   AccountAction,
@@ -315,7 +318,11 @@ export function MoreTokenSection({ view, localUsage }: MoreTokenSectionProps) {
         </Alert>
       ) : null}
       {view === "management-overview" ? (
-        <OverviewView instances={instances} activeId={activeId} />
+        <OverviewView
+          instances={instances}
+          activeId={activeId}
+          quotaDisplay={capabilities.data.quota_display}
+        />
       ) : view === "accounts" ? (
         <AccountsView instance={instance!} capabilities={capabilities.data} />
       ) : view === "quota" ? (
@@ -563,9 +570,11 @@ function PairPanel({ instance, onPaired }: { instance: MoreTokenInstance; onPair
 function OverviewView({
   instances,
   activeId,
+  quotaDisplay,
 }: {
   instances: MoreTokenInstance[]
   activeId: string
+  quotaDisplay: QuotaDisplaySetting
 }) {
   const m = useT().management
   const overviewQueries = useQueries({
@@ -642,7 +651,7 @@ function OverviewView({
             {accounts.isLoading ? (
               <Skeleton className="h-52" />
             ) : (
-              <Topology accounts={accounts.data?.items ?? []} />
+              <Topology accounts={accounts.data?.items ?? []} quotaDisplay={quotaDisplay} />
             )}
           </div>
         </section>
@@ -686,46 +695,111 @@ function Metric({ label, value }: { label: string; value: string }) {
   )
 }
 
-function Topology({ accounts }: { accounts: Account[] }) {
-  const masters = accounts.filter((account) => account.is_master)
-  if (!masters.length) return <p className="text-sm text-muted-foreground">—</p>
+function TreeNode({
+  label,
+  value,
+  master = false,
+  onSelect,
+}: {
+  label: string
+  value: string
+  master?: boolean
+  onSelect?: () => void
+}) {
+  const className = master
+    ? "block min-w-0 rounded-[var(--hm-radius-control)] border-l-2 border-[var(--hm-accent)] bg-muted/40 p-2 text-left"
+    : "inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-[var(--hm-radius-control)] border px-2 py-1 text-xs"
+  const content = (
+    <>
+      <span className={cn("truncate font-medium", master && "block text-sm")}>{label}</span>
+      <span
+        className={cn("font-mono tabular-nums text-muted-foreground", master && "block text-xs")}
+      >
+        {value}
+      </span>
+    </>
+  )
+  if (!onSelect) return <span className={className}>{content}</span>
   return (
-    <ScrollArea className="h-64">
-      <div className="space-y-4 pr-3">
+    <button
+      type="button"
+      onClick={onSelect}
+      className={cn(
+        className,
+        master ? "hover:bg-muted" : "hover:bg-accent",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      )}
+    >
+      {content}
+    </button>
+  )
+}
+
+function Topology({
+  accounts,
+  quotaDisplay,
+  onSelect,
+  onViewChildren,
+}: {
+  accounts: Account[]
+  quotaDisplay: QuotaDisplaySetting
+  /** Absent on the overview, which has no detail sheet to open. */
+  onSelect?: (account: Account) => void
+  onViewChildren?: (account: Account) => void
+}) {
+  const m = useT().management
+  const masters = accounts.filter((account) => account.is_master)
+  if (!masters.length) return <p className="text-sm text-muted-foreground">{m.noData}</p>
+  return (
+    <div className="min-w-0 space-y-3">
+      {onSelect ? <p className="text-xs text-muted-foreground">{m.treeScope}</p> : null}
+      <ul className="min-w-0 space-y-3">
         {masters.map((master) => {
           const children = accounts.filter((account) => account.master_id === master.id)
+          const shown = children.slice(0, 12)
           return (
-            <div
+            <li
               key={master.id}
-              className="grid grid-cols-[minmax(120px,0.4fr)_18px_minmax(0,1fr)] items-start gap-2"
+              className="grid min-w-0 grid-cols-[minmax(8rem,0.35fr)_18px_minmax(0,1fr)] items-start gap-2"
             >
-              <div className="rounded-md border-l-2 border-[var(--hm-accent)] bg-muted/40 p-2">
-                <p className="truncate text-sm font-medium">{master.username}</p>
-                <p className="text-xs tabular-nums text-muted-foreground">{number(master.quota)}</p>
-              </div>
-              <ChevronRight className="mt-3 size-4 text-muted-foreground" />
-              <div className="flex flex-wrap gap-2">
-                {children.length ? (
-                  children.slice(0, 12).map((child) => (
-                    <span key={child.id} className="rounded-md border px-2 py-1 text-xs">
-                      <span className="font-medium">{child.username}</span>{" "}
-                      <span className="tabular-nums text-muted-foreground">
-                        {number(child.quota)}
-                      </span>
-                    </span>
+              <TreeNode
+                label={master.username}
+                value={quotaAmountParts(master.quota, quotaDisplay).primary}
+                master
+                onSelect={onSelect && (() => onSelect(master))}
+              />
+              <ChevronRight
+                aria-hidden="true"
+                className="mt-3 size-4 shrink-0 text-muted-foreground"
+              />
+              <div className="flex min-w-0 flex-wrap gap-2">
+                {shown.length ? (
+                  shown.map((child) => (
+                    <TreeNode
+                      key={child.id}
+                      label={child.username}
+                      value={quotaAmountParts(child.quota, quotaDisplay).primary}
+                      onSelect={onSelect && (() => onSelect(child))}
+                    />
                   ))
                 ) : (
-                  <span className="py-2 text-xs text-muted-foreground">—</span>
+                  <span className="py-2 text-xs text-muted-foreground">{m.childrenCount(0)}</span>
                 )}
-                {children.length > 12 ? (
-                  <Badge variant="secondary">+{children.length - 12}</Badge>
+                {children.length > shown.length && onViewChildren ? (
+                  <button
+                    type="button"
+                    onClick={() => onViewChildren(master)}
+                    className="inline-flex items-center rounded-[var(--hm-radius-control)] border border-dashed px-2 py-1 text-xs text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  >
+                    {m.moreChildren(children.length - shown.length)}
+                  </button>
                 ) : null}
               </div>
-            </div>
+            </li>
           )
         })}
-      </div>
-    </ScrollArea>
+      </ul>
+    </div>
   )
 }
 
@@ -753,6 +827,225 @@ function RiskDistribution({ accounts }: { accounts: Account[] }) {
   )
 }
 
+const FILTER_SELECT_CLASS =
+  "h-9 w-full min-w-0 appearance-none rounded-[var(--hm-radius-control)] border bg-background pl-3 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+
+/**
+ * One dropdown shape for the whole account center, so the toolbar and the
+ * filter popover read as the same control at two different labellings.
+ */
+function FilterSelect({
+  id,
+  label,
+  hideLabel = false,
+  value,
+  onChange,
+  className,
+  children,
+}: {
+  id: string
+  label: string
+  hideLabel?: boolean
+  value: string
+  onChange: (value: string) => void
+  className?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className={cn("min-w-0", className)}>
+      <Label
+        htmlFor={id}
+        className={cn(
+          hideLabel ? "sr-only" : "mb-1.5 block text-xs font-normal text-muted-foreground"
+        )}
+      >
+        {label}
+      </Label>
+      <div className="relative min-w-0">
+        <select
+          id={id}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className={FILTER_SELECT_CLASS}
+        >
+          {children}
+        </select>
+        <ChevronDown
+          aria-hidden="true"
+          className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+        />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Access status and lifecycle are two server fields but one question — can this
+ * account be used right now — so they read as a single dot and a single word.
+ */
+function AccountStatusMark({ account }: { account: Account }) {
+  const m = useT().management
+  const state = account.lifecycle_state || "active"
+  const [tone, label] =
+    state === "archived"
+      ? (["bg-[var(--hm-neutral)]", m.archived] as const)
+      : state === "closing"
+        ? (["bg-[var(--hm-warn)]", m.closing] as const)
+        : account.status === 1
+          ? (["bg-[var(--hm-ok)]", m.enabled] as const)
+          : (["bg-[var(--hm-warn)]", m.disabled] as const)
+  return (
+    <span className="inline-flex min-w-0 items-center gap-2 whitespace-nowrap">
+      <span
+        aria-hidden="true"
+        className={cn("size-1.5 shrink-0 rounded-[var(--hm-radius-dot)]", tone)}
+      />
+      {label}
+    </span>
+  )
+}
+
+function AccountRoleBadge({ account }: { account: Account }) {
+  const m = useT().management
+  const label =
+    account.role >= 100
+      ? m.root
+      : account.role >= 10
+        ? m.admin
+        : account.is_master
+          ? m.master
+          : m.user
+  return (
+    <Badge variant="outline" className="font-normal">
+      {label}
+    </Badge>
+  )
+}
+
+function AccountRelationText({
+  account,
+  onViewChildren,
+}: {
+  account: Account
+  onViewChildren?: (account: Account) => void
+}) {
+  const m = useT().management
+  if (account.master_id > 0)
+    return <span className="whitespace-nowrap">{m.childOf(account.master_id)}</span>
+  if (!account.is_master)
+    return <span className="whitespace-nowrap text-muted-foreground">{m.independent}</span>
+  const label = m.childrenCount(account.children_count ?? 0)
+  // A master with children is the one relationship you can walk into: the
+  // server can scope a page to it, so the count doubles as the way there.
+  if (!onViewChildren || !account.children_count)
+    return <span className="whitespace-nowrap">{label}</span>
+  return (
+    <button
+      type="button"
+      onClick={() => onViewChildren(account)}
+      title={m.viewChildren}
+      className="whitespace-nowrap rounded-[var(--hm-radius-control)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+    >
+      {label}
+    </button>
+  )
+}
+
+/** A column header that carries the sort state it sets. */
+function SortableHead({
+  column,
+  label,
+  sortBy,
+  sortOrder,
+  onSort,
+  className,
+}: {
+  column: "username" | "quota"
+  label: string
+  sortBy: string
+  sortOrder: "asc" | "desc"
+  onSort: (column: "username" | "quota") => void
+  className?: string
+}) {
+  const m = useT().management
+  const active = sortBy === column
+  return (
+    <TableHead
+      className={className}
+      aria-sort={active ? (sortOrder === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        title={m.sortByColumn(label)}
+        className={cn(
+          "inline-flex items-center gap-1 rounded-[var(--hm-radius-control)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+          className?.includes("text-right") && "flex-row-reverse",
+          active && "text-foreground"
+        )}
+      >
+        {label}
+        {active ? (
+          sortOrder === "asc" ? (
+            <ChevronUp aria-hidden="true" className="size-3.5" />
+          ) : (
+            <ChevronDown aria-hidden="true" className="size-3.5" />
+          )
+        ) : null}
+      </button>
+    </TableHead>
+  )
+}
+
+/**
+ * The converted amount leads and the raw quota follows as its meta line — the
+ * raw value stays authoritative, so it never gets dropped, only demoted.
+ */
+function AccountBalanceText({
+  value,
+  display,
+  className,
+  align = "right",
+}: {
+  value: number
+  display: QuotaDisplaySetting
+  className?: string
+  align?: "left" | "right"
+}) {
+  const parts = quotaAmountParts(value, display)
+  return (
+    <span className={cn("block min-w-0", align === "right" && "text-right", className)}>
+      <span className="block truncate font-mono text-sm tabular-nums">{parts.primary}</span>
+      {parts.raw ? (
+        <span className="block truncate font-mono text-xs tabular-nums text-muted-foreground">
+          {parts.raw}
+        </span>
+      ) : null}
+    </span>
+  )
+}
+
+function AccountsSkeleton() {
+  return (
+    <div className="space-y-2 p-3" aria-busy="true">
+      <Skeleton className="h-11" />
+      <Skeleton className="h-11" />
+      <Skeleton className="h-11" />
+      <Skeleton className="h-11" />
+    </div>
+  )
+}
+
+const NO_SELECTION: ReadonlySet<number> = new Set<number>()
+
+interface AccountFilterChip {
+  key: string
+  /** Omitted when the label already names the field it narrows. */
+  field?: string
+  label: string
+  clear: () => void
+}
+
 function AccountsView({
   instance,
   capabilities,
@@ -771,6 +1064,10 @@ function AccountsView({
   const [sortBy, setSortBy] = useState<"created_at" | "username" | "quota" | "last_login_at">(
     "created_at"
   )
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
+  // The server can scope a page to one master. Reaching it needs a name to put
+  // on the filter chip, which only the row that opened it knows.
+  const [master, setMaster] = useState<{ id: number; username: string } | null>(null)
   const [page, setPage] = useState(1)
   const pageSize = 25
   const [tree, setTree] = useState(false)
@@ -780,7 +1077,6 @@ function AccountsView({
     account: Account
     action: AccountAction | "close"
   } | null>(null)
-  const [selected, setSelected] = useState<Set<number>>(new Set())
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setSearch(searchInput.trim())
@@ -788,6 +1084,26 @@ function AccountsView({
     }, 300)
     return () => window.clearTimeout(timer)
   }, [searchInput])
+  // A batch acts on ids and only the current page is on screen, so a selection
+  // is scoped to the query that produced it: anything older reads as empty
+  // rather than acting on rows nobody can see any more.
+  const scope = [
+    page,
+    search,
+    lifecycle,
+    accessStatus,
+    relation,
+    roleFilter,
+    sortBy,
+    sortOrder,
+    master?.id ?? "",
+  ].join("\u0000")
+  const [selection, setSelection] = useState<{ scope: string; ids: ReadonlySet<number> }>({
+    scope,
+    ids: NO_SELECTION,
+  })
+  const selected = selection.scope === scope ? selection.ids : NO_SELECTION
+  const setSelected = (ids: ReadonlySet<number>) => setSelection({ scope, ids })
   const accounts = useQuery({
     queryKey: [
       "more-token",
@@ -800,6 +1116,8 @@ function AccountsView({
       relation,
       roleFilter,
       sortBy,
+      sortOrder,
+      master?.id ?? null,
     ],
     queryFn: ({ signal }) =>
       data<Page<Account>>(
@@ -813,8 +1131,9 @@ function AccountsView({
           accessStatus: accessStatus || null,
           relation: relation || null,
           role: roleFilter || null,
+          masterId: master?.id ?? null,
           sortBy,
-          sortOrder: "desc",
+          sortOrder,
         },
         signal
       ),
@@ -855,135 +1174,356 @@ function AccountsView({
       toast.error(errorText(error))
     }
   }
+
+  const viewChildren = (account: Account) => {
+    setMaster({ id: account.id, username: account.username })
+    setTree(false)
+    setPage(1)
+  }
+  const sortColumn = (column: "username" | "quota") => {
+    if (sortBy === column) setSortOrder((value) => (value === "asc" ? "desc" : "asc"))
+    else {
+      setSortBy(column)
+      setSortOrder(column === "username" ? "asc" : "desc")
+    }
+    setPage(1)
+  }
+
+  const items = accounts.data?.items ?? []
+  const total = accounts.data?.total ?? 0
+  const pages = Math.max(1, Math.ceil(total / pageSize))
+  const lifecycleLabels: Record<string, string> = {
+    active: m.active,
+    closing: m.closing,
+    archived: m.archived,
+  }
+  const accessLabels: Record<string, string> = { enabled: m.enabled, disabled: m.disabled }
+  const relationLabels: Record<string, string> = { master: m.master, child: m.child }
+  const roleLabels: Record<string, string> = {
+    root: m.root,
+    admin: m.admin,
+    master: m.master,
+    child: m.child,
+  }
+  const chips: AccountFilterChip[] = [
+    search
+      ? { key: "search", field: m.search, label: search, clear: () => setSearchInput("") }
+      : null,
+    lifecycle
+      ? {
+          key: "lifecycle",
+          field: m.lifecycle,
+          label: lifecycleLabels[lifecycle] ?? lifecycle,
+          clear: () => {
+            setLifecycle("")
+            setPage(1)
+          },
+        }
+      : null,
+    accessStatus
+      ? {
+          key: "access",
+          field: m.accessStatus,
+          label: accessLabels[accessStatus] ?? accessStatus,
+          clear: () => {
+            setAccessStatus("")
+            setPage(1)
+          },
+        }
+      : null,
+    relation
+      ? {
+          key: "relation",
+          field: m.relationship,
+          label: relationLabels[relation] ?? relation,
+          clear: () => {
+            setRelation("")
+            setPage(1)
+          },
+        }
+      : null,
+    roleFilter
+      ? {
+          key: "role",
+          field: m.role,
+          label: roleLabels[roleFilter] ?? roleFilter,
+          clear: () => {
+            setRoleFilter("")
+            setPage(1)
+          },
+        }
+      : null,
+    master
+      ? {
+          key: "master",
+          label: m.childrenOf(master.username),
+          clear: () => {
+            setMaster(null)
+            setPage(1)
+          },
+        }
+      : null,
+  ].filter((chip): chip is AccountFilterChip => chip !== null)
+  const narrowedCount = [accessStatus, relation, roleFilter, master].filter(Boolean).length
+  const clearAllFilters = () => {
+    setSearchInput("")
+    setLifecycle("")
+    setAccessStatus("")
+    setRelation("")
+    setRoleFilter("")
+    setMaster(null)
+    setPage(1)
+  }
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 flex-1 gap-2">
-          <div className="relative min-w-0 flex-1">
-            <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-            <Input
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
-              placeholder={m.searchAccounts}
-              className="pl-8"
-            />
-          </div>
-          <select
-            value={lifecycle}
-            onChange={(event) => {
-              setLifecycle(event.target.value)
-              setPage(1)
-            }}
-            className="h-9 rounded-md border bg-background px-2 text-sm"
-          >
-            <option value="">{m.allStates}</option>
-            <option value="active">{m.active}</option>
-            <option value="closing">{m.closing}</option>
-            <option value="archived">{m.archived}</option>
-          </select>
+    <div className="min-w-0 space-y-4">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <div className="relative min-w-[11rem] flex-1">
+          <Search
+            aria-hidden="true"
+            className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+          />
+          <Input
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+            placeholder={m.searchAccounts}
+            aria-label={m.searchAccounts}
+            className="pl-8"
+          />
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setTree((value) => !value)}>
+        <FilterSelect
+          id="accounts-lifecycle"
+          label={m.lifecycle}
+          hideLabel
+          className="w-[11.5rem] shrink-0"
+          value={lifecycle}
+          onChange={(value) => {
+            setLifecycle(value)
+            setPage(1)
+          }}
+        >
+          <option value="">{m.allStates}</option>
+          <option value="active">{m.active}</option>
+          <option value="closing">{m.closing}</option>
+          <option value="archived">{m.archived}</option>
+        </FilterSelect>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="sm" className="h-9 shrink-0">
+              <SlidersHorizontal className="size-4" />
+              {m.filters}
+              {narrowedCount ? (
+                <span className="rounded-[var(--hm-radius-dot)] bg-primary px-1.5 text-xs font-medium tabular-nums text-primary-foreground">
+                  {narrowedCount}
+                </span>
+              ) : null}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-72 space-y-3">
+            <FilterSelect
+              id="accounts-access"
+              label={m.accessStatus}
+              value={accessStatus}
+              onChange={(value) => {
+                setAccessStatus(value as typeof accessStatus)
+                setPage(1)
+              }}
+            >
+              <option value="">{m.allAccessStates}</option>
+              <option value="enabled">{m.enabled}</option>
+              <option value="disabled">{m.disabled}</option>
+            </FilterSelect>
+            <FilterSelect
+              id="accounts-relation"
+              label={m.relationship}
+              value={relation}
+              onChange={(value) => {
+                setRelation(value as typeof relation)
+                setPage(1)
+              }}
+            >
+              <option value="">{m.allRelationships}</option>
+              <option value="master">{m.master}</option>
+              <option value="child">{m.child}</option>
+            </FilterSelect>
+            <FilterSelect
+              id="accounts-role"
+              label={m.role}
+              value={roleFilter}
+              onChange={(value) => {
+                setRoleFilter(value as typeof roleFilter)
+                setPage(1)
+              }}
+            >
+              <option value="">{m.allRoles}</option>
+              <option value="root">{m.root}</option>
+              <option value="admin">{m.admin}</option>
+              <option value="master">{m.master}</option>
+              <option value="child">{m.child}</option>
+            </FilterSelect>
+            <FilterSelect
+              id="accounts-sort"
+              label={m.sortAccounts}
+              value={sortBy}
+              onChange={(value) => {
+                setSortBy(value as typeof sortBy)
+                setPage(1)
+              }}
+            >
+              <option value="created_at">{m.newest}</option>
+              <option value="username">{m.username}</option>
+              <option value="quota">{m.balance}</option>
+              <option value="last_login_at">{m.lastLogin}</option>
+            </FilterSelect>
+            <FilterSelect
+              id="accounts-sort-order"
+              label={m.sortOrder}
+              value={sortOrder}
+              onChange={(value) => {
+                setSortOrder(value as typeof sortOrder)
+                setPage(1)
+              }}
+            >
+              <option value="desc">{m.descending}</option>
+              <option value="asc">{m.ascending}</option>
+            </FilterSelect>
+          </PopoverContent>
+        </Popover>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9"
+            onClick={() => setTree((value) => !value)}
+          >
             <ListTree className="size-4" />
             {tree ? m.tableView : m.treeView}
           </Button>
-          <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!canWrite}>
+          <Button
+            size="sm"
+            className="h-9"
+            onClick={() => setCreateOpen(true)}
+            disabled={!canWrite}
+            title={canWrite ? undefined : instance.readOnly ? m.readonlyBanner : m.writeDenied}
+          >
             <Plus className="size-4" />
             {m.createAccount}
           </Button>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-        <select
-          aria-label={m.accessStatus}
-          value={accessStatus}
-          onChange={(event) => {
-            setAccessStatus(event.target.value as typeof accessStatus)
-            setPage(1)
-          }}
-          className="h-9 min-w-0 rounded-md border bg-background px-2 text-sm"
-        >
-          <option value="">{m.allAccessStates}</option>
-          <option value="enabled">{m.enabled}</option>
-          <option value="disabled">{m.disabled}</option>
-        </select>
-        <select
-          aria-label={m.relationship}
-          value={relation}
-          onChange={(event) => {
-            setRelation(event.target.value as typeof relation)
-            setPage(1)
-          }}
-          className="h-9 min-w-0 rounded-md border bg-background px-2 text-sm"
-        >
-          <option value="">{m.allRelationships}</option>
-          <option value="master">{m.master}</option>
-          <option value="child">{m.child}</option>
-        </select>
-        <select
-          aria-label={m.role}
-          value={roleFilter}
-          onChange={(event) => {
-            setRoleFilter(event.target.value as typeof roleFilter)
-            setPage(1)
-          }}
-          className="h-9 min-w-0 rounded-md border bg-background px-2 text-sm"
-        >
-          <option value="">{m.allRoles}</option>
-          <option value="root">Root</option>
-          <option value="admin">Admin</option>
-          <option value="master">{m.master}</option>
-          <option value="child">{m.child}</option>
-        </select>
-        <select
-          aria-label={m.sortAccounts}
-          value={sortBy}
-          onChange={(event) => {
-            setSortBy(event.target.value as typeof sortBy)
-            setPage(1)
-          }}
-          className="h-9 min-w-0 rounded-md border bg-background px-2 text-sm"
-        >
-          <option value="created_at">{m.newest}</option>
-          <option value="username">{m.username}</option>
-          <option value="quota">{m.balance}</option>
-          <option value="last_login_at">{m.lastLogin}</option>
-        </select>
-      </div>
-      {selected.size ? (
-        <div className="flex flex-wrap items-center gap-2 border-y py-2">
-          <span className="text-sm font-medium">{m.selected(selected.size)}</span>
-          <Button variant="outline" size="sm" onClick={() => void bulk("enable")}>
-            {m.batchEnable}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => void bulk("disable")}>
-            {m.batchDisable}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => void bulk("archive")}>
-            {m.batchArchive}
+
+      {chips.length ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {chips.map((chip) => (
+            <button
+              key={chip.key}
+              type="button"
+              onClick={chip.clear}
+              aria-label={m.removeFilter(chip.field ? `${chip.field}: ${chip.label}` : chip.label)}
+              className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-[var(--hm-radius-control)] border px-2 py-1 text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              {chip.field ? (
+                <span className="shrink-0 text-muted-foreground">{chip.field}</span>
+              ) : null}
+              <span className="truncate font-medium">{chip.label}</span>
+              <X aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+            </button>
+          ))}
+          <Button variant="ghost" size="sm" onClick={clearAllFilters}>
+            {m.clearFilters}
           </Button>
         </div>
       ) : null}
-      {accounts.isLoading ? (
-        <LoadingPanel />
-      ) : tree ? (
-        <Topology accounts={accounts.data?.items ?? []} />
-      ) : (
-        <AccountTable
-          accounts={accounts.data?.items ?? []}
-          selected={selected}
-          setSelected={setSelected}
-          onDetail={(account) => setDetailId(account.id)}
-          onAction={(account, nextAction) => setAction({ account, action: nextAction })}
-          capabilities={capabilities}
-          readOnly={instance.readOnly}
-          quotaDisplay={capabilities.quota_display}
-        />
-      )}
-      <div className="flex items-center justify-between border-t pt-3 text-sm">
-        <span className="text-muted-foreground">
-          {accounts.data?.total ?? 0} accounts · page {page}
-        </span>
+
+      <div className="min-w-0 overflow-hidden rounded-[var(--hm-radius-surface)] border">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 border-b px-3 py-2">
+          {selected.size ? (
+            <>
+              <span className="text-sm font-medium tabular-nums">{m.selected(selected.size)}</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => void bulk("enable")}>
+                  {m.batchEnable}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => void bulk("disable")}>
+                  {m.batchDisable}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => void bulk("archive")}>
+                  {m.batchArchive}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+                  {m.clearSelection}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <p className="text-xs tabular-nums text-muted-foreground">{m.accountsTotal(total)}</p>
+          )}
+          <div className="ml-auto flex min-w-0 items-center gap-3">
+            {!canWrite && !instance.readOnly ? (
+              <p className="text-xs text-muted-foreground">{m.writeDenied}</p>
+            ) : null}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!items.length}
+              onClick={() =>
+                downloadCsv(
+                  `more-token-accounts-${instance.id}-${page}.csv`,
+                  accountsCsvRows(items)
+                )
+              }
+            >
+              <Download className="size-4" />
+              {m.exportAccounts}
+            </Button>
+          </div>
+        </div>
+        <div
+          className={cn(
+            accounts.isFetching && !accounts.isLoading && "opacity-60 transition-opacity"
+          )}
+        >
+          {accounts.isLoading ? (
+            <AccountsSkeleton />
+          ) : tree ? (
+            <div className="p-3">
+              <Topology
+                accounts={items}
+                quotaDisplay={capabilities.quota_display}
+                onSelect={(account) => setDetailId(account.id)}
+                onViewChildren={viewChildren}
+              />
+            </div>
+          ) : items.length === 0 ? (
+            <div className="px-3 py-14 text-center">
+              <p className="text-sm text-muted-foreground">{m.noData}</p>
+              {chips.length ? (
+                <Button variant="outline" size="sm" className="mt-3" onClick={clearAllFilters}>
+                  {m.clearFilters}
+                </Button>
+              ) : null}
+            </div>
+          ) : (
+            <AccountTable
+              accounts={items}
+              selected={selected}
+              setSelected={setSelected}
+              onDetail={(account) => setDetailId(account.id)}
+              onAction={(account, nextAction) => setAction({ account, action: nextAction })}
+              onViewChildren={viewChildren}
+              sortBy={sortBy}
+              sortOrder={sortOrder}
+              onSort={sortColumn}
+              capabilities={capabilities}
+              readOnly={instance.readOnly}
+              quotaDisplay={capabilities.quota_display}
+            />
+          )}
+        </div>
+      </div>
+
+      <div className="flex min-w-0 items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span className="tabular-nums">{m.pageSummary(page, pages)}</span>
         <div className="flex gap-2">
           <Button
             variant="outline"
@@ -996,13 +1536,14 @@ function AccountsView({
           <Button
             variant="outline"
             size="sm"
-            disabled={page * pageSize >= (accounts.data?.total ?? 0)}
+            disabled={page >= pages}
             onClick={() => setPage((value) => value + 1)}
           >
             {m.nextPage}
           </Button>
         </div>
       </div>
+
       <CreateAccountDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
@@ -1023,7 +1564,13 @@ function AccountsView({
         quotaDisplay={capabilities.quota_display}
         instance={instance}
         capabilities={capabilities}
+        readOnly={instance.readOnly}
         onDone={invalidate}
+        onAction={(account, nextAction) => setAction({ account, action: nextAction })}
+        onViewChildren={(account) => {
+          setDetailId(null)
+          viewChildren(account)
+        }}
         onOpenChange={(open) => !open && setDetailId(null)}
       />
     </div>
@@ -1036,73 +1583,87 @@ function AccountTable({
   setSelected,
   onDetail,
   onAction,
+  onViewChildren,
+  sortBy,
+  sortOrder,
+  onSort,
   capabilities,
   readOnly,
   quotaDisplay,
 }: {
   accounts: Account[]
-  selected: Set<number>
-  setSelected: (value: Set<number>) => void
+  selected: ReadonlySet<number>
+  setSelected: (value: ReadonlySet<number>) => void
   onDetail: (account: Account) => void
   onAction: (account: Account, action: AccountAction | "close") => void
+  onViewChildren: (account: Account) => void
+  sortBy: string
+  sortOrder: "asc" | "desc"
+  onSort: (column: "username" | "quota") => void
   capabilities: ManagementCapabilities
   readOnly: boolean
   quotaDisplay: QuotaDisplaySetting
 }) {
   const m = useT().management
+  const toggle = (account: Account, checked: boolean) => {
+    const next = new Set(selected)
+    if (checked) next.add(account.id)
+    else next.delete(account.id)
+    setSelected(next)
+  }
   return (
     <>
-      <div className="space-y-2 sm:hidden">
+      <div className="divide-y sm:hidden">
         {accounts.map((account) => (
-          <article key={account.id} className="rounded-lg border bg-card p-3 shadow-sm">
-            <div className="flex items-start gap-3">
-              <Checkbox
-                aria-label={account.username}
-                checked={selected.has(account.id)}
-                onCheckedChange={(value) => {
-                  const next = new Set(selected)
-                  if (value) next.add(account.id)
-                  else next.delete(account.id)
-                  setSelected(next)
-                }}
+          <article key={account.id} className="flex min-w-0 items-start gap-3 p-3">
+            <Checkbox
+              className="mt-1 shrink-0"
+              aria-label={account.username}
+              checked={selected.has(account.id)}
+              onCheckedChange={(value) => toggle(account, value === true)}
+            />
+            <button className="min-w-0 flex-1 text-left" onClick={() => onDetail(account)}>
+              <span className="block truncate font-medium">{account.username}</span>
+              <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                {account.display_name || `#${account.id}`}
+              </span>
+              <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <AccountStatusMark account={account} />
+                <AccountRelationText account={account} />
+                <AccountRoleBadge account={account} />
+              </span>
+              <AccountBalanceText
+                value={account.quota}
+                display={quotaDisplay}
+                align="left"
+                className="mt-2"
               />
-              <button className="min-w-0 flex-1 text-left" onClick={() => onDetail(account)}>
-                <span className="block truncate font-medium">{account.username}</span>
-                <span className="mt-1 block truncate text-xs text-muted-foreground">
-                  {account.display_name || `#${account.id}`} ·{" "}
-                  {account.master_id ? `child of #${account.master_id}` : "master"}
-                </span>
-                <span className="mt-2 block text-sm font-semibold tabular-nums">
-                  {quotaAmountWithRaw(account.quota, quotaDisplay)}
-                </span>
-              </button>
-              <AccountActionsMenu
-                account={account}
-                capabilities={capabilities}
-                readOnly={readOnly}
-                onAction={onAction}
-              />
-            </div>
-            <div className="mt-3 flex gap-2">
-              <Badge variant="outline">{account.status === 1 ? "enabled" : "disabled"}</Badge>
-              <Badge
-                variant={
-                  account.lifecycle_state === "active" || !account.lifecycle_state
-                    ? "outline"
-                    : "secondary"
-                }
-              >
-                {account.lifecycle_state || "active"}
-              </Badge>
-            </div>
+            </button>
+            <AccountActionsMenu
+              account={account}
+              capabilities={capabilities}
+              readOnly={readOnly}
+              onAction={onAction}
+              extra={
+                account.is_master && account.children_count
+                  ? [
+                      {
+                        key: "children",
+                        label: m.viewChildren,
+                        onSelect: () => onViewChildren(account),
+                      },
+                    ]
+                  : undefined
+              }
+            />
           </article>
         ))}
       </div>
-      <div className="hidden overflow-x-auto rounded-md border sm:block">
+      <div className="hidden sm:block">
         <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-10">
+          <TableHeader className="[&_th]:h-9 [&_th]:text-xs [&_th]:font-medium [&_th]:text-muted-foreground">
+            <TableRow className="bg-muted/40 hover:bg-muted/40">
+              <TableHead className="w-10 pl-3">
                 <Checkbox
                   aria-label={m.all}
                   checked={accounts.length > 0 && selected.size === accounts.length}
@@ -1111,58 +1672,68 @@ function AccountTable({
                   }
                 />
               </TableHead>
-              <TableHead>{m.username}</TableHead>
+              <SortableHead
+                column="username"
+                label={m.username}
+                sortBy={sortBy}
+                sortOrder={sortOrder}
+                onSort={onSort}
+              />
               <TableHead>{m.role}</TableHead>
               <TableHead>{m.relationship}</TableHead>
-              <TableHead className="text-right">{m.balance}</TableHead>
-              <TableHead>{m.lifecycle}</TableHead>
-              <TableHead className="w-12">
+              <SortableHead
+                column="quota"
+                label={m.balance}
+                sortBy={sortBy}
+                sortOrder={sortOrder}
+                onSort={onSort}
+                className="text-right"
+              />
+              <TableHead>{m.status}</TableHead>
+              <TableHead className="w-12 pr-3">
                 <span className="sr-only">{m.actions}</span>
               </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {accounts.map((account) => (
-              <TableRow key={account.id}>
-                <TableCell>
+              <TableRow
+                key={account.id}
+                data-state={selected.has(account.id) ? "selected" : undefined}
+              >
+                <TableCell className="pl-3">
                   <Checkbox
                     aria-label={account.username}
                     checked={selected.has(account.id)}
-                    onCheckedChange={(value) => {
-                      const next = new Set(selected)
-                      if (value) next.add(account.id)
-                      else next.delete(account.id)
-                      setSelected(next)
-                    }}
+                    onCheckedChange={(value) => toggle(account, value === true)}
                   />
                 </TableCell>
-                <TableCell>
-                  <button className="text-left hover:underline" onClick={() => onDetail(account)}>
-                    <span className="block font-medium">{account.username}</span>
-                    <span className="text-xs text-muted-foreground">
+                <TableCell className="py-2.5">
+                  <button
+                    className="block min-w-0 max-w-[15rem] text-left"
+                    onClick={() => onDetail(account)}
+                  >
+                    <span className="block truncate font-medium underline-offset-4 hover:underline">
+                      {account.username}
+                    </span>
+                    <span className="block truncate text-xs text-muted-foreground">
                       {account.display_name || `#${account.id}`}
                     </span>
                   </button>
                 </TableCell>
                 <TableCell>
-                  {account.is_master ? "master" : account.role >= 10 ? "admin" : "user"}
+                  <AccountRoleBadge account={account} />
                 </TableCell>
-                <TableCell>{account.master_id ? `#${account.master_id}` : "—"}</TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {quotaAmountWithRaw(account.quota, quotaDisplay)}
-                </TableCell>
-                <TableCell>
-                  <Badge
-                    variant={
-                      account.lifecycle_state === "active" || !account.lifecycle_state
-                        ? "outline"
-                        : "secondary"
-                    }
-                  >
-                    {account.lifecycle_state || "active"}
-                  </Badge>
+                <TableCell className="text-sm text-muted-foreground">
+                  <AccountRelationText account={account} onViewChildren={onViewChildren} />
                 </TableCell>
                 <TableCell>
+                  <AccountBalanceText value={account.quota} display={quotaDisplay} />
+                </TableCell>
+                <TableCell className="text-sm">
+                  <AccountStatusMark account={account} />
+                </TableCell>
+                <TableCell className="pr-3">
                   <AccountActionsMenu
                     account={account}
                     capabilities={capabilities}
@@ -1176,42 +1747,6 @@ function AccountTable({
         </Table>
       </div>
     </>
-  )
-}
-
-function AccountActionsMenu({
-  account,
-  capabilities,
-  readOnly,
-  onAction,
-}: {
-  account: Account
-  capabilities: ManagementCapabilities
-  readOnly: boolean
-  onAction: (account: Account, action: AccountAction | "close") => void
-}) {
-  const m = useT().management
-  const actions = availableAccountActions(account, capabilities, readOnly)
-  if (!actions.length) return null
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-sm" aria-label={`${m.actions}: ${account.username}`}>
-          <Ellipsis />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        {actions.map((action) => (
-          <DropdownMenuItem
-            key={action}
-            className={action === "close" ? "text-destructive" : undefined}
-            onClick={() => onAction(account, action)}
-          >
-            {m[action === "password" ? "changePassword" : action]}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
   )
 }
 

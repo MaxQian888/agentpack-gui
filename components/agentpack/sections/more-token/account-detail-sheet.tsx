@@ -17,8 +17,11 @@ import {
 import { useT } from "@/lib/i18n/provider"
 import { managementRequest, ManagementApiError, operationId } from "@/lib/more-token/client"
 import { quotaAmountWithRaw } from "@/lib/more-token/quota"
+import { AccountActionsMenu } from "./account-actions-menu"
 import { authorizeManagementPreview } from "@/lib/more-token/step-up"
 import type {
+  Account,
+  AccountAction,
   AccountDetail,
   ManagementCapabilities,
   ManagementOperation,
@@ -48,14 +51,21 @@ export function AccountDetailSheet({
   quotaDisplay,
   instance,
   capabilities,
+  readOnly = false,
   onDone,
+  onAction,
+  onViewChildren,
   onOpenChange,
 }: {
   account: AccountDetail | null
   quotaDisplay: QuotaDisplaySetting
   instance: MoreTokenInstance
   capabilities: ManagementCapabilities
+  readOnly?: boolean
   onDone: () => void
+  /** Opens the lifecycle dialog the account center owns. */
+  onAction?: (account: Account, action: AccountAction | "close") => void
+  onViewChildren?: (account: Account) => void
   onOpenChange: (open: boolean) => void
 }) {
   const m = useT().management
@@ -98,8 +108,31 @@ export function AccountDetailSheet({
     <Sheet open={account !== null} onOpenChange={onOpenChange}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
         <SheetHeader>
-          <SheetTitle>{m.accountDetail}</SheetTitle>
-          <SheetDescription>{account?.username}</SheetDescription>
+          <div className="flex min-w-0 items-start justify-between gap-3 pr-8">
+            <div className="min-w-0">
+              <SheetTitle>{m.accountDetail}</SheetTitle>
+              <SheetDescription>{account?.username}</SheetDescription>
+            </div>
+            {account && onAction ? (
+              <AccountActionsMenu
+                account={account}
+                capabilities={capabilities}
+                readOnly={readOnly}
+                onAction={onAction}
+                extra={
+                  onViewChildren && account.is_master && account.children.length
+                    ? [
+                        {
+                          key: "children",
+                          label: m.viewChildren,
+                          onSelect: () => onViewChildren(account),
+                        },
+                      ]
+                    : undefined
+                }
+              />
+            ) : null}
+          </div>
         </SheetHeader>
         {account ? (
           <div className="space-y-4 px-4">
@@ -112,10 +145,34 @@ export function AccountDetailSheet({
               <dd className="tabular-nums">
                 {quotaAmountWithRaw(account.used_quota, quotaDisplay)}
               </dd>
+              <dt className="text-muted-foreground">{m.role}</dt>
+              <dd>
+                {account.role >= 100
+                  ? m.root
+                  : account.role >= 10
+                    ? m.admin
+                    : account.is_master
+                      ? m.master
+                      : m.user}
+              </dd>
               <dt className="text-muted-foreground">{m.relationship}</dt>
-              <dd>{account.master_id ? `#${account.master_id}` : "—"}</dd>
+              <dd>
+                {account.master_id
+                  ? m.childOf(account.master_id)
+                  : account.is_master
+                    ? m.childrenCount(account.children_count ?? account.children.length)
+                    : m.independent}
+              </dd>
+              <dt className="text-muted-foreground">{m.accessStatus}</dt>
+              <dd>{account.status === 1 ? m.enabled : m.disabled}</dd>
               <dt className="text-muted-foreground">{m.lifecycle}</dt>
               <dd>{lifecycleLabel(account.lifecycle_state)}</dd>
+              <dt className="text-muted-foreground">{m.group}</dt>
+              <dd>{account.group || "—"}</dd>
+              <dt className="text-muted-foreground">{m.created}</dt>
+              <dd className="tabular-nums">{formatTime(account.created_at)}</dd>
+              <dt className="text-muted-foreground">{m.lastLogin}</dt>
+              <dd className="tabular-nums">{formatTime(account.last_login_at)}</dd>
               <dt className="text-muted-foreground">quota_version</dt>
               <dd className="font-mono text-xs">{account.quota_version}</dd>
               <dt className="text-muted-foreground">management_version</dt>
@@ -171,7 +228,7 @@ export function AccountDetailSheet({
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-muted-foreground">{m.noData}</p>
+                <p className="text-sm text-muted-foreground">{m.noChildren}</p>
               )}
               {account.children_truncated ? (
                 <p className="text-xs text-muted-foreground">{m.childrenTruncated}</p>
@@ -204,7 +261,7 @@ export function AccountDetailSheet({
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-muted-foreground">{m.noData}</p>
+                <p className="text-sm text-muted-foreground">{m.noActiveSessions}</p>
               )}
               {account.active_sessions_truncated ? (
                 <p className="text-xs text-muted-foreground">{m.activeSessionsTruncated}</p>

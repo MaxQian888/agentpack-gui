@@ -28,6 +28,7 @@ import {
   listInstances,
   operationId,
   quotaCurrencyLabel,
+  quotaCurrencyParts,
   quotaDisplayAmount,
   sameOriginServerUrl,
 } from "./client"
@@ -94,6 +95,25 @@ it("converts raw quota into the configured display currency", () => {
   expect(quotaDisplayAmount(500_000, display)).toBe(7)
   expect(quotaDisplayAmount(38_000, display)).toBeCloseTo(0.532)
   expect(quotaCurrencyLabel(500_000, display)).toContain("7.00")
+  const parts = quotaCurrencyParts(500_000, display)
+  expect(parts.primary).toContain("7.00")
+  expect(parts.primary).not.toContain("quota")
+  expect(parts.raw).toBe("500,000 quota")
+})
+
+it("reports no separate raw half when the raw quota is the only value it can show", () => {
+  const display = {
+    quota_per_unit: 500_000,
+    display_currency: "USD",
+    conversion_numerator: 7,
+    conversion_denominator: 1,
+    rate_valid_until: 1,
+    version: 1,
+  }
+  expect(quotaCurrencyParts(500_000, display)).toEqual({
+    primary: "500,000 quota",
+    raw: null,
+  })
 })
 
 it("keeps small refunds visible instead of rounding them to negative zero", () => {

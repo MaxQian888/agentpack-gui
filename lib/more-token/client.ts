@@ -226,6 +226,22 @@ export function quotaCurrencyLabel(value: number, display: QuotaDisplaySetting):
   }
 }
 
+/**
+ * `quotaCurrencyLabel` split into its converted half and its raw-quota half, so
+ * a panel can lead with the amount and demote the authoritative raw quota to a
+ * meta line instead of printing both in one run-on string. `raw` is null
+ * exactly when the raw quota IS the label.
+ */
+export function quotaCurrencyParts(
+  value: number,
+  display: QuotaDisplaySetting
+): { primary: string; raw: string | null } {
+  const label = quotaCurrencyLabel(value, display)
+  const separator = label.indexOf(" · ")
+  if (separator < 0) return { primary: label, raw: null }
+  return { primary: label.slice(0, separator), raw: label.slice(separator + 3) }
+}
+
 export function downloadCsv(filename: string, rows: Array<Array<string | number>>): void {
   const csv = rows
     .map((row) =>

@@ -1,5 +1,5 @@
 import { escapeCsvCell } from "./client"
-import { quotaAmountWithRaw, quotaTransactionsCsvRows } from "./quota"
+import { quotaAmountParts, quotaAmountWithRaw, quotaTransactionsCsvRows } from "./quota"
 
 it("formats rational display amounts while preserving authoritative raw quota", () => {
   expect(
@@ -69,4 +69,30 @@ it("builds a complete ledger export whose user-controlled fields are CSV-safe", 
     '"\'=HYPERLINK(""https://evil.example"")"'
   )
   expect(rows[1]).not.toContain("request-7")
+})
+
+it("splits a converted amount into its display half and its authoritative raw half", () => {
+  expect(
+    quotaAmountParts(500_000, {
+      quota_per_unit: 500_000,
+      display_currency: "USD",
+      conversion_numerator: 7,
+      conversion_denominator: 2,
+      rate_valid_until: 0,
+      version: 1,
+    })
+  ).toEqual({ primary: "USD 3.5", raw: "500,000 quota" })
+})
+
+it("reports no separate raw half when the raw quota is the only authoritative value", () => {
+  expect(
+    quotaAmountParts(500_000, {
+      quota_per_unit: 500_000,
+      display_currency: "USD",
+      conversion_numerator: 7,
+      conversion_denominator: 2,
+      rate_valid_until: 1,
+      version: 1,
+    })
+  ).toEqual({ primary: "500,000 quota", raw: null })
 })

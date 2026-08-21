@@ -1,4 +1,4 @@
-import { availableAccountActions } from "./accounts"
+import { accountsCsvRows, availableAccountActions } from "./accounts"
 import type { Account, ManagementCapabilities } from "./types"
 
 const account: Account = {
@@ -91,4 +91,29 @@ it("limits account actions by lifecycle, relation, scope, and actor role", () =>
       false
     )
   ).toEqual([])
+})
+
+it("exports the account page as raw quota rather than an expirable conversion", () => {
+  const rows = accountsCsvRows([
+    { ...account, display_name: '=HYPERLINK("https://evil.example")', last_login_at: 0 },
+  ])
+
+  expect(rows[0]).toContain("quota")
+  expect(rows[0]).not.toContain("balance")
+  expect(rows[1]).toEqual([
+    1,
+    "master",
+    '=HYPERLINK("https://evil.example")',
+    1,
+    "true",
+    0,
+    0,
+    100,
+    0,
+    "enabled",
+    "active",
+    "default",
+    "1970-01-01T00:00:01.000Z",
+    "",
+  ])
 })
