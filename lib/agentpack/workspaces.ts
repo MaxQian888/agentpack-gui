@@ -35,6 +35,7 @@ export type SectionKey =
   | "cleanup"
   | "ccswitch"
   | "ccconnect"
+  | "preferences"
   | "config"
   | "about"
 
@@ -72,7 +73,7 @@ export const WORKSPACES: readonly WorkspaceDefinition[] = [
     sections: ["management-overview", "accounts", "quota", "analytics", "audit"],
   },
   { key: "usage", sections: ["history"] },
-  { key: "settings", sections: ["config", "about"] },
+  { key: "settings", sections: ["preferences", "config", "about"] },
 ]
 
 /** Every section key, in rail order. The tour and the palette both walk this. */

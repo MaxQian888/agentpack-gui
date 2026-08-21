@@ -48,7 +48,7 @@ export interface PaletteContext {
   pendingChanges: number
 }
 
-const WORKSPACE_LABEL: Record<WorkspaceKey, (m: Messages) => string> = {
+export const WORKSPACE_LABEL: Record<WorkspaceKey, (m: Messages) => string> = {
   overview: (m) => m.workspaces.overview,
   install: (m) => m.workspaces.install,
   capabilities: (m) => m.workspaces.capabilities,
@@ -90,6 +90,7 @@ const SECTION_LABEL: Record<SectionKey, (m: Messages) => string> = {
   cleanup: (m) => m.menu.cleanup,
   ccswitch: (m) => m.menu.ccswitch,
   ccconnect: (m) => m.menu.ccconnect,
+  preferences: (m) => m.menu.preferences,
   config: (m) => m.menu.saveConfig,
   about: (m) => m.menu.about,
 }

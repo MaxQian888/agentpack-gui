@@ -16,6 +16,7 @@ import {
   Orbit,
   MessagesSquare,
   Package,
+  Palette,
   Server,
   Settings,
   ShieldCheck,
@@ -82,6 +83,7 @@ export const SECTIONS: SectionDef[] = [
   { key: "my-usage", icon: ChartNoAxesColumn, label: (m) => m.personal.tabs.usage },
   { key: "my-models", icon: Orbit, label: (m) => m.personal.tabs.models },
   { key: "my-security", icon: ShieldCheck, label: (m) => m.personal.tabs.security },
+  { key: "preferences", icon: Palette, label: (m) => m.menu.preferences },
   { key: "config", icon: FileJson, label: (m) => m.menu.saveConfig },
   { key: "about", icon: Info, label: (m) => m.menu.about },
 ]
