@@ -105,7 +105,8 @@ catalog must be live and undeprecated.
   `locale`, `scan`, `profile`, `release`, `version`, `merge/{mcp,network}`,
   `network/{discovery,mirrors,probe,proxy,recovery,scan}`, `bundle/*`,
   `config-editor/*`, `mcp-{disabled,health,import}`, `ccconnect`, `ccswitch/*`,
-  plus `workspaces` (the five task domains over the thirteen `SectionKey`s),
+  plus `workspaces` (the seven task domains over the twenty-four `SectionKey`s),
+  `appearance` (the interface-scale vocabulary),
   `diagnostics` (the overview's to-do list), `palette` (⌘K contents),
   `activity` (the run log's shape + redaction) and `cleanup` (the disk-cleanup
   catalog — see below).
@@ -132,12 +133,13 @@ locally and NEVER calls a mutating Rust command. Skills ship as Tauri resources
 
 ### Shell & design system
 
-The window is a **Workbench**: a five-item task rail (`sidebar-nav.tsx`), a
+The window is a **Workbench**: a seven-item task rail (`sidebar-nav.tsx`), a
 title bar that says where you are, a sub-tab strip per workspace, the workspace
 itself, and a change tray docked at the bottom. `lib/agentpack/workspaces.ts`
-owns the mapping — the thirteen `SectionKey`s are the target of every
-navigation, grouped into **Overview · Install & repair · Capabilities · Usage ·
-Settings**. Below 900px the rail becomes a Sheet.
+owns the mapping — the twenty-four `SectionKey`s are the target of every
+navigation, grouped into **Overview · Install & repair · Capabilities · My
+account · Accounts & quota · Usage · Settings**. Below 900px the rail becomes a
+Sheet.
 
 Adding a section means touching six places, and `workspaces.test.ts` fails until
 the first two agree: the `SectionKey` union, `WORKSPACES`, the hand-written list
@@ -146,11 +148,86 @@ in that test, `SECTIONS` in `sidebar-nav.tsx` (label + icon), `SECTION_LABEL` in
 both walk `SECTIONS`, so a new one needs `menu.*` and `tour.steps.*` copy in
 both catalogs or the tour renders an untitled step.
 
+**Four shared primitives carry every section's chrome.** Use them rather than
+hand-rolling the shape again: `section-shell` (heading + subtitle + `help` +
+`actions`), `capability-workbench` (that shell plus the lead / primary / aside /
+detail grid), `section-status` (the summary, as one band of measured facts — the
+row of uniform stat tiles is banned, see design.md), `section-nav` (an aside's
+destinations as one ruled panel) and `filter-bar` (`FilterToolbar` +
+`ScopeChip` + `SearchField` + `MoreFilters`, the two-tier toolbar over any
+inventory list). `scopeChipClass` is exported so a control that must build its
+own trigger — the usage dashboard's custom-range pill — is the same object as
+the chips beside it. A section that draws its own header drifts: History did,
+and ended up the one page whose title sat at a different width from its
+neighbours with the tour anchor re-added by hand.
+
+**Settings is three tabs, and each answers one question.** `preferences` is how
+the app looks and behaves, `config` is profiles + backup + the CLIs' own config
+files, `about` is which build this is. Keep them apart: About used to carry
+every preference under its update panel, which is how a setting ends up with two
+writers that disagree — `about.test.tsx` asserts it renders no switch at all.
+
+⚠️ **Two preferences live on `<html>`, not in React.** `useAppearance`
+(`hooks/`) writes `data-ui-scale` and `data-reduce-motion`, matched by rules in
+`app/globals.css` against `--hm-root-*` in `tokens.css` — so the scale is a
+token, not a px size computed in JS. It is called once, from the shell, which is
+what makes it cover both the live change and the restore at startup. A default
+is expressed by **removing** the attribute, never by writing `100`. The theme
+and the language are not stored in `settings.json` at all: next-themes and the
+i18n provider own their own persistence, and duplicating them would give each
+two sources of truth. `settings.startupSection` is validated against
+`SECTION_KEYS` before the shell navigates to it.
+
 `design.md` at the repo root is the locked design system (Cobalt / modern-minimal)
 and `tokens.css` is its machine-readable half, imported at the top of
 `app/globals.css`, which then re-points the shadcn variable _names_ at those
 tokens. **Read design.md before adding a surface; add a token before adding a
 value** — no `oklch(...)`, px radius or `font-family` belongs anywhere else.
+
+### Staged sections: the setup checklist
+
+`sections/setup-steps.tsx` (`SetupSteps`) is the frame for any section whose work
+is **staged** — where nothing can be started before it is installed and nothing
+opens before it is started. It renders one hairline panel, one row per step, in
+the order the steps must happen: a marker (done · doing now · waiting ·
+blocked), the verb as a title, one plain sentence of why, the measured fact in
+mono, and the single control that advances that step.
+
+Two sections use it, and both used to say the same thing as three sibling cards
+of equal weight, each with its own badge row and its own disabled buttons:
+
+- **cc-connect management** (`sections/ccconnect.tsx`) — install → configure a
+  project → start the bridge → open the dashboard. There is no separate service
+  card or configuration card any more; each is a row. Refresh moved to the
+  section heading's `actions` slot, and Uninstall is step 1's quiet secondary.
+- **Accounts & relays** (`sections/ccswitch/`) — `backend-card` (the storage
+  choice as two explained options, not a ToggleGroup with the consequence
+  printed underneath), then the checklist, then `providers-card` in the
+  **full-width `detail` band** — the list is read across four columns and three
+  verbs, and in the 8-column primary its last column fell off the panel. The
+  aside carries `quick-add-card`, `logins-card`, `app-card` and
+  `visible-apps-card`.
+
+Three rules these two depend on:
+
+1. **A step's status is its own precondition, not its position.** `waiting`
+   means the thing it needs hasn't happened; `current` is the accent, and it is
+   the only accent in the panel — a checklist of primary buttons is four
+   primaries. A state the scan hasn't answered yet (`dbReady === null`) is
+   `waiting`, never `current`: accenting a row with nothing to click reads as
+   stuck rather than as still measuring.
+2. **A step that is absent beats a step that is present and ticked.** The native
+   provider store has no app to install and no database to create, so those two
+   rows don't exist in native mode — `index.test.tsx` asserts it.
+3. **Quick add has one home at a time** — inside the provider list's empty
+   state, where a first provider is actually chosen, and in the aside once the
+   list has rows. Rendered in both, every preset button is on screen twice.
+
+⚠️ The step titles and the four status words are the only strings `SetupSteps`
+does not own: `statusLabels` comes from `t.shell.setup{Done,Current,Waiting,
+Blocked}` and is **required**, because the marker that carries the state
+visually is `aria-hidden`. The status word is a sibling of the title, not part
+of it, so `getByText(title)` still matches exactly.
 
 ### Onboarding & run invariants
 
@@ -272,6 +349,15 @@ split:
   tabs, prop-driven like `dashboard`; both scans are owned + lazily cached in
   `app-shell`), `session-browser`, `transcript`, `markdown-view`, and `usage/`
   (Overview / Cost & windows / How you work sub-tabs over one shared `view`).
+
+  The frame is the shared one: `SectionShell` + one `SectionStatus` band, and
+  both toolbars are `FilterToolbar`s. Two rules the band depends on — its facts
+  are labelled **"All …"** because the usage dashboard states the same
+  quantities for a chosen period one tab down, and two figures called "Total
+  tokens" that disagree are worse than no summary; and a session row keeps its
+  meta on **one clipped line**, because five wrapping meta items turn a 56px row
+  into a 200px one at phone width and a list whose row height follows the
+  viewport can't be scanned.
 
 **Two caches, one pass.** `history_cache.rs` holds both: `history-cache.json`
 (summaries, parsed at startup) and `history-cache.series.json` (the per-message
