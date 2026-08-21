@@ -23,7 +23,7 @@
 import type { Messages } from "@/lib/i18n/types"
 import type { CliInstallManager, OS } from "./types"
 import { CLI_TOOLS, upgradeCommandFor } from "./registry"
-import { isUpgradeAvailable } from "./version"
+import { isUpgradeAvailable, majorVersion } from "./version"
 import type { SectionKey } from "./workspaces"
 
 export type DiagnosticSeverity = "critical" | "warning" | "info"
@@ -153,12 +153,42 @@ export function buildDiagnostics(t: Messages, input: DiagnosticsInput): Diagnost
     })
   }
 
+  // Node as this machine reports it, for the `engines.node` floors below.
+  const nodeVersion = detections["node"]?.installed ? detections["node"].version : undefined
+  const nodeMajor = majorVersion(nodeVersion)
+
   for (const tool of CLI_TOOLS) {
     const det = detections[tool.id]
     const latest = latestVersions[tool.id]
     if (!det?.installed || !latest || !isUpgradeAvailable(det.version, latest)) continue
     const title = t.catalog.cli[tool.id]?.title ?? tool.id
-    const cmd = upgradeCommandFor(tool, os, cliManagers[tool.id])
+    const manager = cliManagers[tool.id]
+    const cmd = upgradeCommandFor(tool, os, manager)
+
+    // npm rejects a package whose `engines.node` floor is above the Node on
+    // this machine, and it does it mid-install with EBADENGINE buried in its
+    // output. The overview's Upgrade goes straight to `cliInstallStep`, so it
+    // never passes the floor check `buildSteps` does — offering it here would
+    // stage a command we already know npm will refuse. Point at the Node
+    // upgrade that unblocks it instead, and say why.
+    //
+    // Only the npm path: a native install upgrades through its own installer,
+    // where Node's version is irrelevant. An unknown manager counts as npm
+    // because that is exactly what `upgradeCommandFor` would run.
+    const npmPath = !!tool.npmPackage && manager !== "native"
+    const floor = tool.minNodeMajor
+    if (npmPath && floor !== undefined && nodeMajor !== undefined && nodeMajor < floor) {
+      items.push({
+        id: `upgrade-${tool.id}`,
+        severity: "warning",
+        title: g.upgradeTitle(title, latest),
+        detail: g.nodeFloorDetail(floor, nodeVersion ?? String(nodeMajor)),
+        destination: "environment",
+        action: { label: g.openRuntimes, run: { kind: "navigate" } },
+      })
+      continue
+    }
+
     items.push({
       id: `upgrade-${tool.id}`,
       severity: "info",

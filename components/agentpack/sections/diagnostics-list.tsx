@@ -1,6 +1,6 @@
 "use client"
 
-import { AlertTriangle, CheckCircle2, CircleAlert, Info } from "lucide-react"
+import { AlertTriangle, CircleAlert, Info } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -25,56 +25,28 @@ const SEVERITY: Record<DiagnosticSeverity, { icon: LucideIcon; className: string
  * the review panel like everything else. There is deliberately no "fix all":
  * across a mixed list of upgrades, restores and installs there is no honest
  * label for what such a button would do.
+ *
+ * It renders nothing when there is nothing to say. "All clear", "still
+ * scanning" and "web mode can't look" are all one statement about this machine,
+ * and the overview's status band is where that statement is made — an empty box
+ * repeating it under the band was one panel of pure restatement.
  */
 export function DiagnosticsList({
   items,
-  loading,
-  available,
   onAct,
 }: {
   items: DiagnosticItem[]
-  loading?: boolean
-  /** False in web mode, where nothing has been read from a machine. */
-  available: boolean
   onAct: (item: DiagnosticItem) => void
 }) {
   const t = useT()
   const g = t.diagnostics
 
-  if (!available) {
-    return (
-      <section aria-label={g.title} className="rounded-[var(--hm-radius-surface)] border p-4">
-        <p className="text-sm text-muted-foreground">{g.notScanned}</p>
-      </section>
-    )
-  }
-
-  if (loading) {
-    return (
-      <section aria-label={g.title} className="rounded-[var(--hm-radius-surface)] border p-4">
-        <div className="h-4 w-48 animate-pulse rounded-[var(--hm-radius-control)] bg-muted" />
-      </section>
-    )
-  }
-
-  if (items.length === 0) {
-    return (
-      <section
-        aria-label={g.title}
-        className="flex items-start gap-2.5 rounded-[var(--hm-radius-surface)] border p-4"
-      >
-        <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-[var(--hm-ok)]" aria-hidden="true" />
-        <div className="min-w-0">
-          <p className="text-sm font-medium">{g.clean}</p>
-          <p className="text-sm text-muted-foreground">{g.cleanDetail}</p>
-        </div>
-      </section>
-    )
-  }
+  if (items.length === 0) return null
 
   return (
     <section aria-label={g.title} className="rounded-[var(--hm-radius-surface)] border">
-      <h3 className="border-b px-4 py-2.5 text-sm font-medium">{g.title}</h3>
+      {/* No visible heading: the band directly above already counts these, and
+          the region keeps its name through aria-label. */}
       <ul className="divide-y">
         {items.map((item) => {
           const { icon: Icon, className } = SEVERITY[item.severity]

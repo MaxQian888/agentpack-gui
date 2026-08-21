@@ -136,6 +136,60 @@ describe("what counts as a finding", () => {
     expect(item.detail).toBe(en.diagnostics.upgradeFrom("1.0.0"))
   })
 
+  it("refuses to offer a one-click upgrade npm would reject on this Node", () => {
+    // claude-code declares an engines.node floor of 22; this machine has 18, so
+    // the Upgrade button would stage a command that dies with EBADENGINE. The
+    // finding stays — the update is real — but it points at the fix that
+    // actually unblocks it.
+    const items = build({
+      detections: {
+        "claude-code": { installed: true, version: "1.0.0" },
+        node: { installed: true, version: "v18.19.0" },
+      },
+      latestVersions: { "claude-code": "2.0.0" },
+    })
+    const item = items.find((i) => i.id === "upgrade-claude-code")!
+    expect(item.severity).toBe("warning")
+    expect(item.destination).toBe("environment")
+    expect(item.action.run).toEqual({ kind: "navigate" })
+    expect(item.detail).toBe(en.diagnostics.nodeFloorDetail(22, "v18.19.0"))
+  })
+
+  it("keeps the one-click upgrade when Node clears the floor", () => {
+    const items = build({
+      detections: {
+        "claude-code": { installed: true, version: "1.0.0" },
+        node: { installed: true, version: "v22.14.0" },
+      },
+      latestVersions: { "claude-code": "2.0.0" },
+    })
+    expect(items.find((i) => i.id === "upgrade-claude-code")?.action.run).toEqual({
+      kind: "upgradeCli",
+      id: "claude-code",
+    })
+  })
+
+  it("leaves a native install alone, because its upgrade never touches npm", () => {
+    const items = build({
+      detections: {
+        "claude-code": { installed: true, version: "1.0.0" },
+        node: { installed: true, version: "v18.19.0" },
+      },
+      latestVersions: { "claude-code": "2.0.0" },
+      cliManagers: { "claude-code": "native" },
+    })
+    expect(items.find((i) => i.id === "upgrade-claude-code")?.severity).toBe("info")
+  })
+
+  it("says nothing about Node when Node itself was never detected", () => {
+    // Absent ≠ too old: the plan installs a current LTS when Node is missing.
+    const items = build({
+      detections: { "claude-code": { installed: true, version: "1.0.0" } },
+      latestVersions: { "claude-code": "2.0.0" },
+    })
+    expect(items.find((i) => i.id === "upgrade-claude-code")?.severity).toBe("info")
+  })
+
   it("ignores a version that isn't actually behind", () => {
     expect(
       ids(

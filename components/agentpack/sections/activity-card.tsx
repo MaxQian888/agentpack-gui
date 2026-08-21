@@ -53,7 +53,10 @@ export function ActivityCard({
   const { lang } = useLocale()
 
   return (
-    <section aria-label={a.title} className="flex min-w-0 flex-col gap-3 rounded-lg border p-4">
+    <section
+      aria-label={a.title}
+      className="flex min-w-0 flex-col gap-3 rounded-[var(--hm-radius-surface)] border p-4"
+    >
       <div className="flex items-center gap-2">
         <History className="size-4 text-muted-foreground" aria-hidden="true" />
         <h3 className="text-sm font-medium">{a.title}</h3>

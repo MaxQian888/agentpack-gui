@@ -120,6 +120,44 @@ function renderDashboard() {
   return { onNavigate }
 }
 
+/** A clean, fully-measured reading — for the states the async harness can't hold. */
+const fakeScan = (over: Partial<DashboardScan> = {}): DashboardScan =>
+  ({
+    claudeMcps: { known: [], custom: [] },
+    codexMcps: { known: [], custom: [] },
+    opencodeMcps: { known: [], custom: [] },
+    claudeSkills: { known: [], custom: [] },
+    codexSkills: { known: [], custom: [] },
+    relay: { hasToken: false },
+    hasCodexRelay: false,
+    providers: [],
+    claudeSettings: { status: "ok", hasBackup: false },
+    codexConfig: { status: "ok", hasBackup: false },
+    at: Date.UTC(2026, 0, 2, 3, 4),
+    degraded: false,
+    ...over,
+  }) as DashboardScan
+
+/** Render one fixed frame, bypassing the scan the harness runs for real. */
+function renderFrame(over: Partial<React.ComponentProps<typeof DashboardSection>> = {}) {
+  const onNavigate = jest.fn()
+  render(
+    <I18nProvider>
+      <RunnerHarness autoApply>
+        <DashboardSection
+          scan={fakeScan()}
+          scanning={false}
+          rescan={jest.fn(async () => undefined)}
+          onNavigate={onNavigate}
+          history={{ data: { sessions: [], errors: [] }, progress: null }}
+          {...over}
+        />
+      </RunnerHarness>
+    </I18nProvider>
+  )
+  return { onNavigate }
+}
+
 it("renders the dashboard title and grouped sections", async () => {
   renderDashboard()
   expect(screen.getByText(/environment dashboard/i)).toBeInTheDocument()
@@ -144,11 +182,14 @@ it("keeps desktop actions and unmeasured values honest in web mode", async () =>
   renderDashboard()
 
   await screen.findByText(en.dashboard.notTauri)
+  // One verdict states the reason; the readouts and the inventory blocks each
+  // stand down to an em dash rather than repeating it eleven times.
   const status = screen.getByRole("region", { name: en.dashboard.statusSummary })
-  expect(within(status).getAllByText("—")).toHaveLength(6)
-  expect(within(status).getAllByText(en.dashboard.notMeasured)).toHaveLength(6)
+  expect(within(status).getAllByText("—")).toHaveLength(5)
+  expect(within(status).getByText(en.dashboard.notMeasured)).toBeInTheDocument()
   const inventory = screen.getByRole("region", { name: en.dashboard.systemInventory })
-  expect(within(inventory).getAllByText(en.dashboard.notMeasured)).toHaveLength(5)
+  expect(within(inventory).getAllByText("—")).toHaveLength(5)
+  expect(within(inventory).queryByText(en.dashboard.notMeasured)).not.toBeInTheDocument()
   expect(within(inventory).queryByText(en.envcheck.notFound)).not.toBeInTheDocument()
   expect(within(inventory).queryByText(en.dashboard.relayNone)).not.toBeInTheDocument()
   expect(screen.queryByRole("button", { name: en.dashboard.refresh })).not.toBeInTheDocument()
@@ -161,7 +202,7 @@ it("marks scan-derived metrics as incomplete when a desktop scan is degraded", a
   await screen.findByText(en.diagnostics.degradedTitle)
   const status = screen.getByRole("region", { name: en.dashboard.statusSummary })
   expect(within(status).getAllByText("—")).toHaveLength(4)
-  expect(within(status).getAllByText(en.dashboard.partialScan)).toHaveLength(4)
+  expect(within(status).getByText(en.dashboard.partialScan)).toBeInTheDocument()
 })
 
 it("shows a detected CLI version from the store", async () => {
@@ -269,7 +310,7 @@ it("says everything is fine when there is nothing to fix", async () => {
   useAppStore.setState({ detections: { "claude-code": { installed: true, version: "1.0.0" } } })
   renderDashboard()
   await screen.findByText("my-custom") // flush the async scan
-  expect(await screen.findByText(en.diagnostics.clean)).toBeInTheDocument()
+  expect(await screen.findByText(en.dashboard.healthAllGood)).toBeInTheDocument()
 })
 
 it("names the missing agent as the blocking finding on a bare machine", async () => {
@@ -325,4 +366,45 @@ it("permanently hides the quick-start card on Don't show again", async () => {
   expect(screen.queryByText(en.quickStart.title)).not.toBeInTheDocument()
   expect(useAppStore.getState().settings.quickStartDismissed).toBe(true)
   expect(saveSettings).toHaveBeenCalledWith({ quickStartDismissed: true })
+})
+
+it("says a rescan is in flight rather than dating the reading it is replacing", () => {
+  useAppStore.setState({ detections: { "claude-code": { installed: true, version: "1.0.0" } } })
+  renderFrame({ scanning: true })
+
+  const status = screen.getByRole("region", { name: en.dashboard.statusSummary })
+  expect(within(status).getByText(en.dashboard.scanning)).toBeInTheDocument()
+  // The old timestamp would still be true of the data on screen, and completely
+  // beside the point while it is being replaced.
+  expect(within(status).queryByText(/scanned/i)).not.toBeInTheDocument()
+})
+
+it("dates the reading once a scan has landed", () => {
+  useAppStore.setState({ detections: { "claude-code": { installed: true, version: "1.0.0" } } })
+  renderFrame()
+
+  const status = screen.getByRole("region", { name: en.dashboard.statusSummary })
+  expect(within(status).getByText(/scanned/i)).toBeInTheDocument()
+})
+
+it("names the value and the destination on every status readout", async () => {
+  useAppStore.setState({ detections: { "claude-code": { installed: true, version: "1.0.0" } } })
+  const { onNavigate } = renderFrame()
+
+  // Visually these are five bare numbers; read out, they have to say where they
+  // lead and what they are counting.
+  const mcp = screen.getByRole("button", {
+    name: en.dashboard.readoutAction(en.dashboard.overviewMcp, "0", en.dashboard.sectionMcp),
+  })
+  await userEvent.click(mcp)
+  expect(onNavigate).toHaveBeenCalledWith("mcp")
+
+  for (const [label, section] of [
+    [en.dashboard.overviewSkills, en.dashboard.sectionSkills],
+    [en.dashboard.overviewProviders, en.dashboard.sectionCcswitch],
+  ] as const) {
+    expect(
+      screen.getByRole("button", { name: en.dashboard.readoutAction(label, "0", section) })
+    ).toBeInTheDocument()
+  }
 })

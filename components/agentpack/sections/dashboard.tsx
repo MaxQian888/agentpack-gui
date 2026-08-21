@@ -3,9 +3,15 @@
 "use client"
 
 import {
+  AlertTriangle,
   ArrowLeftRight,
   ArrowRight,
+  CheckCircle2,
+  CircleAlert,
   Globe,
+  Info,
+  Loader2,
+  MonitorDown,
   RefreshCw,
   Server,
   Sparkles,
@@ -40,13 +46,16 @@ import { useMounted } from "@/hooks/use-mounted"
 import { SpendCard, type HistoryFeed } from "./dashboard-spend"
 import { DiagnosticsList } from "./diagnostics-list"
 import { ActivityCard } from "./activity-card"
-import { buildDiagnostics, type DiagnosticItem } from "@/lib/agentpack/diagnostics"
-import { useT } from "@/lib/i18n/provider"
+import {
+  buildDiagnostics,
+  type DiagnosticItem,
+  type DiagnosticSeverity,
+} from "@/lib/agentpack/diagnostics"
+import { useLocale, useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import type { SectionKey } from "../sidebar-nav"
 import { useRunnerCtx } from "../run/runner-context"
-import { DesktopOnlyNote } from "../desktop-only-note"
-import { CapabilityMetric, CapabilityWorkbench } from "./capability-workbench"
+import { CapabilityWorkbench } from "./capability-workbench"
 
 type FileStatus = "ok" | "invalid" | "missing"
 interface FileHealth {
@@ -65,6 +74,12 @@ export interface DashboardScan {
   providers: Provider[]
   claudeSettings: FileHealth
   codexConfig: FileHealth
+  /**
+   * When this reading was taken (epoch ms). It belongs to the scan rather than
+   * to the component that draws it: the overview says "everything looks good"
+   * off a snapshot, and a verdict with no date on it reads as a live one.
+   */
+  at: number
   /**
    * At least one source could not be read — as opposed to not being there.
    *
@@ -90,6 +105,7 @@ const emptyScan = (): DashboardScan => ({
   providers: [],
   claudeSettings: { status: "missing", hasBackup: false },
   codexConfig: { status: "missing", hasBackup: false },
+  at: 0,
   degraded: false,
 })
 
@@ -100,6 +116,18 @@ const emptyScan = (): DashboardScan => ({
  * predictable height and the page down to a single scrollbar.
  */
 const OVERVIEW_LIMIT = 5
+
+/**
+ * The tools block runs two-up, so its cap is a whole number of rows — five
+ * entries in a two-column grid leaves a hole where the sixth would be.
+ */
+const TOOLS_LIMIT = 8
+
+/**
+ * What a value the app has not measured renders as. An em dash and not a zero,
+ * because a zero is a claim about the machine — see design.md § Voice.
+ */
+const UNMEASURED = "—"
 
 /** Try to parse JSON; classify the file's health for the dashboard. */
 function jsonHealth(text: string): FileStatus {
@@ -166,6 +194,7 @@ export async function scanEnvironment(
       status: codexToml.trim() ? "ok" : "missing",
       hasBackup: codexBak,
     },
+    at: Date.now(),
     degraded,
   }
 }
@@ -225,6 +254,7 @@ export function DashboardSection({
 }: DashboardSectionProps) {
   const t = useT()
   const d = t.dashboard
+  const { lang } = useLocale()
   const detections = useAppStore((s) => s.detections)
   const latestVersions = useAppStore((s) => s.latestVersions)
   const cliManagers = useAppStore((s) => s.cliManagers)
@@ -268,10 +298,13 @@ export function DashboardSection({
     { target: "codex", ids: view.codexSkills },
   ])
 
-  // At-a-glance counts for the overview strip — derived from the same merged
-  // lists the cards render, so a tile and its card can never disagree.
+  // At-a-glance counts for the status band — derived from the same merged lists
+  // the inventory renders, so a readout and its block can never disagree. The
+  // tools block lists what is *present*; the absent ones are a number, not
+  // fourteen "Not found" rows on a machine that only ever wanted two of them.
   const allTools = [...CLI_TOOLS, ...RUNTIMES]
-  const installedTools = allTools.filter((tool) => detections[tool.id]?.installed).length
+  const presentTools = allTools.filter((tool) => detections[tool.id]?.installed)
+  const installedTools = presentTools.length
   const relayConfigured = !!(view.relay.baseUrl || view.relay.hasToken || view.hasCodexRelay)
 
   // Everything that needs the user's attention, leading the page. Derived from
@@ -290,19 +323,48 @@ export function DashboardSection({
   })
   const baseMeasured = desktopAvailable && !loading
   const scanMeasured = baseMeasured && !view.degraded
-  const metricValue = (value: React.ReactNode, measured = baseMeasured) => (measured ? value : "—")
-  const metricDetail = (fallback: React.ReactNode, measured = baseMeasured) => {
-    if (!runtimeResolved) return d.runtimeChecking
-    if (!desktopAvailable) return d.notMeasured
-    if (loading) return d.scanning
-    if (!measured) return d.partialScan
-    return fallback
-  }
-  const inventoryUnavailable = !desktopAvailable
-    ? runtimeResolved
-      ? d.notMeasured
-      : d.runtimeChecking
-    : null
+  /** An unmeasured value is an em dash — never a plausible-looking zero. */
+  const readout = (value: string | number, measured = baseMeasured) =>
+    measured ? String(value) : UNMEASURED
+
+  /**
+   * How old the reading on screen is. A rescan says so instead of leaving
+   * yesterday's clock time under a verdict it is in the middle of replacing.
+   */
+  const metaLine = scanning
+    ? d.scanning
+    : view.degraded
+      ? d.partialScan
+      : scan
+        ? d.scannedAt(clockTime(scan.at, lang))
+        : undefined
+
+  /**
+   * The one verdict the page leads with, and the single place the em dashes are
+   * explained. The reason used to be repeated under all six readouts and again
+   * in every inventory block — eleven copies of one sentence, which is how the
+   * line that actually mattered stopped being read.
+   */
+  const status: { tone: BandTone; headline: string; detail?: string; meta?: string } =
+    !runtimeResolved
+      ? { tone: "pending", headline: d.runtimeChecking }
+      : !desktopAvailable
+        ? { tone: "web", headline: d.notMeasured, detail: d.notTauri }
+        : loading
+          ? { tone: "pending", headline: d.scanning }
+          : diagnostics.length === 0
+            ? {
+                tone: "ok",
+                headline: d.healthAllGood,
+                detail: d.healthAllGoodHint,
+                meta: metaLine,
+              }
+            : {
+                tone: diagnostics[0].severity,
+                headline: d.healthNeedsAttention(diagnostics.length),
+                detail: d.healthNeedsAttentionHint,
+                meta: metaLine,
+              }
 
   /**
    * One item, one action. Every branch that writes goes back through `run`,
@@ -343,7 +405,6 @@ export function DashboardSection({
     <CapabilityWorkbench
       title={d.title}
       subtitle={d.subtitle}
-      summaryLabel={d.statusSummary}
       actionsLabel={d.supporting}
       actions={
         desktopAvailable ? (
@@ -359,56 +420,49 @@ export function DashboardSection({
           </Button>
         ) : undefined
       }
-      metrics={
-        <>
-          <CapabilityMetric
-            label={d.overviewAttention}
-            value={metricValue(diagnostics.length)}
-            detail={metricDetail(
-              diagnostics.length === 0
-                ? d.healthAllGood
-                : d.healthNeedsAttention(diagnostics.length)
-            )}
-          />
-          <CapabilityMetric
+      lead={
+        <StatusBand
+          label={d.statusSummary}
+          tone={status.tone}
+          headline={status.headline}
+          detail={status.detail}
+          meta={status.meta}
+        >
+          <StatReadout
             label={d.overviewTools}
-            value={metricValue(`${installedTools} / ${allTools.length}`)}
-            detail={metricDetail(d.sectionClis)}
+            value={readout(`${installedTools} / ${allTools.length}`)}
+            destination={d.sectionClis}
+            onClick={() => onNavigate("clis")}
           />
-          <CapabilityMetric
+          <StatReadout
             label={d.overviewMcp}
-            value={metricValue(mcpEntries.length, scanMeasured)}
-            detail={metricDetail(d.sectionMcp, scanMeasured)}
+            value={readout(mcpEntries.length, scanMeasured)}
+            destination={d.sectionMcp}
+            onClick={() => onNavigate("mcp")}
           />
-          <CapabilityMetric
+          <StatReadout
             label={d.overviewSkills}
-            value={metricValue(skillEntries.length, scanMeasured)}
-            detail={metricDetail(d.sectionSkills, scanMeasured)}
+            value={readout(skillEntries.length, scanMeasured)}
+            destination={d.sectionSkills}
+            onClick={() => onNavigate("skills")}
           />
-          <CapabilityMetric
+          <StatReadout
             label={d.overviewProviders}
-            value={metricValue(view.providers.length, scanMeasured)}
-            detail={metricDetail(d.sectionCcswitch, scanMeasured)}
+            value={readout(view.providers.length, scanMeasured)}
+            destination={d.sectionCcswitch}
+            onClick={() => onNavigate("ccswitch")}
           />
-          <CapabilityMetric
+          <StatReadout
             label={d.overviewRelay}
-            value={metricValue(relayConfigured ? d.relayConfigured : d.relayNone, scanMeasured)}
-            detail={metricDetail(d.sectionRelay, scanMeasured)}
+            value={readout(relayConfigured ? d.relayConfigured : d.relayNone, scanMeasured)}
+            destination={d.sectionRelay}
+            onClick={() => onNavigate("ccswitch")}
           />
-        </>
+        </StatusBand>
       }
       primary={
         <div className="flex min-w-0 flex-col gap-4">
-          {runtimeResolved && !desktopAvailable ? (
-            <DesktopOnlyNote>{d.notTauri}</DesktopOnlyNote>
-          ) : null}
-
-          <DiagnosticsList
-            items={diagnostics}
-            loading={loading}
-            available={desktopAvailable}
-            onAct={actOn}
-          />
+          <DiagnosticsList items={diagnostics} onAct={actOn} />
 
           {showQuickStart ? (
             <QuickStartCard
@@ -422,52 +476,61 @@ export function DashboardSection({
 
           <section
             aria-label={d.systemInventory}
-            className="min-w-0 overflow-hidden rounded-lg border"
+            className="min-w-0 overflow-hidden rounded-[var(--hm-radius-surface)] border"
           >
-            <div className="border-b px-4 py-3">
-              <h3 className="font-medium">{d.systemInventory}</h3>
-              <p className="mt-1 text-xs text-muted-foreground">{d.systemInventoryHint}</p>
-            </div>
+            <h3 className="border-b px-4 py-2.5 font-mono text-[var(--hm-text-2xs)] tracking-[var(--hm-tracking-mono)] text-muted-foreground uppercase">
+              {d.systemInventory}
+            </h3>
 
             <InventoryBlock icon={Terminal} title={d.sectionClis} className="border-b">
-              {inventoryUnavailable ? (
-                <p className="text-sm text-muted-foreground">{inventoryUnavailable}</p>
+              {/* Detections come from the store, not the disk scan, so this
+                  block never waits on it — it falls back to skeletons only
+                  while it has nothing of its own to show yet. */}
+              {!desktopAvailable ? (
+                <Unmeasured />
+              ) : presentTools.length === 0 ? (
+                loading ? (
+                  <SkeletonRows rows={3} />
+                ) : (
+                  <p className="text-sm text-muted-foreground">{d.none}</p>
+                )
               ) : (
-                <div className="flex flex-col gap-0.5 sm:grid sm:grid-cols-2 sm:gap-x-6">
-                  {allTools.map((tool) => {
-                    const det = detections[tool.id]
-                    const latest = latestVersions[tool.id]
-                    const installed = det?.installed
-                    const isCli = CLI_TOOLS.some((c) => c.id === tool.id)
-                    const hasUpdate = !!installed && isUpgradeAvailable(det?.version, latest)
-                    const title =
-                      (isCli ? t.catalog.cli[tool.id] : t.catalog.runtime[tool.id])?.title ??
-                      tool.id
-                    const version = extractSemver(det?.version) ?? det?.version
-                    return (
-                      <div
-                        key={tool.id}
-                        className="-mx-2 flex min-w-0 items-center gap-2 px-2 py-1.5 text-sm"
-                      >
-                        <StatusDot on={!!installed} />
-                        <span className="truncate font-medium">{title}</span>
-                        <Badge
-                          variant={installed ? "secondary" : "outline"}
-                          className="min-w-0 shrink font-normal text-ellipsis"
+                <>
+                  <div className="flex flex-col gap-0.5 sm:grid sm:grid-cols-2 sm:gap-x-6">
+                    {presentTools.slice(0, TOOLS_LIMIT).map((tool) => {
+                      const det = detections[tool.id]
+                      const latest = latestVersions[tool.id]
+                      const isCli = CLI_TOOLS.some((c) => c.id === tool.id)
+                      const hasUpdate = isUpgradeAvailable(det?.version, latest)
+                      const title =
+                        (isCli ? t.catalog.cli[tool.id] : t.catalog.runtime[tool.id])?.title ??
+                        tool.id
+                      const version = extractSemver(det?.version) ?? det?.version
+                      return (
+                        <div
+                          key={tool.id}
+                          className="-mx-2 flex min-w-0 items-center justify-between gap-2 px-2 py-1 text-sm"
                         >
-                          {installed
-                            ? `${t.envcheck.installed}${version ? ` · ${version}` : ""}`
-                            : t.envcheck.notFound}
-                        </Badge>
-                        {hasUpdate ? (
-                          <Badge variant="default" className="shrink-0 font-normal">
-                            {d.updateAvailable(latest)}
-                          </Badge>
-                        ) : null}
-                      </div>
-                    )
-                  })}
-                </div>
+                          <span className="flex min-w-0 items-center gap-2">
+                            <StatusDot on />
+                            <span className="truncate font-medium">{title}</span>
+                          </span>
+                          <span className="flex shrink-0 items-center gap-2">
+                            {hasUpdate ? (
+                              <Badge variant="secondary" className="font-normal">
+                                {d.updateAvailable(latest)}
+                              </Badge>
+                            ) : null}
+                            <span className="font-mono text-[var(--hm-text-2xs)] text-muted-foreground">
+                              {version ?? t.envcheck.installed}
+                            </span>
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  <ViewAll label={d.viewAll(installedTools)} onClick={() => onNavigate("clis")} />
+                </>
               )}
             </InventoryBlock>
 
@@ -476,7 +539,7 @@ export function DashboardSection({
                 <OverviewList
                   entries={mcpEntries}
                   loading={loading}
-                  unavailable={inventoryUnavailable}
+                  measured={desktopAvailable}
                   d={d}
                   onViewAll={() => onNavigate("mcp")}
                 />
@@ -485,7 +548,7 @@ export function DashboardSection({
                 <OverviewList
                   entries={skillEntries}
                   loading={loading}
-                  unavailable={inventoryUnavailable}
+                  measured={desktopAvailable}
                   d={d}
                   onViewAll={() => onNavigate("skills")}
                 />
@@ -495,10 +558,10 @@ export function DashboardSection({
                 title={d.sectionCcswitch}
                 className="border-b md:border-r md:border-b-0"
               >
-                {inventoryUnavailable ? (
-                  <p className="text-sm text-muted-foreground">{inventoryUnavailable}</p>
-                ) : loading ? (
+                {loading ? (
                   <SkeletonRows rows={3} />
+                ) : !desktopAvailable ? (
+                  <Unmeasured />
                 ) : view.providers.length === 0 ? (
                   <p className="text-sm text-muted-foreground">{d.none}</p>
                 ) : (
@@ -516,7 +579,7 @@ export function DashboardSection({
                               {p.is_current ? d.currentProvider : d.inactiveProvider}
                             </span>
                           </span>
-                          <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                          <span className="shrink-0 font-mono text-[var(--hm-text-2xs)] text-muted-foreground">
                             {p.app_type}
                           </span>
                         </div>
@@ -530,13 +593,15 @@ export function DashboardSection({
                 )}
               </InventoryBlock>
               <InventoryBlock icon={Globe} title={d.sectionRelay}>
-                {inventoryUnavailable ? (
-                  <p className="text-sm text-muted-foreground">{inventoryUnavailable}</p>
-                ) : loading ? (
+                {loading ? (
                   <SkeletonRows rows={1} />
+                ) : !desktopAvailable ? (
+                  <Unmeasured />
                 ) : (
                   <div className="flex min-w-0 items-start gap-2 text-sm">
-                    <StatusDot on={relayConfigured} />
+                    <span className="flex h-5 shrink-0 items-center">
+                      <StatusDot on={relayConfigured} />
+                    </span>
                     {relayConfigured ? (
                       <div className="flex min-w-0 flex-col gap-1">
                         <span className="font-medium">{d.relayConfigured}</span>
@@ -573,6 +638,140 @@ export function DashboardSection({
   )
 }
 
+/**
+ * What the band can be saying. The three diagnostic severities are passed
+ * straight through, so the mark above the verdict is the same mark the worst
+ * row below it carries — the page reads top-down as one statement.
+ */
+type BandTone = DiagnosticSeverity | "ok" | "pending" | "web"
+
+const BAND_TONE: Record<BandTone, { icon: LucideIcon; className: string; spin?: boolean }> = {
+  ok: { icon: CheckCircle2, className: "text-[var(--hm-ok)]" },
+  critical: { icon: CircleAlert, className: "text-[var(--hm-danger)]" },
+  warning: { icon: AlertTriangle, className: "text-[var(--hm-warn)]" },
+  info: { icon: Info, className: "text-[var(--hm-ink-3)]" },
+  pending: { icon: Loader2, className: "text-muted-foreground", spin: true },
+  web: { icon: MonitorDown, className: "text-muted-foreground" },
+}
+
+/** Local wall-clock time, in the viewer's own locale and zone. */
+function clockTime(at: number, lang: string): string {
+  try {
+    return new Intl.DateTimeFormat(lang, { timeStyle: "short" }).format(new Date(at))
+  } catch {
+    return new Date(at).toISOString()
+  }
+}
+
+/**
+ * The overview's lead: one verdict, and the counts behind it.
+ *
+ * This replaced a row of six identical stat tiles. Six equal boxes say six
+ * equally important things, and only one of them was — whether this machine
+ * needs the user to do anything. So the verdict is set at display size with the
+ * severity mark it inherits from the worst finding, and the counts drop to a
+ * quiet readout strip under a rule: still there, still exact, no longer
+ * competing. Each readout is the way into the section that owns it.
+ */
+function StatusBand({
+  label,
+  tone,
+  headline,
+  detail,
+  meta,
+  children,
+}: {
+  label: string
+  tone: BandTone
+  headline: string
+  detail?: string
+  /** One line of mono meta — when it was scanned, or why it wasn't. */
+  meta?: string
+  children: React.ReactNode
+}) {
+  const { icon: Icon, className, spin } = BAND_TONE[tone]
+  return (
+    <section
+      aria-label={label}
+      className="min-w-0 overflow-hidden rounded-[var(--hm-radius-surface)] border"
+    >
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-x-6 gap-y-2 px-5 py-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <Icon
+            className={cn("mt-1 size-5 shrink-0", className, spin && "animate-spin")}
+            aria-hidden="true"
+          />
+          <div className="min-w-0">
+            <h3 className="text-lg font-semibold tracking-tight [overflow-wrap:anywhere]">
+              {headline}
+            </h3>
+            {detail ? (
+              <p className="mt-1 max-w-[68ch] text-sm text-muted-foreground [overflow-wrap:anywhere]">
+                {detail}
+              </p>
+            ) : null}
+          </div>
+        </div>
+        {meta ? (
+          <p className="font-mono text-[var(--hm-text-2xs)] text-muted-foreground">{meta}</p>
+        ) : null}
+      </div>
+      {/* A grid, not a wrapping flex row: at 375px the readouts fall to two
+          columns that still line up, where flex-1 left them ragged. */}
+      <div className="grid min-w-0 grid-cols-2 gap-1 border-t px-3 py-2 sm:grid-cols-3 lg:grid-cols-5">
+        {children}
+      </div>
+    </section>
+  )
+}
+
+/** One count in the band's readout strip, and the way into its section. */
+function StatReadout({
+  label,
+  value,
+  destination,
+  onClick,
+}: {
+  label: string
+  value: string
+  /** The section this opens, named in full for the accessible label. */
+  destination: string
+  onClick: () => void
+}) {
+  const d = useT().dashboard
+  return (
+    <button
+      type="button"
+      // Read out, the visible text is five numbers with nowhere to go: an
+      // eyebrow, a figure, no hint that pressing it navigates or where to. The
+      // em dash gets a word, or the label speaks as "Tools, dash, dash, open…".
+      aria-label={d.readoutAction(
+        label,
+        value === UNMEASURED ? d.readoutUnknown : value,
+        destination
+      )}
+      onClick={onClick}
+      className="flex min-w-0 flex-col items-start gap-0.5 rounded-[var(--hm-radius-control)] px-2 py-1.5 text-left hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none"
+    >
+      <span className="font-mono text-[var(--hm-text-2xs)] tracking-[var(--hm-tracking-mono)] text-muted-foreground uppercase">
+        {label}
+      </span>
+      <span className="min-w-0 font-mono text-base font-semibold tabular-nums [overflow-wrap:anywhere]">
+        {value}
+      </span>
+    </button>
+  )
+}
+
+/**
+ * A block the app has not measured. Bare, because the reason is stated once in
+ * the band above rather than eleven times down the page — the em dash is the
+ * same "no number was invented here" mark the readouts use.
+ */
+function Unmeasured() {
+  return <p className="font-mono text-sm text-muted-foreground">{UNMEASURED}</p>
+}
+
 /** A newcomer's lingering guide, shown until an assistant is set up. */
 function QuickStartCard({
   q,
@@ -590,18 +789,16 @@ function QuickStartCard({
 }) {
   const steps = [q.stepPick, q.stepPreview, q.stepInstall]
   return (
-    <section aria-label={q.title} className="border-y py-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <Sparkles className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
-          <div>
-            <h3 className="font-semibold">{q.title}</h3>
-            <p className="text-sm text-muted-foreground">{q.intro}</p>
-          </div>
+    <section aria-label={q.title} className="min-w-0 rounded-[var(--hm-radius-surface)] border p-4">
+      {/* Dismiss sits with the primary action, not opposite the title: in the
+          8-column workspace a button up there squeezed the intro onto two
+          lines and left one word alone on the second. */}
+      <div className="flex items-start gap-3">
+        <Sparkles className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+        <div className="min-w-0">
+          <h3 className="font-medium">{q.title}</h3>
+          <p className="text-sm text-muted-foreground">{q.intro}</p>
         </div>
-        <Button variant="ghost" size="sm" className="shrink-0" onClick={onDismiss}>
-          {q.dismiss}
-        </Button>
       </div>
       <ol className="mt-3 grid gap-2 sm:grid-cols-3">
         {steps.map((step, i) => (
@@ -621,10 +818,13 @@ function QuickStartCard({
           {q.networkBlocked}
         </button>
       ) : null}
-      <div className="mt-3">
+      <div className="mt-4 flex flex-wrap items-center gap-2">
         <Button size="sm" className="gap-2" onClick={onOpen}>
           <Sparkles className="size-4" aria-hidden="true" />
           {q.openGuide}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onDismiss}>
+          {q.dismiss}
         </Button>
       </div>
     </section>
@@ -697,20 +897,21 @@ function InventoryBlock({
 function OverviewList({
   entries,
   loading,
-  unavailable,
+  measured,
   d,
   onViewAll,
 }: {
   entries: OverviewEntry[]
   loading: boolean
-  unavailable: string | null
+  /** False in web mode, where nothing was read off a machine. */
+  measured: boolean
   d: ReturnType<typeof useT>["dashboard"]
   onViewAll: () => void
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-3">
-      {unavailable ? (
-        <p className="text-sm text-muted-foreground">{unavailable}</p>
+      {!measured ? (
+        <Unmeasured />
       ) : loading ? (
         <SkeletonRows rows={3} />
       ) : entries.length === 0 ? (

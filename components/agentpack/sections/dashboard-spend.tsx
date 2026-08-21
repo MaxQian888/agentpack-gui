@@ -3,7 +3,7 @@
 "use client"
 
 import { useMemo } from "react"
-import { ArrowRight, Wallet } from "lucide-react"
+import { Wallet } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -128,25 +128,25 @@ export function SpendCard({
   }
 
   return (
-    <section aria-label={s.title} className="flex min-w-0 flex-col gap-3 rounded-lg border p-4">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="flex size-7 items-center justify-center rounded-md bg-muted text-muted-foreground">
-            <Wallet className="size-4" aria-hidden="true" />
-          </span>
-          <h3 className="font-medium">{s.title}</h3>
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-          onClick={() => onNavigate("history")}
-        >
-          {s.details}
-          <ArrowRight className="size-3" aria-hidden="true" />
-        </Button>
+    <section
+      aria-label={s.title}
+      className="flex min-w-0 flex-col gap-3 rounded-[var(--hm-radius-surface)] border p-4"
+    >
+      {/* Header and hand-off link are stacked, not opposed: the aside column is
+          ~330px wide, and side by side the title wrapped to two lines. */}
+      <div className="flex items-center gap-2">
+        <Wallet className="size-4 text-muted-foreground" aria-hidden="true" />
+        <h3 className="text-sm font-medium">{s.title}</h3>
       </div>
       {body()}
+      <Button
+        variant="link"
+        size="sm"
+        onClick={() => onNavigate("history")}
+        className="h-auto self-start p-0 text-sm text-[var(--hm-accent)]"
+      >
+        {s.details}
+      </Button>
     </section>
   )
 }
