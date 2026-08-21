@@ -16,6 +16,7 @@ import type { SessionSeries, SessionSummary } from "@/lib/history/types"
 import { resolveRange, type Granularity, type TimeRange } from "@/lib/history/range"
 import { bucketsCsv, buildExport, exportFilename } from "@/lib/history/export"
 import { pickSavePath } from "@/lib/tauri/dialog"
+import { FilterToolbar } from "../../filter-bar"
 import { ExportButtons, RangePicker } from "./range-picker"
 import { OverviewPanel } from "./overview"
 import { CostWindowsPanel } from "./cost-windows"
@@ -133,26 +134,34 @@ export function UsageDashboard({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <RangePicker
-          range={range}
-          onRangeChange={setRange}
-          granularity={granularity}
-          onGranularityChange={setGranularity}
-        />
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" className="gap-2" onClick={() => setShareOpen(true)}>
-            <Share2 className="size-4" />
-            {t.report.share}
-          </Button>
-          <ExportButtons
-            onCsv={() => void exportUsage("csv")}
-            onJson={() => void exportUsage("json")}
-            disabled={!isTauri()}
+      {/* Two tiers, the same shape the Sessions tab and the capability managers
+          use: what the numbers below cover (period + granularity) stays out in
+          the open, and what you do with them once you've read them — share,
+          export, the one figure only the user can supply — sits at the trailing
+          edge. Before this they were one undifferentiated row of seven
+          controls, with the range picker's own `ml-auto` fighting the group
+          beside it for the right-hand side. */}
+      <FilterToolbar
+        scope={
+          <RangePicker
+            range={range}
+            onRangeChange={setRange}
+            granularity={granularity}
+            onGranularityChange={setGranularity}
           />
-          <SubscriptionSetting value={subscription} onChange={setSubscription} />
-        </div>
-      </div>
+        }
+      >
+        <Button variant="outline" size="sm" className="gap-2" onClick={() => setShareOpen(true)}>
+          <Share2 className="size-4" />
+          {t.report.share}
+        </Button>
+        <ExportButtons
+          onCsv={() => void exportUsage("csv")}
+          onJson={() => void exportUsage("json")}
+          disabled={!isTauri()}
+        />
+        <SubscriptionSetting value={subscription} onChange={setSubscription} />
+      </FilterToolbar>
 
       <ShareDialog
         open={shareOpen}

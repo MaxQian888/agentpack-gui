@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { format } from "date-fns"
-import { Search, X } from "lucide-react"
-import { Input } from "@/components/ui/input"
+import { ChevronRight, X } from "lucide-react"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Dialog,
@@ -34,6 +33,7 @@ import { SOURCE_COLORS } from "@/lib/history/display"
 import { detailCacheKey, getCachedDetail, setCachedDetail } from "@/lib/history/detail-cache"
 import { useIncremental } from "@/hooks/use-incremental"
 import { Transcript } from "./transcript"
+import { FilterField, FilterToolbar, MoreFilters, ScopeChip, SearchField } from "../filter-bar"
 
 type SortKey = "recent" | "tokens" | "messages"
 
@@ -47,7 +47,21 @@ function SourceDot({ source }: { source: HistorySource }) {
   )
 }
 
-function SessionCard({
+/**
+ * One session, as a row in a ruled list rather than its own bordered card.
+ *
+ * A few hundred sessions used to render as a few hundred separate boxes with a
+ * gap between each — the stacked-tile shape design.md rules out, and at this
+ * length it also costs a hairline plus 8px of air per session for no grouping
+ * the eye actually uses. One panel, one rule between rows, reads as a list.
+ *
+ * The meta line is prose (what tool, which project, which model, how many
+ * messages); the machine's numbers sit right-aligned in mono so the column
+ * scans vertically. Tokens keep their unit word — a bare "1.2M" next to a bare
+ * "$3.40" is two unlabelled figures, which is exactly what a newcomer can't
+ * read.
+ */
+function SessionRow({
   session,
   subagentCount,
   onOpen,
@@ -58,39 +72,62 @@ function SessionCard({
 }) {
   const t = useT().history
   const cost = sessionCost(session)
+  const meta = [
+    t.sources[session.source] ?? session.source,
+    session.projectName,
+    session.model || null,
+    t.messages(session.messageCount),
+    session.updatedAt > 0 ? format(new Date(session.updatedAt), "yyyy-MM-dd HH:mm") : null,
+  ].filter(Boolean) as string[]
+
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="w-full rounded-lg border p-3 text-left transition-colors hover:bg-accent/40"
+      aria-label={session.title}
+      className={cn(
+        "flex w-full min-w-0 items-center gap-3 border-b px-4 py-3 text-left last:border-b-0",
+        "transition-colors duration-(--hm-dur-fast) ease-(--hm-ease-out) hover:bg-muted",
+        "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none"
+      )}
     >
-      <div className="flex items-center gap-2">
-        <SourceDot source={session.source} />
-        <span className="min-w-0 flex-1 truncate font-medium">{session.title}</span>
-        {session.updatedAt > 0 ? (
-          <span className="shrink-0 text-xs text-muted-foreground">
-            {format(new Date(session.updatedAt), "yyyy-MM-dd HH:mm")}
-          </span>
-        ) : null}
-      </div>
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span>{t.sources[session.source] ?? session.source}</span>
-        <span className="max-w-[14rem] truncate">{session.projectName}</span>
-        {session.model ? <span className="max-w-[12rem] truncate">{session.model}</span> : null}
-        <span>{t.messages(session.messageCount)}</span>
-        <span className="font-medium text-foreground/80">
-          {formatTokens(session.usage.total)} {t.tokensLabel}
+      <SourceDot source={session.source} />
+      <span className="min-w-0 flex-1">
+        {/* The title owns its whole line. The sub-agent badge used to sit beside
+            it and, being `shrink-0`, ate ~100px of a 375px row — enough to
+            truncate the title to four words on the one screen width where the
+            title is all you have room for. It rides the meta line instead. */}
+        <span className="block truncate font-medium">{session.title}</span>
+        {/* One line that clips, not a wrapping bag of chips. Five meta items
+            that wrap turn a 56px row into a 200px one the moment the window is
+            phone-width — and a list whose row height depends on the viewport is
+            unscannable. Clipped detail is one tap away in the transcript; the
+            middots are safe here precisely because this never wraps. */}
+        <span className="mt-0.5 flex min-w-0 items-center gap-2">
+          <span className="min-w-0 truncate text-xs text-muted-foreground">{meta.join(" · ")}</span>
+          {subagentCount > 0 ? (
+            // Dropped below `sm`: at phone width the badge is wider than what
+            // is left of the meta line, and it says the least of the two — the
+            // sub-agent runs are listed in the transcript this row opens.
+            <span className="hidden shrink-0 rounded-(--hm-radius-dot) border px-1.5 py-0.5 text-2xs text-muted-foreground sm:inline-flex">
+              {t.subagents(subagentCount)}
+            </span>
+          ) : null}
+        </span>
+      </span>
+      {/* Never hidden on narrow: what a session cost is half of why this page
+          exists, and a column that disappears below `sm` takes it with it. */}
+      <span className="flex shrink-0 flex-col items-end gap-0.5 text-right">
+        <span className="font-mono text-xs tabular-nums">
+          {t.rowTokens(formatTokens(session.usage.total))}
         </span>
         {cost.value > 0 ? (
-          <span>
-            {cost.estimated ? "~" : ""}
-            {formatCost(cost.value)}
+          <span className="font-mono text-xs tabular-nums text-muted-foreground">
+            {cost.estimated ? t.rowCostEst(formatCost(cost.value)) : formatCost(cost.value)}
           </span>
         ) : null}
-        {subagentCount > 0 ? (
-          <span className="rounded-full border px-1.5 py-0.5">{t.subagents(subagentCount)}</span>
-        ) : null}
-      </div>
+      </span>
+      <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
     </button>
   )
 }
@@ -331,59 +368,67 @@ export function SessionBrowser({
   )
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex flex-wrap gap-1.5">
-          {(["all", ...HISTORY_SOURCES] as const).map((key) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setSource(key)}
-              className={cn(
-                "flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm transition-colors",
-                source === key
-                  ? "border-primary bg-primary/10 font-medium"
-                  : "text-muted-foreground hover:bg-accent/50"
-              )}
-            >
-              {key !== "all" ? <SourceDot source={key} /> : null}
-              {key === "all" ? t.sourceAll : (t.sources[key] ?? key)}
-              <span className="text-xs text-muted-foreground">{counts[key] ?? 0}</span>
-            </button>
-          ))}
-        </div>
-        {day !== null ? (
-          <button
-            type="button"
-            onClick={() => setDay(null)}
-            className="flex items-center gap-1.5 rounded-full border border-primary bg-primary/10 px-3 py-1 text-sm"
-          >
-            {t.dayFilter(day)}
-            <X className="size-3.5" />
-          </button>
-        ) : null}
-        <div className="ml-auto flex items-center gap-2">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={t.searchPlaceholder}
-              className="w-56 pl-8"
-            />
-          </div>
-          <Select value={sort} onValueChange={(v) => setSort(v as SortKey)}>
-            <SelectTrigger className="w-32" aria-label={t.sortLabel}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="recent">{t.sortRecent}</SelectItem>
-              <SelectItem value="tokens">{t.sortTokens}</SelectItem>
-              <SelectItem value="messages">{t.sortMessages}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+    <div className="flex min-w-0 flex-col gap-3">
+      {/* Two tiers, same vocabulary as the MCP and skills managers: the chips
+          that say "which tool" stay out in the open and double as the colour
+          legend for the rows, and sort — a refinement of a list you can already
+          read — folds behind one button that says when it is non-default. */}
+      <FilterToolbar
+        scope={
+          <>
+            {(["all", ...HISTORY_SOURCES] as const).map((key) => (
+              <ScopeChip
+                key={key}
+                active={source === key}
+                onSelect={() => setSource(key)}
+                dot={key !== "all" ? <SourceDot source={key} /> : undefined}
+                label={key === "all" ? t.sourceAll : (t.sources[key] ?? key)}
+                count={counts[key] ?? 0}
+              />
+            ))}
+            {/* The day filter arrives from a chart click, so it has to be
+                visible and self-cancelling — a hidden one would leave the list
+                inexplicably short after switching tabs. */}
+            {day !== null ? (
+              <button
+                type="button"
+                onClick={() => setDay(null)}
+                aria-label={t.clearDay}
+                className={cn(
+                  "flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs",
+                  "border-[var(--hm-accent)] bg-[var(--hm-accent-soft)] font-medium text-[var(--hm-ink)]",
+                  "transition-colors duration-(--hm-dur-fast) ease-(--hm-ease-out)",
+                  "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none"
+                )}
+              >
+                {t.dayFilter(day)}
+                <X aria-hidden="true" className="size-3.5" />
+              </button>
+            ) : null}
+          </>
+        }
+      >
+        <SearchField value={query} onChange={setQuery} label={t.searchPlaceholder} />
+        <MoreFilters
+          label={t.filtersLabel}
+          resetLabel={t.filtersReset}
+          active={sort === "recent" ? 0 : 1}
+          onReset={() => setSort("recent")}
+        >
+          <FilterField label={t.sortLabel}>
+            <Select value={sort} onValueChange={(v) => setSort(v as SortKey)}>
+              <SelectTrigger className="w-full" aria-label={t.sortLabel}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="recent">{t.sortRecent}</SelectItem>
+                <SelectItem value="tokens">{t.sortTokens}</SelectItem>
+                <SelectItem value="messages">{t.sortMessages}</SelectItem>
+              </SelectContent>
+            </Select>
+          </FilterField>
+        </MoreFilters>
+      </FilterToolbar>
 
       {filtered.length === 0 ? (
         <div className="rounded-lg border border-dashed p-10 text-center">
@@ -393,17 +438,29 @@ export function SessionBrowser({
           ) : null}
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
-          {filtered.slice(0, visible).map((s) => (
-            <SessionCard
-              key={`${s.source}:${s.id}`}
-              session={s}
-              subagentCount={subagentsByParent.get(s.id)?.length ?? 0}
-              onOpen={() => setSelected(s)}
-            />
-          ))}
-          {hasMore ? <div ref={sentinelRef} className="h-1" aria-hidden /> : null}
-        </div>
+        <>
+          {/* How much of the history the toolbar above is currently showing.
+              Without it a filtered list of 12 looks identical to a machine that
+              only ever had 12 sessions. */}
+          <p className="text-xs text-muted-foreground">
+            {t.listCount(filtered.length, roots.length)}
+          </p>
+          <div
+            role="list"
+            aria-label={t.listPanel}
+            className="min-w-0 overflow-hidden rounded-lg border"
+          >
+            {filtered.slice(0, visible).map((s) => (
+              <SessionRow
+                key={`${s.source}:${s.id}`}
+                session={s}
+                subagentCount={subagentsByParent.get(s.id)?.length ?? 0}
+                onOpen={() => setSelected(s)}
+              />
+            ))}
+            {hasMore ? <div ref={sentinelRef} className="h-1" aria-hidden /> : null}
+          </div>
+        </>
       )}
 
       <TranscriptDialog

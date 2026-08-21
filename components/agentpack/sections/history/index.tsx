@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
@@ -10,14 +10,25 @@ import { cn } from "@/lib/utils"
 import { isTauri } from "@/lib/tauri"
 import { useT } from "@/lib/i18n/provider"
 import type { ListResult, ScanProgress, UsageSeriesResult } from "@/lib/history/types"
+import { computeUsageStats } from "@/lib/history/stats"
+import { formatCost, formatTokens } from "@/lib/history/format"
 import { SessionBrowser, type BrowserFocus } from "./session-browser"
 import { UsageDashboard, type UsageDrilldown } from "./usage"
 import { DesktopOnlyNote } from "../../desktop-only-note"
+import { HelpTip } from "../../help-tip"
+import { SectionShell } from "../section-shell"
+import { SectionStatus } from "../section-status"
 
 /**
  * Chat-history browser + usage dashboard. Prop-driven like `DashboardSection`:
  * `ShellBody` owns the (lazy, cached) scans so leaving and returning to History
  * doesn't re-read every JSONL and the OpenCode DB.
+ *
+ * The frame is the workbench every other section uses — `SectionShell` for the
+ * heading, one `SectionStatus` band for the verdict, content below. It used to
+ * hand-build its own header, which is how it ended up the one page in the app
+ * whose title sat at a different width from its neighbours and whose tour
+ * anchor had to be re-added by hand.
  */
 /**
  * The lazily-fetched usage series and the handle to ask for it.
@@ -51,7 +62,8 @@ export function HistorySection({
   series,
   refresh,
 }: HistorySectionProps) {
-  const h = useT().history
+  const t = useT()
+  const h = t.history
   const tauri = isTauri()
   const [tab, setTab] = useState("sessions")
   const [focus, setFocus] = useState<BrowserFocus | undefined>()
@@ -64,14 +76,12 @@ export function HistorySection({
   }
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-5">
-      {/* This section builds its own header rather than using SectionShell, so
-          the tour's spotlight anchor has to be added here explicitly. */}
-      <div data-tour="section-heading" className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-semibold tracking-tight">{h.title}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">{h.subtitle}</p>
-        </div>
+    <SectionShell
+      title={h.title}
+      subtitle={h.subtitle}
+      help={<HelpTip text={t.help.history} />}
+      wide
+      actions={
         <Button
           variant="outline"
           size="sm"
@@ -82,24 +92,31 @@ export function HistorySection({
           <RefreshCw className={cn("size-4", loading && "animate-spin")} />
           {h.refresh}
         </Button>
-      </div>
-
+      }
+    >
       {!tauri ? (
         <DesktopOnlyNote>{h.notTauri}</DesktopOnlyNote>
       ) : result === null ? (
         <ScanStatus progress={progress} />
       ) : (
         <>
+          <HistorySummary result={result} />
           {result.errors.map((e) => (
             <p key={e.source} className="text-xs text-destructive">
               {h.scanError(h.sources[e.source] ?? e.source, e.message)}
             </p>
           ))}
-          <Tabs value={tab} onValueChange={setTab}>
-            <TabsList>
+          <Tabs value={tab} onValueChange={setTab} className="gap-0">
+            <TabsList aria-label={h.viewLabel}>
               <TabsTrigger value="sessions">{h.tabSessions}</TabsTrigger>
               <TabsTrigger value="usage">{h.tabUsage}</TabsTrigger>
             </TabsList>
+            {/* One line under the strip saying what the open view answers. Two
+                bare tab labels ("Sessions", "Usage") are only obvious once you
+                already know what's behind them. */}
+            <p className="mt-2 text-sm text-muted-foreground">
+              {tab === "sessions" ? h.tabSessionsHint : h.tabUsageHint}
+            </p>
             <TabsContent value="sessions" className="mt-4">
               <SessionBrowser sessions={result.sessions} focus={focus} />
             </TabsContent>
@@ -115,8 +132,41 @@ export function HistorySection({
           </Tabs>
         </>
       )}
-    </div>
+    </SectionShell>
   )
+}
+
+/**
+ * What the scan found, as one band of measured facts.
+ *
+ * Deliberately whole-history rather than range-aware: this sits above both
+ * tabs, and a figure that silently followed the usage dashboard's range picker
+ * would contradict the session list right under it. The note says so, because
+ * "Cost $312" over a filtered list is exactly the kind of number a user carries
+ * away wrong.
+ */
+function HistorySummary({ result }: { result: ListResult }) {
+  const h = useT().history
+  const facts = useMemo(() => {
+    const stats = computeUsageStats(result.sessions)
+    const lastActive = result.sessions.reduce((max, s) => Math.max(max, s.updatedAt), 0)
+    const estimated = stats.estimatedCost > 0
+    return [
+      { label: h.statAllSessions, value: stats.totals.sessions },
+      { label: h.statAllTokens, value: formatTokens(stats.totals.usage.total) },
+      {
+        label: h.statAllSpend,
+        value: `${estimated ? "~" : ""}${formatCost(stats.totals.cost)}`,
+      },
+      {
+        label: h.statLastActive,
+        value: lastActive > 0 ? new Date(lastActive).toLocaleDateString() : h.statLastActiveNever,
+      },
+      { label: h.statSources, value: stats.bySource.length },
+    ]
+  }, [result, h])
+
+  return <SectionStatus label={h.summaryLabel} facts={facts} notes={[h.summaryNote]} />
 }
 
 /**
