@@ -5,25 +5,15 @@ jest.mock("@/lib/tauri/updater", () => ({
   downloadAndInstallUpdate: jest.fn(),
   restartApp: jest.fn(),
 }))
+// Real DEFAULT_SETTINGS, mocked writer: a hand-copied settings fixture goes
+// stale the moment a preference is added, which is what it did.
 jest.mock("@/lib/tauri/settings", () => ({
+  ...jest.requireActual("@/lib/tauri/settings"),
   saveSettings: jest.fn().mockResolvedValue(undefined),
-  DEFAULT_SETTINGS: {
-    autoCheckUpdates: true,
-    skippedVersion: null,
-    lastCheckAt: null,
-    onboarded: false,
-    onboardingProgress: null,
-    quickStartDismissed: false,
-  },
 }))
 jest.mock("@/lib/tauri/system", () => ({ openUrl: jest.fn(), revealPath: jest.fn() }))
 jest.mock("@/lib/tauri/os", () => ({
   osSummary: jest.fn().mockResolvedValue("macOS 15.3 · aarch64"),
-}))
-jest.mock("@/lib/tauri/shortcut", () => ({
-  DEFAULT_SUMMON_SHORTCUT: "CommandOrControl+Shift+A",
-  registerSummonShortcut: jest.fn().mockResolvedValue(true),
-  unregisterSummonShortcut: jest.fn().mockResolvedValue(undefined),
 }))
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }))
 
@@ -31,13 +21,8 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { toast } from "sonner"
 import { checkForUpdate, downloadAndInstallUpdate, restartApp } from "@/lib/tauri/updater"
-import { saveSettings } from "@/lib/tauri/settings"
-import {
-  DEFAULT_SUMMON_SHORTCUT,
-  registerSummonShortcut,
-  unregisterSummonShortcut,
-} from "@/lib/tauri/shortcut"
-import { revealPath } from "@/lib/tauri/system"
+import { DEFAULT_SETTINGS, saveSettings } from "@/lib/tauri/settings"
+import { openUrl, revealPath } from "@/lib/tauri/system"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
 import { useAppStore } from "@/store/app-store"
@@ -52,20 +37,7 @@ beforeEach(() => {
     updateState: "idle",
     updateInfo: null,
     downloadProgress: 0,
-    settings: {
-      autoCheckUpdates: true,
-      skippedVersion: null,
-      lastCheckAt: null,
-      onboarded: true,
-      onboardingProgress: null,
-      quickStartDismissed: false,
-      ghMirrorPrefix: null,
-      skillRepoSources: [],
-      proxy: null,
-      summonShortcut: null,
-      monthlySubscriptionUsd: null,
-      providerBackend: "native",
-    },
+    settings: { ...DEFAULT_SETTINGS, onboarded: true },
     paths: null,
   })
 })
@@ -83,14 +55,29 @@ it("shows the app version resolved on mount", async () => {
   expect(await screen.findByText(en.about.currentVersion("1.0.0"))).toBeInTheDocument()
 })
 
-it("organizes application status, preferences, and locations as one workbench", async () => {
+it("organizes status, the update panel, and links as one workbench", async () => {
   renderAbout()
   await screen.findByText(en.about.currentVersion("1.0.0"))
 
   expect(screen.getByRole("region", { name: en.about.summaryLabel })).toBeInTheDocument()
-  expect(screen.getByRole("region", { name: en.about.settingsPanel })).toBeInTheDocument()
+  expect(screen.getByRole("region", { name: en.about.updatePanel })).toBeInTheDocument()
   expect(screen.getByRole("complementary", { name: en.about.actionsLabel })).toBeInTheDocument()
   expect(screen.getByText(en.about.locationsTitle)).toBeInTheDocument()
+  expect(screen.getByText(en.about.sourceTitle)).toBeInTheDocument()
+})
+
+/**
+ * The preferences this section used to carry moved to the Preferences tab. If
+ * one reappears here it is a duplicate writer for the same setting, which is
+ * exactly how two switches end up disagreeing about a global hotkey.
+ */
+it("leaves every user preference to the Preferences section", async () => {
+  renderAbout()
+  await screen.findByText(en.about.currentVersion("1.0.0"))
+
+  expect(screen.queryByRole("switch")).not.toBeInTheDocument()
+  expect(screen.queryByText(en.preferences.languageLabel)).not.toBeInTheDocument()
+  expect(screen.queryByText(en.preferences.osLabel)).not.toBeInTheDocument()
 })
 
 it("reports up to date when no update is found", async () => {
@@ -139,50 +126,10 @@ it("toasts when the update check fails", async () => {
   expect(screen.getByRole("alert")).toHaveTextContent(en.about.updateError("offline"))
 })
 
-it("persists the auto-check preference on toggle", async () => {
+it("opens the releases page", async () => {
   renderAbout()
-  await userEvent.click(screen.getByRole("switch", { name: en.about.autoCheckLabel }))
-  expect(saveSettings).toHaveBeenCalledWith({ autoCheckUpdates: false })
-})
-
-it("claims the global hotkey and persists it once the OS grants it", async () => {
-  ;(registerSummonShortcut as jest.Mock).mockResolvedValue(true)
-  renderAbout()
-  await userEvent.click(screen.getByRole("switch", { name: en.about.summonShortcutLabel }))
-  await waitFor(() =>
-    expect(saveSettings).toHaveBeenCalledWith({ summonShortcut: DEFAULT_SUMMON_SHORTCUT })
-  )
-})
-
-it("keeps the hotkey off and explains why when the accelerator is taken", async () => {
-  ;(registerSummonShortcut as jest.Mock).mockResolvedValue(false)
-  renderAbout()
-  await userEvent.click(screen.getByRole("switch", { name: en.about.summonShortcutLabel }))
-  await waitFor(() =>
-    expect(toast.error).toHaveBeenCalledWith(en.about.shortcutTaken(DEFAULT_SUMMON_SHORTCUT))
-  )
-  expect(saveSettings).not.toHaveBeenCalledWith(
-    expect.objectContaining({ summonShortcut: DEFAULT_SUMMON_SHORTCUT })
-  )
-})
-
-it("releases the hotkey when switched back off", async () => {
-  useAppStore.setState({
-    settings: { ...useAppStore.getState().settings, summonShortcut: DEFAULT_SUMMON_SHORTCUT },
-  })
-  renderAbout()
-  await userEvent.click(screen.getByRole("switch", { name: en.about.summonShortcutLabel }))
-  await waitFor(() =>
-    expect(unregisterSummonShortcut).toHaveBeenCalledWith(DEFAULT_SUMMON_SHORTCUT)
-  )
-  expect(saveSettings).toHaveBeenCalledWith({ summonShortcut: null })
-})
-
-it("reopens the welcome wizard on demand", async () => {
-  useAppStore.setState({ onboardingOpen: false })
-  renderAbout()
-  await userEvent.click(screen.getByRole("button", { name: en.welcome.reopen }))
-  expect(useAppStore.getState().onboardingOpen).toBe(true)
+  await userEvent.click(screen.getByRole("button", { name: en.about.viewOnGitHub }))
+  expect(openUrl).toHaveBeenCalledWith(expect.stringContaining("/releases"))
 })
 
 it("reveals config folders when paths are known", async () => {

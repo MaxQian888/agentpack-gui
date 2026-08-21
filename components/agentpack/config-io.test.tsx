@@ -19,7 +19,7 @@ jest.mock("./run/runner-context", () => ({
   useRunnerCtx: () => ({ run: jest.fn(async () => []) }),
 }))
 
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { toast } from "sonner"
 import { isTauri } from "@/lib/tauri"
@@ -111,7 +111,10 @@ describe("profiles", () => {
     renderIO()
     await userEvent.type(screen.getByPlaceholderText(/profile name/i), "Work")
     await userEvent.click(screen.getByRole("button", { name: /save current as profile/i }))
-    expect(screen.getByText("Work")).toBeInTheDocument()
+    // Scoped to the list: the summary strip also names the active profile, and
+    // a saved profile becomes active — so an unscoped query matches twice.
+    const list = screen.getByRole("region", { name: en.profiles.listPanel })
+    expect(within(list).getByText("Work")).toBeInTheDocument()
     expect(writeTextFile).toHaveBeenCalledWith(
       "/h/.agentpack/profiles.json",
       expect.stringContaining("Work")
@@ -148,8 +151,7 @@ describe("profiles", () => {
     const input = screen.getByDisplayValue("Old")
     await userEvent.clear(input)
     await userEvent.type(input, "New")
-    // Buttons in DOM order: Save-as, then the rename-commit (check) button.
-    await userEvent.click(screen.getAllByRole("button")[1])
+    await userEvent.click(screen.getByRole("button", { name: en.profiles.renameCommit }))
     expect(screen.getByText("New")).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole("button", { name: /delete/i }))

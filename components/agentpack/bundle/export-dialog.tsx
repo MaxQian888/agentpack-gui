@@ -139,7 +139,9 @@ export function ExportBundleDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button className="gap-2">
+        {/* Outline, not filled: the page's one primary action is saving a
+            profile — see design.md's 5% rule. */}
+        <Button variant="outline" size="sm" className="gap-2">
           <Download className="size-4" />
           {b.exportOpen}
         </Button>

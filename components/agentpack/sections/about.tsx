@@ -1,16 +1,14 @@
 "use client"
 
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
+/* Hallmark · genre: modern-minimal · macrostructure: asymmetric settings workbench · theme: inherited Cobalt · contrast: pass (40–41) · slop: pass (42–49) · mobile: pass (34, 49, 50–57) */
+
 import { useEffect, useState } from "react"
-import { CheckCircle2, Download, RefreshCw } from "lucide-react"
+import { CheckCircle2, Download, ExternalLink, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
-import { Kbd } from "@/components/ui/kbd"
-import { Label } from "@/components/ui/label"
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Progress } from "@/components/ui/progress"
-import { Switch } from "@/components/ui/switch"
 import { Spinner } from "@/components/ui/spinner"
 import { isTauri } from "@/lib/tauri"
 import {
@@ -21,28 +19,26 @@ import {
 } from "@/lib/tauri/updater"
 import { saveSettings } from "@/lib/tauri/settings"
 import { osSummary } from "@/lib/tauri/os"
-import {
-  DEFAULT_SUMMON_SHORTCUT,
-  registerSummonShortcut,
-  unregisterSummonShortcut,
-} from "@/lib/tauri/shortcut"
 import { openUrl, revealPath } from "@/lib/tauri/system"
-import { useLocale, useT } from "@/lib/i18n/provider"
-import type { Lang } from "@/lib/i18n/types"
-import type { OS } from "@/lib/agentpack/types"
+import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "./capability-workbench"
-import { DesktopOnlyNote } from "../desktop-only-note"
+import { CapabilityTile, CapabilityWorkbench } from "./capability-workbench"
+import { SectionStatus } from "./section-status"
 
 const RELEASES_URL = "https://github.com/Arxtect/agentpack-gui/releases"
 
-const OS_OPTIONS: OS[] = ["win", "mac", "linux"]
-
+/**
+ * Which build this is, and how it gets the next one. That is the whole section.
+ *
+ * It used to be that plus every preference the app had — language, the target
+ * OS, a system-wide hotkey and the two guidance entry points — stacked under the
+ * update panel as identical `border-t` rows. Those now live in Preferences, one
+ * tab to the left, where they can be grouped and explained. What is left here
+ * answers a single question, so the update state gets the whole column instead
+ * of the top third of it.
+ */
 export function AboutSection() {
   const t = useT()
-  const { lang, setLang } = useLocale()
-  const osOverride = useAppStore((s) => s.osOverride)
-  const setOsOverride = useAppStore((s) => s.setOsOverride)
   const appVersion = useAppStore((s) => s.appVersion)
   const updateState = useAppStore((s) => s.updateState)
   const updateInfo = useAppStore((s) => s.updateInfo)
@@ -54,11 +50,9 @@ export function AboutSection() {
   const setUpdateInfo = useAppStore((s) => s.setUpdateInfo)
   const setDownloadProgress = useAppStore((s) => s.setDownloadProgress)
   const setSettings = useAppStore((s) => s.setSettings)
-  const setOnboardingOpen = useAppStore((s) => s.setOnboardingOpen)
-  const setTourActive = useAppStore((s) => s.setTourActive)
 
   // Host OS/arch line ("macOS 15.3 · aarch64"), from @tauri-apps/plugin-os.
-  // Null in web mode, where the row is simply not rendered.
+  // Null in web mode, where the fact reads "—" with the reason.
   const [system, setSystem] = useState<string | null>(null)
   const [systemResolved, setSystemResolved] = useState(false)
   const [updateError, setUpdateError] = useState<string | null>(null)
@@ -74,6 +68,9 @@ export function AboutSection() {
       .catch(() => {})
   }, [appVersion, setAppVersion])
 
+  // Two states, not one: `null` before the call lands means "still reading",
+  // and `null` after it means "web mode can't tell you". The summary strip says
+  // which — a bare `—` with no reason is what design.md § 2 rules out.
   useEffect(() => {
     void osSummary().then((summary) => {
       setSystem(summary)
@@ -134,31 +131,6 @@ export function AboutSection() {
     setUpdateState("idle")
   }
 
-  const onToggleAutoCheck = (checked: boolean) => {
-    setSettings({ autoCheckUpdates: checked })
-    void saveSettings({ autoCheckUpdates: checked })
-  }
-
-  /**
-   * Claim (or release) the global accelerator. Only persist it once the OS has
-   * actually granted it — another app may already own the combination, and a
-   * switch left on for a hotkey that does nothing is worse than an honest error.
-   */
-  const onToggleSummonShortcut = async (checked: boolean) => {
-    if (!checked) {
-      if (settings.summonShortcut) await unregisterSummonShortcut(settings.summonShortcut)
-      setSettings({ summonShortcut: null })
-      await saveSettings({ summonShortcut: null })
-      return
-    }
-    if (await registerSummonShortcut(DEFAULT_SUMMON_SHORTCUT)) {
-      setSettings({ summonShortcut: DEFAULT_SUMMON_SHORTCUT })
-      await saveSettings({ summonShortcut: DEFAULT_SUMMON_SHORTCUT })
-    } else {
-      toast.error(t.about.shortcutTaken(DEFAULT_SUMMON_SHORTCUT))
-    }
-  }
-
   const lastChecked = settings.lastCheckAt
     ? new Date(settings.lastCheckAt).toLocaleString()
     : t.about.never
@@ -176,209 +148,136 @@ export function AboutSection() {
     <CapabilityWorkbench
       title={t.about.title}
       subtitle={t.about.subtitle}
-      summaryLabel={t.about.summaryLabel}
       actionsLabel={t.about.actionsLabel}
-      metrics={
-        <>
-          <CapabilityMetric
-            label={t.about.metricVersion}
-            value={appVersion ?? "—"}
-            detail={appVersion ? undefined : t.about.versionUnknown}
-          />
-          <CapabilityMetric
-            label={t.about.metricSystem}
-            value={system?.split(" · ")[0] ?? "—"}
-            detail={
-              system
-                ? undefined
-                : systemResolved
-                  ? t.about.systemUnavailable
-                  : t.about.systemLoading
-            }
-          />
-          <CapabilityMetric label={t.about.metricUpdate} value={updateLabel} />
-          <CapabilityMetric label={t.about.metricLanguage} value={lang} />
-        </>
+      actions={
+        <Button
+          variant="outline"
+          onClick={() => void onCheck()}
+          disabled={!isTauri() || checking || downloading}
+          className="gap-2"
+        >
+          {checking ? <Spinner className="size-4" /> : <RefreshCw className="size-4" />}
+          {checking ? t.about.checking : t.about.checkNow}
+        </Button>
+      }
+      lead={
+        <SectionStatus
+          label={t.about.summaryLabel}
+          facts={[
+            { label: t.about.metricVersion, value: appVersion ?? "—" },
+            { label: t.about.metricSystem, value: system?.split(" · ")[0] ?? "—" },
+            { label: t.about.metricUpdate, value: updateLabel },
+            { label: t.about.metricChecked, value: lastChecked },
+          ]}
+          notes={[
+            appVersion ? null : t.about.versionUnknown,
+            system ? null : systemResolved ? t.about.systemUnavailable : t.about.systemLoading,
+          ]}
+        />
       }
       primary={
-        <section aria-label={t.about.settingsPanel} className="min-w-0">
-          <Card className="gap-4 p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-medium">
-                  {appVersion ? t.about.currentVersion(appVersion) : t.about.versionUnknown}
-                </div>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {t.about.lastChecked(lastChecked)}
-                </p>
-                {system ? <p className="mt-0.5 text-xs text-muted-foreground">{system}</p> : null}
-              </div>
-              <Button
-                variant="outline"
-                onClick={onCheck}
-                disabled={!isTauri() || checking || downloading}
-                className="gap-2"
-              >
-                {checking ? <Spinner className="size-4" /> : <RefreshCw className="size-4" />}
-                {checking ? t.about.checking : t.about.checkNow}
-              </Button>
+        <section
+          aria-label={t.about.updatePanel}
+          className="flex min-w-0 flex-col gap-4 rounded-lg border p-5"
+        >
+          <div className="min-w-0">
+            <div className="text-sm font-medium">
+              {appVersion ? t.about.currentVersion(appVersion) : t.about.versionUnknown}
             </div>
+            <p className="mt-0.5 font-mono text-[var(--hm-text-2xs)] text-muted-foreground [overflow-wrap:anywhere]">
+              {t.about.lastChecked(lastChecked)}
+              {system ? ` · ${system}` : ""}
+            </p>
+          </div>
 
-            {updateState === "upToDate" ? (
-              <div className="flex items-center gap-2 text-sm text-[var(--hm-ok)]">
-                <CheckCircle2 className="size-4" />
-                {t.about.upToDate}
+          {updateState === "upToDate" ? (
+            <div className="flex items-center gap-2 text-sm text-[var(--hm-ok)]">
+              <CheckCircle2 className="size-4" />
+              {t.about.upToDate}
+            </div>
+          ) : null}
+
+          {updateState === "error" ? (
+            <p role="alert" className="text-sm text-[var(--hm-danger)]">
+              {t.about.updateError(updateError ?? t.about.unknownError)}
+            </p>
+          ) : null}
+
+          {showUpdate && updateInfo ? (
+            <div className="flex flex-col gap-3 border-t pt-4">
+              <div className="flex items-center gap-2">
+                <Badge className="font-normal">{t.about.updateAvailable(updateInfo.version)}</Badge>
               </div>
-            ) : null}
 
-            {updateState === "error" ? (
-              <p role="alert" className="text-sm text-[var(--hm-danger)]">
-                {t.about.updateError(updateError ?? t.about.unknownError)}
-              </p>
-            ) : null}
-
-            {showUpdate && updateInfo ? (
-              <div className="flex flex-col gap-3 border-t pt-4">
-                <div className="flex items-center gap-2">
-                  <Badge className="font-normal">
-                    {t.about.updateAvailable(updateInfo.version)}
-                  </Badge>
-                </div>
-
-                {updateInfo.body ? (
-                  <div>
-                    <div className="mb-1 text-xs font-medium text-muted-foreground">
-                      {t.about.releaseNotes}
-                    </div>
-                    <p className="max-h-40 overflow-auto whitespace-pre-wrap rounded bg-muted/50 p-3 text-xs">
-                      {updateInfo.body}
-                    </p>
+              {updateInfo.body ? (
+                <div>
+                  <div className="mb-1 font-mono text-[var(--hm-text-2xs)] tracking-[var(--hm-tracking-mono)] text-muted-foreground uppercase">
+                    {t.about.releaseNotes}
                   </div>
-                ) : null}
-
-                {downloading ? (
-                  <div className="flex items-center gap-3">
-                    <Progress value={downloadProgress} className="h-1.5 flex-1" />
-                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                      {downloadProgress}%
-                    </span>
-                  </div>
-                ) : null}
-
-                <div className="flex flex-wrap gap-2">
-                  <Button onClick={onInstall} disabled={downloading} className="gap-2">
-                    {downloading ? <Spinner className="size-4" /> : <Download className="size-4" />}
-                    {downloading ? t.about.installing : t.about.installAndRestart}
-                  </Button>
-                  <Button variant="outline" onClick={onSkip} disabled={downloading}>
-                    {t.about.skipVersion}
-                  </Button>
-                  <Button variant="ghost" onClick={() => void openUrl(RELEASES_URL)}>
-                    {t.about.viewOnGitHub}
-                  </Button>
+                  <p className="max-h-40 overflow-auto whitespace-pre-wrap rounded-[var(--hm-radius-surface)] bg-muted/50 p-3 text-xs">
+                    {updateInfo.body}
+                  </p>
                 </div>
-              </div>
-            ) : null}
+              ) : null}
 
-            {/* Language and the OS override moved here out of the header: they are
-            set once and then never again, and the title bar's job is to say
-            where you are, not to hold every preference the app has. */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-              <Label htmlFor="app-language" className="cursor-pointer text-sm">
-                {t.shell.language}
-              </Label>
-              <NativeSelect
-                id="app-language"
-                size="sm"
-                value={lang}
-                onChange={(e) => setLang(e.target.value as Lang)}
-              >
-                <NativeSelectOption value="en">EN</NativeSelectOption>
-                <NativeSelectOption value="zh-CN">中文</NativeSelectOption>
-              </NativeSelect>
-            </div>
+              {downloading ? (
+                <div className="flex items-center gap-3">
+                  <Progress value={downloadProgress} className="h-1.5 flex-1" />
+                  <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                    {downloadProgress}%
+                  </span>
+                </div>
+              ) : null}
 
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-              <div className="min-w-0">
-                <Label htmlFor="os-override" className="cursor-pointer text-sm">
-                  {t.shell.osOverride}
-                </Label>
-                <p className="mt-0.5 text-xs text-muted-foreground">{t.about.osOverrideHint}</p>
-              </div>
-              <NativeSelect
-                id="os-override"
-                size="sm"
-                value={osOverride ?? "auto"}
-                onChange={(e) =>
-                  setOsOverride(e.target.value === "auto" ? null : (e.target.value as OS))
-                }
-              >
-                <NativeSelectOption value="auto">{t.shell.osAuto}</NativeSelectOption>
-                {OS_OPTIONS.map((os) => (
-                  <NativeSelectOption key={os} value={os}>
-                    {os}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </div>
-
-            <div className="flex items-center justify-between gap-3 border-t pt-4">
-              <Label htmlFor="auto-check" className="cursor-pointer text-sm">
-                {t.about.autoCheckLabel}
-              </Label>
-              <Switch
-                id="auto-check"
-                checked={settings.autoCheckUpdates}
-                onCheckedChange={onToggleAutoCheck}
-              />
-            </div>
-            <div className="flex items-center justify-between gap-3 border-t pt-4">
-              <div>
-                <Label htmlFor="summon-shortcut" className="cursor-pointer text-sm">
-                  {t.about.summonShortcutLabel}
-                </Label>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {t.about.summonShortcutHint} <Kbd>{DEFAULT_SUMMON_SHORTCUT}</Kbd>
-                </p>
-              </div>
-              <Switch
-                id="summon-shortcut"
-                disabled={!isTauri()}
-                checked={settings.summonShortcut !== null}
-                onCheckedChange={(checked) => void onToggleSummonShortcut(checked)}
-              />
-            </div>
-            {!isTauri() ? <DesktopOnlyNote>{t.about.shortcutDesktopOnly}</DesktopOnlyNote> : null}
-
-            <div className="flex items-center justify-between gap-3 border-t pt-4">
-              <span className="text-sm">{t.welcome.title}</span>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => setTourActive(true)}>
-                  {t.tour.start}
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => void onInstall()} disabled={downloading} className="gap-2">
+                  {downloading ? <Spinner className="size-4" /> : <Download className="size-4" />}
+                  {downloading ? t.about.installing : t.about.installAndRestart}
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => setOnboardingOpen(true)}>
-                  {t.welcome.reopen}
+                <Button variant="outline" onClick={onSkip} disabled={downloading}>
+                  {t.about.skipVersion}
                 </Button>
               </div>
             </div>
-          </Card>
+          ) : null}
         </section>
       }
       aside={
-        <CapabilityTile title={t.about.locationsTitle} description={t.about.locationsHint}>
-          {paths ? (
-            <div className="flex flex-col gap-2">
-              <Button variant="outline" onClick={() => void revealPath(paths.claudeSettings)}>
-                {t.about.openClaudeFolder}
-              </Button>
-              <Button variant="outline" onClick={() => void revealPath(paths.codexConfig)}>
-                {t.about.openCodexFolder}
-              </Button>
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">{t.about.locationsUnavailable}</p>
-          )}
-        </CapabilityTile>
+        <>
+          <CapabilityTile title={t.about.locationsTitle} description={t.about.locationsHint}>
+            {paths ? (
+              <div className="flex flex-col gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void revealPath(paths.claudeSettings)}
+                >
+                  {t.about.openClaudeFolder}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void revealPath(paths.codexConfig)}
+                >
+                  {t.about.openCodexFolder}
+                </Button>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">{t.about.locationsUnavailable}</p>
+            )}
+          </CapabilityTile>
+          <CapabilityTile title={t.about.sourceTitle} description={t.about.sourceHint}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => void openUrl(RELEASES_URL)}
+            >
+              <ExternalLink className="size-4" />
+              {t.about.viewOnGitHub}
+            </Button>
+          </CapabilityTile>
+        </>
       }
     />
   )

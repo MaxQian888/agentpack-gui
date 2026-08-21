@@ -53,6 +53,9 @@ const SETTINGS: AppSettings = {
   summonShortcut: null,
   monthlySubscriptionUsd: 20,
   providerBackend: "native",
+  uiScale: 100,
+  reduceMotion: false,
+  startupSection: null,
 }
 
 const FILES = {

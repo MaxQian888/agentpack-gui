@@ -62,6 +62,9 @@ export const EXPORTED_SETTINGS_KEYS = [
   "summonShortcut",
   "monthlySubscriptionUsd",
   "providerBackend",
+  "uiScale",
+  "reduceMotion",
+  "startupSection",
 ] as const satisfies readonly (keyof AppSettings)[]
 
 function buildSettings(settings: AppSettings, includeSecrets: boolean): Partial<AppSettings> {
