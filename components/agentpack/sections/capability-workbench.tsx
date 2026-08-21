@@ -72,6 +72,7 @@ export function CapabilityWorkbench({
   summaryLabel,
   actionsLabel,
   metrics,
+  lead,
   primary,
   aside,
   detail,
@@ -80,15 +81,24 @@ export function CapabilityWorkbench({
   subtitle?: string
   help?: React.ReactNode
   actions?: React.ReactNode
-  summaryLabel: string
+  /** Only needed alongside `metrics` — it names that strip's region. */
+  summaryLabel?: string
   actionsLabel: string
   metrics?: React.ReactNode
+  /**
+   * A full-width band above the two columns, for a workspace whose summary is
+   * one ranked verdict rather than a row of equal tiles (see the overview).
+   * It spans the grid so the verdict is never read as a column heading.
+   */
+  lead?: React.ReactNode
   primary: React.ReactNode
   aside?: React.ReactNode
   detail?: React.ReactNode
 }) {
   return (
     <SectionShell title={title} subtitle={subtitle} help={help} actions={actions} wide>
+      {lead ? <div className="min-w-0">{lead}</div> : null}
+
       {metrics ? (
         <dl
           role="region"
