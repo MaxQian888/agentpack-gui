@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// One backed-up file inside a snapshot: where it came from and its copy name.
@@ -259,7 +259,7 @@ pub fn backup_restore(id: String) -> Result<RestoreResult, String> {
     && entry
       .files
       .iter()
-      .any(|file| PathBuf::from(&file.original_path) == crate::ccswitch::db_path())
+      .any(|file| Path::new(&file.original_path) == crate::ccswitch::db_path())
   {
     return Err("cc-switch is running — close it before restoring its database.".into());
   }

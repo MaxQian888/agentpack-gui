@@ -409,6 +409,25 @@ export const removeDir = (path: string) => invoke<void>("remove_dir", { path })
 
 export const pathExists = (path: string) => invoke<boolean>("path_exists", { path })
 
+/** What a path looks like right now. See `FileStat` for what `modifiedMs: 0` means. */
+export interface FileStat {
+  exists: boolean
+  bytes: number
+  /**
+   * Last-modified time, epoch ms. **0 means unknown**, never 1970 — code
+   * comparing it against a backup's timestamp must read 0 as "cannot tell",
+   * not as "older than the backup, safe to overwrite".
+   */
+  modifiedMs: number
+}
+
+/**
+ * Size and modification time of a path, for deciding whether restoring over it
+ * would discard work done outside this app. A missing path comes back as
+ * `exists: false` rather than an error; only a real read failure rejects.
+ */
+export const fileStat = (path: string) => invoke<FileStat>("file_stat", { path })
+
 /** Installed skill ids in a skills dir — sub-dirs with a `SKILL.md` ([] when missing). */
 export const listSkills = (path: string) => invoke<string[]>("list_skills", { path })
 

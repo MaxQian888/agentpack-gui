@@ -195,8 +195,17 @@ active · disabled · loading · error · success.**
 ## 8. Responsive
 
 The desktop window floor is **900 × 600**; it is also a real target, not a
-degraded one. Verified at 900 × 600, 1100 × 760 and 1440 × 900, and — because
-web mode is a shipping target with its own e2e suite — at 320 / 375 / 414 / 768.
+degraded one. Verified at 900 × 600, 1100 × 760, 1440 × 900 and 2000 × 1100, and
+— because web mode is a shipping target with its own e2e suite — at
+320 / 375 / 414 / 768.
+
+The content column has **three** caps, not two (`--hm-content-width*`): a reading
+measure for text-led sections, a wider one for the workbench grids, and a third
+step at a 1600px viewport so a window larger than anything above stops turning
+its extra width into margin. At 2000 × 1100 the wide column was sitting at 72rem
+with ~290px of dead space on each side. The reading measure deliberately skips
+the third step — a paragraph 1600px wide is harder to read, not easier — and
+nothing below 1600px changes, so every size verified before it is untouched.
 
 Non-negotiables at every width: no horizontal scroll on the page body (wide
 tables, charts and log output scroll inside their own `overflow-x: auto`

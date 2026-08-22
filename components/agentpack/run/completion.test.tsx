@@ -48,9 +48,13 @@ describe("the verdict", () => {
   })
 
   it("keeps the full log, one disclosure away", async () => {
-    renderCompletion([{ id: "a", label: "Broken", status: "error", output: [], error: "nope" }])
+    const { container } = renderCompletion([
+      { id: "a", label: "Broken", status: "error", output: [], error: "nope" },
+    ])
     await userEvent.click(screen.getByText(en.completion.details))
-    expect(screen.getByText(/Broken/)).toBeInTheDocument()
+    // Scoped to the disclosure's own block: the step's label also appears in
+    // the failure reading above, which is a different thing saying so.
+    expect(container.querySelector("details pre")?.textContent).toMatch(/Broken/)
   })
 
   /**
@@ -230,5 +234,30 @@ describe("what actually installed, not what was asked for", () => {
     useAppStore.getState().setClis(["claude-desktop"])
     renderCompletion([failed("cli-claude-desktop-brew")])
     expect(screen.queryByText(en.completion.todoSignIn)).not.toBeInTheDocument()
+  })
+})
+
+describe("what to do about a failure", () => {
+  const broken = (output: string[]): StepReport => ({
+    id: "cli-x",
+    label: "Install X",
+    status: "error",
+    output,
+  })
+
+  it("explains the failure above the warnings, because it outranks them", () => {
+    renderCompletion([broken(["npm ERR! code EBADENGINE"])])
+    expect(screen.getByText(en.failure.nodeTooOldTitle)).toBeInTheDocument()
+  })
+
+  it("says nothing about a preview, which wrote nothing to fail at", () => {
+    // The reading would be about a run that never happened.
+    renderCompletion([broken(["npm ERR! code EBADENGINE"])], true)
+    expect(screen.queryByText(en.failure.nodeTooOldTitle)).not.toBeInTheDocument()
+  })
+
+  it("draws no reading at all for a run that worked", () => {
+    renderCompletion(done)
+    expect(screen.queryByRole("region", { name: en.failure.heading })).not.toBeInTheDocument()
   })
 })

@@ -1,6 +1,8 @@
+use serde::Serialize;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 use tauri::{AppHandle, Manager};
 
 /// Read a text file, returning "" when it does not exist (mirrors the TUI's
@@ -51,6 +53,47 @@ pub fn write_binary_file(path: String, bytes: Vec<u8>) -> Result<(), String> {
   let tmp = PathBuf::from(format!("{path}.agentpack.tmp"));
   fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
   fs::rename(&tmp, p).map_err(|e| e.to_string())
+}
+
+/// What a path looks like right now, for deciding whether restoring a backup
+/// over it would discard work done outside this app.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileStat {
+  pub exists: bool,
+  pub bytes: u64,
+  /// Last-modified time, epoch ms. **0 means unknown**, not 1970 — a caller
+  /// comparing it against a backup's timestamp must read 0 as "cannot tell",
+  /// never as "older than the backup, safe to overwrite".
+  pub modified_ms: i64,
+}
+
+/// Size and modification time of a path.
+///
+/// A missing path is not an error: it is the answer "there is nothing here to
+/// lose", which is exactly what a restore wants to know. Only a real failure —
+/// permission denied, an I/O fault — is an `Err`, so a path we could not read is
+/// never silently reported as absent and therefore safe to overwrite.
+#[tauri::command(async)]
+pub fn file_stat(path: String) -> Result<FileStat, String> {
+  match fs::metadata(Path::new(&path)) {
+    Ok(md) => Ok(FileStat {
+      exists: true,
+      bytes: md.len(),
+      modified_ms: md
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0),
+    }),
+    Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(FileStat {
+      exists: false,
+      bytes: 0,
+      modified_ms: 0,
+    }),
+    Err(e) => Err(format!("cannot stat {path}: {e}")),
+  }
 }
 
 /// Whether a path exists (used to show skill install status).
@@ -406,6 +449,28 @@ mod tests {
     write_text_file(path.clone(), "second".into()).unwrap();
     assert_eq!(fs::read_to_string(&target).unwrap(), "second");
     assert!(!Path::new(&format!("{path}.agentpack.tmp")).exists());
+
+    let _ = fs::remove_dir_all(&base);
+  }
+
+  #[test]
+  fn file_stat_reports_absence_rather_than_failing() {
+    let base = temp_dir("stat");
+    let target = base.join("config.json");
+    let path = target.to_string_lossy().into_owned();
+
+    // Nothing there yet: not an error, and explicitly not "modified in 1970".
+    let missing = file_stat(path.clone()).unwrap();
+    assert!(!missing.exists);
+    assert_eq!(missing.bytes, 0);
+    assert_eq!(missing.modified_ms, 0);
+
+    write_text_file(path.clone(), "{}".into()).unwrap();
+    let present = file_stat(path).unwrap();
+    assert!(present.exists);
+    assert_eq!(present.bytes, 2);
+    // A real mtime, not the unknown sentinel.
+    assert!(present.modified_ms > 0);
 
     let _ = fs::remove_dir_all(&base);
   }

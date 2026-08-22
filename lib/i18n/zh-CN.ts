@@ -31,12 +31,12 @@ export const zhCN = {
     previewLabel: "先预览（演练，不真正执行）",
     previewHint: "先看清楚会发生什么 —— 不改动任何东西。",
     later: "以后再说",
-    install: "一键安装",
+    install: "去确认并安装",
     reopen: "重新查看入门引导",
     // 第 2、3 步的副标题。网络自检特意放在安装之前：提前发现网络不通，
     // 好过看着六个步骤一个个变红。
     networkIntro: "先快速看一眼网络，免得安装到一半失败。",
-    installIntro: "下面就是将要发生的事。不点「一键安装」之前不会执行任何操作。",
+    installIntro: "这是你选的东西。下一步会逐条列出它需要做的改动，你在那里确认之后才会真正执行。",
     // 最后一步：列出所选套餐会装什么，以及需要密钥的服务要填的密钥 ——
     // 放在这里问，是因为缺密钥的服务能装上但根本用不了。
     summaryClis: "AI 助手",
@@ -169,6 +169,10 @@ export const zhCN = {
       config: {
         title: "环境档案与备份",
         body: "把配置存成档案，或整台机器导出，换个地方也能原样重建。",
+      },
+      recovery: {
+        title: "恢复点",
+        body: "这个应用留下过的每一条退路——配置快照、Skill 备份、被隔离的清理批次——并且在某个备份比它要覆盖的文件更旧时给出警告。",
       },
       about: {
         title: "关于与更新",
@@ -631,6 +635,7 @@ export const zhCN = {
     catalogHint:
       "每一行都列出可以添加到的 agent。点击其中一个即可把该服务添加过去，再点一次则移除。",
     keyAdd: (envVar: string) => `添加 API 密钥（${envVar}）`,
+    installedActionHint: "各个 agent 中已经配置好的服务。",
     catalogActionHint: "浏览内置目录，把服务添加到任意 agent。",
     matrixActionHint: "并排比较 Claude Code、Codex 与 OpenCode 的配置。",
     addActionHint: "创建 stdio、HTTP 或 SSE 服务，或导入 JSON 和命令。",
@@ -1338,6 +1343,7 @@ export const zhCN = {
     cleanup: "环境清理",
     preferences: "偏好设置",
     saveConfig: "环境档案与备份",
+    recovery: "恢复点",
     about: "关于与更新",
     exit: "退出",
     progress: (done: number, total: number, secs: number) =>
@@ -1461,6 +1467,7 @@ export const zhCN = {
     summaryLabel: "技能概览",
     actionsLabel: "技能管理视图",
     installedPanel: "已安装技能",
+    installedActionHint: "四个技能目录下扫描到的全部技能。",
     catalogActionHint: "把内置工程技能安装到所选 agent。",
     addActionHint: "从 GitHub、本地文件夹或 skills CLI 安装，也可新建技能。",
     detailPanel: "技能管理详情",
@@ -2412,6 +2419,103 @@ export const zhCN = {
     upgradeFrom: (version: string) => `你现在是 ${version}。`,
     nodeFloorDetail: (need: number, found: string) =>
       `这次更新要求 npm 运行在 Node ${need} 或更高版本上，而这台机器上是 Node ${found}。`,
+    selectRow: (title: string) => `选中「${title}」，和同类问题一起修`,
+    selected: (n: number) => `已选 ${n} 项`,
+    clearSelection: "取消选择",
+    batch: {
+      "upgrade-cli": (n: number) => `升级 ${n} 个工具`,
+      "restore-config": (n: number) => `从备份恢复 ${n} 个文件`,
+    },
+  },
+
+  preflight: {
+    title: "应用之前，先看这些",
+    tone: {
+      blocked: "需要你处理",
+      warn: "注意",
+      info: "说明",
+    },
+    blockedTitle: (label: string) => `${label}：这台机器上没法自动完成`,
+    offlineTitle: "这台机器现在连不上网",
+    offlineDetail: "下载一定会失败。先把网络弄通，或者稍后再应用。",
+    elevationTitle: "系统会弹窗要授权",
+    elevationDetail: (n: number) =>
+      `有 ${n} 步需要管理员权限，执行到一半会弹出密码框。那是操作系统弹的，不是这个应用。`,
+    keysTitle: (n: number) => `有 ${n} 个服务还缺 API key`,
+    keysDetail: (names: string) =>
+      `${names} 会装好，但在填上 key 之前不会有任何响应。装完可以去「MCP 服务器」页面补。`,
+    prereqTitle: (label: string) => `${label}：这是依赖项，不是你选的`,
+    prereqNode: "下面这些服务要靠 Node.js 启动。没有它，装是能装上，但永远起不来。",
+    prereqUv: "下面这些基于 Python 的服务要靠 uv 启动。",
+    alreadyTitle: (n: number) => `你选的有 ${n} 项这台机器上已经有了，会原样留着`,
+  },
+
+  recoveryCentre: {
+    title: "恢复点",
+    subtitle:
+      "这个应用留下过的每一条退路，集中在一份列表里——配置快照、Skill 备份、被隔离的清理批次，以及改配置时留在旁边的那份备份。",
+    actionsLabel: "恢复操作",
+    refresh: "刷新",
+    refreshing: "读取中…",
+    summaryLabel: "恢复情况汇总",
+    metricTotal: "恢复点",
+    metricStale: "比现有文件更旧",
+    metricNewest: "最近一次",
+    listPanel: "恢复点",
+    empty: "还没有恢复点。这个应用改动的任何东西都会留下一个。",
+    notMeasured: "还没读取",
+    notTauri: "恢复点在你自己的机器上——运行桌面应用才能看到有哪些东西可以撤销。",
+    degradedNote: "有一处备份存储没读出来，所以这份列表可能不全——它不能证明某个恢复点已经没有了。",
+    undated: "没有记录时间",
+    covers: (n: number) => `${n} 个文件`,
+    restore: "恢复",
+    restoreIn: (section: string) => `去${section}恢复`,
+    handOffSkill: "恢复一个 Skill 需要你指定它放回哪几个 Agent。",
+    handOffQuarantine: "恢复一个批次需要你先看清里面是什么。",
+    restored: "已恢复。",
+    restoreFailed: "恢复没有完成——执行日志里有详情。",
+    confirmTitle: "这会覆盖掉更新的内容",
+    confirmBody: (when: string) =>
+      `它要覆盖的某个文件在 ${when} 之后被改过。恢复会把它退回到那时的样子，而那次改动不会保留在任何地方。`,
+    confirmProceed: "仍然恢复",
+    kind: {
+      configSnapshot: "Provider 存储快照",
+      configBackupFile: "配置备份",
+      skillBackup: "Skill 备份",
+      quarantineBatch: "被隔离的清理批次",
+    },
+    safety: {
+      safe: "可以安全恢复",
+      stale: "会覆盖更新的内容",
+      unknown: "判断不了",
+    },
+    safetyHint: {
+      safe: "自这次备份之后，这里没有任何改动。",
+      stale: "它要覆盖的某个文件在这个恢复点之后被改过——恢复会把那次改动丢掉。",
+      unknown: "测到的信息不足以判断它会不会覆盖掉更新的内容。",
+    },
+  },
+
+  failure: {
+    heading: "哪里出了问题",
+    openSection: (section: string) => `打开${section}`,
+    evidenceLabel: "它的原话：",
+    nodeTooOldTitle: "这个包要求更新的 Node.js",
+    nodeTooOldAdvice:
+      "npm 拒绝了这次安装，因为这个包要求的 Node 版本高于这台机器上的。先升级 Node，再重试。",
+    diskFullTitle: "这台机器磁盘满了",
+    diskFullAdvice:
+      "下载没地方放。「清理」能把几个 Agent CLI 占掉的空间收回来，之后这一步值得重试。",
+    networkTitle: "下载没能通过",
+    networkAdvice: "镜像和代理都已经自动试过了，没有一个能用。去测一遍线路，挑一个通的，再重试。",
+    permissionTitle: "系统拒绝了授权",
+    permissionAdvice:
+      "这次安装需要的权限这个应用没有。有些工具提供不需要提权的用户级安装方式，可以换一个再跑一次。",
+    notFoundTitle: "它要用的命令这台机器上没有",
+    notFoundAdvice: "它想调用的安装器不在。要么把它装上，要么换一种用别的安装器的安装方式。",
+    unknownTitle: "这一步失败了，但原因我们读不出来",
+    unknownAdvice:
+      "输出里没有匹配到我们能解释的原因，所以下面原样贴出它打印的内容。重试只会重跑失败的那些步骤。",
   },
 
   activity: {
@@ -2971,6 +3075,8 @@ export const zhCN = {
     empty: "还没有保存任何档案。",
     emptyHint: "在上方给当前选择起个名字，它就会出现在这里，随时可以在本机或另一台机器上重新应用。",
     savedAt: (when: string) => `保存于 ${when}`,
+    machineComplete: "这台机器已经全都有了。",
+    machineMissing: (n: number) => `其中 ${n} 项这台机器上还没有——「应用」只会装这些。`,
     fileTitle: "配置文件",
     fileHint: "命令行版本读取的纯计划格式。",
     applied: (name: string) => `已应用档案 “${name}”`,
@@ -2993,6 +3099,12 @@ export const zhCN = {
     partProviders: "Provider",
     partFiles: "配置文件",
     partSettings: "应用设置",
+    partCredentials: "还需要你补上",
+    credentialsHint:
+      "迁移文件从不携带任何凭据。在把这些填上之前，需要它们的那部分是装好了，但不会工作。",
+    credentialMcpKey: (id: string, env: string) => `${id} —— API key（${env}）`,
+    credentialProxy: (field: string) => `代理 —— ${field}`,
+    credentialConfigField: (file: string, field: string) => `${file} —— ${field}`,
     planSummary: (clis: number, skills: number, mcps: number) =>
       `${clis} 个 CLI · ${skills} 个技能 · ${mcps} 个 MCP`,
     countProfiles: (n: number) => `已保存 ${n} 个`,

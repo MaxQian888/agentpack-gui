@@ -105,9 +105,11 @@ catalog must be live and undeprecated.
   `locale`, `scan`, `profile`, `release`, `version`, `merge/{mcp,network}`,
   `network/{discovery,mirrors,probe,proxy,recovery,scan}`, `bundle/*`,
   `config-editor/*`, `mcp-{disabled,health,import}`, `ccconnect`, `ccswitch/*`,
-  plus `workspaces` (the seven task domains over the twenty-four `SectionKey`s),
+  plus `workspaces` (the seven task domains over the twenty-five `SectionKey`s),
   `appearance` (the interface-scale vocabulary),
-  `diagnostics` (the overview's to-do list), `palette` (⌘K contents),
+  `inventory` (the machine's asset list — see below),
+  `recovery` (every restore point, folded — see below),
+  `diagnostics` (the overview's to-do list, derived from it), `palette` (⌘K contents),
   `activity` (the run log's shape + redaction) and `cleanup` (the disk-cleanup
   catalog — see below).
   `plan.ts` turns a `Plan` into a declarative `StepDescriptor[]`; `preview.ts`
@@ -136,7 +138,7 @@ locally and NEVER calls a mutating Rust command. Skills ship as Tauri resources
 The window is a **Workbench**: a seven-item task rail (`sidebar-nav.tsx`), a
 title bar that says where you are, a sub-tab strip per workspace, the workspace
 itself, and a change tray docked at the bottom. `lib/agentpack/workspaces.ts`
-owns the mapping — the twenty-four `SectionKey`s are the target of every
+owns the mapping — the twenty-five `SectionKey`s are the target of every
 navigation, grouped into **Overview · Install & repair · Capabilities · My
 account · Accounts & quota · Usage · Settings**. Below 900px the rail becomes a
 Sheet.
@@ -148,22 +150,42 @@ in that test, `SECTIONS` in `sidebar-nav.tsx` (label + icon), `SECTION_LABEL` in
 both walk `SECTIONS`, so a new one needs `menu.*` and `tour.steps.*` copy in
 both catalogs or the tour renders an untitled step.
 
-**Four shared primitives carry every section's chrome.** Use them rather than
+**Five shared primitives carry every section's chrome.** Use them rather than
 hand-rolling the shape again: `section-shell` (heading + subtitle + `help` +
 `actions`), `capability-workbench` (that shell plus the lead / primary / aside /
 detail grid), `section-status` (the summary, as one band of measured facts — the
 row of uniform stat tiles is banned, see design.md), `section-nav` (an aside's
-destinations as one ruled panel) and `filter-bar` (`FilterToolbar` +
-`ScopeChip` + `SearchField` + `MoreFilters`, the two-tier toolbar over any
-inventory list). `scopeChipClass` is exported so a control that must build its
+destinations as one ruled panel), `section-view` (the one panel a destination
+has open) and `filter-bar` (`FilterToolbar` + `ScopeChip` + `SearchField` +
+`MoreFilters`, the two-tier toolbar over any inventory list). `scopeChipClass` is exported so a control that must build its
 own trigger — the usage dashboard's custom-range pill — is the same object as
 the chips beside it. A section that draws its own header drifts: History did,
 and ended up the one page whose title sat at a different width from its
 neighbours with the tour anchor re-added by hand.
 
-**Settings is three tabs, and each answers one question.** `preferences` is how
+⚠️ **A `SectionNav` choice swaps the primary column; it does not append below
+it.** Skills and MCP both used the workbench's full-width `detail` band for
+this, and on a machine with twenty-odd skills that put the catalog a screen and
+a half under the installed list — the click read as having done nothing. So the
+nav lists _every_ view including the inventory (`tabInstalled` is a choice, and
+the way back), and `SectionView` renders whichever one is active. It scrolls
+itself into view when the choice changes but **not on first render** — arriving
+in a section must leave its heading and status band on screen — and passes no
+`behavior`, so the reduce-motion rules in `globals.css` still decide whether the
+jump animates. The `detail` slot stays for what it is for: a panel read across
+the full width regardless of what else is open, like ccswitch's provider list.
+
+⚠️ **`CapabilityList` scrolls inside itself** past `--hm-list-max-h`, and that is
+the other half of the same fix. A list's length is the machine's, not the
+design's, so an uncapped one lets the number of installed skills decide where
+everything below it sits. Capped, the page is the same shape on every machine.
+Category headings are `sticky` for the same reason — a scrolling panel needs to
+say which group you are in.
+
+**Settings is four tabs, and each answers one question.** `preferences` is how
 the app looks and behaves, `config` is profiles + backup + the CLIs' own config
-files, `about` is which build this is. Keep them apart: About used to carry
+files, `recovery` is every way back the app has left behind (see below), `about`
+is which build this is. Keep them apart: About used to carry
 every preference under its update panel, which is how a setting ends up with two
 writers that disagree — `about.test.tsx` asserts it renders no switch at all.
 
@@ -183,6 +205,171 @@ and `tokens.css` is its machine-readable half, imported at the top of
 `app/globals.css`, which then re-points the shadcn variable _names_ at those
 tokens. **Read design.md before adding a surface; add a token before adding a
 value** — no `oklch(...)`, px radius or `font-family` belongs anywhere else.
+
+### The machine inventory
+
+`lib/agentpack/inventory.ts` is the single normalized answer to "what is
+actually on this machine?". It **folds readings the app already took** — the
+dashboard scan, the CLI detections, the startup network probe — into one
+`Asset[]`, and `diagnostics.ts` derives its findings from that rather than from
+seven loose parameters. Before it, three surfaces described the same machine in
+three shapes, which is how two of them end up disagreeing.
+
+Four rules the shape enforces:
+
+1. **Nothing here measures anything.** Pure and browser-safe, like `scan` and
+   `diagnostics`. A missing reading produces a missing asset, never a probe.
+2. **Candidates are not assets.** The registry says what _could_ be installed;
+   an asset is what a reading found. A machine without OpenCode has no OpenCode
+   row — what is expected but absent is `DriftItem`, a comparison against a
+   profile, not a property of the machine. `driftFrom` returns nothing at all
+   for an unmeasured inventory, or every asset would read as missing and the
+   fix would be to reinstall a machine that is already complete.
+3. **Observed is not verified.** `health.status` is what the reading showed;
+   `health.verifiedAt` says whether anything exercised the asset. A declared MCP
+   server is `healthy` with **no** `verifiedAt` — the config parses and names
+   it, and nothing tried to start it. `unknown` means "we could not look", never
+   "probably fine".
+4. **No secrets, by construction.** Every field is copied explicitly, and the
+   ones that could carry credential material (a provider's `settings_config`, a
+   relay token, an MCP `env`) are not copied at all. This model is the intended
+   input to the profile/export formats, so `inventory.test.ts` serializes a whole
+   inventory and asserts a planted token never appears in it.
+
+⚠️ `restorePoint`'s **presence is the claim that a rollback exists** — it is set
+only when there is both a backup and somewhere to write it back to. Diagnostics
+offers Restore on exactly that, so a surface that infers a rollback any other
+way will offer a repair that cannot happen.
+
+### The maintenance inbox
+
+`diagnostics.ts` decides **what is wrong**; `lib/agentpack/inbox.ts` decides
+**how you get through it** — grouping, selection, and applying one repair to
+several findings at once. Every `DiagnosticItem` carries a `category`
+(`DiagnosticCategory`, the axis the inbox filters and groups on) alongside its
+`severity` (the axis it _ranks_ on — grouping by category would put a blocking
+finding underneath an optional one).
+
+There is still no "fix all", and the rule that bans it is what makes batching
+legal: across upgrades, restores and installs there is no honest label for one
+button, but **a batch restricted to a single action kind can be named exactly**
+("Upgrade 3 tools"). Four rules follow:
+
+1. **A batch is keyed off the action, not the topic.** `batchKeyOf` reads
+   `item.action.run.kind` and nothing else, so the two findings that both say
+   "an update is out" split apart when one is really a `navigate` — the
+   Node-floor case, where npm would refuse the upgrade. A key derived from the
+   item's family would have swept it in and staged a command known to fail.
+2. **A mixed selection is not a batch.** `batchFor` returns `null` rather than a
+   partial batch: quietly dropping the picks that didn't fit would run a button
+   whose label counted them. The footer bar simply doesn't render.
+3. **A batch of one is not a batch** (`MIN_BATCH`). The row's own button already
+   does exactly that.
+4. **Nothing executes here.** Actions come back as data; the caller maps them
+   onto steps and the review panel still gates every one (invariant 5 above).
+   `dashboard.tsx`'s `actOnBatch` is all-or-nothing for the same reason as rule 2.
+
+⚠️ `CATEGORY_ORDER` is deliberately **ahead of the findings**: `usage` and `disk`
+have no producer yet, because nothing measures a budget or free space in a shape
+this list can read. `groupInbox` only emits categories that have items, so an
+unproduced category can't render as an empty filter chip — name the category
+when you write its producer, don't stub a finding to fill it.
+
+### Reproducing an environment elsewhere
+
+`bundle/format` already carries a whole machine in one file and `bundle/apply`
+already diffs an incoming bundle against local **intent** — plan vs plan,
+profiles vs profiles, settings vs settings. `lib/agentpack/migrate.ts` adds the
+two things that were missing for "rebuild this environment somewhere else":
+
+- **`compareToMachine`** judges a profile against the **inventory**, not against
+  another plan — `expectedFrom(plan)` turns a plan into `ExpectedAsset[]` and
+  `driftFrom` does the rest. A CLI's asset id needs its `kind`, so a tool the
+  registry no longer knows is **skipped rather than guessed at**: an id built
+  from a guess matches nothing and would report a satisfied machine as missing.
+  An unmeasured inventory yields no claims at all (inherited from `driftFrom`).
+- **`pendingCredentials`** is the honest completion of an import: a transfer file
+  never carries credentials, so the last thing it can do is name precisely which
+  ones it withheld. Three sources, each read from the artefact — key-gated MCP
+  servers with no key in the plan, an **active** proxy missing its password or
+  client-key passphrase, and the blanked fields still sitting in the carried
+  config texts.
+
+⚠️ That last one goes through `blankedSecrets` in `bundle/secrets.ts`, which
+reads the **redacted** text and reports the dotted paths a secret-looking key
+left empty. It must stay there, beside `SECRET_KEY` and `redactNode`: a checklist
+written from its own idea of what counts as a secret drifts from the redaction
+the moment either changes, and the direction it drifts in is "we forgot to tell
+you about this key". It over-reports for the same reason the redaction
+over-blanks — `credentials.user` is listed alongside `credentials.password`.
+
+`pendingCredentials` is wired into the import dialog. `compareToMachine` is not
+yet on a surface; version pins (`ExpectedAsset.version`) are supported by the
+model but nothing writes them, because `Plan` carries no versions.
+
+### The recovery timeline
+
+This app takes **four different kinds of backup**, each written by a different
+part of it and each listed by its own command: provider-store snapshots
+(`backup.rs`), skill backups (`skills.rs`), quarantined cleanup batches
+(`cleanup.rs`), and the `.agentpack.bak` sibling `mergeFile` leaves next to a
+config it edits. `lib/agentpack/recovery.ts` folds all four into one
+`RecoveryPoint[]`, newest first — four lists in four places is four chances for
+someone to conclude there is no way back from a change there has been a way back
+from all along.
+
+⚠️ **`RecoveryPoint.id` is not what a restore takes.** `restoreId` is: a snapshot
+id, a skill-backup id, a quarantine batch id, or (for a `.agentpack.bak`) the
+_live_ config path, because `fileRestoreStep` appends the suffix itself.
+
+The dangerous case this exists for is `restoreSafety`: someone edits
+`~/.claude/settings.json` in a text editor, comes back here to undo something
+else, and a restore puts the file back to before their edit. None of the four
+mechanisms notices, because each only knows about its own writes. So:
+
+- `stale` — a path this would write over is **newer** than the backup.
+- `safe` — every path is older, or absent (nothing to lose).
+- `unknown` — an undated point, a point naming no path, a path nothing measured,
+  or an mtime the platform wouldn't report. **Never rendered as safe.** Worst
+  verdict wins, and `stale` outranks `unknown` — a measured danger beats an
+  unmeasured one.
+
+`fsops::file_stat` exists for exactly this, and its `modifiedMs: 0` means
+**unknown, not 1970** — reading it as a date would make every unmeasurable file
+look older than every backup, i.e. always safe to overwrite. A missing path is
+`exists: false` rather than an `Err`, so only a real read failure rejects.
+
+**Restoring is actioned where its consequence can be described.** Two of the four
+kinds restore from this page, through the review panel, exactly like the
+provider-store restore in `ccswitch/index.tsx` — a `snapshotRestore` step for a
+provider snapshot, a `fileRestore` step for a `.agentpack.bak`. The other two
+hand off: `restoreSkillBackup` needs the list of agents to restore _into_, and a
+quarantine batch is a bag of paths worth reading first. Neither answer is one
+this page can ask for, so it sends the user to Skills / Clean up rather than
+picking for them.
+
+⚠️ A **`stale` restore asks twice** — an AlertDialog here, then the review panel.
+That is proportionate for the one case on the page that actually destroys work;
+asking on every restore would teach people to click through both gates. A
+successful restore re-reads the timeline, because a restore moves the very
+mtimes every verdict on the page was measured against.
+
+⚠️ A **self-guarded** point is `safe` unconditionally, and `pathsToCheck` skips
+it. `cleanup_quarantine_restore` already refuses to overwrite a path the CLI has
+reoccupied, so warning about it would train people to ignore the warning that
+matters. Undated points sort **last**, not first: a `.agentpack.bak` with no date
+is not "from 1970", and at the top of a timeline it would claim to be the most
+recent thing that happened to the machine.
+
+⚠️ **`ShellBody` must not subscribe to `detections`, `latestVersions`,
+`cliManagers` or `networkProbe`.** `refreshDetections` writes the last three
+**once per installed CLI, un-batched** (a `latestVersion` and an `npmOwns` promise
+each), so one subscription there re-renders the entire window ~20 times on every
+startup and Rescan — the header, the tab strip, `<main>` and whatever section the
+user is scrolling with it. The one surface that needs those slices
+(`ExecutionPanel`, for the pre-flight brief's "already installed" count) reads
+them itself and folds the inventory only while the panel is actually asking. The
+shell passes it the raw `dashboardScan`, which it already owns.
 
 ### Staged sections: the setup checklist
 
@@ -261,6 +448,45 @@ that looked reasonable in the code and lied to the user in the app.
    they act on, and a preview leaves the steps staged so applying afterwards is
    one click. Section tests use `run/__testing__/harness` (`autoApply` to stand
    in for the user, `panel` to drive the gate by hand).
+
+6. **The panel briefs before it asks.** `lib/agentpack/preflight.ts` turns the
+   staged `StepDescriptor[]` into sentences (`PreflightBrief`, above the step
+   log): what needs an administrator, which prerequisite is here that nobody
+   picked, which server will install and then not answer without its key, what
+   is being left alone. Three rules: it **reads the steps, never the plan** —
+   `buildSteps` is the only thing that decides what a plan becomes, and a brief
+   re-deriving that would introduce a run it disagrees with; a **blocker is not
+   a veto** — a step needing a human blocks that item, never Apply, because
+   turning one impossible item into "you can install nothing" costs the user the
+   nine good steps; and an **unmeasured inventory yields no claims** — the
+   "already installed" count is `null`, not `0`, until something has looked.
+   `useRunner` exposes `pendingSteps` for this; `pendingCount` is derived from
+   it so no path can update one and forget the other.
+
+7. **A failed step gets an explanation, not just a colour.**
+   `lib/agentpack/failure.ts` reads one `StepReport` and returns a plain-language
+   cause, what to do, and the tool's own line as evidence; `FailureNotes` renders
+   it above the warnings in the completion screen, with a button to the page that
+   fixes it. Four rules: **every reading ends somewhere real** — Node too old →
+   Runtimes, no disk → Clean up, refused download → Network, refused rights →
+   CLIs (some tools publish a user-scope method); **an unreadable failure says
+   so** — `unknown` is a real verdict with honest advice and _no_ destination,
+   never the nearest-sounding guess; **the patterns live in one place** — the
+   network / permission / notFound verdicts come from `classifyFailure`, the same
+   function the retry ladder gates on, so an explanation and an automatic retry
+   can't disagree (`failureEvidence` hands back the matching line so nothing
+   outside `recovery.ts` re-spells a pattern); and **one reading per cause, not
+   per step** — `groupFailures` folds five steps that died on the same blocked
+   download into one problem with one fix.
+
+⚠️ A **preview** gets no diagnosis. A dry run wrote nothing, so a reading about
+why it "failed" would be about a run that never happened.
+
+⚠️ The wizard's last button is **"Review and install"**, not "Install now", and
+`welcome.installIntro` says the changes come next. It used to promise the run
+started there; it never did — it stages, and the panel is where a human says
+yes. Copy that describes a gate as if it weren't one is how the gate reads as
+the app refusing the click that was just made.
 
 Also: the completion screen derives its next action and chores from `reports`,
 not from `plan` — with **no step at all** reading as success, because the dedup

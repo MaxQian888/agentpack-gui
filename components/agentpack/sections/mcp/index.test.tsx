@@ -8,6 +8,7 @@ jest.mock("@/lib/tauri/commands", () => ({
 jest.mock("@/lib/tauri/system", () => ({ openUrl: jest.fn() }))
 
 import { render, screen, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
 import { RunnerHarness } from "../../run/__testing__/harness"
@@ -83,6 +84,18 @@ it("shows unknown MCP coverage while the first scan is pending", () => {
   const summary = within(screen.getByRole("region", { name: /MCP summary/i }))
   expect(summary.getAllByText("—")).toHaveLength(1)
   expect(summary.getByText(en.mcp.statPending)).toBeInTheDocument()
+})
+
+it("swaps the column rather than opening a panel under the inventory", async () => {
+  // The aside is a view switcher, not an append: one view at a time, so a long
+  // inventory can't push what you just opened past the fold.
+  renderSection()
+  const actions = within(screen.getByRole("complementary", { name: /MCP management views/i }))
+  await userEvent.click(actions.getByRole("button", { name: /Overview/i }))
+  expect(screen.queryByRole("list", { name: en.mcp.installedListLabel })).not.toBeInTheDocument()
+
+  await userEvent.click(actions.getByRole("button", { name: /^Installed$/i }))
+  expect(screen.getByRole("list", { name: en.mcp.installedListLabel })).toBeInTheDocument()
 })
 
 it("shows a not-desktop notice when not running under Tauri", () => {

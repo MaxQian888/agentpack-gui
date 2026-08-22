@@ -4,6 +4,9 @@ import { useState } from "react"
 import { CheckCircle2, ChevronRight, Circle, ExternalLink, TriangleAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { pendingKeyEnvs, summarize } from "@/lib/agentpack/report"
+import { groupFailures } from "@/lib/agentpack/failure"
+import type { SectionKey } from "@/lib/agentpack/workspaces"
+import { FailureNotes } from "./failure-notes"
 import { findCli } from "@/lib/agentpack/registry"
 import { launchApp } from "@/lib/tauri/commands"
 import { copyText } from "@/lib/tauri/clipboard"
@@ -31,11 +34,17 @@ export function Completion({
   reports,
   dryRun,
   cancelled = false,
+  onNavigate,
 }: {
   reports: StepReport[]
   dryRun: boolean
   /** The user stopped the run, as opposed to steps being skipped by a failure. */
   cancelled?: boolean
+  /**
+   * Follow a failure to the page that fixes it. Absent where there is nowhere
+   * to go, in which case the reading is still shown and its button is not.
+   */
+  onNavigate?: (section: SectionKey) => void
 }) {
   const t = useT()
   const s = t.summary
@@ -159,6 +168,12 @@ export function Completion({
           <p className="text-xs text-muted-foreground">{c.counts(ok, warnings.length, failed)}</p>
         </div>
       </div>
+
+      {/* Above the warnings, because a failure outranks one — and above the
+          next action, because there isn't a sensible next action while
+          something is broken. A preview that "failed" wrote nothing, so it gets
+          no diagnosis: the reading would be about a run that never happened. */}
+      {!dryRun ? <FailureNotes groups={groupFailures(t, reports)} onNavigate={onNavigate} /> : null}
 
       {/* Warnings are the one thing the headline can't carry, so they stay
           visible rather than living only inside the collapsed log. */}

@@ -8,6 +8,7 @@ import {
   Eraser,
   FileJson,
   Globe,
+  History,
   Info,
   LayoutDashboard,
   Landmark,
@@ -85,6 +86,7 @@ export const SECTIONS: SectionDef[] = [
   { key: "my-security", icon: ShieldCheck, label: (m) => m.personal.tabs.security },
   { key: "preferences", icon: Palette, label: (m) => m.menu.preferences },
   { key: "config", icon: FileJson, label: (m) => m.menu.saveConfig },
+  { key: "recovery", icon: History, label: (m) => m.menu.recovery },
   { key: "about", icon: Info, label: (m) => m.menu.about },
 ]
 

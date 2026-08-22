@@ -22,7 +22,16 @@ export function SectionShell({
   children: React.ReactNode
 }) {
   return (
-    <div className={cn("mx-auto flex flex-col gap-5", wide ? "max-w-6xl" : "max-w-3xl")}>
+    <div
+      className={cn(
+        "mx-auto flex flex-col gap-5",
+        wide
+          ? // The third step lands at 1600px — above every size design.md
+            // verifies, so nothing that was checked at the 72rem cap changes.
+            "max-w-[var(--hm-content-width-wide)] min-[1600px]:max-w-[var(--hm-content-width-max)]"
+          : "max-w-[var(--hm-content-width)]"
+      )}
+    >
       <div data-tour="section-heading" className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">

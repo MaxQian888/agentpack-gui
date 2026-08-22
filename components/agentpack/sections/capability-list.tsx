@@ -8,6 +8,13 @@ import { cn } from "@/lib/utils"
  * the single most reliable generated-UI tell" — and at forty catalog entries it
  * stacked forty borders down the page with nothing but padding between them. One
  * border, hairlines between rows: the same information, a tenth of the ink.
+ *
+ * It scrolls inside itself past `--hm-list-max-h`. A list's length is the
+ * machine's, not the design's — twenty-two skills here, two hundred on the next
+ * machine — and letting it set the page height moved everything downstream of
+ * it: the aside's destinations, the panel a destination opens, the empty space
+ * a short list leaves. Capped, the layout is the same on every machine and the
+ * only thing that varies is how far you scroll within the panel.
  */
 export function CapabilityList({
   label,
@@ -20,7 +27,13 @@ export function CapabilityList({
   children: React.ReactNode
 }) {
   return (
-    <ul aria-label={label} className={cn("min-w-0 overflow-hidden rounded-lg border", className)}>
+    <ul
+      aria-label={label}
+      className={cn(
+        "max-h-(--hm-list-max-h) min-w-0 overflow-x-hidden overflow-y-auto rounded-lg border",
+        className
+      )}
+    >
       {children}
     </ul>
   )
@@ -118,7 +131,7 @@ export function CapabilityGroupHeading({
   count: React.ReactNode
 }) {
   return (
-    <li className="border-b bg-[var(--hm-paper-2)] px-4 py-1.5">
+    <li className="sticky top-0 z-10 border-b bg-[var(--hm-paper-2)] px-4 py-1.5">
       <h4 className="flex items-baseline gap-2 font-mono text-2xs tracking-(--hm-tracking-mono) text-muted-foreground uppercase">
         {title}
         <span className="tabular-nums">{count}</span>

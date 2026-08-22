@@ -107,6 +107,28 @@ export function classifyFailure(
   return "other"
 }
 
+/** The patterns behind each verdict, so nothing outside this file re-spells them. */
+const PATTERNS_FOR: Partial<Record<FailureClass, readonly RegExp[]>> = {
+  notFound: NOT_FOUND_PATTERNS,
+  permission: PERMISSION_PATTERNS,
+  network: NETWORK_PATTERNS,
+}
+
+/**
+ * The output line that produced a verdict — what the tool actually said.
+ *
+ * Exact rather than approximate: none of the patterns above spans a newline
+ * (`.` does not match one, and none contains `\n`), so a whole-text match is
+ * always reproducible on a single line. `undefined` for `other`, which has no
+ * patterns, and for the case a line search somehow can't reproduce — the
+ * caller renders no quote rather than an invented one.
+ */
+export function failureEvidence(output: readonly string[], cls: FailureClass): string | undefined {
+  const patterns = PATTERNS_FOR[cls]
+  if (!patterns) return undefined
+  return output.find((line) => matchesAny(line, patterns))?.trim() || undefined
+}
+
 /** How a working remedy could be made permanent, if the user opts in. */
 export type PersistHint = { kind: "npmRegistry"; url: string } | { kind: "proxy"; url: string }
 

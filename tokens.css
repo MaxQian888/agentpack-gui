@@ -59,6 +59,23 @@
   --hm-rail-width: 11.5rem;
   --hm-rail-width-wide: 13rem;
 
+  /* The content column beside it. Three steps, not two: a reading measure for
+     the text-led sections, a wider one for the workbench grids, and a third so
+     a window much larger than any this design was verified at stops turning its
+     extra width into margin. The reading measure deliberately does NOT get the
+     third step — a paragraph 1600px wide is harder to read, not easier. */
+  --hm-content-width: 48rem;
+  --hm-content-width-wide: 72rem;
+  --hm-content-width-max: 100rem;
+
+  /* How tall an inventory panel may grow before it scrolls inside itself. A
+     list is the one surface whose length is the machine's, not the design's:
+     twenty-two skills or two hundred, the page around it — the aside's
+     destinations, the panel that opens below — must stay where it was. Viewport
+     units so the cap follows the window rather than a guess about it, and a rem
+     ceiling so a very tall display doesn't hand one list the whole screen. */
+  --hm-list-max-h: min(62vh, 46rem);
+
   /* The one multiplier the user is allowed over the whole scale. Every size in
      the app is a rem, so the root size *is* the interface scale — which is why
      these are the only px sizes here that aren't hairlines. 100% is the browser

@@ -33,12 +33,13 @@ export const en = {
     previewLabel: "Preview first (dry-run)",
     previewHint: "See exactly what would happen — without changing anything.",
     later: "Maybe later",
-    install: "Install now",
+    install: "Review and install",
     reopen: "Show welcome guide",
     // Step 2/3 subtitles. The network step comes before installing on purpose:
     // finding out the network is blocked beats watching six steps go red.
     networkIntro: "A quick look at your network, so the install doesn't fail halfway.",
-    installIntro: "Here's exactly what will happen. Nothing runs until you press Install.",
+    installIntro:
+      "Here's what you picked. Next you'll see the exact changes it needs, and nothing runs until you approve them there.",
     // Final step: the list of what the chosen bundle installs, plus the keys the
     // key-gated servers need — asked here because a server without its key
     // installs cleanly and then never works.
@@ -172,6 +173,10 @@ export const en = {
       config: {
         title: "Profiles & backup",
         body: "Save your setup as a profile, or export the whole machine so you can rebuild it somewhere else.",
+      },
+      recovery: {
+        title: "Recovery points",
+        body: "Every way back this app has left behind — config snapshots, skill backups and quarantined cleanups — with a warning when one is older than the file it would overwrite.",
       },
       about: {
         title: "About & updates",
@@ -691,6 +696,7 @@ export const en = {
     catalogHint:
       "Each row lists the agents it can be added to. Click one to add the server there; click it again to remove it.",
     keyAdd: (envVar: string) => `Add API key (${envVar})`,
+    installedActionHint: "The servers already configured across your agents.",
     catalogActionHint: "Browse the built-in catalog and add a server to any agent.",
     matrixActionHint: "Compare Claude Code, Codex, and OpenCode side by side.",
     addActionHint: "Create a stdio, HTTP, or SSE server, or import JSON and commands.",
@@ -1435,6 +1441,7 @@ export const en = {
     cleanup: "Clean up",
     preferences: "Preferences",
     saveConfig: "Profiles & backup",
+    recovery: "Recovery points",
     about: "About & updates",
     exit: "Exit",
     progress: (done: number, total: number, secs: number) => `${done}/${total} done · ${secs}s`,
@@ -1564,6 +1571,7 @@ export const en = {
     summaryLabel: "Skills summary",
     actionsLabel: "Skill management views",
     installedPanel: "Installed skills",
+    installedActionHint: "Everything found across the four skills roots.",
     catalogActionHint: "Install the bundled engineering skills into selected agents.",
     addActionHint: "Install from GitHub, a local folder, skills CLI, or create a new skill.",
     detailPanel: "Skill management details",
@@ -2559,6 +2567,138 @@ export const en = {
     /** The update exists but npm would refuse it on this machine's Node. */
     nodeFloorDetail: (need: number, found: string) =>
       `npm needs Node ${need} or newer for this update, and this machine has Node ${found}.`,
+    /**
+     * Batch repairs. One label per action kind, because a batch is only honest
+     * when a single sentence describes every member of it.
+     */
+    selectRow: (title: string) => `Select "${title}" to fix with others like it`,
+    selected: (n: number) => `${n} selected`,
+    clearSelection: "Clear",
+    batch: {
+      "upgrade-cli": (n: number) => `Upgrade ${n} tools`,
+      "restore-config": (n: number) => `Restore ${n} files from backup`,
+    },
+  },
+
+  /**
+   * The pre-flight brief, read at the moment someone is asked to approve a run.
+   * Plain language on purpose: this is the one screen where a first-time user
+   * has to decide something, and every sentence here answers a question they
+   * would otherwise only get an answer to by watching it go wrong.
+   */
+  preflight: {
+    title: "Before you apply",
+    /** The tone mark is aria-hidden, so each note states its tone in words. */
+    tone: {
+      blocked: "Needs you",
+      warn: "Heads up",
+      info: "For information",
+    },
+    blockedTitle: (label: string) => `${label} can't be done automatically here`,
+    offlineTitle: "This machine can't reach the internet",
+    offlineDetail: "Downloads will fail. Fix the network first, or apply this later.",
+    elevationTitle: "Your system will ask for permission",
+    elevationDetail: (n: number) =>
+      `${n} step${n === 1 ? "" : "s"} need an administrator, so a password prompt appears partway through. That prompt comes from your operating system, not from this app.`,
+    keysTitle: (n: number) => `${n} server${n === 1 ? "" : "s"} still need an API key`,
+    keysDetail: (names: string) =>
+      `${names} will be set up, but won't answer until a key is filled in. You can do that afterwards under MCP servers.`,
+    prereqTitle: (label: string) => `${label} — a prerequisite, not something you picked`,
+    prereqNode:
+      "Node.js is what starts the servers in this list. Without it they install fine and then never run.",
+    prereqUv: "uv is what starts the Python-based servers in this list.",
+    alreadyTitle: (n: number) =>
+      `${n} of your picks ${n === 1 ? "is" : "are"} already on this machine, and will be left alone`,
+  },
+
+  /**
+   * The recovery centre. Its whole reason to exist is `safety` below: the four
+   * backup mechanisms each only know about their own writes, so none of them
+   * notices that the file it is about to restore over was edited by hand
+   * afterwards.
+   */
+  recoveryCentre: {
+    title: "Recovery points",
+    subtitle:
+      "Every way back this app has left behind, in one list — config snapshots, skill backups, quarantined cleanups and the backup left beside an edited config.",
+    actionsLabel: "Recovery actions",
+    refresh: "Refresh",
+    refreshing: "Reading…",
+    summaryLabel: "Recovery summary",
+    metricTotal: "Restore points",
+    metricStale: "Older than the live file",
+    metricNewest: "Newest",
+    listPanel: "Restore points",
+    empty: "No restore points yet. Anything this app changes leaves one behind.",
+    notMeasured: "Not read yet",
+    notTauri:
+      "Restore points live on your machine — run the desktop app to see what can be undone.",
+    degradedNote:
+      "One of the backup stores couldn't be read, so this list may be short — it is not proof that a restore point is gone.",
+    undated: "Date not recorded",
+    covers: (n: number) => `${n} file${n === 1 ? "" : "s"}`,
+    restore: "Restore",
+    restoreIn: (section: string) => `Restore in ${section}`,
+    /**
+     * Why two of the four kinds hand off instead of restoring from here: each
+     * needs an answer this page has no way to ask for.
+     */
+    handOffSkill: "Restoring a skill needs you to say which agents it goes back into.",
+    handOffQuarantine: "Restoring a batch needs you to see what is in it first.",
+    restored: "Restored.",
+    restoreFailed: "The restore didn't finish — the run log has the detail.",
+    confirmTitle: "This would overwrite newer work",
+    confirmBody: (when: string) =>
+      `A file this restores over was changed after ${when}. Restoring puts it back to how it was then, and the later change is not kept anywhere.`,
+    confirmProceed: "Restore anyway",
+    kind: {
+      configSnapshot: "Provider store snapshot",
+      configBackupFile: "Config backup",
+      skillBackup: "Skill backup",
+      quarantineBatch: "Quarantined cleanup",
+    },
+    /** The verdict word. The mark that carries it visually is aria-hidden. */
+    safety: {
+      safe: "Safe to restore",
+      stale: "Would overwrite newer work",
+      unknown: "Can't tell",
+    },
+    safetyHint: {
+      safe: "Nothing here has changed since this was taken.",
+      stale:
+        "A file this would write over was changed after this point was taken — restoring discards that change.",
+      unknown: "Not enough was measured to say whether this would overwrite anything newer.",
+    },
+  },
+
+  /**
+   * Why a step failed, and what to do about it. Every reading here ends
+   * somewhere real — a page in this app, or one concrete act. "Check your
+   * configuration" is the absence of a diagnosis wearing one's clothes.
+   */
+  failure: {
+    heading: "What went wrong",
+    openSection: (section: string) => `Open ${section}`,
+    /** Introduces the tool's own words, so a wrong reading is visibly wrong. */
+    evidenceLabel: "It said:",
+    nodeTooOldTitle: "This package needs a newer Node.js",
+    nodeTooOldAdvice:
+      "npm refused the install because the package requires a Node version above the one on this machine. Update Node, then retry.",
+    diskFullTitle: "This machine ran out of disk space",
+    diskFullAdvice:
+      "The download had nowhere to go. Clean up reclaims the space the agent CLIs fill, and then this is worth retrying.",
+    networkTitle: "The download couldn't get through",
+    networkAdvice:
+      "Mirrors and proxies were already tried and none of them worked. Test the routes, pick one that does, then retry.",
+    permissionTitle: "The system refused permission",
+    permissionAdvice:
+      "The install needed rights this app doesn't have. Some tools offer a user-scope install method that needs none — pick one and run it again.",
+    notFoundTitle: "A command it needed isn't on this machine",
+    notFoundAdvice:
+      "The installer it tried to use isn't there. Install it, or choose an install method that uses a different one.",
+    unknownTitle: "This step failed for a reason we couldn't read",
+    unknownAdvice:
+      "Nothing in the output matched a cause we know how to explain, so here is exactly what it printed. Retry re-runs only what failed.",
   },
 
   /** The overview's record of what this app has actually done to the machine. */
@@ -3176,6 +3316,9 @@ export const en = {
     emptyHint:
       "Name the current selection above and it lands here, ready to re-apply on this machine or another one.",
     savedAt: (when: string) => `Saved ${when}`,
+    machineComplete: "This machine already has everything in it.",
+    machineMissing: (n: number) =>
+      `${n} of these ${n === 1 ? "is" : "are"} not on this machine yet — Apply installs just those.`,
     fileTitle: "Config file",
     fileHint: "The plan-only format the headless CLI reads.",
     applied: (name: string) => `Applied profile "${name}"`,
@@ -3198,6 +3341,17 @@ export const en = {
     partProviders: "Providers",
     partFiles: "Config files",
     partSettings: "App settings",
+    /**
+     * The honest completion of an import: a transfer file never carries
+     * credentials, so the last thing it can do is say precisely which ones it
+     * withheld. Derived from the file itself — see `pendingCredentials`.
+     */
+    partCredentials: "Still to supply",
+    credentialsHint:
+      "A transfer file never carries credentials. Until these are filled in, the parts that need them are set up but won't work.",
+    credentialMcpKey: (id: string, env: string) => `${id} — API key (${env})`,
+    credentialProxy: (field: string) => `Proxy — ${field}`,
+    credentialConfigField: (file: string, field: string) => `${file} — ${field}`,
     planSummary: (clis: number, skills: number, mcps: number) =>
       `${clis} CLIs · ${skills} skills · ${mcps} MCP servers`,
     countProfiles: (n: number) => `${n} saved`,

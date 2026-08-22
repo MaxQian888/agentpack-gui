@@ -595,9 +595,7 @@ mod tests {
     let st = cc_schema_status().unwrap();
     assert_eq!(st.missing_columns, vec!["website_url".to_string()]);
 
-    let err = cc_load_providers()
-      .err()
-      .expect("old schema must be rejected");
+    let err = cc_load_providers().expect_err("old schema must be rejected");
     assert!(err.contains("Launch cc-switch"), "unexpected error: {err}");
 
     let _ = std::fs::remove_file(&p);

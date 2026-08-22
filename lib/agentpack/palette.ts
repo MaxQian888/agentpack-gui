@@ -92,6 +92,7 @@ const SECTION_LABEL: Record<SectionKey, (m: Messages) => string> = {
   ccconnect: (m) => m.menu.ccconnect,
   preferences: (m) => m.menu.preferences,
   config: (m) => m.menu.saveConfig,
+  recovery: (m) => m.menu.recovery,
   about: (m) => m.menu.about,
 }
 

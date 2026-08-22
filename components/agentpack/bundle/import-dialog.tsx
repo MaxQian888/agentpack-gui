@@ -44,6 +44,7 @@ import {
   snapshotStep,
 } from "@/lib/agentpack/plan"
 import { profilesPath, serializeProfiles, PROFILE_VERSION } from "@/lib/agentpack/profile"
+import { pendingCredentials } from "@/lib/agentpack/migrate"
 import type { StepDescriptor } from "@/lib/agentpack/types"
 import { useT } from "@/lib/i18n/provider"
 import { isTauri } from "@/lib/tauri"
@@ -183,6 +184,17 @@ export function ImportBundleDialog({ onImported }: { onImported?: () => void }) 
       cancelled = true
     }
   }, [open, paths, targetBackend])
+
+  /**
+   * What this file deliberately refused to carry. Informational rather than a
+   * choice — there is nothing to tick, only something to do afterwards — and it
+   * is read from the bundle itself, so it names exactly what was blanked rather
+   * than what a second copy of the redaction rule thinks should have been.
+   */
+  const credentials = useMemo(
+    () => (bundle?.plan ? pendingCredentials({ plan: bundle.plan, files: bundle.files }) : []),
+    [bundle]
+  )
 
   const planDiff = bundle?.plan ? diffPlan(plan, bundle.plan, planMode) : null
   const profilesDiff = bundle?.profiles ? diffProfiles(profiles, bundle.profiles) : null
@@ -457,6 +469,25 @@ export function ImportBundleDialog({ onImported }: { onImported?: () => void }) 
                         </p>
                       ) : null}
                     </div>
+                  ))}
+                </Card>
+              ) : null}
+
+              {credentials.length > 0 ? (
+                <Card className="gap-2 p-3">
+                  <div className="text-sm">{b.partCredentials}</div>
+                  <p className="text-xs text-muted-foreground">{b.credentialsHint}</p>
+                  {credentials.map((c) => (
+                    <p
+                      key={`${c.kind}-${c.owner}-${c.field ?? ""}`}
+                      className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]"
+                    >
+                      {c.kind === "mcpKey"
+                        ? b.credentialMcpKey(c.owner, c.field ?? "")
+                        : c.kind === "proxyPassword"
+                          ? b.credentialProxy(c.field ?? "")
+                          : b.credentialConfigField(c.owner, c.field ?? "")}
+                    </p>
                   ))}
                 </Card>
               ) : null}

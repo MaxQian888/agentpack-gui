@@ -17,6 +17,7 @@ import { AddSkillsTab } from "./add"
 import { DesktopOnlyNote } from "../../desktop-only-note"
 import { CapabilityWorkbench } from "../capability-workbench"
 import { SectionNav } from "../section-nav"
+import { SectionView } from "../section-view"
 import { SectionStatus } from "../section-status"
 
 /**
@@ -35,7 +36,9 @@ export function SkillsSection({ scan, loading, refresh }: SkillsSectionProps) {
   const t = useT()
   const sb = t.skillsBrowser
   const tauri = isTauri()
-  const [detail, setDetail] = useState<"catalog" | "add" | null>(null)
+  /* One view at a time in the primary column, chosen from the aside — not the
+     installed list plus whatever else you opened underneath it. */
+  const [view, setView] = useState<"installed" | "catalog" | "add">("installed")
   const [updateCount, setUpdateCount] = useState(0)
 
   const stats = useMemo(() => {
@@ -57,30 +60,27 @@ export function SkillsSection({ scan, loading, refresh }: SkillsSectionProps) {
   ) : scan === null ? (
     spinner
   ) : (
-    <section aria-label={sb.installedPanel} className="min-w-0">
-      <h3 className="mb-3 font-medium">{sb.tabInstalled}</h3>
-      <InstalledSkillsTab
-        scan={scan}
-        refresh={refresh}
-        onUpdateCountChange={setUpdateCount}
-        onBrowseCatalog={() => setDetail("catalog")}
-      />
-    </section>
+    <SectionView
+      label={view === "installed" ? sb.installedPanel : sb.detailPanel}
+      title={
+        view === "installed" ? sb.tabInstalled : view === "catalog" ? sb.tabCatalog : sb.tabAdd
+      }
+      choice={view}
+    >
+      {view === "installed" ? (
+        <InstalledSkillsTab
+          scan={scan}
+          refresh={refresh}
+          onUpdateCountChange={setUpdateCount}
+          onBrowseCatalog={() => setView("catalog")}
+        />
+      ) : view === "catalog" ? (
+        <CatalogTab scan={scan} refresh={refresh} />
+      ) : (
+        <AddSkillsTab installed={scan} refresh={refresh} />
+      )}
+    </SectionView>
   )
-
-  const detailPanel =
-    tauri && detail ? (
-      <section aria-label={sb.detailPanel} className="min-w-0 border-t pt-5">
-        <h3 className="mb-4 text-lg font-medium">
-          {detail === "catalog" ? sb.tabCatalog : sb.tabAdd}
-        </h3>
-        {detail === "catalog" ? (
-          <CatalogTab scan={scan} refresh={refresh} />
-        ) : (
-          <AddSkillsTab installed={scan} refresh={refresh} />
-        )}
-      </section>
-    ) : null
 
   return (
     <CapabilityWorkbench
@@ -127,24 +127,30 @@ export function SkillsSection({ scan, loading, refresh }: SkillsSectionProps) {
             className="min-[768px]:max-[1099px]:col-span-2"
             choices={[
               {
+                id: "skills-installed",
+                title: sb.tabInstalled,
+                description: sb.installedActionHint,
+                active: view === "installed",
+                onSelect: () => setView("installed"),
+              },
+              {
                 id: "skills-catalog",
                 title: sb.tabCatalog,
                 description: sb.catalogActionHint,
-                active: detail === "catalog",
-                onSelect: () => setDetail("catalog"),
+                active: view === "catalog",
+                onSelect: () => setView("catalog"),
               },
               {
                 id: "skills-add",
                 title: sb.tabAdd,
                 description: sb.addActionHint,
-                active: detail === "add",
-                onSelect: () => setDetail("add"),
+                active: view === "add",
+                onSelect: () => setView("add"),
               },
             ]}
           />
         ) : null
       }
-      detail={detailPanel}
     />
   )
 }

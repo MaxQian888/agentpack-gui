@@ -130,6 +130,7 @@ pub fn run() {
       fsops::write_text_file,
       fsops::write_binary_file,
       fsops::path_exists,
+      fsops::file_stat,
       fsops::remove_dir,
       fsops::list_skills,
       fsops::install_skill,

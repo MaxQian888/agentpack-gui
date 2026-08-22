@@ -51,6 +51,8 @@ import {
   type DiagnosticItem,
   type DiagnosticSeverity,
 } from "@/lib/agentpack/diagnostics"
+import { buildInventory } from "@/lib/agentpack/inventory"
+import type { InboxBatch } from "@/lib/agentpack/inbox"
 import { useLocale, useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import type { SectionKey } from "../sidebar-nav"
@@ -307,20 +309,21 @@ export function DashboardSection({
   const installedTools = presentTools.length
   const relayConfigured = !!(view.relay.baseUrl || view.relay.hasToken || view.hasCodexRelay)
 
-  // Everything that needs the user's attention, leading the page. Derived from
-  // the scan + detections + the startup probe by one pure function — no extra
-  // probing, and no branch of it can reach the disk. See lib/agentpack/diagnostics.
+  // Everything that needs the user's attention, leading the page. The readings
+  // are folded into one asset inventory, and the findings are derived from that
+  // — two pure functions, no extra probing, and no branch of either can reach
+  // the disk. See lib/agentpack/inventory and lib/agentpack/diagnostics.
   const probe = useAppStore((s) => s.networkProbe)
   const activity = useAppStore((s) => s.activity)
-  const diagnostics = buildDiagnostics(t, {
+  const inventory = buildInventory({
     scan,
     detections,
     latestVersions,
     cliManagers,
     networkProbe: probe,
     paths,
-    os,
   })
+  const diagnostics = buildDiagnostics(t, inventory, os)
   const baseMeasured = desktopAvailable && !loading
   const scanMeasured = baseMeasured && !view.degraded
   /** An unmeasured value is an em dash — never a plausible-looking zero. */
@@ -367,6 +370,23 @@ export function DashboardSection({
               }
 
   /**
+   * The steps one finding's repair amounts to. Empty for the branches that are
+   * navigation rather than repair, and for an upgrade whose command couldn't be
+   * resolved — the caller decides what to do with that instead of this pretending
+   * it staged something.
+   */
+  const stepsFor = (item: DiagnosticItem) => {
+    const a = item.action.run
+    if (a.kind === "restoreFile") return [fileRestoreStep(a.path, t)]
+    if (a.kind === "upgradeCli") {
+      const tool = CLI_TOOLS.find((c) => c.id === a.id)
+      const cmd = tool && upgradeCommandFor(tool, os, cliManagers[a.id])
+      return tool && cmd ? [cliInstallStep(tool.id, cmd, true, t)] : []
+    }
+    return []
+  }
+
+  /**
    * One item, one action. Every branch that writes goes back through `run`,
    * which stages it for review — the to-do list is a shortcut to the change,
    * never a shortcut past the gate.
@@ -380,15 +400,26 @@ export function DashboardSection({
         return setOnboardingOpen(true)
       case "navigate":
         return onNavigate(item.destination)
-      case "restoreFile":
-        return runThen([fileRestoreStep(a.path, t)])
-      case "upgradeCli": {
-        const tool = CLI_TOOLS.find((c) => c.id === a.id)
-        const cmd = tool && upgradeCommandFor(tool, os, cliManagers[a.id])
-        if (!tool || !cmd) return onNavigate(item.destination)
-        return runThen([cliInstallStep(tool.id, cmd, true, t)])
+      default: {
+        const steps = stepsFor(item)
+        return steps.length ? runThen(steps) : onNavigate(item.destination)
       }
     }
+  }
+
+  /**
+   * The same repair over several findings at once, staged as one review.
+   *
+   * All or nothing: the button's label counts every selected item, so running a
+   * subset would be a button that lied about what it did. Both batchable kinds
+   * always resolve — an upgrade finding only *gets* the `upgradeCli` action when
+   * its command resolved in the first place — so the short branch is a backstop,
+   * and it hands the user the section rather than quietly doing less.
+   */
+  const actOnBatch = (batch: InboxBatch) => {
+    const steps = batch.items.flatMap(stepsFor)
+    if (steps.length !== batch.items.length) return onNavigate(batch.items[0].destination)
+    runThen(steps)
   }
 
   // The quick-start card is a safety net for anyone who skipped the welcome
@@ -462,7 +493,7 @@ export function DashboardSection({
       }
       primary={
         <div className="flex min-w-0 flex-col gap-4">
-          <DiagnosticsList items={diagnostics} onAct={actOn} />
+          <DiagnosticsList items={diagnostics} onAct={actOn} onBatch={actOnBatch} />
 
           {showQuickStart ? (
             <QuickStartCard

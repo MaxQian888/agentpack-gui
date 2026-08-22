@@ -1,4 +1,10 @@
-import { parseDoc, pickClaudeConfigSubset, redactFileText, restoreBlankedSecrets } from "./secrets"
+import {
+  blankedSecrets,
+  parseDoc,
+  pickClaudeConfigSubset,
+  redactFileText,
+  restoreBlankedSecrets,
+} from "./secrets"
 
 const CLAUDE_SETTINGS = JSON.stringify({
   model: "opus",
@@ -142,5 +148,50 @@ describe("pickClaudeConfigSubset", () => {
     expect(pickClaudeConfigSubset(JSON.stringify({ projects: {} }))).toBeNull()
     expect(pickClaudeConfigSubset(JSON.stringify({ mcpServers: {} }))).toBeNull()
     expect(pickClaudeConfigSubset("{ broken")).toBeNull()
+  })
+})
+
+describe("blankedSecrets", () => {
+  it("reports what a redaction actually blanked, by dotted path", () => {
+    const redacted = redactFileText(
+      "claudeSettings",
+      JSON.stringify({ model: "opus", env: { ANTHROPIC_AUTH_TOKEN: "sk-real", KEEP: "yes" } })
+    )!
+    expect(blankedSecrets("claudeSettings", redacted)).toEqual(["env.ANTHROPIC_AUTH_TOKEN"])
+  })
+
+  it("follows the same over-blanking the redaction does", () => {
+    // Everything under a secret-looking key is blanked, so everything under it
+    // has to be listed — a checklist that stopped at the key named "password"
+    // would leave `credentials.user` for the user to discover on their own.
+    const redacted = redactFileText(
+      "claudeSettings",
+      JSON.stringify({ credentials: { user: "me", password: "p" } })
+    )!
+    expect(blankedSecrets("claudeSettings", redacted).sort()).toEqual([
+      "credentials.password",
+      "credentials.user",
+    ])
+  })
+
+  it("indexes into arrays so a repeated entry can be told apart", () => {
+    const redacted = redactFileText("claudeSettings", JSON.stringify({ tokens: ["a", "b"] }))!
+    expect(blankedSecrets("claudeSettings", redacted)).toEqual(["tokens[0]", "tokens[1]"])
+  })
+
+  it("says nothing about a file that carried no secrets", () => {
+    const redacted = redactFileText("claudeSettings", JSON.stringify({ model: "opus" }))!
+    expect(blankedSecrets("claudeSettings", redacted)).toEqual([])
+  })
+
+  it("says nothing about a file that doesn't parse", () => {
+    // Such a file is never put in a bundle at all, so there is nothing to
+    // re-enter for it.
+    expect(blankedSecrets("claudeSettings", "{not json")).toEqual([])
+  })
+
+  it("reads TOML the same way", () => {
+    const redacted = redactFileText("codexConfig", '[mcp_servers.x.env]\nAPI_KEY = "real"\n')!
+    expect(blankedSecrets("codexConfig", redacted)).toEqual(["mcp_servers.x.env.API_KEY"])
   })
 })

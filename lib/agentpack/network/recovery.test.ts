@@ -1,5 +1,27 @@
 import type { Command } from "../types"
-import { classifyFailure, remediesFor, type RecoveryContext } from "./recovery"
+import { classifyFailure, failureEvidence, remediesFor, type RecoveryContext } from "./recovery"
+
+describe("failureEvidence", () => {
+  it("hands back the line the verdict came from, trimmed", () => {
+    const output = ["npm WARN deprecated", "  curl: (28) Operation timed out  ", "exit 1"]
+    expect(failureEvidence(output, "network")).toBe("curl: (28) Operation timed out")
+  })
+
+  it("has nothing to quote for a verdict with no patterns", () => {
+    expect(failureEvidence(["anything at all"], "other")).toBeUndefined()
+  })
+
+  it("has nothing to quote when no single line reproduces the match", () => {
+    // The caller renders no quote rather than an invented one.
+    expect(failureEvidence(["all quiet"], "network")).toBeUndefined()
+    expect(failureEvidence([], "permission")).toBeUndefined()
+  })
+
+  it("quotes the first match, so it agrees with the verdict's own reasoning", () => {
+    const output = ["ETIMEDOUT while fetching", "ECONNRESET later on"]
+    expect(failureEvidence(output, "network")).toBe("ETIMEDOUT while fetching")
+  })
+})
 
 describe("classifyFailure", () => {
   // Real output lines, quoted the way each tool actually prints them — the whole

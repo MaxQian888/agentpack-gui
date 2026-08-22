@@ -377,3 +377,39 @@ it("disables provider import while cc-switch holds the database", async () => {
   expect(await screen.findByText(b.ccSwitchRunning)).toBeInTheDocument()
   expect(screen.getByLabelText(b.partProviders)).toBeDisabled()
 })
+
+describe("what the file deliberately didn't carry", () => {
+  it("lists the key a selected server still needs", async () => {
+    // The honest completion of an import: the server installs cleanly and then
+    // never answers, and the file is not allowed to fix that for you.
+    await openWith(
+      bundleText({
+        plan: { ...INCOMING, mcps: [{ id: "context7", targets: ["claude"] }], mcpKeys: {} },
+      })
+    )
+    expect(await screen.findByText(b.partCredentials)).toBeInTheDocument()
+    expect(screen.getByText(b.credentialMcpKey("context7", "CONTEXT7_API_KEY"))).toBeInTheDocument()
+  })
+
+  it("names the blanked field the export actually stripped out of a config file", async () => {
+    // Read from the bundle itself, so it can't disagree with the redaction.
+    await openWith(
+      bundleText({
+        files: {
+          claudeSettings: JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: "sk-real" } }),
+        },
+      })
+    )
+    expect(
+      await screen.findByText(b.credentialConfigField("claudeSettings", "env.ANTHROPIC_AUTH_TOKEN"))
+    ).toBeInTheDocument()
+  })
+
+  it("says nothing when the file withheld nothing", async () => {
+    await openWith(bundleText())
+    // The plan panel is up, so the dialog has parsed — there is simply no
+    // chore, and an empty "still to supply" card would read as one.
+    expect(await screen.findByText(b.partPlan)).toBeInTheDocument()
+    expect(screen.queryByText(b.partCredentials)).not.toBeInTheDocument()
+  })
+})

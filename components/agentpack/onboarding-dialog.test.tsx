@@ -7,6 +7,7 @@ import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
 import type { NetworkProbeResult } from "@/lib/agentpack/network/probe"
 import { SKILLS } from "@/lib/agentpack/registry"
+import { presetSelection } from "@/lib/agentpack/presets"
 import { useAppStore } from "@/store/app-store"
 import { OnboardingDialog } from "./onboarding-dialog"
 
@@ -100,6 +101,40 @@ describe("step 2 — which bundle", () => {
     await next()
     // PRESETS order is minimal, recommended, everything — recommended is index 1.
     expect(screen.getAllByRole("radio")[1]).toBeChecked()
+  })
+
+  it("states each bundle's size, so choosing isn't trial and error", async () => {
+    // Without it the only way to tell Minimal from Everything is to pick one
+    // and walk to the last step to see what it brought.
+    renderDialog()
+    await next()
+    const everything = presetSelection("everything", "gui")!
+    expect(
+      screen.getByText(
+        en.presetsScreen.presetCounts(
+          everything.clis.length,
+          everything.skills.length,
+          everything.mcps.length
+        )
+      )
+    ).toBeInTheDocument()
+  })
+
+  it("counts the bundle for the surface already chosen, not a generic one", async () => {
+    // The desktop-app answer installs different tools from the terminal one, so
+    // a count that ignored the surface would describe a bundle nobody selected.
+    renderDialog()
+    const radios = screen.getAllByRole("radio")
+    await userEvent.click(radios[1]) // terminal
+    await next()
+    const cli = presetSelection("everything", "cli")!
+    const gui = presetSelection("everything", "gui")!
+    expect(cli.clis).not.toEqual(gui.clis)
+    expect(
+      screen.getByText(
+        en.presetsScreen.presetCounts(cli.clis.length, cli.skills.length, cli.mcps.length)
+      )
+    ).toBeInTheDocument()
   })
 })
 

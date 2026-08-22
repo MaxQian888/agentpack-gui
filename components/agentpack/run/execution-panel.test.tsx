@@ -1,7 +1,8 @@
-import type { StepReport } from "@/lib/agentpack/types"
+import type { StepDescriptor, StepReport } from "@/lib/agentpack/types"
 
 interface Ctx {
   reports: StepReport[]
+  pendingSteps: StepDescriptor[]
   running: boolean
   previewing: boolean
   awaitingConfirm: boolean
@@ -15,6 +16,7 @@ interface Ctx {
 }
 
 const blank = (): Omit<Ctx, "reports"> => ({
+  pendingSteps: [],
   running: false,
   previewing: false,
   awaitingConfirm: false,
@@ -58,6 +60,15 @@ describe("the review gate", () => {
   beforeEach(() => {
     ctx.awaitingConfirm = true
     ctx.reports = [{ ...done, status: "pending" }]
+    ctx.pendingSteps = [
+      {
+        kind: "command",
+        id: "cli-x",
+        label: "Install X",
+        command: { file: "npm", args: ["i"] },
+        requiresElevation: true,
+      },
+    ]
   })
 
   it("offers preview and apply as two named, separate exits", async () => {
@@ -122,5 +133,75 @@ describe("running and finished", () => {
     ctx.lastWasPreview = true
     renderPanel()
     expect(screen.getByText(en.summary.dryRunComplete)).toBeInTheDocument()
+  })
+})
+
+describe("the pre-flight brief", () => {
+  beforeEach(() => {
+    ctx.awaitingConfirm = true
+    ctx.reports = [{ ...done, status: "pending" }]
+    ctx.pendingSteps = [
+      {
+        kind: "command",
+        id: "cli-x",
+        label: "Install X",
+        command: { file: "npm", args: ["i"] },
+        requiresElevation: true,
+      },
+    ]
+  })
+
+  it("says in words what the step list says in commands", () => {
+    // The password prompt is the single most alarming thing that happens during
+    // a first install, and it is knowable before the run rather than during it.
+    renderPanel()
+    expect(screen.getByText(en.preflight.elevationTitle)).toBeInTheDocument()
+  })
+
+  it("goes away once the run starts, because it is no longer about to happen", () => {
+    ctx.awaitingConfirm = false
+    ctx.running = true
+    renderPanel()
+    expect(screen.queryByText(en.preflight.elevationTitle)).not.toBeInTheDocument()
+  })
+
+  it("stays through a preview, because Apply is still the next decision", () => {
+    ctx.lastWasPreview = true
+    renderPanel()
+    expect(screen.getByText(en.preflight.elevationTitle)).toBeInTheDocument()
+  })
+
+  it("says nothing at all about an ordinary run", () => {
+    ctx.pendingSteps = [
+      { kind: "command", id: "cli-x", label: "Install X", command: { file: "npm", args: ["i"] } },
+    ]
+    renderPanel()
+    expect(screen.queryByRole("region", { name: en.preflight.title })).not.toBeInTheDocument()
+  })
+})
+
+describe("following a failure to its fix", () => {
+  it("closes the panel on the way, so it isn't left over the page it opened", async () => {
+    const onNavigate = jest.fn()
+    ctx.reports = [{ id: "a", label: "Install A", status: "error", output: ["ENOSPC"] }]
+    render(
+      <I18nProvider>
+        <ExecutionPanel onNavigate={onNavigate} />
+      </I18nProvider>
+    )
+    await userEvent.click(
+      screen.getByRole("button", { name: en.failure.openSection(en.menu.cleanup) })
+    )
+    expect(onNavigate).toHaveBeenCalledWith("cleanup")
+    expect(useAppStore.getState().panelOpen).toBe(false)
+  })
+
+  it("shows the reading without a destination button when nowhere was wired up", () => {
+    ctx.reports = [{ id: "a", label: "Install A", status: "error", output: ["ENOSPC"] }]
+    renderPanel()
+    expect(screen.getByText(en.failure.diskFullTitle)).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: en.failure.openSection(en.menu.cleanup) })
+    ).not.toBeInTheDocument()
   })
 })

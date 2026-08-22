@@ -39,6 +39,7 @@ const ALL: readonly SectionKey[] = [
   "ccconnect",
   "preferences",
   "config",
+  "recovery",
   "about",
 ]
 

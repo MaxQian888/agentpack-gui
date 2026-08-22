@@ -37,6 +37,7 @@ export type SectionKey =
   | "ccconnect"
   | "preferences"
   | "config"
+  | "recovery"
   | "about"
 
 export type WorkspaceKey =
@@ -73,7 +74,10 @@ export const WORKSPACES: readonly WorkspaceDefinition[] = [
     sections: ["management-overview", "accounts", "quota", "analytics", "audit"],
   },
   { key: "usage", sections: ["history"] },
-  { key: "settings", sections: ["preferences", "config", "about"] },
+  // Recovery sits next to the profiles-and-backup tab that takes most of these
+  // snapshots. It is the counterpart of that page, not a second copy of it:
+  // one saves state, the other is every way back the app has ever left behind.
+  { key: "settings", sections: ["preferences", "config", "recovery", "about"] },
 ]
 
 /** Every section key, in rail order. The tour and the palette both walk this. */

@@ -92,16 +92,47 @@ it("shows the empty state when no skills exist anywhere", async () => {
   await waitFor(() => expect(readTextFile).toHaveBeenCalled())
 })
 
-it("opens the bundled catalog detail panel", async () => {
+it("opens the bundled catalog", async () => {
   renderSection({ skills: [], errors: [] })
   await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.tabCatalog }))
   // The six bundled skills render with their catalog titles.
   expect(await screen.findByText(en.catalog.skills["rust"].title)).toBeInTheDocument()
 })
 
-it("opens the add-skills detail panel", async () => {
+it("opens the add-skills view", async () => {
   renderSection({ skills: [], errors: [] })
   await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.tabAdd }))
   expect(await screen.findByText(en.skillsBrowser.addGithubTitle)).toBeInTheDocument()
   expect(screen.getByText(en.skillsBrowser.addLocalTitle)).toBeInTheDocument()
+})
+
+it("swaps the column rather than opening a panel under the installed list", async () => {
+  // With twenty-odd skills installed, appending the catalog below them put it a
+  // screen and a half down: the click looked like it had done nothing.
+  const installed: SkillsScanResult = {
+    skills: [
+      {
+        path: "/h/.claude/skills/fornax-cli",
+        source: "claude",
+        dirName: "fornax-cli",
+        isSymlink: false,
+        linkTarget: null,
+        skillMd: "---\nname: fornax-cli\ndescription: about it\n---\n",
+        modifiedAt: 0,
+        origin: null,
+      },
+    ],
+    errors: [],
+  }
+  renderSection(installed)
+  expect(await screen.findByText("fornax-cli")).toBeInTheDocument()
+
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.tabCatalog }))
+  expect(await screen.findByText(en.catalog.skills["rust"].title)).toBeInTheDocument()
+  expect(screen.queryByText("fornax-cli")).not.toBeInTheDocument()
+
+  // And the aside is the way back — the installed list is one of its choices.
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.tabInstalled }))
+  expect(await screen.findByText("fornax-cli")).toBeInTheDocument()
+  expect(screen.queryByText(en.catalog.skills["rust"].title)).not.toBeInTheDocument()
 })

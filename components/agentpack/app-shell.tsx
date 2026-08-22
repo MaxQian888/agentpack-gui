@@ -45,6 +45,7 @@ import { WorkspaceTabs } from "./workspace-tabs"
 import { ChangeTray } from "./change-tray"
 import { CommandPalette, useCommandShortcut } from "./command-palette"
 import { DashboardSection, scanEnvironment, type DashboardScan } from "./sections/dashboard"
+import { RecoverySection } from "./sections/recovery"
 import { HistorySection } from "./sections/history"
 import { PresetsSection } from "./sections/presets"
 import { EnvironmentSection } from "./sections/environment"
@@ -137,6 +138,13 @@ function ShellBody() {
   // Mirrors `dashboardScan`, but as a ref: runOneClick reads it at call time and
   // must not be rebuilt (and re-created as a callback) on every scan.
   const lastGoodScan = useRef<DashboardScan | null>(null)
+
+  // NB: the shell deliberately subscribes to none of `detections`,
+  // `latestVersions`, `cliManagers` or `networkProbe`. `refreshDetections`
+  // writes the last three once per installed CLI, un-batched, so a subscription
+  // here re-renders the whole window ~20 times on every startup and Rescan —
+  // `<main>` and whatever section the user is scrolling with it. The one surface
+  // that needs them folds them itself; see `ExecutionPanel`.
 
   // Chat-history scan is lazy (it reads every JSONL + the OpenCode DB, too slow
   // to run on startup) and cached here so returning to History reuses it.
@@ -678,14 +686,21 @@ function ShellBody() {
       case "preferences":
         return <PreferencesSection />
       case "config":
-        return <ConfigIO onOpenMcp={() => goToSection("mcp")} />
+        return <ConfigIO scan={dashboardScan} onOpenMcp={() => goToSection("mcp")} />
+      case "recovery":
+        return <RecoverySection scan={dashboardScan} onNavigate={goToSection} />
       case "about":
         return <AboutSection />
     }
   }
 
+  // `h-full` takes the height html/body were pinned to in `app/layout.tsx`,
+  // rather than asking the webview what a viewport height is — `h-dvh` is what
+  // let the macOS build disagree with its own window. It only works because
+  // body now HAS a resolved height; without that, `height: 100%` degrades to
+  // "as tall as my content" and the shell stops filling the window entirely.
   return (
-    <div className="flex h-dvh bg-background text-foreground">
+    <div className="flex h-full overflow-hidden bg-background text-foreground">
       <WorkspaceRail active={workspace} onSelect={navigate} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Header
@@ -703,7 +718,15 @@ function ShellBody() {
           role={hasTabs(workspace) ? "tabpanel" : undefined}
           aria-labelledby={hasTabs(workspace) ? `tab-${section}` : undefined}
           tabIndex={-1}
-          className="flex-1 overflow-auto p-4 sm:p-6"
+          // `min-h-0` is load-bearing, not decoration. A flex item's
+          // `min-height: auto` resolves to its content size unless the item is
+          // a scroll container — and WebKit (which is what the macOS desktop
+          // build runs on) does not always apply that exception in a nested
+          // column. Without it this pane grows to fit a tall page instead of
+          // scrolling it, and the *document* scrolls instead: the rail slides
+          // away and the window looks broken. Every other scroll container in
+          // this repo already carries it.
+          className="min-h-0 flex-1 overflow-auto p-4 sm:p-6"
         >
           {renderSection()}
         </main>
@@ -712,7 +735,7 @@ function ShellBody() {
             modal you have to dismiss to navigate. */}
         <ChangeTray onReview={reviewChanges} />
       </div>
-      <ExecutionPanel />
+      <ExecutionPanel scan={dashboardScan} onNavigate={goToSection} />
       <CommandPalette
         open={commandOpen}
         onOpenChange={setCommandOpen}

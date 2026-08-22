@@ -278,6 +278,12 @@ export function OnboardingDialog({
             <RadioGroup value={preset} onValueChange={pickPreset} className="gap-2">
               {PRESET_IDS.map((id) => {
                 const meta = t.presets[id]
+                // Its size, for the surface already chosen — read from the same
+                // function the store applies, so it is the real bundle rather
+                // than a second description of it. Without it the only way to
+                // tell Minimal from Everything is to pick one and walk to the
+                // last step, which is a question answered by trial and error.
+                const picked = presetSelection(id, surface)
                 return (
                   <Label
                     key={id}
@@ -291,6 +297,15 @@ export function OnboardingDialog({
                     <span className="flex flex-col gap-0.5">
                       <span className="text-sm font-medium">{meta?.title ?? id}</span>
                       <span className="text-xs text-muted-foreground">{meta?.description}</span>
+                      {picked ? (
+                        <span className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+                          {t.presetsScreen.presetCounts(
+                            picked.clis.length,
+                            picked.skills.length,
+                            picked.mcps.length
+                          )}
+                        </span>
+                      ) : null}
                     </span>
                   </Label>
                 )

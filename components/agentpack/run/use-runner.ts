@@ -33,6 +33,13 @@ export interface RunnerState {
   /** How many steps are staged. Drives the palette's "review N changes". */
   pendingCount: number
   /**
+   * The staged descriptors, while `awaitingConfirm` is true. The panel reads
+   * them to brief the user in plain language — a `StepReport` carries only a
+   * label, and the facts that brief needs (a prerequisite, an elevation prompt,
+   * an item that can't be done here) live on the descriptor.
+   */
+  pendingSteps: readonly StepDescriptor[]
+  /**
    * The last execution was a preview, so the completion screen must not claim
    * anything was installed. Cleared the moment a real apply starts.
    */
@@ -78,7 +85,10 @@ export function useRunner(): RunnerState {
   const [running, setRunning] = useState(false)
   const [previewing, setPreviewing] = useState(false)
   const [awaitingConfirm, setAwaitingConfirm] = useState(false)
-  const [pendingCount, setPendingCount] = useState(0)
+  // One source of truth for "what is staged": the count is derived rather than
+  // tracked beside it, so a code path can't update one and forget the other.
+  const [pendingSteps, setPendingSteps] = useState<readonly StepDescriptor[]>([])
+  const pendingCount = pendingSteps.length
   const [lastWasPreview, setLastWasPreview] = useState(false)
   const [cancelled, setCancelled] = useState(false)
   const ctrl = useRef<AbortController | null>(null)
@@ -284,7 +294,7 @@ export function useRunner(): RunnerState {
       setPreviewing(false)
       setCancelled(false)
       setLastWasPreview(false)
-      setPendingCount(withVerify.length)
+      setPendingSteps(withVerify)
       setAwaitingConfirm(true)
       setPanelOpen(true)
       return new Promise<StepReport[]>((resolve) => {
@@ -314,13 +324,13 @@ export function useRunner(): RunnerState {
     setAwaitingConfirm(false)
     setLastWasPreview(false)
     const result = await execute(pending.current)
-    setPendingCount(0)
+    setPendingSteps([])
     release(result)
   }, [execute, release])
 
   const abandonPending = useCallback(() => {
     pending.current = []
-    setPendingCount(0)
+    setPendingSteps([])
     setAwaitingConfirm(false)
     release([])
   }, [release])
@@ -360,6 +370,7 @@ export function useRunner(): RunnerState {
     previewing,
     awaitingConfirm,
     pendingCount,
+    pendingSteps,
     lastWasPreview,
     cancelled,
     run,

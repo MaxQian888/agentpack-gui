@@ -3,7 +3,7 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · genre: modern-minimal · macrostructure: asymmetric settings workbench · theme: inherited Cobalt · contrast: pass (40–41) · slop: pass (42–49) · mobile: pass (34, 49, 50–57) */
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { Check, Download, Plus, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -14,6 +14,13 @@ import { isTauri } from "@/lib/tauri"
 import { readTextFile, writeTextFile } from "@/lib/tauri/commands"
 import { pickFile, pickSavePath } from "@/lib/tauri/dialog"
 import { parseConfig, serializePlan } from "@/lib/agentpack/config"
+import {
+  buildInventory,
+  type InventoryInput,
+  type MachineInventory,
+} from "@/lib/agentpack/inventory"
+import { compareToMachine } from "@/lib/agentpack/migrate"
+import type { Plan } from "@/lib/agentpack/types"
 import {
   parseProfiles,
   profilesPath,
@@ -39,7 +46,18 @@ import { SectionStatus } from "./sections/section-status"
  * are tiles beside it; and the config-file editors are a reference list at the
  * bottom, below the fold, where reaching for them is deliberate.
  */
-export function ConfigIO({ onOpenMcp }: { onOpenMcp?: () => void }) {
+export function ConfigIO({
+  scan = null,
+  onOpenMcp,
+}: {
+  /**
+   * The last dashboard scan, so each profile can say how much of it this
+   * machine already has. Null is an *unmeasured* machine, and an unmeasured
+   * machine gets no claim at all — see `compareToMachine`.
+   */
+  scan?: InventoryInput["scan"]
+  onOpenMcp?: () => void
+}) {
   const t = useT()
   const plan = useAppStore((s) => s.plan)
   const loadPlan = useAppStore((s) => s.loadPlan)
@@ -51,6 +69,30 @@ export function ConfigIO({ onOpenMcp }: { onOpenMcp?: () => void }) {
   const applyProfile = useAppStore((s) => s.applyProfile)
   const deleteProfile = useAppStore((s) => s.deleteProfile)
   const renameProfile = useAppStore((s) => s.renameProfile)
+  const detections = useAppStore((s) => s.detections)
+  const latestVersions = useAppStore((s) => s.latestVersions)
+  const cliManagers = useAppStore((s) => s.cliManagers)
+  const networkProbe = useAppStore((s) => s.networkProbe)
+
+  /**
+   * What this machine actually has, for the per-profile readout below. Folded
+   * here rather than in the shell: subscribing the shell to these slices
+   * re-renders the whole window on every one of ~20 un-batched detection writes
+   * (see the note in `app-shell`). A section pays that cost only while it is
+   * the section on screen.
+   */
+  const inventory = useMemo(
+    () =>
+      buildInventory({
+        scan,
+        detections,
+        latestVersions,
+        cliManagers,
+        networkProbe,
+        paths,
+      }),
+    [scan, detections, latestVersions, cliManagers, networkProbe, paths]
+  )
 
   const [newName, setNewName] = useState("")
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -243,6 +285,11 @@ export function ConfigIO({ onOpenMcp }: { onOpenMcp?: () => void }) {
                         {" · "}
                         {t.profiles.savedAt(new Date(p.createdAt).toLocaleDateString())}
                       </p>
+                      {/* What Apply would actually do. It is the same dedup the
+                          run itself performs, so this states the size of the
+                          job rather than describing it a second way — and an
+                          unmeasured machine says nothing at all. */}
+                      <ProfileGap inventory={inventory} plan={p.plan} />
                     </div>
                   )}
                   {editingId === p.id ? null : (
@@ -302,5 +349,27 @@ export function ConfigIO({ onOpenMcp }: { onOpenMcp?: () => void }) {
       }
       detail={<ConfigFilesCard onOpenMcp={onOpenMcp} />}
     />
+  )
+}
+
+/**
+ * How much of a profile this machine already has.
+ *
+ * One more fact on the line the row already carries, not a new control: Apply
+ * dedups against the same reading, so this states the size of the job Apply
+ * would do rather than offering a second way to do it.
+ *
+ * An unmeasured machine renders nothing. "0 missing" and "we haven't looked"
+ * are opposite claims, and only one of them is safe to make.
+ */
+function ProfileGap({ inventory, plan }: { inventory: MachineInventory; plan: Plan }) {
+  const t = useT()
+  const report = compareToMachine({ inventory, plan })
+  if (!report.measured || report.expected === 0) return null
+  const short = report.missing.length
+  return (
+    <p className="mt-0.5 text-[var(--hm-text-2xs)] text-muted-foreground">
+      {short === 0 ? t.profiles.machineComplete : t.profiles.machineMissing(short)}
+    </p>
   )
 }

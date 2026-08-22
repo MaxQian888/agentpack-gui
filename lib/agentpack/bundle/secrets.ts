@@ -91,6 +91,38 @@ export function redactFileText(key: BundleFileKey, text: string): string | null 
   return serializeDoc(key, redactNode(doc, false) as Doc)
 }
 
+/**
+ * The dotted paths a redaction blanked, so an import can list what only a human
+ * can put back.
+ *
+ * Reads the *redacted* text — a secret-looking key whose string value is empty
+ * is exactly what `redactNode` leaves behind. That makes this a report of what
+ * the file actually carries rather than a second guess at what it should have
+ * carried, and it keeps `SECRET_KEY` and the walk in one place: a checklist
+ * derived from its own copy of the rule would drift from the redaction the
+ * moment either changed.
+ *
+ * An unparseable file yields nothing: such a file is never put in a bundle at
+ * all (`redactFileText` returns null), so there is nothing to re-enter for it.
+ */
+export function blankedSecrets(key: BundleFileKey, redactedText: string): string[] {
+  const doc = parseDoc(key, redactedText)
+  return doc ? collectBlanked(doc, false, "") : []
+}
+
+function collectBlanked(node: unknown, inSecret: boolean, path: string): string[] {
+  if (typeof node === "string") return inSecret && node === "" ? [path] : []
+  if (Array.isArray(node)) {
+    return node.flatMap((v, i) => collectBlanked(v, inSecret, `${path}[${i}]`))
+  }
+  if (isPlainObject(node)) {
+    return Object.entries(node).flatMap(([k, v]) =>
+      collectBlanked(v, inSecret || SECRET_KEY.test(k), path ? `${path}.${k}` : k)
+    )
+  }
+  return []
+}
+
 /** Walk `incoming`, substituting the local machine's value wherever a secret was blanked. */
 function restoreNode(
   incoming: unknown,

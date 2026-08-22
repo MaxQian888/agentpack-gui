@@ -18,6 +18,7 @@ import { AddCustomTab } from "./add-custom"
 import { DesktopOnlyNote } from "../../desktop-only-note"
 import { CapabilityWorkbench } from "../capability-workbench"
 import { SectionNav } from "../section-nav"
+import { SectionView } from "../section-view"
 import { SectionStatus } from "../section-status"
 
 /**
@@ -42,7 +43,9 @@ export function McpSection({ scan, loading, refresh }: McpSectionProps) {
   const t = useT()
   const m = t.mcp
   const tauri = isTauri()
-  const [detail, setDetail] = useState<"catalog" | "matrix" | "add" | null>(null)
+  /* One view at a time in the primary column, chosen from the aside — not the
+     inventory plus whatever else you opened underneath it. */
+  const [view, setView] = useState<"installed" | "catalog" | "matrix" | "add">("installed")
 
   const total = MCP_SERVERS.length
   const rows = useMemo(() => installedRows(scan), [scan])
@@ -56,36 +59,36 @@ export function McpSection({ scan, loading, refresh }: McpSectionProps) {
     </div>
   )
 
+  const viewTitle =
+    view === "installed"
+      ? m.tabInstalled
+      : view === "catalog"
+        ? m.tabCatalog
+        : view === "matrix"
+          ? m.tabMatrix
+          : m.tabAdd
+
   const primary = !tauri ? (
     <DesktopOnlyNote>{m.notTauri}</DesktopOnlyNote>
   ) : (
-    <section aria-label={m.installedPanel} className="min-w-0">
-      <h3 className="mb-3 font-medium">{m.tabInstalled}</h3>
+    <SectionView
+      label={view === "installed" ? m.installedPanel : m.detailPanel}
+      title={viewTitle}
+      choice={view}
+    >
       {scan === null && loading ? (
         loadingPanel
+      ) : view === "installed" ? (
+        <InstalledTab scan={scan} refresh={refresh} onBrowseCatalog={() => setView("catalog")} />
+      ) : view === "catalog" ? (
+        <CatalogTab scan={scan} refresh={refresh} />
+      ) : view === "matrix" ? (
+        <MatrixTab scan={scan} refresh={refresh} />
       ) : (
-        <InstalledTab scan={scan} refresh={refresh} onBrowseCatalog={() => setDetail("catalog")} />
+        <AddCustomTab scan={scan} refresh={refresh} />
       )}
-    </section>
+    </SectionView>
   )
-
-  const detailPanel =
-    tauri && detail ? (
-      <section aria-label={m.detailPanel} className="min-w-0 border-t pt-5">
-        <h3 className="mb-4 text-lg font-medium">
-          {detail === "catalog" ? m.tabCatalog : detail === "matrix" ? m.tabMatrix : m.tabAdd}
-        </h3>
-        {scan === null && loading ? (
-          loadingPanel
-        ) : detail === "catalog" ? (
-          <CatalogTab scan={scan} refresh={refresh} />
-        ) : detail === "matrix" ? (
-          <MatrixTab scan={scan} refresh={refresh} />
-        ) : (
-          <AddCustomTab scan={scan} refresh={refresh} />
-        )}
-      </section>
-    ) : null
 
   return (
     <CapabilityWorkbench
@@ -126,31 +129,37 @@ export function McpSection({ scan, loading, refresh }: McpSectionProps) {
             className="min-[768px]:max-[1099px]:col-span-2"
             choices={[
               {
+                id: "mcp-installed",
+                title: m.tabInstalled,
+                description: m.installedActionHint,
+                active: view === "installed",
+                onSelect: () => setView("installed"),
+              },
+              {
                 id: "mcp-catalog",
                 title: m.tabCatalog,
                 description: m.catalogActionHint,
-                active: detail === "catalog",
-                onSelect: () => setDetail("catalog"),
+                active: view === "catalog",
+                onSelect: () => setView("catalog"),
               },
               {
                 id: "mcp-matrix",
                 title: m.tabMatrix,
                 description: m.matrixActionHint,
-                active: detail === "matrix",
-                onSelect: () => setDetail("matrix"),
+                active: view === "matrix",
+                onSelect: () => setView("matrix"),
               },
               {
                 id: "mcp-add",
                 title: m.tabAdd,
                 description: m.addActionHint,
-                active: detail === "add",
-                onSelect: () => setDetail("add"),
+                active: view === "add",
+                onSelect: () => setView("add"),
               },
             ]}
           />
         ) : null
       }
-      detail={detailPanel}
     />
   )
 }

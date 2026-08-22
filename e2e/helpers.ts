@@ -33,6 +33,7 @@ export const NAV = {
   history: { workspace: "usage", tab: null },
   preferences: { workspace: "settings", tab: "Preferences" },
   config: { workspace: "settings", tab: "Profiles & backup" },
+  recovery: { workspace: "settings", tab: "Recovery points" },
   about: { workspace: "settings", tab: "About & updates" },
 } as const satisfies Record<string, { workspace: keyof typeof WORKSPACE; tab: string | null }>
 
