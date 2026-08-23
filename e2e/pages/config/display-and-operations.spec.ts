@@ -13,6 +13,10 @@ test("shows profile, backup, and config-file controls", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Load config" })).toBeVisible()
   await expect(page.getByRole("button", { name: "Export backup…" })).toBeVisible()
   await expect(page.getByRole("button", { name: "Import backup…" })).toBeVisible()
+  // Browser mode has not measured a machine. It must not turn that absence of
+  // evidence into either a complete profile or a list of missing components.
+  await expect(page.getByText("This machine already has everything.")).toHaveCount(0)
+  await expect(page.getByText(/missing from this machine/)).toHaveCount(0)
 })
 
 test("gates profile and config filesystem writes to the desktop runtime", async ({ page }) => {

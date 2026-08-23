@@ -26,4 +26,17 @@ describe("RootLayout", () => {
     expect(markup).toContain("antialiased")
     expect(markup).toContain("<main>content</main>")
   })
+
+  it("pins the document so only the app shell can opt into scrolling", () => {
+    const markup = renderToStaticMarkup(
+      <RootLayout>
+        <main>content</main>
+      </RootLayout>
+    )
+
+    expect(markup).toContain('<html lang="en" class="h-full overflow-hidden"')
+    expect(markup).toContain(
+      '<body class="--font-geist-sans --font-geist-mono h-full overflow-hidden antialiased"'
+    )
+  })
 })

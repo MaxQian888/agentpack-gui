@@ -38,10 +38,10 @@ beforeEach(() => {
   useAppStore.getState().resetPlan()
 })
 
-function renderIO() {
+function renderIO(scan: React.ComponentProps<typeof ConfigIO>["scan"] = null) {
   return render(
     <I18nProvider>
-      <ConfigIO />
+      <ConfigIO scan={scan} />
     </I18nProvider>
   )
 }
@@ -101,6 +101,13 @@ it("does nothing when the open dialog is cancelled", async () => {
 })
 
 describe("profiles", () => {
+  const measuredScan: NonNullable<React.ComponentProps<typeof ConfigIO>["scan"]> = {
+    at: Date.UTC(2026, 7, 24),
+    degraded: false,
+    claudeSettings: { status: "missing", hasBackup: false },
+    codexConfig: { status: "missing", hasBackup: false },
+  }
+
   beforeEach(() => {
     useAppStore.setState({ paths: { home: "/h" } as never, profiles: [], currentProfileId: null })
     ;(readTextFile as jest.Mock).mockResolvedValue("")
@@ -136,6 +143,42 @@ describe("profiles", () => {
     renderIO()
     await userEvent.click(await screen.findByRole("button", { name: /^apply$/i }))
     expect(useAppStore.getState().plan.clis).toContain("codex")
+  })
+
+  it("reports how many profile requirements are missing from a measured machine", async () => {
+    const plan: Plan = { ...useAppStore.getState().plan, clis: ["codex"] }
+    ;(readTextFile as jest.Mock).mockResolvedValue(
+      serializeProfiles({ version: 1, profiles: [{ id: "p1", name: "Work", createdAt: 0, plan }] })
+    )
+
+    renderIO(measuredScan)
+
+    expect(await screen.findByText(en.profiles.machineMissing(1))).toBeInTheDocument()
+  })
+
+  it("reports a complete profile only after the machine has been measured", async () => {
+    const plan: Plan = { ...useAppStore.getState().plan, clis: ["codex"] }
+    useAppStore.setState({ detections: { codex: { installed: true, version: "1.0.0" } } })
+    ;(readTextFile as jest.Mock).mockResolvedValue(
+      serializeProfiles({ version: 1, profiles: [{ id: "p1", name: "Work", createdAt: 0, plan }] })
+    )
+
+    renderIO(measuredScan)
+
+    expect(await screen.findByText(en.profiles.machineComplete)).toBeInTheDocument()
+  })
+
+  it("makes no completeness claim before the machine has been measured", async () => {
+    const plan: Plan = { ...useAppStore.getState().plan, clis: ["codex"] }
+    ;(readTextFile as jest.Mock).mockResolvedValue(
+      serializeProfiles({ version: 1, profiles: [{ id: "p1", name: "Work", createdAt: 0, plan }] })
+    )
+
+    renderIO()
+    await screen.findByText("Work")
+
+    expect(screen.queryByText(en.profiles.machineMissing(1))).not.toBeInTheDocument()
+    expect(screen.queryByText(en.profiles.machineComplete)).not.toBeInTheDocument()
   })
 
   it("renames then deletes a profile", async () => {

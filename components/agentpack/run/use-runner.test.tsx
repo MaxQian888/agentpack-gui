@@ -72,6 +72,7 @@ describe("the review gate", () => {
     await waitFor(() => expect(result.current.awaitingConfirm).toBe(true))
     expect(runSteps).not.toHaveBeenCalled()
     expect(result.current.pendingCount).toBe(1)
+    expect(result.current.pendingSteps).toEqual([cmd("a", "A")])
     // The panel is opened for the user rather than left to the caller.
     expect(useAppStore.getState().panelOpen).toBe(true)
 
@@ -79,6 +80,7 @@ describe("the review gate", () => {
       await result.current.applyPending()
     })
     expect(result.current.awaitingConfirm).toBe(false)
+    expect(result.current.pendingSteps).toEqual([])
     expect(result.current.reports[0].status).toBe("done")
     await expect(settled).resolves.toHaveLength(1)
   })
@@ -96,6 +98,7 @@ describe("the review gate", () => {
     // Still staged — this is the whole point: read the preview, then apply.
     expect(result.current.awaitingConfirm).toBe(true)
     expect(result.current.pendingCount).toBe(1)
+    expect(result.current.pendingSteps).toEqual([cmd("a", "A")])
 
     await act(async () => {
       await result.current.applyPending()
@@ -132,6 +135,7 @@ describe("the review gate", () => {
     act(() => result.current.abandonPending())
     await expect(settled).resolves.toEqual([])
     expect(result.current.pendingCount).toBe(0)
+    expect(result.current.pendingSteps).toEqual([])
     expect(runSteps).not.toHaveBeenCalled()
   })
 

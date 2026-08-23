@@ -69,6 +69,34 @@ test("a single-destination workspace draws no tab strip", async ({ page }) => {
   await expect(page.getByRole("tablist")).toHaveCount(1)
 })
 
+test("keeps the document pinned while the main pane owns vertical scrolling", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 500 })
+  await navTo(page, "config")
+
+  const scrollState = await page.evaluate(() => {
+    const main = document.querySelector("main")
+    if (!main) throw new Error("App shell main pane was not found")
+    main.scrollTop = main.scrollHeight
+    return {
+      htmlOverflow: getComputedStyle(document.documentElement).overflow,
+      bodyOverflow: getComputedStyle(document.body).overflow,
+      mainOverflowY: getComputedStyle(main).overflowY,
+      mainClientHeight: main.clientHeight,
+      mainScrollHeight: main.scrollHeight,
+      mainScrollTop: main.scrollTop,
+      windowScrollY: window.scrollY,
+    }
+  })
+
+  expect(scrollState.htmlOverflow).toBe("hidden")
+  expect(scrollState.bodyOverflow).toBe("hidden")
+  expect(scrollState.mainOverflowY).toBe("auto")
+  expect(scrollState.mainScrollHeight).toBeGreaterThan(scrollState.mainClientHeight)
+  expect(scrollState.mainScrollTop).toBeGreaterThan(0)
+  expect(scrollState.windowScrollY).toBe(0)
+  await expect(page.getByRole("navigation", { name: "Task areas" })).toBeVisible()
+})
+
 test("the command palette opens on ⌘K and navigates", async ({ page }) => {
   await page.keyboard.press("ControlOrMeta+k")
   const input = page.getByPlaceholder("Go to a task area, or type an action…")
@@ -87,4 +115,46 @@ test("Escape closes the palette", async ({ page }) => {
   await expect(input).toBeVisible()
   await page.keyboard.press("Escape")
   await expect(input).toBeHidden()
+})
+
+test("runs command-palette actions as well as destination jumps", async ({ page }) => {
+  await page.keyboard.press("ControlOrMeta+k")
+  const input = page.getByPlaceholder("Go to a task area, or type an action…")
+  await input.fill("quick config")
+  await page.getByRole("option", { name: "Open quick config" }).click()
+  await expect(page.getByRole("heading", { name: "Choose a preset" })).toBeVisible()
+
+  await page.keyboard.press("ControlOrMeta+k")
+  await page.getByPlaceholder("Go to a task area, or type an action…").fill("light dark")
+  await page.getByRole("option", { name: "Switch light / dark" }).click()
+  await expect(page.locator("html")).toHaveClass(/dark/)
+
+  await page.keyboard.press("ControlOrMeta+k")
+  await page.getByPlaceholder("Go to a task area, or type an action…").fill("app updates")
+  await page.getByRole("option", { name: "Check for app updates" }).click()
+  await expect(page.getByRole("heading", { name: "About & updates" })).toBeVisible()
+})
+
+test("navigates between workspaces through the mobile task-area sheet", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto("/")
+  await expect(page.getByRole("heading", { name: "Environment dashboard" })).toBeVisible()
+
+  const openMenu = page.getByRole("button", { name: "Open task areas" })
+  await openMenu.click()
+  const mobileNav = page.getByRole("navigation", { name: "Task areas" })
+  await mobileNav.getByRole("button", { name: /^Install & repair/ }).click()
+  await expect(mobileNav).toBeHidden()
+  await expect(page.getByRole("heading", { name: "Choose a preset" })).toBeVisible()
+
+  await page.getByRole("tab", { name: "Network / mirrors" }).click()
+  await expect(page.getByRole("heading", { name: "Network configuration" })).toBeVisible()
+
+  await openMenu.click()
+  await page
+    .getByRole("navigation", { name: "Task areas" })
+    .getByRole("button", { name: /^Settings/ })
+    .click()
+  await page.getByRole("tab", { name: "Recovery points" }).click()
+  await expect(page.getByRole("heading", { name: "Recovery points" })).toBeVisible()
 })

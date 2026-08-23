@@ -17,8 +17,13 @@ test("shows the generated page in the sidebar and renders its MDX content", asyn
   await expect(sidebar.getByRole("link", { name: "Getting Started" })).toBeVisible()
   await sidebar.getByRole("link", { name: "Getting Started" }).click()
   await expect(page).toHaveURL(/\/docs\/?$/)
-  await expect(page.getByRole("article").getByText(/documentation skeleton for/)).toBeVisible()
-  await expect(page.getByRole("article").getByText("Add your content here.")).toBeVisible()
+  const article = page.getByRole("article")
+  await expect(article.getByRole("heading", { name: "Provider storage" })).toBeVisible()
+  await expect(article.getByText(/two isolated storage backends/)).toBeVisible()
+  await expect(
+    article.getByRole("heading", { name: "more-token personal workspace" })
+  ).toBeVisible()
+  await expect(article.getByText(/personal desktop credential/)).toBeVisible()
 })
 
 test("unknown documentation pages return a visible 404", async ({ page }) => {

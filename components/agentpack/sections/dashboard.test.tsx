@@ -12,7 +12,7 @@ jest.mock("@/lib/tauri/settings", () => ({
 }))
 
 import { useCallback, useEffect, useState } from "react"
-import { render, screen, within } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import * as api from "@/lib/tauri/commands"
 import { DEFAULT_SETTINGS, saveSettings } from "@/lib/tauri/settings"
@@ -283,6 +283,34 @@ it("leads with the diagnostics list and stages its fixes for review", async () =
   expect(useAppStore.getState().panelOpen).toBe(true)
   await userEvent.click(within(list).getByRole("button", { name: en.diagnostics.restore }))
   expect(useAppStore.getState().panelOpen).toBe(true)
+})
+
+it("stages every selected CLI upgrade as one reviewed batch", async () => {
+  useAppStore.setState({
+    detections: {
+      "claude-code": { installed: true, version: "1.0.0" },
+      codex: { installed: true, version: "1.0.0" },
+    },
+    latestVersions: { "claude-code": "2.0.0", codex: "2.0.0" },
+    cliManagers: {},
+  })
+  renderFrame()
+
+  const list = screen.getByRole("region", { name: en.diagnostics.title })
+  const titles = [
+    en.diagnostics.upgradeTitle(en.catalog.cli["claude-code"].title, "2.0.0"),
+    en.diagnostics.upgradeTitle(en.catalog.cli.codex.title, "2.0.0"),
+  ]
+  for (const title of titles) {
+    await userEvent.click(
+      within(list).getByRole("checkbox", { name: en.diagnostics.selectRow(title) })
+    )
+  }
+  await userEvent.click(
+    within(list).getByRole("button", { name: en.diagnostics.batch["upgrade-cli"](2) })
+  )
+
+  await waitFor(() => expect(api.runCommand).toHaveBeenCalledTimes(2))
 })
 
 it("ranks a blocking finding above an optional one", async () => {
