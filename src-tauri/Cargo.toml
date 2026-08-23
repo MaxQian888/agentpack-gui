@@ -74,4 +74,4 @@ libc = "0.2"
 # Read the live persisted PATH from the registry so tools installed mid-session
 # (Node via winget, claude via `npm i -g`) are found without an app restart.
 [target.'cfg(windows)'.dependencies]
-winreg = "0.55"
+winreg = "0.56"
