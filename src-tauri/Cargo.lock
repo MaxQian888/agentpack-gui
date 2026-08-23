@@ -51,7 +51,7 @@ dependencies = [
  "thiserror 2.0.18",
  "ureq",
  "url",
- "webpki-roots 0.26.11",
+ "webpki-roots 1.0.8",
  "winreg",
 ]
 
