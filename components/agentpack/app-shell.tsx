@@ -24,7 +24,6 @@ import { loadSettings, saveSettings, type OnboardingProgress } from "@/lib/tauri
 import { registerSummonShortcut } from "@/lib/tauri/shortcut"
 import { notify } from "@/lib/tauri/system"
 import { buildSteps, type InstalledState } from "@/lib/agentpack/plan"
-import type { OS } from "@/lib/agentpack/types"
 import { effectiveProxy } from "@/lib/agentpack/network/proxy"
 import { scanNetwork } from "@/lib/agentpack/network/scan"
 import { hostArch } from "@/lib/tauri/system"
@@ -270,64 +269,60 @@ function ShellBody() {
   // Detect every CLI + runtime and refresh latest-version info. Reused both on
   // startup and after every real run, so install/upgrade/uninstall are reflected
   // in the badges without an app restart.
-  const refreshDetections = useCallback(
-    async (hostOS?: OS) => {
-      if (!isTauri()) return
-      const state = useAppStore.getState()
-      // Machine dependencies follow the host, never the optional command-preview
-      // override used to inspect plans for another OS.
-      const os = hostOS ?? state.paths?.os ?? state.effectiveOS()
-      // Each probe is isolated: a single failing detection must not reject the
-      // whole batch and blank every badge / install button in the UI — it just
-      // marks that one tool "not installed" so the rest still render their actions.
-      const entries = await Promise.all([
-        ...CLI_TOOLS.map(
-          async (tool) =>
-            [
-              tool.id,
-              await detectCli(tool.bin, !!tool.gui, tool.appBundles).catch(() => ({
-                installed: false,
-              })),
-            ] as const
-        ),
-        ...runtimesForOS(os).map(
-          async (rt) =>
-            [rt.id, await detectRuntime(rt).catch(() => ({ installed: false }))] as const
-        ),
-      ])
-      setDetections(Object.fromEntries(entries))
-      // Fire-and-forget: resolve the latest published version for every installed
-      // npm-based CLI so the UI can show Upgrade only when one is actually behind.
-      for (const [id, det] of entries) {
-        const tool = CLI_TOOLS.find((c) => c.id === id)
-        if (!tool?.npmPackage || !det.installed) continue
-        latestVersion(tool.npmPackage)
-          .then((v) => {
-            if (v) setLatestVersion(id, v)
-          })
-          .catch(() => {})
-        // Learn how it was installed so an upgrade matches it in place (an npm
-        // upgrade of a native install would leave a second, shadowing copy).
-        npmOwns(tool.npmPackage)
-          .then((owned) => setCliManager(id, owned ? "npm" : "native"))
-          .catch(() => {})
-      }
-      // For a winget/brew-managed runtime, learn whether that manager actually owns
-      // the install. When it doesn't (Node from nodejs.org / nvm, etc.) the
-      // Environment section swaps its Update/Reinstall buttons for a download link,
-      // since winget/brew can't update a copy they didn't install.
-      for (const [id, det] of entries) {
-        const rt = RUNTIMES.find((r) => r.id === id)
-        if (!rt || !det.installed) continue
-        const pm = runtimePkgManager(rt, os)
-        if (!pm) continue
-        pkgManagerOwns(pm.manager, pm.id)
-          .then((owned) => setRuntimeOwned(id, owned))
-          .catch(() => {})
-      }
-    },
-    [setDetections, setLatestVersion, setCliManager, setRuntimeOwned]
-  )
+  const refreshDetections = useCallback(async () => {
+    if (!isTauri()) return
+    const state = useAppStore.getState()
+    // Machine dependencies follow the host, never the optional command-preview
+    // override used to inspect plans for another OS.
+    const os = state.paths?.os ?? state.effectiveOS()
+    // Each probe is isolated: a single failing detection must not reject the
+    // whole batch and blank every badge / install button in the UI — it just
+    // marks that one tool "not installed" so the rest still render their actions.
+    const entries = await Promise.all([
+      ...CLI_TOOLS.map(
+        async (tool) =>
+          [
+            tool.id,
+            await detectCli(tool.bin, !!tool.gui, tool.appBundles).catch(() => ({
+              installed: false,
+            })),
+          ] as const
+      ),
+      ...runtimesForOS(os).map(
+        async (rt) => [rt.id, await detectRuntime(rt).catch(() => ({ installed: false }))] as const
+      ),
+    ])
+    setDetections(Object.fromEntries(entries))
+    // Fire-and-forget: resolve the latest published version for every installed
+    // npm-based CLI so the UI can show Upgrade only when one is actually behind.
+    for (const [id, det] of entries) {
+      const tool = CLI_TOOLS.find((c) => c.id === id)
+      if (!tool?.npmPackage || !det.installed) continue
+      latestVersion(tool.npmPackage)
+        .then((v) => {
+          if (v) setLatestVersion(id, v)
+        })
+        .catch(() => {})
+      // Learn how it was installed so an upgrade matches it in place (an npm
+      // upgrade of a native install would leave a second, shadowing copy).
+      npmOwns(tool.npmPackage)
+        .then((owned) => setCliManager(id, owned ? "npm" : "native"))
+        .catch(() => {})
+    }
+    // For a winget/brew-managed runtime, learn whether that manager actually owns
+    // the install. When it doesn't (Node from nodejs.org / nvm, etc.) the
+    // Environment section swaps its Update/Reinstall buttons for a download link,
+    // since winget/brew can't update a copy they didn't install.
+    for (const [id, det] of entries) {
+      const rt = RUNTIMES.find((r) => r.id === id)
+      if (!rt || !det.installed) continue
+      const pm = runtimePkgManager(rt, os)
+      if (!pm) continue
+      pkgManagerOwns(pm.manager, pm.id)
+        .then((owned) => setRuntimeOwned(id, owned))
+        .catch(() => {})
+    }
+  }, [setDetections, setLatestVersion, setCliManager, setRuntimeOwned])
 
   /**
    * "Rescan" as the user means it: re-read the machine, *all* of it.
@@ -354,7 +349,7 @@ function ShellBody() {
         // selected from the backend-reported OS, not the store's macOS fallback
         // before `getPaths` resolves. Zustand updates synchronously, so the
         // detection reads the real OS immediately after this write.
-        void refreshDetections(p.os)
+        void refreshDetections()
         // What this app has already done to the machine. Read once, here,
         // because the overview shows it before the user touches anything —
         // and because it costs one small JSON read, unlike the scans above.
