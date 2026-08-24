@@ -103,6 +103,21 @@ it("blocks installation on Windows builds too old for Windows Terminal", () => {
   expect(screen.queryByRole("button", { name: en.shell.installNow })).not.toBeInTheDocument()
 })
 
+it("blocks Terminal update and reinstall actions on unsupported Windows builds", () => {
+  useAppStore.setState({
+    detections: { "windows-terminal": { installed: true } },
+    paths: { os: "win", windowsBuild: 18363 } as never,
+  })
+  renderEnv()
+
+  expect(screen.getByText(en.environment.windowsBuildRequired(19041))).toBeInTheDocument()
+  expect(screen.queryByRole("button", { name: en.shell.update })).not.toBeInTheDocument()
+  expect(screen.queryByRole("button", { name: en.shell.reinstall })).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole("button", { name: new RegExp(en.shell.downloadLatest, "i") })
+  ).not.toBeInTheDocument()
+})
+
 it("shows a not-found badge when a runtime is absent", () => {
   useAppStore.setState({ detections: { bun: { installed: false }, node: { installed: false } } })
   renderEnv()

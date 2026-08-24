@@ -126,7 +126,8 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
                 paths.windowsBuild !== null &&
                 paths.windowsBuild < rt.minWindowsBuild
               // Offer a chooser only for missing runtimes that have >1 channel.
-              const showMethodPicker = !!d && !d.installed && methods.length > 1
+              const showMethodPicker =
+                !!d && !d.installed && methods.length > 1 && !windowsBuildUnsupported
               // A winget/brew-managed runtime the manager DOESN'T own can't be updated
               // or reinstalled in place — offer its official download page instead.
               // Only once ownership is a confirmed `false` (unknown/pending keeps the
@@ -150,7 +151,7 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
                             {t.envcheck.installed}
                             {d.version ? ` · ${extractSemver(d.version) ?? d.version}` : ""}
                           </Badge>
-                          {notManaged ? (
+                          {windowsBuildUnsupported ? null : notManaged ? (
                             <Button
                               variant="outline"
                               size="sm"
@@ -236,12 +237,12 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
                       {rt.manualNote ?? t.environment.noInstaller}
                     </p>
                   ) : null}
-                  {d && !d.installed && windowsBuildUnsupported ? (
+                  {d && windowsBuildUnsupported ? (
                     <p className="text-xs text-muted-foreground">
                       {t.environment.windowsBuildRequired(rt.minWindowsBuild!)}
                     </p>
                   ) : null}
-                  {notManaged && pm ? (
+                  {notManaged && pm && !windowsBuildUnsupported ? (
                     <p className="text-xs text-muted-foreground">
                       {t.environment.notManaged(pm.manager)}
                     </p>
