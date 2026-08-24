@@ -214,6 +214,8 @@ export interface Runtime {
   id: "windows-terminal" | "node" | "bun" | "python" | "uv"
   /** Platforms where this environment dependency is relevant. Omit for all. */
   platforms?: readonly OS[]
+  /** Minimum supported Windows build, when this dependency has one. */
+  minWindowsBuild?: number
   /** Binary name to probe on PATH for detection. */
   bin: string
   /** Fallback binary name to probe when `bin` is absent (e.g. python3 vs python). */
@@ -411,6 +413,8 @@ export interface Paths {
    */
   shellProfile: string
   os: OS
+  /** Windows build number (for example 19045); absent on other platforms. */
+  windowsBuild?: number | null
 }
 
 export type StepKind =

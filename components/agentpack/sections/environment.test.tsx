@@ -91,6 +91,18 @@ it("uses the host OS rather than the command-preview override", () => {
   expect(screen.getByRole("button", { name: en.shell.installNow })).toBeInTheDocument()
 })
 
+it("blocks installation on Windows builds too old for Windows Terminal", () => {
+  useAppStore.setState({
+    detections: { "windows-terminal": { installed: false } },
+    paths: { os: "win", windowsBuild: 18363 } as never,
+  })
+  renderEnv()
+
+  expect(screen.getByText(en.catalog.runtime["windows-terminal"].title)).toBeInTheDocument()
+  expect(screen.getByText(en.environment.windowsBuildRequired(19041))).toBeInTheDocument()
+  expect(screen.queryByRole("button", { name: en.shell.installNow })).not.toBeInTheDocument()
+})
+
 it("shows a not-found badge when a runtime is absent", () => {
   useAppStore.setState({ detections: { bun: { installed: false }, node: { installed: false } } })
   renderEnv()

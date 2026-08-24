@@ -365,6 +365,8 @@ export const en = {
     installHint: "Missing a tool? Install it directly — detection re-runs after each install.",
     noInstaller: "No automated installer on this OS — see the note below.",
     recheck: "Re-detect",
+    windowsBuildRequired: (build: number) =>
+      `Requires Windows 10 2004 or later (build ${build}+). Update Windows before installing.`,
     notManaged: (manager: string) =>
       `Not installed via ${manager}, so it can't be updated or reinstalled here — download the latest version from the official site instead.`,
   },

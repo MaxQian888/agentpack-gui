@@ -88,18 +88,19 @@ function scriptInstall(
 }
 
 /**
- * Language runtimes the agent CLIs depend on. Node (with npm) is the base
- * runtime every npm-installed CLI needs; Bun is an optional faster alternative.
- * Python (+ uv) powers Python-based MCP servers and tooling.
+ * Machine environment dependencies. Windows Terminal is a Windows-only GUI
+ * dependency; Node (with npm) is the base runtime every npm-installed CLI
+ * needs, Bun is an optional alternative, and Python (+ uv) powers Python tools.
  *
- * Install strategy: Node/Python use the OS app manager (winget/brew); Bun and
- * uv use their official installers on every OS (PowerShell on Windows,
- * `curl … | sh` on macOS/Linux). `null` => no automated path.
+ * Install strategy: Terminal offers winget plus the Store; Node/Python use the
+ * OS app manager; Bun and uv use their official installers. `null` means no
+ * automated path on that OS.
  */
 export const RUNTIMES: readonly Runtime[] = [
   {
     id: "windows-terminal",
     platforms: ["win"],
+    minWindowsBuild: 19041,
     bin: "wt",
     // `wt --version` opens a window instead of reporting a version. GUI mode
     // makes detection use PATH + Get-AppxPackage without executing Terminal.

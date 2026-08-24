@@ -333,6 +333,8 @@ export const zhCN = {
     installHint: "缺少工具？直接安装即可——每次安装后会重新检测。",
     noInstaller: "本系统没有自动安装方式——请参见下方说明。",
     recheck: "重新检测",
+    windowsBuildRequired: (build: number) =>
+      `需要 Windows 10 2004 或更高版本（build ${build}+）。请先更新 Windows。`,
     notManaged: (manager: string) =>
       `它不是通过 ${manager} 安装的，无法在此更新或重装——请改从官方页面下载最新版本。`,
   },

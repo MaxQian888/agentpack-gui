@@ -36,7 +36,8 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
   const detections = useAppStore((s) => s.detections)
   const runtimeOwned = useAppStore((s) => s.runtimeOwned)
   const effectiveOS = useAppStore((s) => s.effectiveOS)
-  const hostOS = useAppStore((s) => s.paths?.os) ?? effectiveOS()
+  const paths = useAppStore((s) => s.paths)
+  const hostOS = paths?.os ?? effectiveOS()
   const runtimes = runtimesForOS(hostOS)
   const { run } = useRunnerCtx()
   // isTauri() is false in the pre-rendered HTML, so the note has to wait for
@@ -118,6 +119,12 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
               const updatable = !!runtimeUpgradeCommandFor(rt, hostOS)
               const selectedMethodId = methodChoice[rt.id] ?? methods[0]?.id
               const selectedMethod = methods.find((m) => m.id === selectedMethodId)
+              const windowsBuildUnsupported =
+                hostOS === "win" &&
+                rt.minWindowsBuild !== undefined &&
+                paths?.windowsBuild !== undefined &&
+                paths.windowsBuild !== null &&
+                paths.windowsBuild < rt.minWindowsBuild
               // Offer a chooser only for missing runtimes that have >1 channel.
               const showMethodPicker = !!d && !d.installed && methods.length > 1
               // A winget/brew-managed runtime the manager DOESN'T own can't be updated
@@ -184,7 +191,7 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
                           >
                             {t.envcheck.notFound}
                           </Badge>
-                          {installable ? (
+                          {installable && !windowsBuildUnsupported ? (
                             <Button variant="outline" size="sm" onClick={() => void installNow(rt)}>
                               {t.shell.installNow}
                             </Button>
@@ -227,6 +234,11 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
                   {d && !d.installed && !installable ? (
                     <p className="text-xs text-muted-foreground">
                       {rt.manualNote ?? t.environment.noInstaller}
+                    </p>
+                  ) : null}
+                  {d && !d.installed && windowsBuildUnsupported ? (
+                    <p className="text-xs text-muted-foreground">
+                      {t.environment.windowsBuildRequired(rt.minWindowsBuild!)}
                     </p>
                   ) : null}
                   {notManaged && pm ? (

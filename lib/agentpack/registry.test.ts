@@ -48,6 +48,7 @@ it("offers Windows Terminal detection and installation only on Windows", () => {
     bin: "wt",
     gui: true,
     platforms: ["win"],
+    minWindowsBuild: 19041,
     appBundles: [{ name: "Microsoft.WindowsTerminal" }],
   })
   expect(terminal?.install.win).toEqual({

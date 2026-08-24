@@ -23,6 +23,7 @@ pub struct Paths {
   mcp_disabled_store: String,
   shell_profile: String,
   os: String,
+  windows_build: Option<u32>,
 }
 
 fn s(p: PathBuf) -> String {
@@ -38,6 +39,27 @@ pub fn os_family() -> &'static str {
   } else {
     "linux"
   }
+}
+
+/// Windows Terminal requires build 19041+, so expose the host build alongside
+/// the OS family instead of letting an unsupported install fail deep in winget.
+#[cfg(windows)]
+fn windows_build() -> Option<u32> {
+  use winreg::enums::HKEY_LOCAL_MACHINE;
+  use winreg::RegKey;
+
+  RegKey::predef(HKEY_LOCAL_MACHINE)
+    .open_subkey(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
+    .ok()?
+    .get_value::<String, _>("CurrentBuildNumber")
+    .ok()?
+    .parse()
+    .ok()
+}
+
+#[cfg(not(windows))]
+fn windows_build() -> Option<u32> {
+  None
 }
 
 /// The login shell's rc file — where an `export HTTP_PROXY=…` block has to go for
@@ -101,6 +123,7 @@ pub fn get_paths() -> Result<Paths, String> {
     mcp_disabled_store: s(agentpack.join("mcp-disabled.json")),
     shell_profile: s(shell_profile(&home)),
     os: os_family().into(),
+    windows_build: windows_build(),
   })
 }
 
