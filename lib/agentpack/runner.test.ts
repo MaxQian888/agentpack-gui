@@ -357,6 +357,29 @@ it("auto-elevates any winget install and warns about the UAC prompt", async () =
   expect(reports[0].output.join("\n")).toMatch(/administrator permission/i)
 })
 
+it("keeps an explicitly user-scope winget install in the current account", async () => {
+  ;(api.runCommand as jest.Mock).mockResolvedValue(0)
+  const steps: StepDescriptor[] = [
+    {
+      kind: "command",
+      id: "c",
+      label: "c",
+      command: {
+        file: "winget",
+        args: ["install", "-e", "--id", "Microsoft.WindowsTerminal", "--scope", "user"],
+      },
+    },
+  ]
+
+  await runSteps(steps, { dryRun: false, paths })
+
+  expect(api.runCommand).toHaveBeenCalledWith(
+    steps[0].kind === "command" ? steps[0].command : undefined,
+    expect.any(Function),
+    expect.objectContaining({ elevated: false })
+  )
+})
+
 it("treats winget 'already installed / up to date' as success, not an error", async () => {
   // 0x8A15002B — the package is already current; winget's non-zero code here is benign.
   ;(api.runCommand as jest.Mock).mockResolvedValue(-1978335189)

@@ -113,6 +113,8 @@ export const RUNTIMES: readonly Runtime[] = [
           "-e",
           "--id",
           "Microsoft.WindowsTerminal",
+          "--scope",
+          "user",
           "--accept-source-agreements",
           "--accept-package-agreements",
           "--disable-interactivity",
@@ -120,6 +122,38 @@ export const RUNTIMES: readonly Runtime[] = [
       },
       mac: null,
       linux: null,
+    },
+    methods: {
+      win: [
+        {
+          id: "winget",
+          command: {
+            file: "winget",
+            args: [
+              "install",
+              "-e",
+              "--id",
+              "Microsoft.WindowsTerminal",
+              "--scope",
+              "user",
+              "--accept-source-agreements",
+              "--accept-package-agreements",
+              "--disable-interactivity",
+            ],
+          },
+        },
+        {
+          id: "store",
+          command: {
+            file: "powershell",
+            args: [
+              "-NoProfile",
+              "-Command",
+              "Start-Process 'ms-windows-store://pdp/?ProductId=9N0DX20HK701'",
+            ],
+          },
+        },
+      ],
     },
     upgrade: {
       win: {
@@ -129,6 +163,8 @@ export const RUNTIMES: readonly Runtime[] = [
           "-e",
           "--id",
           "Microsoft.WindowsTerminal",
+          "--scope",
+          "user",
           "--accept-source-agreements",
           "--accept-package-agreements",
           "--disable-interactivity",
@@ -136,8 +172,6 @@ export const RUNTIMES: readonly Runtime[] = [
       },
     },
     downloadUrl: "https://learn.microsoft.com/windows/terminal/install",
-    manualNote:
-      "Windows Terminal requires Windows 10 2004 (build 19041) or later — see https://learn.microsoft.com/windows/terminal/install",
   },
   {
     id: "node",

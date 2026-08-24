@@ -57,11 +57,27 @@ it("offers Windows Terminal detection and installation only on Windows", () => {
       "-e",
       "--id",
       "Microsoft.WindowsTerminal",
+      "--scope",
+      "user",
       "--accept-source-agreements",
       "--accept-package-agreements",
       "--disable-interactivity",
     ],
   })
+  expect(installMethodsFor(terminal!, "win")).toEqual([
+    { id: "winget", command: terminal?.install.win },
+    {
+      id: "store",
+      command: {
+        file: "powershell",
+        args: [
+          "-NoProfile",
+          "-Command",
+          "Start-Process 'ms-windows-store://pdp/?ProductId=9N0DX20HK701'",
+        ],
+      },
+    },
+  ])
   expect(runtimesForOS("win").map((runtime) => runtime.id)).toContain("windows-terminal")
   expect(runtimesForOS("mac").map((runtime) => runtime.id)).not.toContain("windows-terminal")
   expect(runtimesForOS("linux").map((runtime) => runtime.id)).not.toContain("windows-terminal")

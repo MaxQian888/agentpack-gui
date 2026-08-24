@@ -77,7 +77,7 @@ import { act } from "react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { toast } from "sonner"
-import { detectCli, readTextFile, listSkills } from "@/lib/tauri/commands"
+import { detectCli, detectRuntime, getPaths, readTextFile, listSkills } from "@/lib/tauri/commands"
 import { useAppStore } from "@/store/app-store"
 import { AppShell } from "./app-shell"
 import { en } from "@/lib/i18n/en"
@@ -85,6 +85,7 @@ import { en } from "@/lib/i18n/en"
 beforeEach(() => {
   useAppStore.setState({
     paths: null,
+    osOverride: null,
     panelOpen: false,
     detections: {},
     latestVersions: {},
@@ -101,6 +102,39 @@ beforeEach(() => {
 
 const claudeMcpLabel = (id: "memory" | "context7") =>
   en.steps.addMcpClaude(en.catalog.mcp[id].title)
+
+it("waits for the real Windows OS before detecting platform dependencies", async () => {
+  useAppStore.setState({ osOverride: "mac" })
+  ;(getPaths as jest.Mock).mockResolvedValueOnce({
+    home: "C:\\Users\\tester",
+    claudeSettings: "",
+    claudeConfig: "",
+    claudeSkillsDir: "",
+    codexConfig: "",
+    codexAuth: "",
+    codexSkillsDir: "",
+    opencodeConfig: "",
+    opencodeSkillsDir: "",
+    agentsSkillsDir: "",
+    ccSwitchSettings: "",
+    ccSwitchDb: "",
+    ccConnectDir: "",
+    ccConnectConfig: "",
+    os: "win",
+  })
+
+  render(
+    <I18nProvider>
+      <AppShell />
+    </I18nProvider>
+  )
+
+  await waitFor(() =>
+    expect(detectRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "windows-terminal", gui: true })
+    )
+  )
+})
 
 it("Run drops an already-installed MCP and keeps a missing one", async () => {
   render(

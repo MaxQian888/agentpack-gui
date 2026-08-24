@@ -49,13 +49,17 @@ let opSeq = 0
 const isNotFound = (msg: string) => /command not found/i.test(msg)
 
 /**
- * winget mutating verbs. These hit machine scope on Windows and need admin, so
- * they're routed through UAC elevation — otherwise a non-elevated, non-interactive
- * winget either fails on permissions or reports "No applicable installer found".
+ * winget mutating verbs normally hit machine scope on Windows and need admin.
+ * An explicit `--scope user` must stay in the current account: elevating as a
+ * different administrator would install a Store/MSIX package for that account.
  */
 const WINGET_ELEVATED_VERBS = new Set(["install", "uninstall", "upgrade"])
+const isUserScopeWinget = (cmd: Command) => {
+  const scope = cmd.args.indexOf("--scope")
+  return cmd.file === "winget" && scope >= 0 && cmd.args[scope + 1]?.toLowerCase() === "user"
+}
 const isWingetMutation = (cmd: Command) =>
-  cmd.file === "winget" && WINGET_ELEVATED_VERBS.has(cmd.args[0] ?? "")
+  cmd.file === "winget" && WINGET_ELEVATED_VERBS.has(cmd.args[0] ?? "") && !isUserScopeWinget(cmd)
 
 /** A command step that needs administrator rights (explicit flag or any winget install). */
 function stepNeedsElevation(step: StepDescriptor): boolean {

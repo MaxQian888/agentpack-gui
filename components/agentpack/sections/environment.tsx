@@ -36,7 +36,8 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
   const detections = useAppStore((s) => s.detections)
   const runtimeOwned = useAppStore((s) => s.runtimeOwned)
   const effectiveOS = useAppStore((s) => s.effectiveOS)
-  const runtimes = runtimesForOS(effectiveOS())
+  const hostOS = useAppStore((s) => s.paths?.os) ?? effectiveOS()
+  const runtimes = runtimesForOS(hostOS)
   const { run } = useRunnerCtx()
   // isTauri() is false in the pre-rendered HTML, so the note has to wait for
   // mount or it hydration-mismatches — same pairing as the dashboard.
@@ -64,7 +65,7 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
   }
 
   const installNow = (rt: (typeof runtimes)[number]) => {
-    const methods = installMethodsFor(rt, effectiveOS())
+    const methods = installMethodsFor(rt, hostOS)
     const chosen = methods.find((m) => m.id === methodChoice[rt.id]) ?? methods[0]
     if (!chosen) return
     // The central afterRun hook re-detects runtimes once the install completes.
@@ -74,7 +75,7 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
   // Update an already-installed runtime in place. A no-op update (winget/brew
   // finds nothing newer) reports as "already up to date" rather than an error.
   const updateNow = (rt: (typeof runtimes)[number]) => {
-    const cmd = runtimeUpgradeCommandFor(rt, effectiveOS())
+    const cmd = runtimeUpgradeCommandFor(rt, hostOS)
     if (!cmd) return
     void run([runtimeUpgradeStep(rt.id, cmd, t)])
   }
@@ -112,9 +113,9 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
             {runtimes.map((rt) => {
               const meta = t.catalog.runtime[rt.id]
               const d = detections[rt.id]
-              const methods = installMethodsFor(rt, effectiveOS())
+              const methods = installMethodsFor(rt, hostOS)
               const installable = methods.length > 0
-              const updatable = !!runtimeUpgradeCommandFor(rt, effectiveOS())
+              const updatable = !!runtimeUpgradeCommandFor(rt, hostOS)
               const selectedMethodId = methodChoice[rt.id] ?? methods[0]?.id
               const selectedMethod = methods.find((m) => m.id === selectedMethodId)
               // Offer a chooser only for missing runtimes that have >1 channel.
@@ -123,7 +124,7 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
               // or reinstalled in place — offer its official download page instead.
               // Only once ownership is a confirmed `false` (unknown/pending keeps the
               // normal actions; the runner still warns if winget can't update).
-              const pm = runtimePkgManager(rt, effectiveOS())
+              const pm = runtimePkgManager(rt, hostOS)
               const notManaged = !!pm && runtimeOwned[rt.id] === false && !!rt.downloadUrl
               return (
                 <div key={rt.id} className="min-w-0 p-4">

@@ -44,8 +44,9 @@ agentpack 把两件事放进同一个窗口：看到花销，然后当场处理 
 **安装与配置**
 
 - 安装或升级 Claude Code、Codex、OpenCode、cc-switch、cc-connect，以及它们依赖的
-  Node / Bun / Python / uv —— 命令输出实时流式显示，升级会匹配当初的安装方式，不会留下
-  两份互相遮蔽的副本。
+  Node / Bun / Python / uv；在 Windows 10 2004 及以上版本中，还会检测并安装缺失的
+  Windows 终端。命令输出实时流式显示，升级会匹配当初的安装方式，不会留下两份互相遮蔽
+  的副本。
 - **Skills 管理**，覆盖 `~/.claude`、`~/.codex`、`~/.opencode` 和 `~/.agents`：查看已装
   内容、从 GitHub 仓库安装、检查更新、删除前自动备份、处理重名冲突。
 - **MCP 服务器**：精选目录 + 官方 MCP registry 搜索，健康检查会真的跑一次 `initialize`

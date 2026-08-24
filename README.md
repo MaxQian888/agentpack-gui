@@ -48,8 +48,10 @@ leaves your machine.
 **Setup & configuration**
 
 - Install or upgrade Claude Code, Codex, OpenCode, cc-switch and cc-connect,
-  plus the Node / Bun / Python / uv runtimes they need — with live command
-  output, and an in-place upgrade that matches how each tool was installed.
+  plus the Node / Bun / Python / uv runtimes they need. On Windows 10 2004 and
+  later, agentpack also detects and installs Windows Terminal when it is missing.
+  Commands stream live output, and in-place upgrades match how each tool was
+  installed.
 - **Skills** manager across `~/.claude`, `~/.codex`, `~/.opencode` and
   `~/.agents`: browse what's installed, install from a GitHub repo, check for
   updates, back up before deleting, resolve name conflicts.

@@ -1253,6 +1253,10 @@ export const en = {
         title: "winget",
         description: "Windows Package Manager (may require administrator).",
       },
+      store: {
+        title: "Microsoft Store",
+        description: "Open the product page, finish installation, then re-detect.",
+      },
       scoop: { title: "Scoop", description: "User-scope install, no administrator needed." },
       brew: { title: "Homebrew", description: "macOS package manager." },
       fnm: { title: "fnm", description: "Fast Node manager (user scope)." },

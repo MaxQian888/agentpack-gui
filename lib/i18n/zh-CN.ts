@@ -1163,6 +1163,10 @@ export const zhCN = {
       bun: { title: "bun", description: "用 Bun 全局安装。" },
       native: { title: "官方安装器", description: "独立安装脚本 —— 无需 Node.js。" },
       winget: { title: "winget", description: "Windows 包管理器（可能需要管理员权限）。" },
+      store: {
+        title: "Microsoft Store",
+        description: "打开产品页面，完成安装后再重新检测。",
+      },
       scoop: { title: "Scoop", description: "用户级安装，无需管理员权限。" },
       brew: { title: "Homebrew", description: "macOS 包管理器。" },
       fnm: { title: "fnm", description: "快速 Node 版本管理器（用户级）。" },

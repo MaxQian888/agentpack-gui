@@ -17,6 +17,7 @@ beforeEach(() => {
     detections: {},
     runtimeOwned: {},
     paths: null,
+    osOverride: null,
     panelOpen: false,
   })
 })
@@ -76,6 +77,18 @@ it("does not show the Windows-only terminal on macOS", () => {
   renderEnv()
 
   expect(screen.queryByText("Windows Terminal")).not.toBeInTheDocument()
+})
+
+it("uses the host OS rather than the command-preview override", () => {
+  useAppStore.setState({
+    detections: { "windows-terminal": { installed: false } },
+    paths: { os: "win" } as never,
+    osOverride: "mac",
+  })
+  renderEnv()
+
+  expect(screen.getByText(en.catalog.runtime["windows-terminal"].title)).toBeInTheDocument()
+  expect(screen.getByRole("button", { name: en.shell.installNow })).toBeInTheDocument()
 })
 
 it("shows a not-found badge when a runtime is absent", () => {
