@@ -61,7 +61,7 @@ const isUserScopeWinget = (cmd: Command) => {
 const isWingetMutation = (cmd: Command) =>
   cmd.file === "winget" && WINGET_ELEVATED_VERBS.has(cmd.args[0] ?? "") && !isUserScopeWinget(cmd)
 
-/** A command step that needs administrator rights (explicit flag or any winget install). */
+/** A command step that needs administrator rights (explicit flag or machine-scope winget). */
 function stepNeedsElevation(step: StepDescriptor): boolean {
   return step.kind === "command" && (!!step.requiresElevation || isWingetMutation(step.command))
 }

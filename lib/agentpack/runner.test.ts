@@ -336,7 +336,7 @@ it("appends an elevation hint when a requiresElevation command fails", async () 
   expect(reports[0].output.join("\n")).toMatch(/administrator/i)
 })
 
-it("auto-elevates any winget install and warns about the UAC prompt", async () => {
+it("auto-elevates a machine-scope winget install and warns about the UAC prompt", async () => {
   ;(api.runCommand as jest.Mock).mockResolvedValue(0)
   const steps: StepDescriptor[] = [
     {
