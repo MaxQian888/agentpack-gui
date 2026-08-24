@@ -56,6 +56,28 @@ it("offers an install action for a missing runtime and opens the run panel", asy
   expect(useAppStore.getState().panelOpen).toBe(true)
 })
 
+it("offers to install a missing Windows Terminal on Windows", async () => {
+  useAppStore.setState({
+    detections: { "windows-terminal": { installed: false } },
+    paths: { os: "win" } as never,
+  })
+  renderEnv()
+
+  expect(screen.getByText(en.catalog.runtime["windows-terminal"].title)).toBeInTheDocument()
+  await userEvent.click(screen.getByRole("button", { name: en.shell.installNow }))
+  expect(useAppStore.getState().panelOpen).toBe(true)
+})
+
+it("does not show the Windows-only terminal on macOS", () => {
+  useAppStore.setState({
+    detections: { "windows-terminal": { installed: false } },
+    paths: { os: "mac" } as never,
+  })
+  renderEnv()
+
+  expect(screen.queryByText("Windows Terminal")).not.toBeInTheDocument()
+})
+
 it("shows a not-found badge when a runtime is absent", () => {
   useAppStore.setState({ detections: { bun: { installed: false }, node: { installed: false } } })
   renderEnv()

@@ -27,7 +27,13 @@ import { buildSteps, type InstalledState } from "@/lib/agentpack/plan"
 import { effectiveProxy } from "@/lib/agentpack/network/proxy"
 import { scanNetwork } from "@/lib/agentpack/network/scan"
 import { hostArch } from "@/lib/tauri/system"
-import { CLI_TOOLS, RUNTIMES, runtimePkgManager, SKILLS } from "@/lib/agentpack/registry"
+import {
+  CLI_TOOLS,
+  RUNTIMES,
+  runtimePkgManager,
+  runtimesForOS,
+  SKILLS,
+} from "@/lib/agentpack/registry"
 import { skillTargetsFor, type Surface } from "@/lib/agentpack/presets"
 import {
   hasTabs,
@@ -265,6 +271,7 @@ function ShellBody() {
   // in the badges without an app restart.
   const refreshDetections = useCallback(async () => {
     if (!isTauri()) return
+    const os = useAppStore.getState().effectiveOS()
     // Each probe is isolated: a single failing detection must not reject the
     // whole batch and blank every badge / install button in the UI — it just
     // marks that one tool "not installed" so the rest still render their actions.
@@ -278,7 +285,7 @@ function ShellBody() {
             })),
           ] as const
       ),
-      ...RUNTIMES.map(
+      ...runtimesForOS(os).map(
         async (rt) => [rt.id, await detectRuntime(rt).catch(() => ({ installed: false }))] as const
       ),
     ])
@@ -303,7 +310,6 @@ function ShellBody() {
     // the install. When it doesn't (Node from nodejs.org / nvm, etc.) the
     // Environment section swaps its Update/Reinstall buttons for a download link,
     // since winget/brew can't update a copy they didn't install.
-    const os = useAppStore.getState().effectiveOS()
     for (const [id, det] of entries) {
       const rt = RUNTIMES.find((r) => r.id === id)
       if (!rt || !det.installed) continue

@@ -206,16 +206,22 @@ export interface ReleaseAssetMatch {
 export type Arch = "x64" | "arm64"
 
 /**
- * A language runtime / toolchain prerequisite (Node.js, Bun). Detected the same
- * way as a non-GUI CLI (`<bin> --version`), but installed through the platform's
- * runtime installer rather than npm. Display text lives in the i18n catalog.
+ * A machine-wide environment dependency (Windows Terminal, Node.js, Bun).
+ * Command-line entries use `<bin> --version`; GUI entries use PATH/app-package
+ * lookup without launching. Display text lives in the i18n catalog.
  */
 export interface Runtime {
-  id: "node" | "bun" | "python" | "uv"
+  id: "windows-terminal" | "node" | "bun" | "python" | "uv"
+  /** Platforms where this environment dependency is relevant. Omit for all. */
+  platforms?: readonly OS[]
   /** Binary name to probe on PATH for detection. */
   bin: string
   /** Fallback binary name to probe when `bin` is absent (e.g. python3 vs python). */
   altBin?: string
+  /** GUI dependency: detect by PATH/package lookup only, never execute it. */
+  gui?: boolean
+  /** Store/MSIX or app-bundle identities for a GUI dependency. */
+  appBundles?: readonly AppBundle[]
   /** Per-OS install command. `null` => no automated installer on this OS. */
   install: Record<OS, Command | null>
   /**

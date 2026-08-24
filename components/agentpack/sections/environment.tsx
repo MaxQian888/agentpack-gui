@@ -13,10 +13,10 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import {
-  RUNTIMES,
   installMethodsFor,
   runtimePkgManager,
   runtimeUpgradeCommandFor,
+  runtimesForOS,
 } from "@/lib/agentpack/registry"
 import { runtimeInstallStep, runtimeUpgradeStep } from "@/lib/agentpack/plan"
 import { extractSemver } from "@/lib/agentpack/version"
@@ -36,6 +36,7 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
   const detections = useAppStore((s) => s.detections)
   const runtimeOwned = useAppStore((s) => s.runtimeOwned)
   const effectiveOS = useAppStore((s) => s.effectiveOS)
+  const runtimes = runtimesForOS(effectiveOS())
   const { run } = useRunnerCtx()
   // isTauri() is false in the pre-rendered HTML, so the note has to wait for
   // mount or it hydration-mismatches — same pairing as the dashboard.
@@ -47,9 +48,9 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
   // re-detect too — a freshly installed runtime that isn't yet on this process's
   // PATH, or an install done outside agentpack, only shows up after a fresh scan.
   const [refreshing, setRefreshing] = useState(false)
-  const detectionsMeasured = RUNTIMES.every((runtime) => detections[runtime.id] !== undefined)
-  const installedCount = RUNTIMES.filter((runtime) => detections[runtime.id]?.installed).length
-  const missingCount = RUNTIMES.filter(
+  const detectionsMeasured = runtimes.every((runtime) => detections[runtime.id] !== undefined)
+  const installedCount = runtimes.filter((runtime) => detections[runtime.id]?.installed).length
+  const missingCount = runtimes.filter(
     (runtime) => detections[runtime.id] && !detections[runtime.id]?.installed
   ).length
   const recheck = async () => {
@@ -62,7 +63,7 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
     }
   }
 
-  const installNow = (rt: (typeof RUNTIMES)[number]) => {
+  const installNow = (rt: (typeof runtimes)[number]) => {
     const methods = installMethodsFor(rt, effectiveOS())
     const chosen = methods.find((m) => m.id === methodChoice[rt.id]) ?? methods[0]
     if (!chosen) return
@@ -72,7 +73,7 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
 
   // Update an already-installed runtime in place. A no-op update (winget/brew
   // finds nothing newer) reports as "already up to date" rather than an error.
-  const updateNow = (rt: (typeof RUNTIMES)[number]) => {
+  const updateNow = (rt: (typeof runtimes)[number]) => {
     const cmd = runtimeUpgradeCommandFor(rt, effectiveOS())
     if (!cmd) return
     void run([runtimeUpgradeStep(rt.id, cmd, t)])
@@ -88,7 +89,7 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
         <SectionStatus
           label={t.environment.summaryLabel}
           facts={[
-            { label: t.environment.metricCatalog, value: RUNTIMES.length },
+            { label: t.environment.metricCatalog, value: runtimes.length },
             {
               label: t.environment.metricInstalled,
               value: detectionsMeasured ? installedCount : "—",
@@ -108,7 +109,7 @@ export function EnvironmentSection({ refresh }: { refresh?: () => Promise<void> 
             </div>
           ) : null}
           <div className="divide-y">
-            {RUNTIMES.map((rt) => {
+            {runtimes.map((rt) => {
               const meta = t.catalog.runtime[rt.id]
               const d = detections[rt.id]
               const methods = installMethodsFor(rt, effectiveOS())

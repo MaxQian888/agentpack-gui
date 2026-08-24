@@ -98,6 +98,48 @@ function scriptInstall(
  */
 export const RUNTIMES: readonly Runtime[] = [
   {
+    id: "windows-terminal",
+    platforms: ["win"],
+    bin: "wt",
+    // `wt --version` opens a window instead of reporting a version. GUI mode
+    // makes detection use PATH + Get-AppxPackage without executing Terminal.
+    gui: true,
+    appBundles: [{ name: "Microsoft.WindowsTerminal" }],
+    install: {
+      win: {
+        file: "winget",
+        args: [
+          "install",
+          "-e",
+          "--id",
+          "Microsoft.WindowsTerminal",
+          "--accept-source-agreements",
+          "--accept-package-agreements",
+          "--disable-interactivity",
+        ],
+      },
+      mac: null,
+      linux: null,
+    },
+    upgrade: {
+      win: {
+        file: "winget",
+        args: [
+          "upgrade",
+          "-e",
+          "--id",
+          "Microsoft.WindowsTerminal",
+          "--accept-source-agreements",
+          "--accept-package-agreements",
+          "--disable-interactivity",
+        ],
+      },
+    },
+    downloadUrl: "https://learn.microsoft.com/windows/terminal/install",
+    manualNote:
+      "Windows Terminal requires Windows 10 2004 (build 19041) or later — see https://learn.microsoft.com/windows/terminal/install",
+  },
+  {
     id: "node",
     bin: "node",
     install: {
@@ -853,6 +895,11 @@ export function findCli(id: string): CliTool | undefined {
 
 export function findRuntime(id: string): Runtime | undefined {
   return RUNTIMES.find((r) => r.id === id)
+}
+
+/** Environment dependencies relevant to this OS, in catalog display order. */
+export function runtimesForOS(os: OS): Runtime[] {
+  return RUNTIMES.filter((runtime) => !runtime.platforms || runtime.platforms.includes(os))
 }
 
 export function findSkill(id: string): SkillDef | undefined {

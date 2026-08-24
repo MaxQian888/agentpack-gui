@@ -131,8 +131,8 @@ export const zhCN = {
         body: "第一次用？选一套组合，一键预填一批合理的工具。",
       },
       environment: {
-        title: "运行时",
-        body: "Node、Python、Bun 和 uv —— 助手依赖的工具链。缺什么 agentpack 会帮你装上。",
+        title: "运行环境",
+        body: "终端、Node、Python、Bun 和 uv —— 助手依赖的工具。缺什么 agentpack 会帮你装上。",
       },
       clis: {
         title: "CLI",
@@ -228,7 +228,7 @@ export const zhCN = {
     dryRun: "演练模式：agentpack 只展示会做什么 —— 不碰任何文件、不真正安装。关掉它才会真正执行。",
     preset: "预设会替你预选一套合理的组合。先用「推荐」，之后随时能改。",
     cli: "CLI 就是你在终端里运行的 AI 助手（Claude Code、Codex）。装好后会多出对应命令。",
-    runtime: "Node.js、Python 这类运行时，是 CLI 和部分 MCP 服务运行所需的引擎。",
+    runtime: "运行环境包括终端，以及 CLI 和 MCP 服务依赖的 Node.js、Python 等工具。",
     skills: "技能是可复用的指令包，教 AI 把某类工程任务做好。",
     mcp: "MCP 服务是给 AI 扩能力的插件 —— 联网、记忆、GitHub 等等。",
     network:
@@ -318,20 +318,19 @@ export const zhCN = {
   },
 
   environment: {
-    title: "运行时环境",
-    subtitle:
-      "Agent CLI 需要 Node.js（含 npm）。Bun 是可选的更快运行时；Python 与 uv 用于 Python 系 MCP 服务与工具。",
-    summaryLabel: "运行时状态概览",
-    actionsLabel: "运行时检测控制",
-    catalogPanel: "运行时目录",
+    title: "运行环境",
+    subtitle: "检测 Agent 工具依赖的终端与运行时，并直接安装缺失项。",
+    summaryLabel: "运行环境状态概览",
+    actionsLabel: "运行环境检测控制",
+    catalogPanel: "运行环境目录",
     detectionTitle: "检测与安装",
-    metricCatalog: "运行时",
+    metricCatalog: "工具",
     metricInstalled: "已安装",
     metricMissing: "缺失",
     metricPending: "等待桌面端检测",
-    detecting: "正在检测已安装的运行时…",
-    notTauri: "检测运行时需要桌面应用 —— 这里下方的版本会一直是空的。",
-    installHint: "缺少运行时？直接安装即可——每次安装后会重新检测。",
+    detecting: "正在检测已安装的环境工具…",
+    notTauri: "检测运行环境需要桌面应用 —— 这里下方的版本会一直是空的。",
+    installHint: "缺少工具？直接安装即可——每次安装后会重新检测。",
     noInstaller: "本系统没有自动安装方式——请参见下方说明。",
     recheck: "重新检测",
     notManaged: (manager: string) =>
@@ -1065,6 +1064,10 @@ export const zhCN = {
       },
     } as Record<string, { title: string; description: string }>,
     runtime: {
+      "windows-terminal": {
+        title: "Windows 终端",
+        description: "微软的新式终端应用，支持 Windows 10 2004 及以上版本。",
+      },
       node: {
         title: "Node.js",
         description: "JavaScript 运行时 + npm —— 安装与运行 agent CLI 的必备环境。",
@@ -2619,7 +2622,7 @@ export const zhCN = {
     overviewSkills: "技能",
     overviewProviders: "供应商",
     overviewRelay: "中转",
-    sectionClis: "CLI 与运行时",
+    sectionClis: "CLI 与运行环境",
     sectionSkills: "已安装技能",
     sectionMcp: "MCP 服务",
     sectionRelay: "API 端点（中转）",

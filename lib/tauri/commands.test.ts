@@ -96,6 +96,22 @@ it("detectRuntime stops at the primary bin when it is installed", async () => {
   expect((invoke as jest.Mock).mock.calls.length).toBe(calls + 1)
 })
 
+it("detects a GUI environment tool without executing it", async () => {
+  ;(invoke as jest.Mock).mockResolvedValueOnce({ installed: true })
+
+  await detectRuntime({
+    bin: "wt",
+    gui: true,
+    appBundles: [{ name: "Microsoft.WindowsTerminal" }],
+  })
+
+  expect(invoke).toHaveBeenCalledWith("detect_cli", {
+    bin: "wt",
+    gui: true,
+    appBundles: [{ name: "Microsoft.WindowsTerminal" }],
+  })
+})
+
 it("latestVersion passes the package under `package`", async () => {
   await latestVersion("@openai/codex")
   expect(invoke).toHaveBeenCalledWith("latest_version", { package: "@openai/codex" })

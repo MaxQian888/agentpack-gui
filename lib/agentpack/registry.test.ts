@@ -10,6 +10,7 @@ import {
   installMethodsFor,
   runtimePkgManager,
   runtimeUpgradeCommandFor,
+  runtimesForOS,
   upgradeCommandFor,
 } from "./registry"
 import { PRESETS, findPreset } from "./presets"
@@ -38,6 +39,32 @@ it("python probes python3 as a fallback; uv installs on every OS", () => {
   for (const os of ["win", "mac", "linux"] as const) {
     expect(findRuntime("uv")?.install[os]).not.toBeNull()
   }
+})
+
+it("offers Windows Terminal detection and installation only on Windows", () => {
+  const terminal = findRuntime("windows-terminal")
+
+  expect(terminal).toMatchObject({
+    bin: "wt",
+    gui: true,
+    platforms: ["win"],
+    appBundles: [{ name: "Microsoft.WindowsTerminal" }],
+  })
+  expect(terminal?.install.win).toEqual({
+    file: "winget",
+    args: [
+      "install",
+      "-e",
+      "--id",
+      "Microsoft.WindowsTerminal",
+      "--accept-source-agreements",
+      "--accept-package-agreements",
+      "--disable-interactivity",
+    ],
+  })
+  expect(runtimesForOS("win").map((runtime) => runtime.id)).toContain("windows-terminal")
+  expect(runtimesForOS("mac").map((runtime) => runtime.id)).not.toContain("windows-terminal")
+  expect(runtimesForOS("linux").map((runtime) => runtime.id)).not.toContain("windows-terminal")
 })
 
 it("everything preset covers the whole MCP registry", () => {

@@ -135,8 +135,8 @@ export const en = {
         body: "New here? Pick a bundle and it pre-fills a sensible set of tools in one tap.",
       },
       environment: {
-        title: "Runtimes",
-        body: "Node, Python, Bun and uv — the toolchains the assistants need. agentpack installs any that are missing.",
+        title: "Environment",
+        body: "Terminal, Node, Python, Bun and uv — the tools the assistants need. agentpack installs any that are missing.",
       },
       clis: {
         title: "CLIs",
@@ -241,7 +241,7 @@ export const en = {
       "A preset pre-selects a sensible bundle. Start with Recommended; change anything afterward.",
     cli: "CLIs are the AI assistants you run in a terminal (Claude Code, Codex). Installing one adds its command.",
     runtime:
-      "Runtimes like Node.js and Python are the engines the CLIs and some MCP servers need to run.",
+      "Environment tools include the terminal and runtimes the CLIs and MCP servers need to run.",
     skills:
       "Skills are reusable instruction packs that teach the AI how to do specific engineering tasks well.",
     mcp: "MCP servers are plugins that extend the AI with new abilities — web access, memory, GitHub, and more.",
@@ -349,20 +349,20 @@ export const en = {
   },
 
   environment: {
-    title: "Runtime environment",
+    title: "Environment",
     subtitle:
-      "The agent CLIs need Node.js (with npm). Bun is an optional faster runtime; Python and uv power Python-based MCP servers and tooling.",
-    summaryLabel: "Runtime status summary",
-    actionsLabel: "Runtime detection controls",
-    catalogPanel: "Runtime catalog",
+      "Check the terminal and runtimes your agent tools depend on, then install anything missing.",
+    summaryLabel: "Environment status summary",
+    actionsLabel: "Environment detection controls",
+    catalogPanel: "Environment catalog",
     detectionTitle: "Detection and installation",
-    metricCatalog: "Runtimes",
+    metricCatalog: "Tools",
     metricInstalled: "Installed",
     metricMissing: "Missing",
     metricPending: "Waiting for desktop detection",
-    detecting: "Detecting installed runtimes…",
-    notTauri: "Runtime detection needs the desktop app — here the versions below stay blank.",
-    installHint: "Missing a runtime? Install it directly — detection re-runs after each install.",
+    detecting: "Detecting installed environment tools…",
+    notTauri: "Environment detection needs the desktop app — here the versions below stay blank.",
+    installHint: "Missing a tool? Install it directly — detection re-runs after each install.",
     noInstaller: "No automated installer on this OS — see the note below.",
     recheck: "Re-detect",
     notManaged: (manager: string) =>
@@ -1148,6 +1148,10 @@ export const en = {
       },
     } as Record<string, { title: string; description: string }>,
     runtime: {
+      "windows-terminal": {
+        title: "Windows Terminal",
+        description: "Microsoft's modern terminal app — available on Windows 10 2004 and later.",
+      },
       node: {
         title: "Node.js",
         description: "JavaScript runtime + npm — required to install and run the agent CLIs.",
@@ -2808,7 +2812,7 @@ export const en = {
     overviewSkills: "Skills",
     overviewProviders: "Providers",
     overviewRelay: "Relay",
-    sectionClis: "CLIs & runtimes",
+    sectionClis: "CLIs & environment",
     sectionSkills: "Installed skills",
     sectionMcp: "MCP servers",
     sectionRelay: "API endpoint (relay)",

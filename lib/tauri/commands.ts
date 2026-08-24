@@ -199,10 +199,12 @@ export const detectCli = (bin: string, gui: boolean, appBundles?: readonly AppBu
 export async function detectRuntime(rt: {
   bin: string
   altBin?: string
+  gui?: boolean
+  appBundles?: readonly AppBundle[]
 }): Promise<{ installed: boolean; version?: string }> {
-  const d = await detectCli(rt.bin, false)
+  const d = await detectCli(rt.bin, !!rt.gui, rt.appBundles)
   if (d.installed || !rt.altBin) return d
-  return detectCli(rt.altBin, false)
+  return detectCli(rt.altBin, !!rt.gui, rt.appBundles)
 }
 
 /** Latest published version of an npm package, or null if it can't be determined. */
