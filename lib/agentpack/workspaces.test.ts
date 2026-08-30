@@ -33,6 +33,7 @@ const ALL: readonly SectionKey[] = [
   "clis",
   "skills",
   "mcp",
+  "pi",
   "network",
   "cleanup",
   "ccswitch",

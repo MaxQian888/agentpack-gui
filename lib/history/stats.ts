@@ -18,7 +18,13 @@ export interface SessionCost {
 }
 
 export function sessionCost(s: SessionSummary): SessionCost {
-  if (s.cost != null) return { value: s.cost, estimated: false, unpriced: false }
+  if (s.cost != null) {
+    return {
+      value: s.cost,
+      estimated: s.costBasis === "sourceEstimate",
+      unpriced: false,
+    }
+  }
   const est = estimateCost(s.source, s.model, s.usage)
   if (est != null) return { value: est, estimated: true, unpriced: false }
   return { value: 0, estimated: false, unpriced: true }

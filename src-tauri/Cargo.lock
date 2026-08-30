@@ -25,6 +25,7 @@ version = "0.15.0"
 dependencies = [
  "dirs",
  "flate2",
+ "glob",
  "keyring",
  "libc",
  "log",

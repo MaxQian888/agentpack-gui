@@ -66,6 +66,12 @@ import {
   httpGet,
   providerLoad,
   providerWrite,
+  piManagementScan,
+  piPackageSearch,
+  piAuthStatus,
+  piSessionDirsGet,
+  piSessionDirsSet,
+  launchPiInteractive,
 } from "./commands"
 import { Channel, invoke } from "@tauri-apps/api/core"
 
@@ -171,6 +177,29 @@ it("runCommand forwards per-run env overrides (how a recovery retry works)", asy
   })
   const call = (invoke as jest.Mock).mock.calls.find(([c]) => c === "run_command")
   expect(call![1].env).toEqual({ HTTPS_PROXY: "http://127.0.0.1:7890" })
+})
+
+it("runCommand forwards a project working directory", async () => {
+  await runCommand({ file: "pi", args: ["list"], cwd: "/work/repo" }, jest.fn())
+  const calls = (invoke as jest.Mock).mock.calls.filter(([c]) => c === "run_command")
+  expect(calls.at(-1)?.[1].cwd).toBe("/work/repo")
+})
+
+it("Pi management wrappers preserve scope and refresh intent", async () => {
+  await piManagementScan({ kind: "project", cwd: "/work/repo" })
+  expect(invoke).toHaveBeenCalledWith("pi_management_scan", {
+    scope: { kind: "project", cwd: "/work/repo" },
+  })
+  await piPackageSearch("memory")
+  expect(invoke).toHaveBeenCalledWith("pi_package_search", { query: "memory" })
+  await piAuthStatus(false)
+  expect(invoke).toHaveBeenCalledWith("pi_auth_status", { refresh: false })
+  await piSessionDirsGet()
+  expect(invoke).toHaveBeenCalledWith("pi_session_dirs_get")
+  await piSessionDirsSet(["/history/pi"])
+  expect(invoke).toHaveBeenCalledWith("pi_session_dirs_set", { dirs: ["/history/pi"] })
+  await launchPiInteractive("/work/repo")
+  expect(invoke).toHaveBeenCalledWith("launch_pi_interactive", { cwd: "/work/repo" })
 })
 
 it("simple wrappers forward their arguments to the right command", async () => {

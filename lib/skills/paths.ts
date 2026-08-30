@@ -15,6 +15,8 @@ export function skillsDirFor(paths: Paths, source: SkillSource): string {
       return paths.codexSkillsDir
     case "opencode":
       return paths.opencodeSkillsDir
+    case "pi":
+      return paths.piSkillsDir
     case "agents":
       return paths.agentsSkillsDir
   }

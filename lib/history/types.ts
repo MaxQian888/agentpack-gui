@@ -10,10 +10,12 @@
  */
 
 /** The agent CLI a session belongs to. */
-export type HistorySource = "claude" | "codex" | "opencode"
+export type HistorySource = "claude" | "codex" | "opencode" | "pi"
 
 /** Every source in canonical display order. */
-export const HISTORY_SOURCES: HistorySource[] = ["claude", "codex", "opencode"]
+export const HISTORY_SOURCES: HistorySource[] = ["claude", "codex", "opencode", "pi"]
+
+export type CostBasis = "billed" | "sourceEstimate"
 
 /**
  * Unified token accounting. The component fields are the disjoint parts summing
@@ -45,6 +47,10 @@ export interface SessionSummary {
   usage: TokenUsage
   /** Real USD cost when the source records it (OpenCode); otherwise null. */
   cost: number | null
+  /** Provenance for a source-provided cost; absent means agentpack prices tokens. */
+  costBasis?: CostBasis | null
+  /** Number of leaves in a tree session; linear sources default to one. */
+  branchCount?: number
   /** Epoch milliseconds. */
   startedAt: number
   updatedAt: number
@@ -122,6 +128,20 @@ export interface Message {
 export interface SessionDetail {
   summary: SessionSummary
   messages: Message[]
+  tree?: SessionTree
+}
+
+export interface SessionTreeNode {
+  id: string
+  parentId: string | null
+  kind: string
+  label: string | null
+  message: Message | null
+}
+
+export interface SessionTree {
+  activeLeafId: string
+  nodes: SessionTreeNode[]
 }
 
 /** A source that failed to scan (missing dir is absent, not an error). */
@@ -157,6 +177,8 @@ export type PackedEvent = [
   cacheRead: number,
   cacheWrite: number,
   reasoning: number,
+  /** Source-provided cost in millionths of USD; absent/-1 means unavailable. */
+  reportedCostMicros?: number,
 ]
 
 /** Field offsets into a {@link PackedEvent}, so callers never index by magic number. */
@@ -168,6 +190,7 @@ export const EV = {
   cacheRead: 4,
   cacheWrite: 5,
   reasoning: 6,
+  reportedCost: 7,
 } as const
 
 /**
@@ -193,6 +216,7 @@ export interface SessionSeries {
   events: PackedEvent[]
   /** Sorted most-called first by the Rust side. */
   tools: ToolStat[]
+  costBasis?: CostBasis | null
 }
 
 export interface UsageSeriesResult {

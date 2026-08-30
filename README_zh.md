@@ -4,7 +4,7 @@
 
 **看清 AI 编程到底花了多少钱，顺手把各个 CLI 的配置也管了。**
 
-一个跨平台桌面应用，管 Claude Code、Codex 和 OpenCode：从你自己的会话历史里读出真实
+一个跨平台桌面应用，管 Claude Code、Codex、OpenCode 和 Pi：从你自己的会话历史里读出真实
 花销，然后在同一个窗口里装 CLI、切账号和镜像、管理 skills 和 MCP 服务器。
 
 [English](./README.md) · [下载](https://github.com/Arxtect/agentpack-gui/releases) · [参与贡献](./CONTRIBUTING.md)
@@ -32,22 +32,25 @@ agentpack 把两件事放进同一个窗口：看到花销，然后当场处理 
 
 **花销与历史**
 
-- 直接从磁盘**只读**解析 Claude Code（JSONL）、Codex（rollout JSONL）和 OpenCode
-  （SQLite）的会话历史。
+- 直接从磁盘**只读**解析 Claude Code（JSONL）、Codex（rollout JSONL）、OpenCode
+  （SQLite）和 Pi（v1–v3 树形 JSONL）的会话历史。
 - 首页显示本月至今花销；完整看板包含成本趋势、5 小时计费窗口、消耗速率、按模型和按项目
   的拆分。
-- 来源本身记录了费用的（OpenCode）是**精确值**，其余是**按 token 数估算**。没有已知价格
+- 来源本身记录了费用的（OpenCode）是**精确值**；Pi 的 `usage.cost.total` 明确标为
+  **来源估算**；其余是**按 token 数估算**。没有已知价格
   的模型会被明确标为「未定价」，绝不当成真实的 `$0` 混进总额。
 - 浏览和阅读历史对话，包括 sub-agent 的运行记录。
 - 导出 CSV/JSON 给表格用，或导出一张可分享的卡片 / Markdown 摘要。
 
 **安装与配置**
 
-- 安装或升级 Claude Code、Codex、OpenCode、cc-switch、cc-connect，以及它们依赖的
+- 安装或升级 Claude Code、Codex、OpenCode、Pi、cc-switch、cc-connect，以及它们依赖的
   Node / Bun / Python / uv；在 Windows 10 2004 及以上版本中，还会检测并安装缺失的
   Windows 终端。命令输出实时流式显示，升级会匹配当初的安装方式，不会留下两份互相遮蔽
   的副本。
-- **Skills 管理**，覆盖 `~/.claude`、`~/.codex`、`~/.opencode` 和 `~/.agents`：查看已装
+- **Pi 管理**：管理全局/项目 Packages 与四类资源过滤，查看项目 Trust 和脱敏后的
+  Provider 认证状态；登录/登出仍由 Pi 官方交互流程完成。
+- **Skills 管理**，覆盖 `~/.claude`、`~/.codex`、`~/.opencode`、`~/.pi/agent` 和 `~/.agents`：查看已装
   内容、从 GitHub 仓库安装、检查更新、删除前自动备份、处理重名冲突。
 - **MCP 服务器**：精选目录 + 官方 MCP registry 搜索，健康检查会真的跑一次 `initialize`
   握手，支持 `mcpServers` 配置块的导入导出。

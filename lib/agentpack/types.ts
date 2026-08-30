@@ -24,6 +24,8 @@ export interface Command {
   file: string
   /** Arguments, already split (no shell parsing). */
   args: string[]
+  /** Optional working directory; used by project-scoped package managers. */
+  cwd?: string
 }
 
 /**
@@ -90,6 +92,7 @@ export interface CliTool {
     | "cc-switch"
     | "cc-connect"
     | "opencode"
+    | "pi"
     // The desktop apps sit alongside their CLIs rather than replacing them:
     // both can be installed, and they share `~/.claude` / `~/.codex` config.
     | "claude-desktop"
@@ -132,6 +135,8 @@ export interface CliTool {
    * EBADENGINE deep in the log. Only meaningful for npm-installed CLIs.
    */
   minNodeMajor?: number
+  /** Exact semver floor when the package requires more than a whole Node major. */
+  minNodeVersion?: string
   /** Per-OS install command. `null` => not installable that way on this OS. */
   install: Record<OS, Command | null>
   /**
@@ -397,6 +402,13 @@ export interface Paths {
   /** `~/.config/opencode/opencode.json` (XDG-style path even on Windows). */
   opencodeConfig: string
   opencodeSkillsDir: string
+  piSettings: string
+  piAuth: string
+  piTrust: string
+  piSessionsDir: string
+  piNpmDir: string
+  piGitDir: string
+  piSkillsDir: string
   /** Shared canonical dir used by the skills.sh CLI and read by OpenCode. */
   agentsSkillsDir: string
   ccSwitchSettings: string

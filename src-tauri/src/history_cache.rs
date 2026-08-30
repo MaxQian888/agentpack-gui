@@ -25,12 +25,12 @@ use crate::history::{SessionSeries, SessionSummary};
 /// same story, unchanged files holding stale (null) values.
 /// v5 deduped Claude assistant turns by `(message.id, requestId)`; every cached
 /// Claude summary before it over-counted tokens and messages by roughly 2.4×.
-pub const CACHE_VERSION: u32 = 5;
+pub const CACHE_VERSION: u32 = 7;
 
 /// Bump when the *series* shape or its extracted values change. Versioned
 /// separately from [`CACHE_VERSION`] so a change to one doesn't throw away the
 /// other — they are rebuilt from the same pass but stored apart.
-pub const SERIES_VERSION: u32 = 1;
+pub const SERIES_VERSION: u32 = 2;
 
 /// One cached file: the signature we validate against plus its parsed summary.
 #[derive(Serialize, Deserialize, Clone)]
@@ -40,6 +40,8 @@ pub struct CachedEntry {
   /// File size in bytes — pairs with `mtime_ms` to detect any change.
   pub size: u64,
   pub summary: SessionSummary,
+  #[serde(default)]
+  pub warnings: Vec<String>,
 }
 
 /// The whole cache: version tag + `absolute path → entry`.
@@ -256,6 +258,7 @@ mod tests {
         mtime_ms: 111,
         size: 222,
         summary: sample_summary("a"),
+        warnings: vec!["warning survives cache".into()],
       },
     );
     save(&cache);
@@ -265,6 +268,7 @@ mod tests {
     let e = loaded.entries.get("a.jsonl").expect("entry present");
     assert_eq!(e.mtime_ms, 111);
     assert_eq!(e.size, 222);
+    assert_eq!(e.warnings, vec!["warning survives cache"]);
     // `SessionSummary` fields are private; check the round-tripped value via serde.
     let v = serde_json::to_value(&e.summary).unwrap();
     assert_eq!(v["model"], "m");

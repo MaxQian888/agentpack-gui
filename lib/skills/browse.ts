@@ -6,14 +6,14 @@ import { skillDescription, skillName, splitFrontmatter } from "./frontmatter"
 import type { InstalledSkill, SkillRow, SkillSource } from "./types"
 
 /** Every scan source, in display order (filter pills, target checkboxes). */
-export const SKILL_SOURCES: readonly SkillSource[] = ["claude", "codex", "opencode", "agents"]
+export const SKILL_SOURCES: readonly SkillSource[] = ["claude", "codex", "opencode", "pi", "agents"]
 
 /**
  * Metadata source priority when the same dir name exists in several roots: the
  * canonical `agents` copy wins (symlinks elsewhere point at it), then claude,
  * codex, opencode.
  */
-const SOURCE_PRIORITY: readonly SkillSource[] = ["agents", "claude", "codex", "opencode"]
+const SOURCE_PRIORITY: readonly SkillSource[] = ["agents", "claude", "codex", "pi", "opencode"]
 
 /** The entry whose content/metadata represents the row (canonical copy first). */
 export function primaryEntry(row: SkillRow): InstalledSkill | undefined {
@@ -103,7 +103,13 @@ export function sortRows(rows: SkillRow[], sort: SkillSort): SkillRow[] {
 }
 
 export function countsBySource(skills: InstalledSkill[]): Record<SkillSource, number> {
-  const counts: Record<SkillSource, number> = { claude: 0, codex: 0, opencode: 0, agents: 0 }
+  const counts: Record<SkillSource, number> = {
+    claude: 0,
+    codex: 0,
+    opencode: 0,
+    pi: 0,
+    agents: 0,
+  }
   for (const skill of skills) counts[skill.source] += 1
   return counts
 }

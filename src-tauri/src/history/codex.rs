@@ -530,7 +530,11 @@ pub(super) fn codex_detail(
     }
   }
   flush(&mut cur, &mut messages);
-  SessionDetail { summary, messages }
+  SessionDetail {
+    summary,
+    messages,
+    tree: None,
+  }
 }
 
 /// Every Codex rollout with its signature, plus the session-index titles the

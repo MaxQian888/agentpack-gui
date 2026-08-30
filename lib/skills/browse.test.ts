@@ -157,6 +157,6 @@ describe("countsBySource", () => {
       skill({ source: "claude", dirName: "b" }),
       skill({ source: "agents", dirName: "a" }),
     ])
-    expect(counts).toEqual({ claude: 2, codex: 0, opencode: 0, agents: 1 })
+    expect(counts).toEqual({ claude: 2, codex: 0, opencode: 0, pi: 0, agents: 1 })
   })
 })

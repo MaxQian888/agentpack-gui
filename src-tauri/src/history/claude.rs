@@ -337,6 +337,8 @@ pub(super) fn claude_detail(path: &Path, lines: &[Value]) -> SessionDetail {
       message_count: 0,
       usage: TokenUsage::default(),
       cost: None,
+      cost_basis: None,
+      branch_count: 1,
       started_at: 0,
       updated_at: 0,
       path: path.to_string_lossy().into_owned(),
@@ -450,7 +452,11 @@ pub(super) fn claude_detail(path: &Path, lines: &[Value]) -> SessionDetail {
       messages.push(msg);
     }
   }
-  SessionDetail { summary, messages }
+  SessionDetail {
+    summary,
+    messages,
+    tree: None,
+  }
 }
 
 /// Absolute path of an externalized tool result, from either the

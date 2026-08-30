@@ -86,6 +86,7 @@ const SECTION_LABEL: Record<SectionKey, (m: Messages) => string> = {
   clis: (m) => m.menu.clis,
   skills: (m) => m.menu.skills,
   mcp: (m) => m.menu.mcp,
+  pi: (m) => m.menu.pi,
   network: (m) => m.menu.network,
   cleanup: (m) => m.menu.cleanup,
   ccswitch: (m) => m.menu.ccswitch,

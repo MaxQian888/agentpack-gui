@@ -15,6 +15,13 @@ pub struct Paths {
   codex_skills_dir: String,
   opencode_config: String,
   opencode_skills_dir: String,
+  pi_settings: String,
+  pi_auth: String,
+  pi_trust: String,
+  pi_sessions_dir: String,
+  pi_npm_dir: String,
+  pi_git_dir: String,
+  pi_skills_dir: String,
   agents_skills_dir: String,
   cc_switch_settings: String,
   cc_switch_db: String,
@@ -89,11 +96,19 @@ pub fn codex_home(home: &std::path::Path) -> PathBuf {
     .unwrap_or_else(|_| home.join(".codex"))
 }
 
+/// Pi's agent data root, honoring the same override as the official CLI.
+pub fn pi_home(home: &std::path::Path) -> PathBuf {
+  std::env::var("PI_CODING_AGENT_DIR")
+    .map(PathBuf::from)
+    .unwrap_or_else(|_| home.join(".pi").join("agent"))
+}
+
 #[tauri::command]
 pub fn get_paths() -> Result<Paths, String> {
   let home = dirs::home_dir().ok_or("no home dir")?;
   let claude = home.join(".claude");
   let codex = codex_home(&home);
+  let pi = pi_home(&home);
   let ccsw = home.join(".cc-switch");
   let ccconn = home.join(".cc-connect");
   let agentpack = home.join(".agentpack");
@@ -111,6 +126,13 @@ pub fn get_paths() -> Result<Paths, String> {
     // opencode.ai docs and a real install); skills.sh installs there too.
     opencode_config: s(home.join(".config").join("opencode").join("opencode.json")),
     opencode_skills_dir: s(home.join(".config").join("opencode").join("skills")),
+    pi_settings: s(pi.join("settings.json")),
+    pi_auth: s(pi.join("auth.json")),
+    pi_trust: s(pi.join("trust.json")),
+    pi_sessions_dir: s(pi.join("sessions")),
+    pi_npm_dir: s(pi.join("npm")),
+    pi_git_dir: s(pi.join("git")),
+    pi_skills_dir: s(pi.join("skills")),
     // Shared canonical dir used by the skills.sh CLI (symlink targets) and read
     // directly by OpenCode.
     agents_skills_dir: s(home.join(".agents").join("skills")),
@@ -269,6 +291,13 @@ mod tests {
     // OpenCode uses an XDG-style ~/.config even on Windows.
     assert_eq!(p.opencode_config, join(".config/opencode/opencode.json"));
     assert_eq!(p.opencode_skills_dir, join(".config/opencode/skills"));
+    assert_eq!(p.pi_settings, join(".pi/agent/settings.json"));
+    assert_eq!(p.pi_auth, join(".pi/agent/auth.json"));
+    assert_eq!(p.pi_trust, join(".pi/agent/trust.json"));
+    assert_eq!(p.pi_sessions_dir, join(".pi/agent/sessions"));
+    assert_eq!(p.pi_npm_dir, join(".pi/agent/npm"));
+    assert_eq!(p.pi_git_dir, join(".pi/agent/git"));
+    assert_eq!(p.pi_skills_dir, join(".pi/agent/skills"));
     assert_eq!(p.agents_skills_dir, join(".agents/skills"));
     assert_eq!(p.cc_switch_settings, join(".cc-switch/settings.json"));
     assert_eq!(p.cc_switch_db, join(".cc-switch/cc-switch.db"));
@@ -287,6 +316,21 @@ mod tests {
     assert!(p.codex_auth.starts_with("/elsewhere/codex"));
     assert!(p.codex_skills_dir.starts_with("/elsewhere/codex"));
     // …and only that group: Claude's paths stay under the real home.
+    assert!(p.claude_config.starts_with(&p.home));
+  }
+
+  #[test]
+  fn get_paths_relocates_the_pi_group_when_pi_agent_dir_is_set() {
+    let _lock = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = EnvRestore::set(&[("PI_CODING_AGENT_DIR", Some("/elsewhere/pi"))]);
+    let p = get_paths().expect("home dir resolves");
+    assert!(p.pi_settings.starts_with("/elsewhere/pi"));
+    assert!(p.pi_auth.starts_with("/elsewhere/pi"));
+    assert!(p.pi_trust.starts_with("/elsewhere/pi"));
+    assert!(p.pi_sessions_dir.starts_with("/elsewhere/pi"));
+    assert!(p.pi_npm_dir.starts_with("/elsewhere/pi"));
+    assert!(p.pi_git_dir.starts_with("/elsewhere/pi"));
+    assert!(p.pi_skills_dir.starts_with("/elsewhere/pi"));
     assert!(p.claude_config.starts_with(&p.home));
   }
 }

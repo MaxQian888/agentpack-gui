@@ -56,18 +56,18 @@ function renderCatalog(scan: SkillsScanResult = emptyScan) {
   )
 }
 
-it("offers all four skill roots as one-click install chips", () => {
+it("offers all five skill roots as one-click install chips", () => {
   renderCatalog()
-  // 6 bundled skills × 4 roots, each a single toggle rather than a checkbox
+  // 6 bundled skills × 5 roots, each a single toggle rather than a checkbox
   // plus a pair of buttons that only appear once it is ticked.
-  expect(screen.getAllByTitle(/^Install into /).length).toBe(24)
+  expect(screen.getAllByTitle(/^Install into /).length).toBe(30)
   expect(screen.queryByRole("checkbox")).not.toBeInTheDocument()
 })
 
 it("marks the roots a bundled skill is already installed in", () => {
   renderCatalog(rustInstalled)
   expect(screen.getByTitle("Delete from Claude Code")).toBeInTheDocument()
-  expect(screen.getAllByTitle(/^Install into /).length).toBe(23)
+  expect(screen.getAllByTitle(/^Install into /).length).toBe(29)
 })
 
 it("installs into a root in one click, through the runner", async () => {

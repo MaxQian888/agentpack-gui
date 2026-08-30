@@ -140,10 +140,16 @@ describe("npm-managed CLIs", () => {
     for (const tool of npmCli) {
       const pkg = tool.npmPackage!
       for (const os of ["win", "mac", "linux"] as const) {
-        expect(tool.install[os]).toEqual({ file: "npm", args: ["install", "-g", pkg] })
+        const installArgs =
+          tool.id === "pi" ? ["install", "-g", "--ignore-scripts", pkg] : ["install", "-g", pkg]
+        const upgradeArgs =
+          tool.id === "pi"
+            ? ["install", "-g", "--ignore-scripts", `${pkg}@latest`]
+            : ["install", "-g", `${pkg}@latest`]
+        expect(tool.install[os]).toEqual({ file: "npm", args: installArgs })
         expect(tool.upgrade?.[os]).toEqual({
           file: "npm",
-          args: ["install", "-g", `${pkg}@latest`],
+          args: upgradeArgs,
         })
         expect(tool.uninstall?.[os]).toEqual({ file: "npm", args: ["uninstall", "-g", pkg] })
       }
@@ -153,11 +159,9 @@ describe("npm-managed CLIs", () => {
   it("offers npm first, then pnpm and bun, on every OS", () => {
     for (const tool of npmCli) {
       for (const os of ["win", "mac", "linux"] as const) {
-        expect(
-          installMethodsFor(tool, os)
-            .map((m) => m.id)
-            .slice(0, 3)
-        ).toEqual(["npm", "pnpm", "bun"])
+        const methods = installMethodsFor(tool, os).map((m) => m.id)
+        if (tool.id === "pi") expect(methods).toEqual(["npm"])
+        else expect(methods.slice(0, 3)).toEqual(["npm", "pnpm", "bun"])
       }
     }
   })
@@ -168,11 +172,29 @@ describe("npm-managed CLIs", () => {
   it("only claims a Node floor for packages that publish one", () => {
     const floors: Record<string, number> = {
       "claude-code": 22,
+      pi: 22,
       "gemini-cli": 20,
       "qwen-code": 22,
       auggie: 20,
     }
     for (const tool of CLI_TOOLS) expect(tool.minNodeMajor).toBe(floors[tool.id])
+  })
+
+  it("installs Pi from the official package without lifecycle scripts", () => {
+    const pi = findCli("pi")!
+    expect(pi.bin).toBe("pi")
+    expect(pi.npmPackage).toBe("@earendil-works/pi-coding-agent")
+    expect(pi.minNodeVersion).toBe("22.19.0")
+    for (const os of ["win", "mac", "linux"] as const) {
+      expect(pi.install[os]).toEqual({
+        file: "npm",
+        args: ["install", "-g", "--ignore-scripts", "@earendil-works/pi-coding-agent"],
+      })
+      expect(pi.upgrade?.[os]).toEqual({
+        file: "npm",
+        args: ["install", "-g", "--ignore-scripts", "@earendil-works/pi-coding-agent@latest"],
+      })
+    }
   })
 
   it("ships no npm package upstream has deprecated or renamed away", () => {

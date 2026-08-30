@@ -86,6 +86,20 @@ describe("computeUsageStats", () => {
     expect(st.totals.cost).toBeCloseTo(30.25)
   })
 
+  it("classifies Pi's recorded model-price cost as an estimate", () => {
+    const st = computeUsageStats([
+      session({
+        source: "pi",
+        model: "custom-model",
+        cost: 0.75,
+        costBasis: "sourceEstimate",
+      }),
+    ])
+    expect(st.actualCost).toBe(0)
+    expect(st.estimatedCost).toBeCloseTo(0.75)
+    expect(st.unpriced.transcripts).toBe(0)
+  })
+
   it("groups by source, sorted by total tokens desc", () => {
     const st = computeUsageStats([
       session({ source: "codex", usage: usage({ total: 5 }) }),

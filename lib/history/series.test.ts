@@ -21,8 +21,12 @@ const ev = (
   output: number,
   cacheRead = 0,
   cacheWrite = 0,
-  reasoning = 0
-): PackedEvent => [ts, model, input, output, cacheRead, cacheWrite, reasoning]
+  reasoning = 0,
+  reportedCostMicros?: number
+): PackedEvent =>
+  reportedCostMicros === undefined
+    ? [ts, model, input, output, cacheRead, cacheWrite, reasoning]
+    : [ts, model, input, output, cacheRead, cacheWrite, reasoning, reportedCostMicros]
 
 const series = (over: Partial<SessionSeries> = {}): SessionSeries => ({
   id: "s",
@@ -69,6 +73,38 @@ describe("buildTimeline", () => {
       ALL_TIME
     )
     expect(t[0].model).toBe("b-model")
+  })
+
+  it("uses Pi's source-estimated event cost without treating it as unpriced", () => {
+    const t = buildTimeline(
+      [
+        series({
+          source: "pi",
+          costBasis: "sourceEstimate",
+          models: ["custom-model"],
+          events: [ev(day(10), 0, 1, 1, 0, 0, 0, 1250)],
+        }),
+      ],
+      ALL_TIME
+    )
+    expect(t[0].cost).toBeCloseTo(0.00125)
+    expect(t[0].unpriced).toBe(false)
+  })
+
+  it("uses OpenCode's billed event cost in the timeline", () => {
+    const t = buildTimeline(
+      [
+        series({
+          source: "opencode",
+          costBasis: "billed",
+          models: ["custom-model"],
+          events: [ev(day(10), 0, 1, 1, 0, 0, 0, 4200)],
+        }),
+      ],
+      ALL_TIME
+    )
+    expect(t[0].cost).toBeCloseTo(0.0042)
+    expect(t[0].unpriced).toBe(false)
   })
 
   it("leaves the model blank when the record named none", () => {

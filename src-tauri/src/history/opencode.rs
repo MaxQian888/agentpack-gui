@@ -96,6 +96,8 @@ fn opencode_row_to_summary(r: &rusqlite::Row) -> rusqlite::Result<SessionSummary
     message_count: r.get::<_, Option<i64>>(13)?.unwrap_or(0) as u64,
     usage,
     cost: r.get::<_, Option<f64>>(5)?,
+    cost_basis: Some("billed".into()),
+    branch_count: 1,
     started_at: r.get::<_, Option<i64>>(11)?.unwrap_or(0),
     updated_at: r.get::<_, Option<i64>>(12)?.unwrap_or(0),
     path: r.get(0)?,
@@ -162,6 +164,7 @@ pub(super) fn opencode_series(out: &mut Vec<SessionSeries>) -> Result<(), String
         models: Vec::new(),
         events: Vec::new(),
         tools: Vec::new(),
+        cost_basis: Some("billed".into()),
       },
     );
   }
@@ -202,7 +205,12 @@ pub(super) fn opencode_series(out: &mut Vec<SessionSeries>) -> Result<(), String
       .and_then(Value::as_i64)
       .unwrap_or(0);
     let idx = model_index(&mut entry.models, s(&data, "modelID"));
-    if let Some(ev) = pack_event(ts, idx, &usage) {
+    if let Some(mut ev) = pack_event(ts, idx, &usage) {
+      ev[7] = data
+        .get("cost")
+        .and_then(Value::as_f64)
+        .map(|cost| (cost * 1_000_000.0).round() as i64)
+        .unwrap_or(-1);
       entry.events.push(ev);
     }
   }
@@ -387,7 +395,11 @@ pub(super) fn opencode_detail(id: &str) -> Result<SessionDetail, String> {
       messages.push(msg);
     }
   }
-  Ok(SessionDetail { summary, messages })
+  Ok(SessionDetail {
+    summary,
+    messages,
+    tree: None,
+  })
 }
 
 #[cfg(test)]

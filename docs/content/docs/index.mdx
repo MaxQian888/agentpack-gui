@@ -8,6 +8,19 @@ description: Welcome to the agentpack-gui documentation.
 AgentPack keeps local AI coding tools, provider profiles, and optional more-token
 accounts in one desktop workspace.
 
+## Pi management
+
+Pi is managed as a first-class CLI. AgentPack detects and upgrades the official
+`@earendil-works/pi-coding-agent` package, reads v1–v3 tree sessions without
+loading the Pi SDK, and keeps Pi's source-estimated costs distinct from billed
+or AgentPack-estimated costs.
+
+Capabilities → Pi manages global and project Packages, their extensions,
+skills, prompts and themes, plus redacted Provider authentication status.
+Third-party Packages run with the user's full system permissions, so AgentPack
+shows the exact target and command before using Pi's official CLI. Login and
+logout stay in Pi's own interactive `/login` and `/logout` flow.
+
 ## Provider storage
 
 Accounts & relays supports two isolated storage backends:

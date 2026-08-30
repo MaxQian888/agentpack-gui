@@ -403,7 +403,13 @@ async function execute(step: StepDescriptor, ctx: ExecContext): Promise<StepReco
     }
     case "mergeFile":
     case "ccVisibleApps": {
-      const existing = await api.readTextFile(step.path)
+      let existing: string
+      try {
+        existing = await api.readTextFile(step.path)
+      } catch (error) {
+        if (await api.pathExists(step.path)) throw error
+        existing = ""
+      }
       // Lightweight rollback: back up the ORIGINAL file the first time agentpack
       // touches it, so a bad merge can be reverted from the dashboard. Only write
       // the backup when one doesn't exist yet — otherwise a later step (or a

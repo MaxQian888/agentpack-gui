@@ -31,6 +31,18 @@ export function majorVersion(raw: string | undefined): number | undefined {
   return parts(raw)?.[0]
 }
 
+/** Whether a noisy installed version is strictly below an exact semver floor. */
+export function isVersionBelow(installed: string | undefined, minimum: string): boolean {
+  const current = parts(installed)
+  const floor = parts(minimum)
+  if (!current || !floor) return false
+  for (let index = 0; index < 3; index += 1) {
+    if (current[index] < floor[index]) return true
+    if (current[index] > floor[index]) return false
+  }
+  return false
+}
+
 /**
  * True only when `latest` is strictly newer than `installed`. Returns false when
  * either version is missing/unparseable, so a failed lookup never shows Upgrade.

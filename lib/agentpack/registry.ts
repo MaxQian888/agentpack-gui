@@ -49,6 +49,20 @@ function npmCli(pkg: string): Pick<CliTool, "install" | "methods" | "upgrade" | 
   }
 }
 
+/** Pi's official install contract disables dependency lifecycle scripts. */
+function safeNpmCli(pkg: string): Pick<CliTool, "install" | "methods" | "upgrade" | "uninstall"> {
+  const command = (latest = false): Command => ({
+    file: "npm",
+    args: ["install", "-g", "--ignore-scripts", `${pkg}${latest ? "@latest" : ""}`],
+  })
+  return {
+    install: everyOs(() => command()),
+    methods: everyOs(() => [{ id: "npm", command: command() }]),
+    upgrade: everyOs(() => command(true)),
+    uninstall: everyOs(() => ({ file: "npm", args: ["uninstall", "-g", pkg] })),
+  }
+}
+
 /**
  * The package-manager channels plus the vendor's own install script, which is
  * the only route on a machine with no Node at all. `native` is deliberately
@@ -498,6 +512,15 @@ export const CLI_TOOLS: readonly CliTool[] = [
     bin: "opencode",
     npmPackage: "opencode-ai",
     ...npmCli("opencode-ai"),
+  },
+  {
+    id: "pi",
+    kind: "agent",
+    bin: "pi",
+    npmPackage: "@earendil-works/pi-coding-agent",
+    minNodeMajor: 22,
+    minNodeVersion: "22.19.0",
+    ...safeNpmCli("@earendil-works/pi-coding-agent"),
   },
   // ── Other terminal agents ──────────────────────────────────────────────────
   //

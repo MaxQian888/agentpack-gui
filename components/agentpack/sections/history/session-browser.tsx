@@ -31,6 +31,7 @@ import { dayKey, formatCost, formatTokens } from "@/lib/history/format"
 import { matchesQuery, sessionCost } from "@/lib/history/stats"
 import { SOURCE_COLORS } from "@/lib/history/display"
 import { detailCacheKey, getCachedDetail, setCachedDetail } from "@/lib/history/detail-cache"
+import { branchOptions, messagesForLeaf } from "@/lib/history/tree"
 import { useIncremental } from "@/hooks/use-incremental"
 import { Transcript } from "./transcript"
 import { FilterField, FilterToolbar, MoreFilters, ScopeChip, SearchField } from "../filter-bar"
@@ -77,6 +78,7 @@ function SessionRow({
     session.projectName,
     session.model || null,
     t.messages(session.messageCount),
+    (session.branchCount ?? 1) > 1 ? t.branches(session.branchCount ?? 1) : null,
     session.updatedAt > 0 ? format(new Date(session.updatedAt), "yyyy-MM-dd HH:mm") : null,
   ].filter(Boolean) as string[]
 
@@ -143,6 +145,7 @@ function TranscriptBody({ session }: { session: SessionSummary }) {
   const key = detailCacheKey(session.source, session.path, session.updatedAt)
   const [detail, setDetail] = useState<SessionDetail | null>(() => getCachedDetail(key) ?? null)
   const [error, setError] = useState(false)
+  const [selectedLeaf, setSelectedLeaf] = useState<string | null>(null)
 
   useEffect(() => {
     if (getCachedDetail(key)) return
@@ -171,7 +174,33 @@ function TranscriptBody({ session }: { session: SessionSummary }) {
       </div>
     )
   }
-  return <Transcript detail={detail} />
+  const options = detail.tree ? branchOptions(detail.tree, t.branchOption) : []
+  const activeLeaf = selectedLeaf ?? detail.tree?.activeLeafId
+  const selectedDetail =
+    detail.tree && activeLeaf
+      ? { ...detail, messages: messagesForLeaf(detail.tree, activeLeaf) }
+      : detail
+  return (
+    <div>
+      {detail.tree && options.length > 1 ? (
+        <div className="border-b bg-muted/30 px-4 py-2">
+          <Select value={activeLeaf} onValueChange={setSelectedLeaf}>
+            <SelectTrigger className="w-full sm:w-72" aria-label={t.branchView}>
+              <SelectValue placeholder={t.branchView} />
+            </SelectTrigger>
+            <SelectContent>
+              {options.map((option) => (
+                <SelectItem key={option.id} value={option.id}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      ) : null}
+      <Transcript detail={selectedDetail} />
+    </div>
+  )
 }
 
 function TranscriptDialog({

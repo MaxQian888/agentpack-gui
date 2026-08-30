@@ -580,6 +580,7 @@ pub(crate) fn elevated_wrapper(
 /// `(async)` on a sync fn makes Tauri run it on a worker thread instead of the
 /// main thread, so waiting on a slow subprocess never freezes the UI.
 #[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
 pub fn run_command(
   file: String,
   args: Vec<String>,
@@ -588,6 +589,7 @@ pub fn run_command(
   timeout_secs: Option<u64>,
   elevated: Option<bool>,
   env: Option<HashMap<String, String>>,
+  cwd: Option<String>,
 ) -> Result<i32, String> {
   let env = env.unwrap_or_default();
   // Resolve the target up front. On Windows every command is wrapped in `cmd /c`,
@@ -612,6 +614,13 @@ pub fn run_command(
   let _ = elevated; // no elevation path off Windows
 
   let mut cmd = build_command(&file, &args);
+  if let Some(cwd) = cwd.filter(|value| !value.trim().is_empty()) {
+    let dir = std::path::PathBuf::from(&cwd);
+    if !dir.is_dir() {
+      return Err(format!("working directory does not exist: {cwd}"));
+    }
+    cmd.current_dir(dir);
+  }
   // Detach stdin so an installer that prompts (e.g. a Y/N) gets EOF and fails
   // fast instead of hanging forever on a GUI process with no console to answer.
   cmd
@@ -1932,6 +1941,7 @@ mod tests {
       None,
       None,
       None,
+      None,
     );
     let err = res.expect_err("missing binary must be an error");
     assert!(err.contains("command not found"), "got: {err}");
@@ -1984,6 +1994,7 @@ mod tests {
       channel,
       Some("test-timeout".into()),
       Some(1),
+      None,
       None,
       None,
     );

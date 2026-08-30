@@ -93,6 +93,24 @@ it("mergeFile reads, transforms and writes the file (+ backs up existing content
   expect(api.writeTextFile).toHaveBeenCalledWith("/h/.codex/config.toml", "{}!")
 })
 
+it("mergeFile can create a missing settings file", async () => {
+  ;(api.readTextFile as jest.Mock).mockRejectedValueOnce(new Error("not found"))
+  ;(api.pathExists as jest.Mock).mockResolvedValue(false)
+  const steps: StepDescriptor[] = [
+    {
+      kind: "mergeFile",
+      id: "new",
+      label: "new",
+      path: "/project/.pi/settings.json",
+      merge: (existing) => `${existing}{}`,
+      writtenNote: "",
+    },
+  ]
+  const reports = await runSteps(steps, { dryRun: false, paths })
+  expect(reports[0].status).toBe("done")
+  expect(api.writeTextFile).toHaveBeenCalledWith("/project/.pi/settings.json", "{}")
+})
+
 it("mergeFile keeps the original backup instead of overwriting it on a second write", async () => {
   ;(api.readTextFile as jest.Mock).mockResolvedValue("{}")
   ;(api.pathExists as jest.Mock).mockResolvedValue(true) // a backup already exists

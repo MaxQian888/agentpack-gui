@@ -157,6 +157,7 @@ pub(super) fn scan_files<F>(
           mtime_ms: sig.mtime_ms,
           size: sig.size,
           summary: parsed.summary,
+          warnings: parsed.warnings,
         },
         CachedSeries {
           mtime_ms: sig.mtime_ms,

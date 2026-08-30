@@ -11,6 +11,7 @@ mod mcp;
 mod more_token;
 mod net;
 mod paths;
+mod pi_management;
 mod providers;
 mod skills;
 
@@ -194,6 +195,12 @@ pub fn run() {
       history::history_usage_series,
       history::history_get_session,
       history::history_get_part_text,
+      pi_management::pi_management_scan,
+      pi_management::pi_package_search,
+      pi_management::pi_auth_status,
+      pi_management::pi_session_dirs_get,
+      pi_management::pi_session_dirs_set,
+      pi_management::launch_pi_interactive,
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

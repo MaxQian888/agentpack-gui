@@ -4,7 +4,7 @@
 
 **See what your AI coding actually costs — and manage every CLI's setup in the same app.**
 
-A cross-platform desktop app for Claude Code, Codex and OpenCode: read your real
+A cross-platform desktop app for Claude Code, Codex, OpenCode and Pi: read your real
 spend from your own session history, then install CLIs, switch accounts and
 mirrors, and manage skills and MCP servers — without leaving the window.
 
@@ -35,24 +35,29 @@ leaves your machine.
 
 **Spend & history**
 
-- Reads Claude Code (JSONL), Codex (rollout JSONL) and OpenCode (SQLite) session
+- Reads Claude Code (JSONL), Codex (rollout JSONL), OpenCode (SQLite), and Pi
+  (v1–v3 tree JSONL) session
   history straight off disk, read-only.
 - Month-to-date spend on the home screen; a full dashboard with cost trends,
   5-hour billing windows, burn rate, per-model and per-project breakdowns.
-- Costs are **exact** where the source records them (OpenCode) and **estimated
-  from token counts** elsewhere. A model with no known rate is reported as
+- Costs are **exact** where the source records them (OpenCode), identified as a
+  **source estimate** where Pi records `usage.cost.total`, and **estimated from
+  token counts** elsewhere. A model with no known rate is reported as
   unpriced, never as a real `$0`.
 - Browse and read past transcripts, including sub-agent runs.
 - Export CSV/JSON for spreadsheets, or a shareable card / Markdown summary.
 
 **Setup & configuration**
 
-- Install or upgrade Claude Code, Codex, OpenCode, cc-switch and cc-connect,
+- Install or upgrade Claude Code, Codex, OpenCode, Pi, cc-switch and cc-connect,
   plus the Node / Bun / Python / uv runtimes they need. On Windows 10 2004 and
   later, agentpack also detects and installs Windows Terminal when it is missing.
   Commands stream live output, and in-place upgrades match how each tool was
   installed.
-- **Skills** manager across `~/.claude`, `~/.codex`, `~/.opencode` and
+- **Pi management** for global/project packages, resource filters, project
+  trust visibility, and redacted provider authentication status. Login/logout
+  stays in Pi's official interactive flow.
+- **Skills** manager across `~/.claude`, `~/.codex`, `~/.opencode`, `~/.pi/agent` and
   `~/.agents`: browse what's installed, install from a GitHub repo, check for
   updates, back up before deleting, resolve name conflicts.
 - **MCP servers**: a curated catalog plus search against the official MCP

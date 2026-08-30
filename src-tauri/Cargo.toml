@@ -49,6 +49,7 @@ tar = "0.4"
 # Content hashing for skill update detection (see skills::hash_skill_dir).
 sha2 = "0.11"
 url = "2"
+glob = "0.3"
 rustls-pemfile = "2"
 webpki-roots = "0.26"
 # Management credentials are isolated from model keys and files. 3.6.3 has

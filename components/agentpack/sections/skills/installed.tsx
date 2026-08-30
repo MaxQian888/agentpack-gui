@@ -91,6 +91,7 @@ export const SKILL_SOURCE_COLORS: Record<SkillSource, string> = {
   claude: "var(--hm-source-claude)",
   codex: "var(--hm-source-codex)",
   opencode: "var(--hm-source-opencode)",
+  pi: "var(--hm-source-pi)",
   agents: "var(--hm-source-agents)",
 }
 

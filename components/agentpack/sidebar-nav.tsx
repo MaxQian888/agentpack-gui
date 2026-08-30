@@ -71,6 +71,7 @@ export const SECTIONS: SectionDef[] = [
   { key: "cleanup", icon: Eraser, label: (m) => m.menu.cleanup },
   { key: "skills", icon: Wrench, label: (m) => m.menu.skills },
   { key: "mcp", icon: Server, label: (m) => m.menu.mcp },
+  { key: "pi", icon: Package, label: (m) => m.menu.pi },
   { key: "ccswitch", icon: ArrowLeftRight, label: (m) => m.menu.ccswitch },
   { key: "ccconnect", icon: Cable, label: (m) => m.menu.ccconnect },
   { key: "history", icon: MessagesSquare, label: (m) => m.menu.history },

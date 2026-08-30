@@ -12,7 +12,7 @@ import {
   upgradeCommandFor,
 } from "./registry"
 import { hasReleaseFor } from "./release"
-import { isUpgradeAvailable, majorVersion } from "./version"
+import { isUpgradeAvailable, isVersionBelow, majorVersion } from "./version"
 import {
   buildClaudeMcpCommandFromSpec,
   buildClaudeMcpEntryFromSpec,
@@ -382,14 +382,18 @@ export function buildSteps(
     // old — when it's absent we install a current LTS above every floor.
     const nodeFound = installed.has("node") ? state.versions?.["node"] : undefined
     const nodeMajor = majorVersion(nodeFound)
-    if (npmBased && tool.minNodeMajor && nodeMajor !== undefined && nodeMajor < tool.minNodeMajor) {
+    const nodeTooOld = tool.minNodeVersion
+      ? isVersionBelow(nodeFound, tool.minNodeVersion)
+      : Boolean(tool.minNodeMajor && nodeMajor !== undefined && nodeMajor < tool.minNodeMajor)
+    if (npmBased && tool.minNodeMajor && nodeTooOld) {
+      const nodeFloor = tool.minNodeVersion ?? tool.minNodeMajor
       steps.push({
         kind: "info",
         id: `cli-${id}`,
         label: upgrade ? t.upgradeCli(title) : t.installCli(title),
         lines: [
-          t.nodeTooOld(title, tool.minNodeMajor, nodeFound ?? String(nodeMajor)),
-          t.nodeTooOldFix(tool.minNodeMajor),
+          t.nodeTooOld(title, nodeFloor, nodeFound ?? String(nodeMajor)),
+          t.nodeTooOldFix(nodeFloor),
         ],
         manual: true,
       })

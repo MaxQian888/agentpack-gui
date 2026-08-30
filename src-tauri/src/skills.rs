@@ -27,12 +27,13 @@ const MAX_SKILL_MD_BYTES: u64 = 256 * 1024;
 
 /// The canonical (source, root) list. `fsops::skills_roots` derives its delete
 /// whitelist from this, so scanner and guardrail can never disagree.
-pub(crate) fn source_roots(home: &Path) -> [(&'static str, PathBuf); 4] {
+pub(crate) fn source_roots(home: &Path) -> [(&'static str, PathBuf); 5] {
   let opencode = home.join(".config").join("opencode");
   [
     ("claude", home.join(".claude").join("skills")),
     ("codex", codex_home(home).join("skills")),
     ("opencode", opencode.join("skills")),
+    ("pi", crate::paths::pi_home(home).join("skills")),
     ("agents", home.join(".agents").join("skills")),
   ]
 }
@@ -1257,14 +1258,14 @@ mod tests {
   }
 
   #[test]
-  fn source_roots_cover_all_four_agents() {
+  fn source_roots_cover_all_five_agents() {
     let home = Path::new("/h");
     let roots = source_roots(home);
     let sources: Vec<&str> = roots.iter().map(|(s, _)| *s).collect();
-    assert_eq!(sources, vec!["claude", "codex", "opencode", "agents"]);
+    assert_eq!(sources, vec!["claude", "codex", "opencode", "pi", "agents"]);
     // `install_skill` (bundled), `install_skill_from_dir`, `create_skill` and the
     // repo installer all resolve targets through `target_root`; every one of the
-    // four sources must map to a root, and anything else must be rejected.
+    // five sources must map to a root, and anything else must be rejected.
     assert_eq!(
       target_root(home, "claude"),
       Some(home.join(".claude").join("skills"))
@@ -1276,6 +1277,10 @@ mod tests {
     assert_eq!(
       target_root(home, "opencode"),
       Some(home.join(".config").join("opencode").join("skills"))
+    );
+    assert_eq!(
+      target_root(home, "pi"),
+      Some(home.join(".pi").join("agent").join("skills"))
     );
     assert_eq!(
       target_root(home, "agents"),

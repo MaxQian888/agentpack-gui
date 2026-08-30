@@ -35,6 +35,12 @@ import type {
   ManagementStepUpPollResult,
   ManagementStepUpStartResult,
 } from "@/lib/more-token/types"
+import type {
+  PiAuthReport,
+  PiPackageSearchItem,
+  PiPackageSnapshot,
+  PiScanScope,
+} from "@/lib/pi/types"
 
 // Typed wrappers around the custom Rust commands (src-tauri/src/*.rs). Keep this
 // file as the SOLE caller of `invoke` for agentpack — UI/runner import these.
@@ -146,6 +152,7 @@ export async function runCommand(
     timeoutSecs: timeoutSecs ?? null,
     elevated: elevated ?? null,
     env: env ?? null,
+    cwd: cmd.cwd ?? null,
   })
 }
 
@@ -651,6 +658,26 @@ export const historyGetSession = (source: HistorySource, path: string) =>
  */
 export const historyGetPartText = (source: HistorySource, path: string, ref: string) =>
   invoke<string>("history_get_part_text", { source, path, ref })
+
+// ── Pi management (src-tauri/src/pi_management.rs) ─────────────────────────
+
+export const piManagementScan = (scope: PiScanScope) =>
+  invoke<PiPackageSnapshot>("pi_management_scan", { scope })
+
+export const piPackageSearch = (query: string) =>
+  invoke<PiPackageSearchItem[]>("pi_package_search", { query })
+
+/** Read-only by default; only an explicit user refresh may let Pi renew OAuth. */
+export const piAuthStatus = (refresh = false) => invoke<PiAuthReport>("pi_auth_status", { refresh })
+
+export const piSessionDirsGet = () => invoke<string[]>("pi_session_dirs_get")
+
+export const piSessionDirsSet = (dirs: string[]) =>
+  invoke<string[]>("pi_session_dirs_set", { dirs })
+
+/** Launches the fixed `pi` executable in a terminal; it never accepts arbitrary commands. */
+export const launchPiInteractive = (cwd: string | null = null) =>
+  invoke<void>("launch_pi_interactive", { cwd })
 
 // ── Environment cleanup (src-tauri/src/cleanup.rs) ──────────────────────────
 

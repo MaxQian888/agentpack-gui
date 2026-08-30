@@ -47,6 +47,13 @@ const paths: Paths = {
   codexSkillsDir: "/h/.codex/skills",
   opencodeConfig: "/h/.config/opencode/opencode.json",
   opencodeSkillsDir: "/h/.config/opencode/skills",
+  piSettings: "/h/.pi/agent/settings.json",
+  piAuth: "/h/.pi/agent/auth.json",
+  piTrust: "/h/.pi/agent/trust.json",
+  piSessionsDir: "/h/.pi/agent/sessions",
+  piNpmDir: "/h/.pi/agent/npm",
+  piGitDir: "/h/.pi/agent/git",
+  piSkillsDir: "/h/.pi/agent/skills",
   agentsSkillsDir: "/h/.agents/skills",
   ccSwitchSettings: "/h/.cc-switch/settings.json",
   ccSwitchDb: "/h/.cc-switch/cc-switch.db",
@@ -253,6 +260,20 @@ describe("Node engines floor", () => {
       versions: { node: "v20.11.0" },
     }).find((s) => s.id === "cli-claude-code")!
     expect(step.kind).toBe("command")
+  })
+
+  it("enforces Pi's exact 22.19.0 floor inside the Node 22 major", () => {
+    const piPlan: Plan = { ...plan, clis: ["pi"] }
+    const at2218 = buildSteps(piPlan, paths, undefined, new Set(["node"]), {
+      versions: { node: "v22.18.0" },
+    }).find((step) => step.id === "cli-pi")
+    expect(at2218?.kind).toBe("info")
+    expect(at2218?.kind === "info" && at2218.lines.join(" ")).toContain("22.19.0")
+
+    const at2219 = buildSteps(piPlan, paths, undefined, new Set(["node"]), {
+      versions: { node: "v22.19.0" },
+    }).find((step) => step.id === "cli-pi")
+    expect(at2219?.kind).toBe("command")
   })
 })
 

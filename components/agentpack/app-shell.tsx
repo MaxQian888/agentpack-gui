@@ -58,6 +58,8 @@ import { EnvironmentSection } from "./sections/environment"
 import { ClisSection } from "./sections/clis"
 import { SkillsSection } from "./sections/skills"
 import { McpSection } from "./sections/mcp"
+import { PiSection } from "./sections/pi"
+import { usePiManagementController } from "./pi-controller"
 import { NetworkSection } from "./sections/network"
 import { CleanupSection } from "./sections/cleanup"
 import { CcSwitchSection } from "./sections/ccswitch"
@@ -159,6 +161,11 @@ function ShellBody() {
   // Rebuilding the caches means re-parsing gigabytes of JSONL, so the scan
   // streams how far it has got rather than leaving a bare spinner up.
   const [historyProgress, setHistoryProgress] = useState<ScanProgress | null>(null)
+  const piController = usePiManagementController(
+    historyResult?.sessions
+      .filter((session) => session.source === "pi" && session.cwd)
+      .map((session) => session.cwd) ?? []
+  )
 
   // The per-message usage series is one to two orders of magnitude larger than
   // the summaries, so it loads only when the usage dashboard actually asks.
@@ -690,6 +697,8 @@ function ShellBody() {
         return (
           <McpSection scan={dashboardScan} loading={dashboardScanning} refresh={rescanDashboard} />
         )
+      case "pi":
+        return <PiSection controller={piController} onOpenClis={() => goToSection("clis")} />
       case "network":
         return <NetworkSection />
       case "cleanup":

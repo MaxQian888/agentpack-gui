@@ -133,6 +133,7 @@
   --hm-source-claude: oklch(58% 0.13 45);
   --hm-source-codex: oklch(56% 0.1 200);
   --hm-source-opencode: oklch(56% 0.11 300);
+  --hm-source-pi: oklch(56% 0.11 265);
   /* The shared ~/.agents root is not a CLI, so it takes the one hue left over
      between codex-teal and opencode-violet rather than a fourth brand colour. */
   --hm-source-agents: oklch(56% 0.1 110);
@@ -177,5 +178,6 @@
   --hm-source-claude: oklch(72% 0.12 45);
   --hm-source-codex: oklch(70% 0.09 200);
   --hm-source-opencode: oklch(72% 0.1 300);
+  --hm-source-pi: oklch(72% 0.1 265);
   --hm-source-agents: oklch(70% 0.09 110);
 }

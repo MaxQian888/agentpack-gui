@@ -5,7 +5,7 @@
  */
 
 /** Where a scanned skill lives — one of the four global skills roots. */
-export type SkillSource = "claude" | "codex" | "opencode" | "agents"
+export type SkillSource = "claude" | "codex" | "opencode" | "pi" | "agents"
 
 /** Roots a skill can be copy-installed into (same set as the scan sources). */
 export type SkillInstallTarget = SkillSource

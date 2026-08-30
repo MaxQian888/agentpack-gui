@@ -31,6 +31,7 @@ export type SectionKey =
   | "clis"
   | "skills"
   | "mcp"
+  | "pi"
   | "network"
   | "cleanup"
   | "ccswitch"
@@ -64,7 +65,7 @@ export const WORKSPACES: readonly WorkspaceDefinition[] = [
   // they fill up afterwards. It is maintenance, not configuration — which is why
   // it isn't in Settings next to profiles and config files.
   { key: "install", sections: ["presets", "environment", "clis", "network", "cleanup"] },
-  { key: "capabilities", sections: ["skills", "mcp", "ccswitch", "ccconnect"] },
+  { key: "capabilities", sections: ["skills", "mcp", "pi", "ccswitch", "ccconnect"] },
   {
     key: "account",
     sections: ["my-account", "my-balance", "my-usage", "my-models", "my-security"],

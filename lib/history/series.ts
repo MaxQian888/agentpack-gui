@@ -81,7 +81,14 @@ export function buildTimeline(series: SessionSeries[], range: TimeRange): Timeli
     // A model absent from the pricing table yields null, which is carried as
     // `unpriced` rather than flattened to 0 — a real $0 would quietly understate
     // every block cost, burn rate and projection downstream.
-    const cost = estimateRequestCost(s.source, model, usage)
+    const reportedMicros = ev[EV.reportedCost]
+    const reported =
+      (s.costBasis === "sourceEstimate" || s.costBasis === "billed") &&
+      reportedMicros != null &&
+      reportedMicros >= 0
+        ? reportedMicros / 1_000_000
+        : null
+    const cost = reported ?? estimateRequestCost(s.source, model, usage)
     out.push({ ts, model, usage, cost: cost ?? 0, unpriced: cost == null })
   })
   return out.sort((a, b) => a.ts - b.ts)

@@ -77,6 +77,13 @@ pub struct SessionSummary {
   usage: TokenUsage,
   /// Real cost in USD when the source records it (OpenCode); `None` otherwise.
   cost: Option<f64>,
+  /// `billed` for source-recorded billing, `sourceEstimate` for a source-side
+  /// model-price calculation, absent when agentpack must estimate it.
+  #[serde(default)]
+  cost_basis: Option<String>,
+  /// Number of leaves in a branching transcript. Linear sources are one.
+  #[serde(default = "one_branch")]
+  branch_count: u64,
   /// Epoch milliseconds.
   started_at: i64,
   updated_at: i64,
@@ -106,7 +113,11 @@ pub struct SessionSummary {
 /// struct because a real history holds ~200k of these — field names would
 /// roughly triple both the cache file and the IPC payload while carrying no
 /// extra information.
-pub type PackedEvent = [i64; 7];
+pub type PackedEvent = [i64; 8];
+
+fn one_branch() -> u64 {
+  1
+}
 
 /// How often one tool was called in a session, and how often it failed.
 ///
@@ -141,12 +152,15 @@ pub struct SessionSeries {
   pub models: Vec<String>,
   pub events: Vec<PackedEvent>,
   pub tools: Vec<ToolStat>,
+  #[serde(default)]
+  pub cost_basis: Option<String>,
 }
 
 /// A file parsed once, feeding both caches.
 pub struct ParsedSession {
   pub summary: SessionSummary,
   pub series: SessionSeries,
+  pub warnings: Vec<String>,
 }
 
 /// The identity a finished parse stamps onto **both** halves.
@@ -200,6 +214,7 @@ impl ParsedSession {
       models,
     } = identity;
     ParsedSession {
+      warnings: Vec::new(),
       series: SessionSeries {
         id: id.clone(),
         source: source.into(),
@@ -209,6 +224,7 @@ impl ParsedSession {
         models: models.clone(),
         events,
         tools,
+        cost_basis: None,
       },
       summary: SessionSummary {
         id,
@@ -223,6 +239,8 @@ impl ParsedSession {
         message_count: fields.message_count,
         usage: fields.usage,
         cost: None,
+        cost_basis: None,
+        branch_count: 1,
         started_at: fields.started_at,
         updated_at: fields.updated_at,
         path: fields.path,
@@ -313,6 +331,7 @@ fn pack_event(ts: i64, model_idx: i64, u: &TokenUsage) -> Option<PackedEvent> {
     u.cache_read as i64,
     u.cache_write as i64,
     u.reasoning as i64,
+    -1,
   ])
 }
 
@@ -432,6 +451,25 @@ impl Message {
 pub struct SessionDetail {
   summary: SessionSummary,
   messages: Vec<Message>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  tree: Option<SessionTree>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionTree {
+  active_leaf_id: String,
+  nodes: Vec<SessionTreeNode>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionTreeNode {
+  id: String,
+  parent_id: Option<String>,
+  kind: String,
+  label: Option<String>,
+  message: Option<Message>,
 }
 
 /// A source that couldn't be scanned (missing directory is *not* an error — it's
@@ -477,6 +515,10 @@ mod codex;
 
 use codex::{codex_detail, codex_parse_from_file, codex_sigs, codex_titles};
 
+mod pi;
+
+use pi::{pi_detail, pi_parse_from_file, pi_sigs};
+
 // ── Tauri commands ───────────────────────────────────────────────────────────
 
 /// One pass over every installed source, filling both caches.
@@ -504,8 +546,13 @@ fn scan_all(
     source: "codex".into(),
     message: e,
   });
-  let total =
-    claude.as_ref().map(Vec::len).unwrap_or(0) + codex.as_ref().map(|(s, _)| s.len()).unwrap_or(0);
+  let pi = pi_sigs().map_err(|e| SourceError {
+    source: "pi".into(),
+    message: e,
+  });
+  let total = claude.as_ref().map(Vec::len).unwrap_or(0)
+    + codex.as_ref().map(|(s, _)| s.len()).unwrap_or(0)
+    + pi.as_ref().map(Vec::len).unwrap_or(0);
   let reporter = Progress::new(Some(progress), total);
 
   match claude {
@@ -528,6 +575,31 @@ fn scan_all(
       &reporter,
       |p| codex_parse_from_file(p, &titles),
     ),
+    Err(e) => errors.push(e),
+  }
+  match pi {
+    Ok(sigs) => {
+      scan_files(
+        &cache,
+        &mut new_cache,
+        &mut sessions,
+        sigs,
+        &reporter,
+        pi_parse_from_file,
+      );
+      errors.extend(
+        new_cache
+          .summaries
+          .entries
+          .values()
+          .filter(|entry| entry.summary.source == "pi")
+          .flat_map(|entry| entry.warnings.iter().cloned())
+          .map(|message| SourceError {
+            source: "pi".into(),
+            message,
+          }),
+      );
+    }
     Err(e) => errors.push(e),
   }
   if let Err(e) = scan_opencode(&mut sessions) {
@@ -609,6 +681,11 @@ fn session_detail(source: &str, path: &str) -> Result<SessionDetail, String> {
       Ok(codex_detail(&p, &lines, &codex_titles()))
     }
     "opencode" => opencode_detail(path),
+    "pi" => {
+      let p = PathBuf::from(path);
+      let lines = read_jsonl(&p)?;
+      Ok(pi_detail(&p, &lines))
+    }
     other => Err(format!("unknown history source: {other}")),
   }
 }
@@ -624,6 +701,13 @@ pub fn history_get_session(source: String, path: String) -> Result<SessionDetail
   let mut detail = session_detail(&source, &path)?;
   for msg in &mut detail.messages {
     cap_message(msg);
+  }
+  if let Some(tree) = &mut detail.tree {
+    for node in &mut tree.nodes {
+      if let Some(message) = &mut node.message {
+        cap_message(message);
+      }
+    }
   }
   Ok(detail)
 }
@@ -656,11 +740,21 @@ pub fn history_get_part_text(
     .parse()
     .map_err(|_| format!("bad part index: {index}"))?;
   let detail = session_detail(&source, &path)?;
-  detail
+  let from_active_path = detail
     .messages
     .into_iter()
     .find(|m| m.id == msg_id)
-    .and_then(|m| m.parts.into_iter().nth(index))
+    .and_then(|m| m.parts.into_iter().nth(index));
+  let from_tree = detail.tree.and_then(|tree| {
+    tree
+      .nodes
+      .into_iter()
+      .filter_map(|node| node.message)
+      .find(|message| message.id == msg_id)
+      .and_then(|message| message.parts.into_iter().nth(index))
+  });
+  from_active_path
+    .or(from_tree)
     .map(|p| p.text)
     .ok_or_else(|| format!("part not found: {msg_id}:{index}"))
 }
@@ -1197,8 +1291,9 @@ mod tests {
       git_branch: None,
       parent_id: None,
       models: vec!["m".into()],
-      events: vec![[1, 0, 1, 1, 0, 0, 0]],
+      events: vec![[1, 0, 1, 1, 0, 0, 0, -1]],
       tools: Vec::new(),
+      cost_basis: None,
     }
   }
 
@@ -1275,6 +1370,7 @@ mod tests {
         mtime_ms: sig.mtime_ms,
         size: sig.size,
         summary: sample_summary(&key),
+        warnings: Vec::new(),
       },
     );
     cache.series.entries.insert(
@@ -1326,6 +1422,7 @@ mod tests {
         mtime_ms: sig.mtime_ms,
         size: sig.size,
         summary: sample_summary(&key),
+        warnings: Vec::new(),
       },
     );
 
@@ -1379,6 +1476,7 @@ mod tests {
       mtime_ms: m,
       size: s,
       summary: sample_summary("k"),
+      warnings: Vec::new(),
     };
     let mut a = ScanCache::default();
     let mut b = ScanCache::default();
@@ -1405,6 +1503,7 @@ mod tests {
       mtime_ms: m,
       size: s,
       summary: sample_summary("k"),
+      warnings: Vec::new(),
     };
     let mut old = ScanCache::default();
     let mut fresh = ScanCache::default();

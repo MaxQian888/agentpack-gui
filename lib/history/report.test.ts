@@ -56,7 +56,8 @@ const labels: ReportLabels = {
   unpricedNote: (n) => `${n} unpriced`,
   noActivity: "No sessions yet",
   footer: "Made with agentpack",
-  sourceLabel: (s) => ({ claude: "Claude Code", codex: "Codex", opencode: "OpenCode" })[s],
+  sourceLabel: (s) =>
+    ({ claude: "Claude Code", codex: "Codex", opencode: "OpenCode", pi: "Pi" })[s],
 }
 
 describe("formatDelta", () => {

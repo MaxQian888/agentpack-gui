@@ -9,6 +9,7 @@ export const SOURCE_COLORS: Record<HistorySource, string> = {
   claude: "#d97757",
   codex: "#10a37f",
   opencode: "#8b5cf6",
+  pi: "#6366f1",
 }
 
 /** Best-effort mapping of a model id to the CLI it most likely belongs to. */
