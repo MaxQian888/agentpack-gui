@@ -81,6 +81,18 @@ export const WORKSPACES: readonly WorkspaceDefinition[] = [
   { key: "settings", sections: ["preferences", "config", "recovery", "about"] },
 ]
 
+/**
+ * Where on a destination to land, for the hand-offs where the section alone
+ * isn't specific enough: the completion screen's "add your key" to-do wants the
+ * MCP catalog's needs-a-key list, and Recovery's skill-backup row wants the
+ * Skills backups. Read once, when the destination mounts; any other way in
+ * lands on the section's default view.
+ */
+export interface NavigateIntent {
+  mcp?: "needsKey"
+  skills?: "backups"
+}
+
 /** Every section key, in rail order. The tour and the palette both walk this. */
 export const SECTION_KEYS: readonly SectionKey[] = WORKSPACES.flatMap((w) => w.sections)
 

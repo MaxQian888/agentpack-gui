@@ -45,6 +45,16 @@ export interface RunnerState {
    */
   lastWasPreview: boolean
   /**
+   * The plan the current run was built from, or null when it wasn't built from
+   * one (an MCP add, a restore, a cleanup). The completion screen and the brief
+   * read this, never the live plan: a successful run clears the live plan the
+   * moment it resolves, and an unrelated run must not be briefed — or offered
+   * "Open Claude" — on the strength of whatever happens to be in the tray.
+   */
+  runPlan: Plan | null
+  /** How the current run is named, for the panel's title. */
+  runTitle: string | undefined
+  /**
    * Whether the user stopped the last run. `skipped` alone can't say so — it also
    * covers steps dropped because a prerequisite failed — and the two need
    * different verdicts on the completion screen.
@@ -91,6 +101,11 @@ export function useRunner(): RunnerState {
   const pendingCount = pendingSteps.length
   const [lastWasPreview, setLastWasPreview] = useState(false)
   const [cancelled, setCancelled] = useState(false)
+  const [runPlan, setRunPlan] = useState<Plan | null>(null)
+  const [runTitle, setRunTitle] = useState<string | undefined>(undefined)
+  // Whether steps are executing right now, readable from inside callbacks that
+  // closed over an older `running`. `run()` consults it before staging anything.
+  const busy = useRef(false)
   const ctrl = useRef<AbortController | null>(null)
   const pending = useRef<StepDescriptor[]>([])
   // The run's full step list, which a retry must NOT narrow: `pending` used to be
@@ -221,6 +236,7 @@ export function useRunner(): RunnerState {
       cancelledRef.current = false
       if (preview) setPreviewing(true)
       else setRunning(true)
+      busy.current = true
       ctrl.current = new AbortController()
       const result = await runSteps(steps, {
         dryRun: preview,
@@ -238,6 +254,7 @@ export function useRunner(): RunnerState {
             prev.map((prior) => (prior.id === r.id ? { ...r, output: [...r.output] } : prior))
           ),
       })
+      busy.current = false
       if (preview) setPreviewing(false)
       else setRunning(false)
       // A real run may have installed/removed a tool — let subscribers re-detect
@@ -267,6 +284,16 @@ export function useRunner(): RunnerState {
         toast.error(t.shell.notInTauri)
         return []
       }
+      // One run at a time. The panel can be closed while steps execute, and the
+      // page behind it stays live — so a second Apply used to restage over the
+      // first: it released the first caller with [], reset the rows the first
+      // run was still writing into, and then handed the first run's reports to
+      // the second caller. Bring the running one back instead.
+      if (busy.current) {
+        toast.message(t.shell.runBusy)
+        setPanelOpen(true)
+        return []
+      }
       // Verify steps ride along with real work only. On their own they would
       // turn "everything you picked is already installed" into a staged run of
       // two `--version` checks, which reads as though something is about to be
@@ -287,6 +314,8 @@ export function useRunner(): RunnerState {
       pending.current = withVerify
       all.current = withVerify
       activityMeta.current = opts.activity ?? {}
+      setRunPlan(opts.plan ?? null)
+      setRunTitle(opts.activity?.title)
       setReports(
         withVerify.map((s) => ({ id: s.id, label: s.label, status: "pending", output: [] }))
       )
@@ -323,15 +352,25 @@ export function useRunner(): RunnerState {
     if (pending.current.length === 0) return
     setAwaitingConfirm(false)
     setLastWasPreview(false)
+    // Whoever staged *these* steps gets *these* reports — captured now, not read
+    // after the await, when `settle` could belong to someone else.
+    const settleThis = settle.current
+    settle.current = null
     const result = await execute(pending.current)
     setPendingSteps([])
-    release(result)
-  }, [execute, release])
+    settleThis?.(result)
+  }, [execute])
 
   const abandonPending = useCallback(() => {
     pending.current = []
     setPendingSteps([])
     setAwaitingConfirm(false)
+    // The staged rows go too. Left behind, a discarded review read as a finished
+    // run the next time the panel opened: "All set · 0 done" over a 0/N bar for
+    // something that never happened.
+    setReports([])
+    setRunPlan(null)
+    setRunTitle(undefined)
     release([])
   }, [release])
 
@@ -373,6 +412,8 @@ export function useRunner(): RunnerState {
     pendingSteps,
     lastWasPreview,
     cancelled,
+    runPlan,
+    runTitle,
     run,
     previewPending,
     applyPending,

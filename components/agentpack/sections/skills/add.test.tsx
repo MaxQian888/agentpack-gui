@@ -24,7 +24,7 @@ jest.mock("@/lib/tauri/settings", () => ({
   saveSettings: jest.fn(async () => ({})),
 }))
 
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
@@ -241,4 +241,79 @@ it("saves a manually-entered repo source and removes it", async () => {
   expect(screen.getByText("me/skills")).toBeInTheDocument()
   await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.removeRepo }))
   expect(screen.getByText(en.skillsBrowser.reposEmpty)).toBeInTheDocument()
+})
+
+/** Fetch a two-skill repo and return once its list is on screen. */
+async function fetchTwo() {
+  ;(fetchRepoSkills as jest.Mock).mockResolvedValue({
+    scanId: "scan-9",
+    skills: [
+      {
+        dirName: "web-design",
+        relPath: "skills/web-design",
+        skillMd: "---\nname: web-design\n---\n",
+      },
+      { dirName: "react", relPath: "skills/react", skillMd: "---\nname: react\n---\n" },
+    ],
+  })
+  await userEvent.type(screen.getByPlaceholderText(en.skillsBrowser.sourcePlaceholder), "o/r")
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.fetchSkills }))
+  await screen.findByText("web-design")
+}
+
+it("keeps the fetched repo when the install fails, so Retry has something to install from", async () => {
+  ;(installRepoSkills as jest.Mock).mockRejectedValueOnce(new Error("disk full"))
+  const refresh = renderAdd()
+  await fetchTwo()
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.installSelected(2) }))
+  await waitFor(() => expect(installRepoSkills).toHaveBeenCalled())
+  // `refresh` follows the settled run.
+  await waitFor(() => expect(refresh).toHaveBeenCalled())
+  // Disposing of the scan here made Retry in the panel fail on an unknown scan.
+  expect(cleanupRepoScan).not.toHaveBeenCalledWith("scan-9")
+  expect(screen.getByText("web-design")).toBeInTheDocument()
+  expect(
+    screen.getByRole("button", { name: en.skillsBrowser.installSelected(2) })
+  ).toBeInTheDocument()
+})
+
+it("keeps a picked folder when its import fails", async () => {
+  ;(installSkillFromDir as jest.Mock).mockRejectedValueOnce(new Error("disk full"))
+  ;(pickFolder as jest.Mock).mockResolvedValue("/tmp/my-skill")
+  ;(pathExists as jest.Mock).mockResolvedValue(true)
+  const refresh = renderAdd()
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.pickFolder }))
+  await userEvent.click(await screen.findByRole("button", { name: en.skillsBrowser.importNow }))
+  await waitFor(() => expect(refresh).toHaveBeenCalled())
+  expect(screen.getByText("/tmp/my-skill")).toBeInTheDocument()
+})
+
+it("keeps what was typed when creating the skill fails", async () => {
+  ;(createSkill as jest.Mock).mockRejectedValueOnce(new Error("exists"))
+  const refresh = renderAdd()
+  await userEvent.type(screen.getByLabelText(en.skillsBrowser.nameLabel), "my-skill")
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.createNow }))
+  await waitFor(() => expect(refresh).toHaveBeenCalled())
+  expect(screen.getByLabelText(en.skillsBrowser.nameLabel)).toHaveValue("my-skill")
+})
+
+it("shows the skills CLI its own targets, and refuses to run with none", async () => {
+  renderAdd()
+  await userEvent.type(screen.getByPlaceholderText(en.skillsBrowser.sourcePlaceholder), "o/r")
+  await userEvent.click(screen.getByText(en.skillsBrowser.advancedTitle))
+  const advanced = within(screen.getByText(en.skillsBrowser.advancedTitle).closest("details")!)
+  // Only the agents the CLI has a flag for — "Shared" would map to nothing.
+  expect(advanced.getAllByRole("checkbox")).toHaveLength(3)
+  await userEvent.click(advanced.getByRole("checkbox", { name: "Claude Code" }))
+  await userEvent.click(advanced.getByRole("checkbox", { name: "Codex" }))
+  const button = advanced.getByRole("button", { name: en.skillsBrowser.useNpx })
+  // With no -a flag the CLI installs into every agent it finds.
+  expect(button).toBeDisabled()
+  expect(button).toHaveAccessibleDescription(en.skillsBrowser.npxNoTarget)
+  await userEvent.click(advanced.getByRole("checkbox", { name: "OpenCode" }))
+  await userEvent.click(button)
+  await waitFor(() => expect(runCommand).toHaveBeenCalled())
+  expect((runCommand as jest.Mock).mock.calls[0][0].args).toEqual(
+    expect.arrayContaining(["-a", "opencode"])
+  )
 })

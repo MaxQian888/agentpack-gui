@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { ExternalLink, Info, KeyRound, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
@@ -31,7 +31,15 @@ import {
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { MCP_CATEGORY_ORDER, MCP_SERVERS } from "@/lib/agentpack/registry"
-import { claudeMcpRoute, mcpAddSpecStep, mcpAddStep, mcpRemoveStep } from "@/lib/agentpack/plan"
+import {
+  mcpAddSpecStep,
+  mcpAddStep,
+  mcpEditStep,
+  mcpRemoveStep,
+  type ClaudeMcpRoute,
+} from "@/lib/agentpack/plan"
+import { resolveCatalogSpec } from "@/lib/agentpack/merge/mcp"
+import { runApplied } from "@/lib/agentpack/report"
 import { mapRegistryResponse, type RegistryCandidate } from "@/lib/agentpack/registry-remote"
 import type { McpServer, McpTarget } from "@/lib/agentpack/types"
 import { isTauri } from "@/lib/tauri"
@@ -56,18 +64,45 @@ type TransportFilter = McpServer["transport"] | "all"
 type AuthFilter = "all" | "key" | "none"
 const FILTERS: Filter[] = ["all", "installed", "notInstalled", "needsKey"]
 
-export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refresh: () => void }) {
+/**
+ * One online search's answer, stamped with the query it answers.
+ *
+ * Without the stamp a slow reply to "fi" could land after "filesystem" and
+ * replace its results, and "Load more" could send the new query with the old
+ * query's cursor.
+ */
+interface RegistryPage {
+  query: string
+  results: RegistryCandidate[]
+  cursor?: string
+  /** The first page failed — there is nothing to show for this query. */
+  error: boolean
+  /** A later page failed — what loaded stays on screen, with a retry. */
+  moreError: boolean
+}
+
+export function CatalogTab({
+  scan,
+  refresh,
+  route,
+  initialFilter = "all",
+}: {
+  scan: DashboardScan | null
+  refresh: () => void
+  /** How Claude's config is reached (`claudeMcpRoute`), decided by the section. */
+  route: ClaudeMcpRoute
+  /** Where the list starts — "needsKey" when arriving to fill in a key. */
+  initialFilter?: Filter
+}) {
   const t = useT()
   const m = t.mcp
   const plan = useAppStore((s) => s.plan)
-  const setMcp = useAppStore((s) => s.setMcp)
   const setMcpKey = useAppStore((s) => s.setMcpKey)
   const paths = useAppStore((s) => s.paths)
-  const detections = useAppStore((s) => s.detections)
   const { run } = useRunnerCtx()
 
   const [search, setSearch] = useState("")
-  const [filter, setFilter] = useState<Filter>("all")
+  const [filter, setFilter] = useState<Filter>(initialFilter)
   const [target, setTarget] = useState<TargetFilter>("all")
   const [transport, setTransport] = useState<TransportFilter>("all")
   const [auth, setAuth] = useState<AuthFilter>("all")
@@ -79,70 +114,90 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
   const [keyOpen, setKeyOpen] = useState<Set<string>>(new Set())
 
   // Online registry search (on-demand; the featured catalog above stays offline).
-  const [regResults, setRegResults] = useState<RegistryCandidate[]>([])
-  const [regCursor, setRegCursor] = useState<string | undefined>(undefined)
+  const [reg, setReg] = useState<RegistryPage | null>(null)
   const [regLoading, setRegLoading] = useState(false)
-  const [regError, setRegError] = useState(false)
   const [addCand, setAddCand] = useState<RegistryCandidate | null>(null)
 
-  // The desktop app has no `claude` binary but reads the same config file, so
-  // "no CLI" is not the same as "cannot configure Claude" any more.
-  const route = claudeMcpRoute(
-    !!detections["claude-code"]?.installed,
-    !!detections["claude-desktop"]?.installed
-  )
   const claudeDisabled = route === "none"
   const takenIds = useMemo(() => existingIds(scan), [scan])
 
-  const syncPlan = (id: string, target: McpTarget, add: boolean) => {
-    const cur = plan.mcps.find((x) => x.id === id)?.targets ?? []
-    const next = add
-      ? Array.from(new Set<McpTarget>([...cur, target]))
-      : cur.filter((x) => x !== target)
-    setMcp(id, next)
-  }
-
+  // A catalog add is applied the moment the review panel says so. It used to
+  // write the same selection into the install plan as well, which brought the
+  // change tray up offering to review a change that had already happened.
   const addOne = async (server: McpServer, target: McpTarget) => {
     if (!paths) return
     await run(mcpAddStep(server, [target], plan.mcpKeys[server.id], paths, t, route))
-    syncPlan(server.id, target, true)
+    refresh()
+  }
+
+  // Rewrite an installed server with the key now in the plan, on every agent
+  // it is already configured for. Staged as an edit, so the panel shows which
+  // config files change before anything is written.
+  const installedTargets = (presence: ReturnType<typeof presenceOf>): McpTarget[] =>
+    (["claude", "codex", "opencode"] as const).filter(
+      (tg) => presence[tg] && !(tg === "claude" && claudeDisabled)
+    )
+  const applyKey = async (server: McpServer, targets: McpTarget[]) => {
+    const key = plan.mcpKeys[server.id]?.trim()
+    if (!paths || !key || targets.length === 0) return
+    const title = t.catalog.mcp[server.id]?.title ?? server.id
+    await run(mcpEditStep(server.id, resolveCatalogSpec(server, key), targets, paths, t, route), {
+      activity: { title: m.keyApplyTitle(title), source: "section" },
+    })
     refresh()
   }
 
   const removeOne = async (server: McpServer, target: McpTarget) => {
     if (!paths) return
     await run(mcpRemoveStep(server.id, [target], paths, t, route))
-    syncPlan(server.id, target, false)
     refresh()
   }
 
   const q = search.trim().toLowerCase()
+  // The query the user is looking at *now*, for replies to check themselves
+  // against. Synced in an effect: a reply lands long after the render it
+  // belongs to.
+  const liveQuery = useRef(q)
+  useEffect(() => {
+    liveQuery.current = q
+  }, [q])
 
   const fetchRegistry = async (query: string, cursor?: string) => {
     if (!isTauri()) return
     setRegLoading(true)
-    setRegError(false)
     try {
       const raw = await registryFetch(query, cursor)
+      // A reply to a query the user has typed past answers nothing on screen.
+      if (liveQuery.current !== query) return
       const { candidates, nextCursor } = mapRegistryResponse(JSON.parse(raw))
-      setRegResults((prev) => (cursor ? [...prev, ...candidates] : candidates))
-      setRegCursor(nextCursor)
+      setReg((prev) =>
+        cursor && prev?.query === query
+          ? { ...prev, results: [...prev.results, ...candidates], cursor: nextCursor }
+          : { query, results: candidates, cursor: nextCursor, error: false, moreError: false }
+      )
     } catch {
-      setRegError(true)
-      if (!cursor) setRegResults([])
+      if (liveQuery.current !== query) return
+      // A failed next page keeps what already loaded; only a failed first page
+      // has nothing to show.
+      setReg((prev) =>
+        cursor && prev?.query === query
+          ? { ...prev, moreError: true }
+          : { query, results: [], error: true, moreError: false }
+      )
     } finally {
-      setRegLoading(false)
+      if (liveQuery.current === query) setRegLoading(false)
     }
   }
 
   // Debounce the online search; the featured catalog above never waits on it.
-  // Results are hidden until q ≥ 2 (see the JSX guard) and every fetch replaces
-  // them, so there's no need to reset state synchronously here.
+  // Results are shown only while their stamp matches q (see `current` below),
+  // so there's no need to reset state synchronously here.
   useEffect(() => {
     if (q.length < 2 || !isTauri()) return
     const handle = setTimeout(() => void fetchRegistry(q), 350)
     return () => clearTimeout(handle)
   }, [q])
+  const current = reg?.query === q ? reg : null
 
   /** Prefill the custom form from a registry candidate (secrets → env refs; required non-secret vars → empty rows). */
   const candidateToForm = (c: RegistryCandidate): CustomFormValue => {
@@ -159,8 +214,9 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
 
   const addFromForm = async (v: CustomFormValue) => {
     if (!paths) return
-    await run(mcpAddSpecStep(v.id, v.spec, v.targets, paths, t, route))
-    setAddCand(null)
+    const reports = await run(mcpAddSpecStep(v.id, v.spec, v.targets, paths, t, route))
+    // The form holds what was typed; close it only once that is on disk.
+    if (runApplied(reports)) setAddCand(null)
     refresh()
   }
 
@@ -261,6 +317,11 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
                 className="w-full"
                 aria-label={m.filterTarget}
                 disabled={filter !== "installed" && filter !== "notInstalled"}
+                aria-describedby={
+                  filter !== "installed" && filter !== "notInstalled"
+                    ? "mcp-target-filter-hint"
+                    : undefined
+                }
               >
                 <SelectValue />
               </SelectTrigger>
@@ -271,6 +332,11 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
                 <SelectItem value="opencode">{m.targets.opencode}</SelectItem>
               </SelectContent>
             </Select>
+            {filter !== "installed" && filter !== "notInstalled" ? (
+              <p id="mcp-target-filter-hint" className="text-xs text-muted-foreground">
+                {m.filterTargetHint}
+              </p>
+            ) : null}
           </FilterField>
           <FilterField label={m.filterTransport}>
             <Select
@@ -373,12 +439,26 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
                           </button>
                         ) : null}
                         {server.keyEnv && showKey ? (
-                          <KeyInput
-                            ariaLabel={`${server.id} ${server.keyEnv}`}
-                            placeholder={server.keyEnv}
-                            value={key}
-                            onChange={(v) => setMcpKey(server.id, v)}
-                          />
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
+                            <KeyInput
+                              ariaLabel={`${server.id} ${server.keyEnv}`}
+                              placeholder={server.keyEnv}
+                              value={key}
+                              onChange={(v) => setMcpKey(server.id, v)}
+                            />
+                            {installedTargets(presence).length > 0 ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={!key.trim()}
+                                onClick={() => void applyKey(server, installedTargets(presence))}
+                              >
+                                {m.keyApply(installedTargets(presence).length)}
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">{m.keyPending}</span>
+                            )}
+                          </div>
                         ) : null}
                       </div>
                     </CapabilityRow>
@@ -395,23 +475,35 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
           <h4 className="flex items-center gap-2 text-sm font-medium">
             <Search aria-hidden="true" className="size-4 text-muted-foreground" />
             {m.registryTitle}
-            {regResults.length ? (
+            {current?.results.length ? (
               <span className="font-mono text-xs font-normal tabular-nums text-muted-foreground">
-                {regResults.length}
+                {current.results.length}
               </span>
             ) : null}
             {regLoading ? <Spinner className="size-3.5" /> : null}
           </h4>
-          {regError ? (
-            <p className="text-sm text-muted-foreground">{m.registryError}</p>
-          ) : regLoading && regResults.length === 0 ? (
+          {/* No page for this exact query yet means one is on its way (the
+              debounce or the request), whatever an older query left behind. */}
+          {!current ? (
             <p className="text-sm text-muted-foreground">{m.registrySearching}</p>
-          ) : regResults.length === 0 ? (
+          ) : current.error ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm text-muted-foreground">{m.registryError}</p>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={regLoading}
+                onClick={() => void fetchRegistry(q)}
+              >
+                {m.registryRetry}
+              </Button>
+            </div>
+          ) : current.results.length === 0 ? (
             <p className="text-sm text-muted-foreground">{m.registryEmpty}</p>
           ) : (
             <>
               <CapabilityList label={m.registryTitle}>
-                {regResults.map((c) => (
+                {current.results.map((c) => (
                   <CapabilityRow
                     key={c.name}
                     title={c.title}
@@ -449,13 +541,25 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
                   />
                 ))}
               </CapabilityList>
-              {regCursor ? (
+              {current.moreError ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm text-muted-foreground">{m.registryMoreError}</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={regLoading}
+                    onClick={() => void fetchRegistry(q, current.cursor)}
+                  >
+                    {m.registryRetry}
+                  </Button>
+                </div>
+              ) : current.cursor ? (
                 <Button
                   variant="outline"
                   size="sm"
                   className="w-fit"
                   disabled={regLoading}
-                  onClick={() => void fetchRegistry(q, regCursor)}
+                  onClick={() => void fetchRegistry(q, current.cursor)}
                 >
                   {m.registryLoadMore}
                 </Button>
@@ -476,6 +580,7 @@ export function CatalogTab({ scan, refresh }: { scan: DashboardScan | null; refr
               mode="add"
               initial={candidateToForm(addCand)}
               takenIds={takenIds}
+              disabledTargets={claudeDisabled ? { claude: m.claudeMissing } : undefined}
               onSubmit={(v) => void addFromForm(v)}
               onCancel={() => setAddCand(null)}
             />

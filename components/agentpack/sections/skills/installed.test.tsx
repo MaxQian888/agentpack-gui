@@ -1,5 +1,8 @@
 jest.mock("@/lib/tauri", () => ({ isTauri: () => true }))
 jest.mock("@/lib/tauri/system", () => ({ revealPath: jest.fn(), openPath: jest.fn() }))
+jest.mock("sonner", () => ({
+  toast: { success: jest.fn(), error: jest.fn(), info: jest.fn(), message: jest.fn() },
+}))
 jest.mock("@/lib/tauri/commands", () => ({
   pathExists: jest.fn(async () => false),
   readTextFile: jest.fn(async () => "{}"),
@@ -20,6 +23,7 @@ jest.mock("@/lib/tauri/commands", () => ({
   })),
 }))
 
+import { useState } from "react"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
@@ -34,8 +38,9 @@ import {
 } from "@/lib/tauri/commands"
 import type { InstalledSkill, SkillsScanResult } from "@/lib/skills/types"
 import { openPath, revealPath } from "@/lib/tauri/system"
+import { toast } from "sonner"
 import { RunnerHarness } from "../../run/__testing__/harness"
-import { InstalledSkillsTab } from "./installed"
+import { InstalledSkillsTab, type SkillUpdates } from "./installed"
 
 const paths = {
   home: "/h",
@@ -84,11 +89,24 @@ beforeEach(() => {
   useAppStore.setState({ paths, panelOpen: false })
 })
 
-function renderTab(refresh = jest.fn()) {
+/** The tab with its update state held the way the section holds it. */
+function Tab({ scan, refresh }: { scan: SkillsScanResult; refresh: () => void }) {
+  const [updates, setUpdates] = useState<SkillUpdates>(null)
+  return (
+    <InstalledSkillsTab
+      scan={scan}
+      refresh={refresh}
+      updates={updates}
+      onUpdatesChange={setUpdates}
+    />
+  )
+}
+
+function renderTab(refresh = jest.fn(), s: SkillsScanResult = scan) {
   render(
     <I18nProvider>
       <RunnerHarness autoApply>
-        <InstalledSkillsTab scan={scan} refresh={refresh} />
+        <Tab scan={s} refresh={refresh} />
       </RunnerHarness>
     </I18nProvider>
   )
@@ -148,43 +166,25 @@ it("filters installed skills by management and issue status", async () => {
 })
 
 it("treats divergent copies across skill sources as a conflict", async () => {
-  render(
-    <I18nProvider>
-      <RunnerHarness autoApply>
-        <InstalledSkillsTab
-          scan={{
-            skills: [
-              skill({ source: "claude", dirName: "shared", path: "/c/shared" }),
-              skill({
-                source: "codex",
-                dirName: "shared",
-                path: "/x/shared",
-                skillMd: "---\nname: shared\n---\n# Different content\n",
-              }),
-            ],
-            errors: [],
-          }}
-          refresh={jest.fn()}
-        />
-      </RunnerHarness>
-    </I18nProvider>
-  )
+  renderTab(jest.fn(), {
+    skills: [
+      skill({ source: "claude", dirName: "shared", path: "/c/shared" }),
+      skill({
+        source: "codex",
+        dirName: "shared",
+        path: "/x/shared",
+        skillMd: "---\nname: shared\n---\n# Different content\n",
+      }),
+    ],
+    errors: [],
+  })
   await pickStatus(en.skillsBrowser.statusIssues)
   expect(screen.getByText("shared")).toBeInTheDocument()
 })
 
 it("shows scan errors only in the all and issues status views", async () => {
   const message = en.skillsBrowser.scanError("Codex", "permission denied")
-  render(
-    <I18nProvider>
-      <RunnerHarness autoApply>
-        <InstalledSkillsTab
-          scan={{ ...scan, errors: [{ source: "codex", message: "permission denied" }] }}
-          refresh={jest.fn()}
-        />
-      </RunnerHarness>
-    </I18nProvider>
-  )
+  renderTab(jest.fn(), { ...scan, errors: [{ source: "codex", message: "permission denied" }] })
 
   expect(screen.getByText(message)).toBeInTheDocument()
   await pickStatus(en.skillsBrowser.statusUnmanaged)
@@ -270,7 +270,6 @@ it("opens the backups dialog from the toolbar", async () => {
 })
 
 it("checks for updates and flags a managed skill with a pending update", async () => {
-  const onUpdateCountChange = jest.fn()
   const managedScan: SkillsScanResult = {
     skills: [
       skill({
@@ -285,17 +284,7 @@ it("checks for updates and flags a managed skill with a pending update", async (
   ;(checkRepoUpdates as jest.Mock).mockResolvedValue([
     { path: "/h/.claude/skills/web", hasUpdate: true, latestHash: "h2", error: null },
   ])
-  render(
-    <I18nProvider>
-      <RunnerHarness autoApply>
-        <InstalledSkillsTab
-          scan={managedScan}
-          refresh={jest.fn()}
-          onUpdateCountChange={onUpdateCountChange}
-        />
-      </RunnerHarness>
-    </I18nProvider>
-  )
+  renderTab(jest.fn(), managedScan)
   await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.checkUpdates }))
   await waitFor(() =>
     expect(checkRepoUpdates).toHaveBeenCalledWith(
@@ -304,7 +293,7 @@ it("checks for updates and flags a managed skill with a pending update", async (
     )
   )
   expect(await screen.findByText(en.skillsBrowser.updateAvailable)).toBeInTheDocument()
-  await waitFor(() => expect(onUpdateCountChange).toHaveBeenLastCalledWith(1))
+  expect(screen.getByRole("button", { name: en.skillsBrowser.updateAll(1) })).toBeInTheDocument()
 
   // "Update all" re-syncs the managed skill through the runner.
   await userEvent.click(screen.getByRole("button", { name: /Update all/ }))
@@ -328,13 +317,7 @@ it("updates a single managed skill from its row menu", async () => {
   ;(checkRepoUpdates as jest.Mock).mockResolvedValue([
     { path: "/h/.claude/skills/web", hasUpdate: true, latestHash: "h2", error: null },
   ])
-  render(
-    <I18nProvider>
-      <RunnerHarness autoApply>
-        <InstalledSkillsTab scan={managedScan} refresh={jest.fn()} />
-      </RunnerHarness>
-    </I18nProvider>
-  )
+  renderTab(jest.fn(), managedScan)
   await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.checkUpdates }))
   await screen.findByText(en.skillsBrowser.updateAvailable)
   await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.actions }))
@@ -342,4 +325,86 @@ it("updates a single managed skill from its row menu", async () => {
   await waitFor(() =>
     expect(updateSkill).toHaveBeenCalledWith("/h/.claude/skills/web", ["claude"], null)
   )
+})
+
+const managedScan: SkillsScanResult = {
+  skills: [
+    skill({
+      source: "claude",
+      dirName: "web",
+      path: "/h/.claude/skills/web",
+      origin: { repo: "o/r", ref: "HEAD", relPath: "", contentHash: "h1", installedAt: 0 },
+    }),
+  ],
+  errors: [],
+}
+
+it("keeps the update flag when the update didn't land", async () => {
+  ;(checkRepoUpdates as jest.Mock).mockResolvedValue([
+    { path: "/h/.claude/skills/web", hasUpdate: true, latestHash: "h2", error: null },
+  ])
+  ;(updateSkill as jest.Mock).mockRejectedValueOnce(new Error("network down"))
+  const refresh = renderTab(jest.fn(), managedScan)
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.checkUpdates }))
+  await screen.findByText(en.skillsBrowser.updateAvailable)
+  await userEvent.click(screen.getByRole("button", { name: /Update all/ }))
+  // `refresh` runs once the run has settled — i.e. after the flags were decided.
+  await waitFor(() => expect(refresh).toHaveBeenCalled())
+  // The skill is exactly as outdated as before, and the flag is the way back to Update.
+  expect(screen.getByText(en.skillsBrowser.updateAvailable)).toBeInTheDocument()
+})
+
+it("clears the update flag once the update applied", async () => {
+  ;(checkRepoUpdates as jest.Mock).mockResolvedValue([
+    { path: "/h/.claude/skills/web", hasUpdate: true, latestHash: "h2", error: null },
+  ])
+  ;(updateSkill as jest.Mock).mockResolvedValue(["/h/.claude/skills/web"])
+  renderTab(jest.fn(), managedScan)
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.checkUpdates }))
+  await screen.findByText(en.skillsBrowser.updateAvailable)
+  await userEvent.click(screen.getByRole("button", { name: /Update all/ }))
+  await waitFor(() =>
+    expect(screen.queryByText(en.skillsBrowser.updateAvailable)).not.toBeInTheDocument()
+  )
+})
+
+it("doesn't toast a batch copy whose step failed", async () => {
+  ;(installSkillFromDir as jest.Mock).mockRejectedValueOnce(new Error("disk full"))
+  const refresh = renderTab()
+  // rust lives only in Claude Code; copy it to Codex.
+  await userEvent.click(screen.getAllByRole("checkbox", { name: en.skillsBrowser.selectRow })[1])
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.batchCopyTo }))
+  await userEvent.click(await screen.findByRole("menuitem", { name: /Codex/ }))
+  await waitFor(() => expect(installSkillFromDir).toHaveBeenCalled())
+  await waitFor(() => expect(refresh).toHaveBeenCalled())
+  expect(toast.success).not.toHaveBeenCalled()
+})
+
+it("says so instead of opening a delete that would remove nothing", async () => {
+  renderTab()
+  // tauri-v2 lives only in Codex; scope the delete to OpenCode.
+  await userEvent.click(screen.getAllByRole("checkbox", { name: en.skillsBrowser.selectRow })[2])
+  await userEvent.click(screen.getByRole("combobox", { name: en.skillsBrowser.batchDeleteScope }))
+  await userEvent.click(await screen.findByRole("option", { name: "OpenCode" }))
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.batchDelete }))
+  expect(toast.info).toHaveBeenCalledWith(en.skillsBrowser.batchNothingToDelete("OpenCode"))
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument()
+})
+
+it("explains why Check updates is disabled when nothing is managed", () => {
+  renderTab()
+  const button = screen.getByRole("button", { name: en.skillsBrowser.checkUpdates })
+  expect(button).toBeDisabled()
+  expect(button).toHaveAccessibleDescription(en.skillsBrowser.checkUpdatesNoneManaged)
+})
+
+it("doesn't call a failed scan an empty disk", async () => {
+  const refresh = renderTab(jest.fn(), {
+    skills: [],
+    errors: [{ source: "claude", message: "permission denied" }],
+  })
+  expect(screen.getByText(en.skillsBrowser.emptyScanFailed)).toBeInTheDocument()
+  expect(screen.queryByText(en.skillsBrowser.empty)).not.toBeInTheDocument()
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.refresh }))
+  expect(refresh).toHaveBeenCalled()
 })

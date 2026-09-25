@@ -22,8 +22,9 @@ import { saveSettings } from "@/lib/tauri/settings"
 import { pickFolder } from "@/lib/tauri/dialog"
 import { cleanupRepoScan, fetchRepoSkills, pathExists } from "@/lib/tauri/commands"
 import { skillCopyStep, skillCreateStep, skillRepoInstallStep } from "@/lib/agentpack/plan"
+import { runApplied } from "@/lib/agentpack/report"
 import { filterBySubpath, parseRepoSource, tarballUrl, type RepoRef } from "@/lib/skills/github"
-import { npxSkillsAddCommand } from "@/lib/skills/npx"
+import { NPX_TARGETS, npxSkillsAddCommand } from "@/lib/skills/npx"
 import { skillDescription, skillName, splitFrontmatter } from "@/lib/skills/frontmatter"
 import { scaffoldSkillMd, type SkillTemplate } from "@/lib/skills/scaffold"
 import { SKILL_SOURCES } from "@/lib/skills/browse"
@@ -48,15 +49,18 @@ function isValidSkillName(name: string): boolean {
 function TargetPicker({
   targets,
   onToggle,
+  sources = SKILL_SOURCES,
 }: {
   targets: Set<SkillSource>
   onToggle: (t: SkillSource) => void
+  /** The roots on offer — every one, unless the installer can't address some. */
+  sources?: readonly SkillSource[]
 }) {
   const sb = useT().skillsBrowser
   return (
     <div className="flex flex-wrap items-center gap-4 text-sm">
       <span className="text-muted-foreground">{sb.selectTargets}</span>
-      {SKILL_SOURCES.map((target) => (
+      {sources.map((target) => (
         <label key={target} className="flex cursor-pointer items-center gap-2">
           <Checkbox checked={targets.has(target)} onCheckedChange={() => onToggle(target)} />
           {sb.sources[target]}
@@ -180,11 +184,23 @@ export function AddSkillsTab({
       })
       .filter((s): s is NonNullable<typeof s> => s !== null)
     if (steps.length === 0) return
-    await run(steps)
-    void cleanupRepoScan(scan.scanId).catch(() => {})
-    setScan(null)
+    const reports = await run(steps)
+    // The scan is what the steps install *from*. Retry in the review panel
+    // reads it again, and someone who walked away should find their fetch still
+    // here — so only a run that fully landed is done with it. Anything else is
+    // still disposed of on unmount or by the next fetch.
+    if (runApplied(reports)) {
+      void cleanupRepoScan(scan.scanId).catch(() => {})
+      setScan(null)
+    }
     refresh()
   }
+
+  // The skills CLI gets its own targets, beside its own button: it used to
+  // borrow the GitHub picker, which only renders after a fetch, so the command
+  // ran against targets nobody could see — and with none mapped to a flag it
+  // installs into every agent it finds.
+  const [npxTargets, setNpxTargets] = useState<Set<SkillSource>>(new Set(["claude", "codex"]))
 
   const runNpx = async () => {
     const src = source.trim()
@@ -192,12 +208,13 @@ export function AddSkillsTab({
       setFetchErr(sb.invalidSource)
       return
     }
+    if (npxTargets.size === 0) return
     await run([
       {
         kind: "command",
         id: `npx-skills-add-${Date.now()}`,
         label: sb.useNpx,
-        command: npxSkillsAddCommand(src, [...ghTargets]),
+        command: npxSkillsAddCommand(src, [...npxTargets]),
       },
     ])
     refresh()
@@ -228,8 +245,8 @@ export function AddSkillsTab({
     if (!resolved || resolved.length === 0) return
     const targets = resolved[0].targets
     const dests = targets.map((target) => skillDestPath(paths, target, dirName))
-    await run([skillCopyStep(dirName, dirName, folder, targets, dests, t)])
-    setFolder(null)
+    const reports = await run([skillCopyStep(dirName, dirName, folder, targets, dests, t)])
+    if (runApplied(reports)) setFolder(null)
     refresh()
   }
 
@@ -274,9 +291,12 @@ export function AddSkillsTab({
     )
     const content = scaffoldSkillMd({ name: trimmedName, description: newDesc, template })
     const dests = targets.map((target) => skillDestPath(paths, target, trimmedName))
-    await run([skillCreateStep(trimmedName, targets, content, dests, t, overwrite)])
-    setNewName("")
-    setNewDesc("")
+    const reports = await run([skillCreateStep(trimmedName, targets, content, dests, t, overwrite)])
+    // What was typed is the only copy of it until the skill is on disk.
+    if (runApplied(reports)) {
+      setNewName("")
+      setNewDesc("")
+    }
     refresh()
   }
 
@@ -370,11 +390,29 @@ export function AddSkillsTab({
               />
               <p className="text-xs text-muted-foreground">{sb.mirrorHint}</p>
             </div>
-            <div>
-              <Button variant="outline" size="sm" onClick={() => void runNpx()}>
-                {sb.useNpx}
-              </Button>
-              <p className="mt-1 text-xs text-muted-foreground">{sb.npxHint}</p>
+            <div className="flex flex-col gap-2">
+              <TargetPicker
+                targets={npxTargets}
+                sources={NPX_TARGETS}
+                onToggle={(x) => setNpxTargets(toggleIn(npxTargets, x))}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void runNpx()}
+                  disabled={npxTargets.size === 0}
+                  aria-describedby={npxTargets.size === 0 ? "skills-npx-no-target" : undefined}
+                >
+                  {sb.useNpx}
+                </Button>
+                {npxTargets.size === 0 ? (
+                  <span id="skills-npx-no-target" className="text-xs text-muted-foreground">
+                    {sb.npxNoTarget}
+                  </span>
+                ) : null}
+              </div>
+              <p className="text-xs text-muted-foreground">{sb.npxHint}</p>
             </div>
           </div>
         </details>
@@ -450,7 +488,13 @@ export function AddSkillsTab({
                 key={rec.url}
                 type="button"
                 onClick={() => addRepoSource(rec)}
-                className="rounded-full border px-2.5 py-0.5 hover:bg-accent/40"
+                className={cn(
+                  // A control, so the control radius — design.md § 5 keeps pills
+                  // for status dots and count bubbles.
+                  "rounded-md border px-2.5 py-0.5 hover:bg-accent/40",
+                  "transition-colors duration-(--hm-dur-fast) ease-(--hm-ease-out)",
+                  "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none"
+                )}
               >
                 + {rec.label ?? rec.url}
               </button>
@@ -481,6 +525,7 @@ export function AddSkillsTab({
             />
             <div>
               <Button
+                variant="outline"
                 size="sm"
                 onClick={() => void importFolder()}
                 disabled={localTargets.size === 0}
@@ -547,7 +592,10 @@ export function AddSkillsTab({
             onToggle={(x) => setCreateTargets(toggleIn(createTargets, x))}
           />
           <div>
+            {/* Outline, like Import: the view's one primary is the GitHub
+                install, which only appears once there is something to install. */}
             <Button
+              variant="outline"
               size="sm"
               onClick={() => void createSkillNow()}
               disabled={!trimmedName || !nameValid || createTargets.size === 0}

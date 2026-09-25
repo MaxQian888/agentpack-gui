@@ -7,8 +7,9 @@ import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
 import { historyGetSession } from "@/lib/tauri/commands"
+import { customRange } from "@/lib/history/range"
 import type { SessionDetail, SessionSummary, TokenUsage } from "@/lib/history/types"
-import { SessionBrowser } from "./session-browser"
+import { SessionBrowser, type BrowserFocus } from "./session-browser"
 
 const usage = (over: Partial<TokenUsage> = {}): TokenUsage => ({
   input: 0,
@@ -44,13 +45,15 @@ const session = (over: Partial<SessionSummary>): SessionSummary => ({
 const h = en.history
 const mockedGet = historyGetSession as jest.Mock
 
-function renderBrowser(sessions: SessionSummary[]) {
+function renderBrowser(sessions: SessionSummary[], focus?: BrowserFocus) {
   return render(
     <I18nProvider>
-      <SessionBrowser sessions={sessions} />
+      <SessionBrowser sessions={sessions} focus={focus} />
     </I18nProvider>
   )
 }
+
+beforeEach(() => mockedGet.mockReset())
 
 describe("SessionBrowser", () => {
   it("shows the empty state with no sessions", () => {
@@ -137,6 +140,31 @@ describe("SessionBrowser", () => {
     await user.click(screen.getByText("Broken"))
     const dialog = await screen.findByRole("dialog")
     await waitFor(() => expect(within(dialog).getByText(h.loadFailed)).toBeInTheDocument())
+    // The reason as the system gave it, not just that it failed.
+    expect(within(dialog).getByText("nope")).toBeInTheDocument()
+  })
+
+  it("retries a failed load in place", async () => {
+    const user = userEvent.setup()
+    mockedGet.mockRejectedValueOnce(new Error("busy")).mockResolvedValueOnce({
+      summary: session({ title: "Flaky" }),
+      messages: [],
+    })
+    renderBrowser([session({ title: "Flaky" })])
+    await user.click(screen.getByText("Flaky"))
+    const dialog = await screen.findByRole("dialog")
+    await user.click(await within(dialog).findByRole("button", { name: h.retry }))
+    await waitFor(() => expect(within(dialog).getByText(h.transcriptEmpty)).toBeInTheDocument())
+    expect(historyGetSession).toHaveBeenCalledTimes(2)
+  })
+
+  it("lists rows as list items whose names carry the whole row", () => {
+    renderBrowser([session({ id: "a", title: "Alpha" }), session({ id: "b", title: "Beta" })])
+    const list = screen.getByRole("list", { name: h.listPanel })
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2)
+    // No title-only override: the tool and the size are part of what's read out.
+    const row = within(list).getByRole("button", { name: /Alpha/ })
+    expect(row).toHaveAccessibleName(expect.stringContaining(h.rowTokens("100")))
   })
 
   // Sub-agent runs are separate transcripts on disk and outnumber real sessions
@@ -169,6 +197,26 @@ describe("SessionBrowser", () => {
     await user.click(within(dialog).getByRole("button", { name: "audit-panel" }))
     await waitFor(() =>
       expect(historyGetSession).toHaveBeenCalledWith("claude", "p/subagents/agent-abc.jsonl")
+    )
+  })
+
+  it("reopens on the main session, not on the sub-agent last viewed", async () => {
+    const user = userEvent.setup()
+    mockedGet.mockResolvedValue({ summary: session({ id: "parent" }), messages: [] })
+    renderBrowser([
+      session({ id: "parent", title: "Main work", path: "p.jsonl" }),
+      session({ id: "sub1", title: "agent-abc", agentName: "audit-panel", parentId: "parent" }),
+    ])
+    await user.click(screen.getByText("Main work"))
+    let dialog = await screen.findByRole("dialog")
+    await user.click(within(dialog).getByRole("button", { name: "audit-panel" }))
+    await user.keyboard("{Escape}")
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument())
+    await user.click(screen.getByText("Main work"))
+    dialog = await screen.findByRole("dialog")
+    expect(within(dialog).getByRole("button", { name: h.subagentParent })).toHaveAttribute(
+      "aria-pressed",
+      "true"
     )
   })
 
@@ -211,5 +259,84 @@ describe("SessionBrowser", () => {
     const dialog = await screen.findByRole("dialog")
     await user.click(within(dialog).getByRole("button", { name: "official_docs" }))
     await waitFor(() => expect(historyGetSession).toHaveBeenCalledWith("codex", "leaf.jsonl"))
+  })
+
+  describe("drill-downs from the usage tab", () => {
+    // A sub-agent ranks among the most expensive sessions on its own cost, but
+    // the list nests it out of sight — a title search for it matched nothing.
+    it("opens a sub-agent inside its parent's transcript, with its chip selected", async () => {
+      mockedGet.mockResolvedValue({ summary: session({ id: "parent" }), messages: [] })
+      renderBrowser(
+        [
+          session({ id: "parent", title: "Main work", path: "drill.jsonl" }),
+          session({
+            id: "sub1",
+            title: "agent-drill",
+            agentName: "audit-panel",
+            parentId: "parent",
+            // Unique to this test: transcripts are cached across tests by path.
+            path: "drill/subagents/agent-drill.jsonl",
+          }),
+        ],
+        { session: { source: "claude", path: "drill/subagents/agent-drill.jsonl" }, nonce: 1 }
+      )
+      const dialog = await screen.findByRole("dialog")
+      expect(within(dialog).getByRole("heading", { name: "agent-drill" })).toBeInTheDocument()
+      expect(within(dialog).getByRole("button", { name: "audit-panel" })).toHaveAttribute(
+        "aria-pressed",
+        "true"
+      )
+      await waitFor(() =>
+        expect(historyGetSession).toHaveBeenCalledWith(
+          "claude",
+          "drill/subagents/agent-drill.jsonl"
+        )
+      )
+    })
+
+    it("filters to exactly the drilled project, as a chip that clears it", async () => {
+      const user = userEvent.setup()
+      renderBrowser(
+        [
+          session({ id: "a", title: "Tidy api", projectName: "api" }),
+          session({ id: "b", title: "Gateway work", projectName: "api-gateway" }),
+          session({ id: "c", title: "Talk about the api", projectName: "docs" }),
+        ],
+        { project: "api", nonce: 1 }
+      )
+      // A substring search for "api" matched all three.
+      expect(screen.getByText("Tidy api")).toBeInTheDocument()
+      expect(screen.queryByText("Gateway work")).not.toBeInTheDocument()
+      expect(screen.queryByText("Talk about the api")).not.toBeInTheDocument()
+
+      await user.click(screen.getByRole("button", { name: h.clearFilter(h.projectFilter("api")) }))
+      expect(screen.getByText("Gateway work")).toBeInTheDocument()
+    })
+
+    it("carries the period the clicked figure was counted over", async () => {
+      const user = userEvent.setup()
+      const inside = new Date(2026, 6, 5, 12).getTime()
+      const outside = new Date(2026, 5, 1, 12).getTime()
+      renderBrowser(
+        [
+          session({ id: "a", title: "July", projectName: "api", updatedAt: inside }),
+          session({ id: "b", title: "June", projectName: "api", updatedAt: outside }),
+        ],
+        {
+          project: "api",
+          period: {
+            range: customRange(new Date(2026, 6, 1).getTime(), new Date(2026, 6, 7).getTime()),
+            label: "Jul 1 – Jul 7",
+          },
+          nonce: 1,
+        }
+      )
+      expect(screen.getByText("July")).toBeInTheDocument()
+      expect(screen.queryByText("June")).not.toBeInTheDocument()
+      await user.click(
+        screen.getByRole("button", { name: h.clearFilter(h.periodFilter("Jul 1 – Jul 7")) })
+      )
+      expect(screen.getByText("June")).toBeInTheDocument()
+    })
   })
 })

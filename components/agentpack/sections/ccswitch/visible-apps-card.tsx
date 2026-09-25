@@ -11,14 +11,20 @@ import type { VisibleApps } from "@/lib/agentpack/ccswitch/types"
  * Which apps cc-switch shows in its own UI. Written to cc-switch's settings
  * file rather than its database, so it needs an explicit Apply — unlike the
  * provider rows, nothing here takes effect until the file is written.
+ *
+ * Apply is only live once a switch differs from the file: applying the file's
+ * own contents back to it staged a review of a write that changed nothing.
  */
 export function VisibleAppsCard({
   visible,
+  changed,
   disabled,
   onChange,
   onApply,
 }: {
   visible: VisibleApps
+  /** Whether any switch differs from what cc-switch's settings file says. */
+  changed: boolean
   disabled: boolean
   onChange: (next: VisibleApps) => void
   onApply: () => void
@@ -43,9 +49,22 @@ export function VisibleAppsCard({
           </div>
         ))}
       </div>
-      <Button variant="outline" size="sm" className="mt-3" onClick={onApply} disabled={disabled}>
-        {t.shell.apply}
-      </Button>
+      <div className="mt-3 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onApply}
+          disabled={disabled || !changed}
+          aria-describedby={changed ? undefined : "ccswitch-visible-unchanged"}
+        >
+          {t.shell.apply}
+        </Button>
+        {changed ? null : (
+          <p id="ccswitch-visible-unchanged" className="min-w-0 text-xs text-muted-foreground">
+            {c.visibleUnchanged}
+          </p>
+        )}
+      </div>
     </section>
   )
 }

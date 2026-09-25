@@ -11,6 +11,7 @@ import {
   CommandList,
 } from "@/components/ui/command"
 import { useT } from "@/lib/i18n/provider"
+import { useTrayCount } from "./change-tray"
 import {
   buildPalette,
   filterPalette,
@@ -23,6 +24,7 @@ export interface PaletteHandlers {
   quickConfig: () => void
   rescan: () => void
   review: () => void
+  showRun: () => void
   onboarding: () => void
   updates: () => void
 }
@@ -48,11 +50,14 @@ export function CommandPalette({
   open,
   onOpenChange,
   pendingChanges,
+  running = false,
   handlers,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  pendingChanges: number
+  /** The change tray's count — what Review would stage. Read from the store when omitted. */
+  pendingChanges?: number
+  running?: boolean
   handlers: PaletteHandlers
 }) {
   const t = useT()
@@ -90,7 +95,12 @@ export function CommandPalette({
     [onOpenChange]
   )
 
-  const items = useMemo(() => buildPalette(t, { pendingChanges }), [t, pendingChanges])
+  const trayCount = useTrayCount()
+  const count = pendingChanges ?? trayCount
+  const items = useMemo(
+    () => buildPalette(t, { pendingChanges: count, running }),
+    [t, count, running]
+  )
   const matches = useMemo(() => filterPalette(items, query), [items, query])
   const go = matches.filter((i) => i.group === "go")
   const actions = matches.filter((i) => i.group === "action")
@@ -107,6 +117,8 @@ export function CommandPalette({
         return handlers.rescan()
       case "review":
         return handlers.review()
+      case "showRun":
+        return handlers.showRun()
       case "toggleTheme":
         return setTheme(resolvedTheme === "dark" ? "light" : "dark")
       case "onboarding":

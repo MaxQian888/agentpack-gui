@@ -18,7 +18,9 @@ import userEvent from "@testing-library/user-event"
 import { toast } from "sonner"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
+import { en } from "@/lib/i18n/en"
 import { readTextFile } from "@/lib/tauri/commands"
+import type { ClaudeMcpRoute } from "@/lib/agentpack/plan"
 import { InstalledTab } from "./installed"
 import type { DashboardScan } from "../dashboard"
 
@@ -44,8 +46,13 @@ const paths = {
   opencodeConfig: "/h/.config/opencode/opencode.json",
 } as never
 
+/** What `run()` resolves with once the user applied and every step landed. */
+const applied = (steps: { id: string; label: string }[]) =>
+  steps.map((s) => ({ id: s.id, label: s.label, status: "done", output: [] }))
+
 beforeEach(() => {
-  mockRun.mockClear()
+  mockRun.mockReset()
+  mockRun.mockImplementation(async (steps) => applied(steps))
   ;(toast.success as jest.Mock).mockClear()
   useAppStore.getState().resetPlan()
   useAppStore.setState({ paths })
@@ -55,10 +62,14 @@ afterEach(() => {
   ;(readTextFile as jest.Mock).mockImplementation(async () => "{}")
 })
 
-function renderInstalled(s: DashboardScan | null = scan(), onBrowseCatalog?: () => void) {
+function renderInstalled(
+  s: DashboardScan | null = scan(),
+  onBrowseCatalog?: () => void,
+  route: ClaudeMcpRoute = "cli"
+) {
   return render(
     <I18nProvider>
-      <InstalledTab scan={s} refresh={() => {}} onBrowseCatalog={onBrowseCatalog} />
+      <InstalledTab scan={s} refresh={() => {}} route={route} onBrowseCatalog={onBrowseCatalog} />
     </I18nProvider>
   )
 }
@@ -107,7 +118,8 @@ it("copies a known server to a missing target from the row menu", async () => {
   await waitFor(() => expect(mockRun).toHaveBeenCalled())
   const steps = mockRun.mock.calls[0][0] as { id: string }[]
   expect(steps.some((s) => s.id === "mcp-add-codex-context7")).toBe(true)
-  expect(toast.success).toHaveBeenCalled()
+  // The review panel reports success; a toast on top would say it twice.
+  expect(toast.success).not.toHaveBeenCalled()
 })
 
 it("runs a health check from the row menu and toasts the outcome", async () => {
@@ -159,4 +171,70 @@ it("edits a custom server end to end and runs the edit step", async () => {
   await waitFor(() => expect(mockRun).toHaveBeenCalled())
   const steps = mockRun.mock.calls[0][0] as { id: string }[]
   expect(steps.some((s) => s.id.includes("mine"))).toBe(true)
+})
+
+it("doesn't toast a copy the user walked away from", async () => {
+  mockRun.mockResolvedValue([])
+  renderInstalled()
+  await userEvent.click(screen.getAllByRole("button", { name: /Actions/i })[0])
+  await userEvent.click(await screen.findByRole("menuitem", { name: /Copy to Codex/i }))
+  await waitFor(() => expect(mockRun).toHaveBeenCalled())
+  expect(toast.success).not.toHaveBeenCalled()
+})
+
+it("doesn't toast a copy whose step failed", async () => {
+  mockRun.mockImplementation(async (steps: { id: string; label: string }[]) =>
+    steps.map((st) => ({ id: st.id, label: st.label, status: "error", output: [] }))
+  )
+  renderInstalled()
+  await userEvent.click(screen.getAllByRole("button", { name: /Actions/i })[0])
+  await userEvent.click(await screen.findByRole("menuitem", { name: /Copy to Codex/i }))
+  await waitFor(() => expect(mockRun).toHaveBeenCalled())
+  expect(toast.success).not.toHaveBeenCalled()
+})
+
+it("copies to Claude by writing its file on a desktop-only machine", async () => {
+  renderInstalled(
+    scan({ claudeMcps: { known: [], custom: [] }, codexMcps: { known: ["context7"], custom: [] } }),
+    undefined,
+    "file"
+  )
+  await userEvent.click(screen.getAllByRole("button", { name: /Actions/i })[0])
+  await userEvent.click(await screen.findByRole("menuitem", { name: /Copy to Claude Code/i }))
+  await waitFor(() => expect(mockRun).toHaveBeenCalled())
+  const [step] = mockRun.mock.calls[0][0] as { id: string; kind: string }[]
+  expect(step).toMatchObject({ id: "mcp-add-claude-context7", kind: "mergeFile" })
+})
+
+it("says why Claude is missing from the menu when there is no route to it", async () => {
+  renderInstalled(scan(), undefined, "none")
+  await userEvent.click(screen.getAllByRole("button", { name: /Actions/i })[0])
+  expect(await screen.findByText(en.mcp.claudeMissing)).toBeInTheDocument()
+  expect(
+    screen.queryByRole("menuitem", { name: /Remove from Claude Code/i })
+  ).not.toBeInTheDocument()
+})
+
+it("opens the edit form straight from a custom server's Edit item", async () => {
+  ;(readTextFile as jest.Mock).mockImplementation(async (p: string) =>
+    p.endsWith("config.toml") ? '[mcp_servers.mine]\ncommand = "node"\nargs = ["s.js"]\n' : "{}"
+  )
+  renderInstalled()
+  await userEvent.click(screen.getAllByRole("button", { name: /Actions/i })[1])
+  await userEvent.click(await screen.findByRole("menuitem", { name: /^Edit$/i }))
+  // The form itself, not the read-only viewer it used to open.
+  expect(await screen.findByRole("button", { name: /Save changes/i })).toBeInTheDocument()
+})
+
+it("keeps the edit form open until the edit is on disk", async () => {
+  mockRun.mockResolvedValue([])
+  ;(readTextFile as jest.Mock).mockImplementation(async (p: string) =>
+    p.endsWith("config.toml") ? '[mcp_servers.mine]\ncommand = "node"\nargs = ["s.js"]\n' : "{}"
+  )
+  renderInstalled()
+  await userEvent.click(screen.getAllByRole("button", { name: /Actions/i })[1])
+  await userEvent.click(await screen.findByRole("menuitem", { name: /^Edit$/i }))
+  await userEvent.click(await screen.findByRole("button", { name: /Save changes/i }))
+  await waitFor(() => expect(mockRun).toHaveBeenCalled())
+  expect(screen.getByRole("button", { name: /Save changes/i })).toBeInTheDocument()
 })

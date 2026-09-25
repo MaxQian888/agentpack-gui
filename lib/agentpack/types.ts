@@ -1,3 +1,5 @@
+import type { AppSettings } from "@/lib/tauri/settings"
+
 /** Supported operating-system families. */
 export type OS = "win" | "mac" | "linux"
 
@@ -441,11 +443,14 @@ export type StepKind =
   | "skillUpdate"
   | "skillBackup"
   | "skillCreate"
+  | "skillRestore"
   | "ccProvider"
   | "ccVisibleApps"
+  | "ccInitDb"
   | "fileRestore"
   | "snapshot"
   | "cleanup"
+  | "appSettings"
 
 interface StepBase {
   id: string
@@ -604,6 +609,25 @@ export interface SkillCreateStep extends StepBase {
   overwrite?: boolean
 }
 
+/**
+ * Put a skill backup (`restore_skill_backup`) back into each target root.
+ *
+ * A step rather than a direct command call because a restore replaces whatever
+ * is at `<root>/<dirName>` wholesale — it was the one skill write that bypassed
+ * the review panel. Callers route overwrites through the install guard first,
+ * exactly as for a copy or an install.
+ */
+export interface SkillRestoreStep extends StepBase {
+  kind: "skillRestore"
+  /** The backup's id in the skill backup store. */
+  backupId: string
+  dirName: string
+  /** SkillInstallTarget[] — kept as strings so agentpack types stay skills-agnostic. */
+  targets: string[]
+  /** Destination dirs, precomputed for dry-run preview. */
+  dests: string[]
+}
+
 export interface CcProviderStep extends StepBase {
   kind: "ccProvider"
   op: "add" | "update" | "delete" | "setCurrent"
@@ -614,6 +638,17 @@ export interface CcVisibleAppsStep extends StepBase {
   kind: "ccVisibleApps"
   path: string
   merge: (existing: string) => string
+}
+
+/**
+ * Create cc-switch's SQLite database when it doesn't exist yet (`cc_init_db`,
+ * a no-op when it does). A step so the preview can name the file and the
+ * report is the command's own outcome.
+ */
+export interface CcInitDbStep extends StepBase {
+  kind: "ccInitDb"
+  /** The database file, for the preview and the log. */
+  path: string
 }
 
 /** Restore a config file from a previously written `.agentpack.bak` snapshot. */
@@ -668,6 +703,24 @@ export interface CleanupStep extends StepBase {
   entries: { path: string; bytes: number; files: number }[]
 }
 
+/**
+ * Persist a patch of agentpack's own settings (the store plugin's `settings.json`
+ * in the app data dir). A step rather than a direct `saveSettings` call so a
+ * change a user is asked to approve — an imported backup's settings — is listed
+ * in the review panel and the activity log like every other write, and a
+ * cancelled run leaves them alone.
+ */
+export interface AppSettingsStep extends StepBase {
+  kind: "appSettings"
+  patch: Partial<AppSettings>
+  /**
+   * One line per changed key, already in the user's language and with any
+   * credential masked — previewed and logged verbatim, since this module has no
+   * idea which settings are secret.
+   */
+  lines: string[]
+}
+
 /** One path a cleanup step covers. Mirrors `CleanupSpec` in `src-tauri/src/cleanup.rs`. */
 export interface CleanupSpecDescriptor {
   id: string
@@ -688,12 +741,15 @@ export type StepDescriptor =
   | SkillUpdateStep
   | SkillBackupStep
   | SkillCreateStep
+  | SkillRestoreStep
   | CcProviderStep
   | CcVisibleAppsStep
+  | CcInitDbStep
   | FileRestoreStep
   | SnapshotStep
   | SnapshotRestoreStep
   | CleanupStep
+  | AppSettingsStep
 
 /**
  * How a step that first failed on the network was rescued. Present only when a

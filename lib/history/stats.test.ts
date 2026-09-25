@@ -1,4 +1,5 @@
-import { computeUsageStats, matchesQuery } from "./stats"
+import { formatCostFigure } from "./format"
+import { computeUsageStats, matchesQuery, projectKey, statsCostFigure } from "./stats"
 import type { SessionSummary, TokenUsage } from "./types"
 
 const usage = (over: Partial<TokenUsage> = {}): TokenUsage => ({
@@ -247,6 +248,21 @@ describe("computeUsageStats — unpriced models", () => {
     expect(st.actualCost).toBeCloseTo(0.5)
     expect(st.estimatedCost).toBe(0)
     expect(st.totals.cost).toBeCloseTo(0.5)
+    // …and the headline figure says it is a lower bound.
+    expect(formatCostFigure(statsCostFigure(st))).toBe("≥$0.5000")
+  })
+
+  it("writes — for a total when no transcript could be priced at all", () => {
+    const st = computeUsageStats([session({ model: "some-local-llm", usage: usage({ total: 9 }) })])
+    expect(formatCostFigure(statsCostFigure(st))).toBe("—")
+    expect(st.byProject[0]).toMatchObject({ transcripts: 1, unpriced: 1 })
+  })
+})
+
+describe("projectKey", () => {
+  it("is the key byProject groups under, including the nameless bucket", () => {
+    const st = computeUsageStats([session({ projectName: "" })])
+    expect(st.byProject[0].project).toBe(projectKey(session({ projectName: "" })))
   })
 })
 

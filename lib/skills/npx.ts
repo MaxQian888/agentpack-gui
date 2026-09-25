@@ -16,6 +16,13 @@ const CLI_AGENT: Partial<Record<SkillInstallTarget, string>> = {
 }
 
 /**
+ * The targets the CLI can be pointed at by flag — the only ones worth offering
+ * beside its button. Offering `agents` or `pi` there would let someone pick a
+ * target that maps to no flag, and no flag means every agent.
+ */
+export const NPX_TARGETS = Object.keys(CLI_AGENT) as SkillInstallTarget[]
+
+/**
  * `npx -y skills add <source> -g -y [-a <agents...>]` — global scope, no
  * prompts. Without any mappable agent the `-a` flag is omitted and the CLI
  * installs for every agent it detects.

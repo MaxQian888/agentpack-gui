@@ -1,7 +1,6 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { toast } from "sonner"
 import {
   Dialog,
   DialogContent,
@@ -15,9 +14,11 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-import { mcpAddSpecStep } from "@/lib/agentpack/plan"
+import { mcpAddSpecStep, mcpEditStep, type ClaudeMcpRoute } from "@/lib/agentpack/plan"
+import { runApplied } from "@/lib/agentpack/report"
 import { parseMcpImport, type ImportedServer } from "@/lib/agentpack/mcp-import"
 import type { McpTarget } from "@/lib/agentpack/types"
 import { useRunnerCtx } from "../../run/runner-context"
@@ -29,17 +30,24 @@ import { existingIds, MCP_TARGETS, TargetDot } from "./helpers"
  * server object, or a `claude mcp add …` command. Parsing is pure
  * (`parseMcpImport`); this dialog previews the result, warns on id collisions,
  * and writes the chosen servers through the runner (dry-run / backup for free).
+ *
+ * An id that is already configured is written as an edit, not an add: the
+ * collision note promises the import overwrites it, and `claude mcp add`
+ * refuses a duplicate id — so it has to remove first, as `mcpEditStep` does.
  */
 export function ImportDialog({
   open,
   onOpenChange,
   scan,
   refresh,
+  route,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   scan: DashboardScan | null
   refresh: () => void
+  /** How Claude's config is reached (`claudeMcpRoute`), decided by the section. */
+  route: ClaudeMcpRoute
 }) {
   const t = useT()
   const m = t.mcp
@@ -54,6 +62,16 @@ export function ImportDialog({
   const servers: ImportedServer[] = "servers" in parsed ? parsed.servers : []
   const errorCode = "error" in parsed ? parsed.error : null
 
+  // Targets nothing here can write: Claude with no route to it, and Codex when
+  // every server pasted is SSE (Codex has no SSE transport). A mixed paste keeps
+  // Codex and says, per row, which servers it will skip.
+  const allSse = servers.length > 0 && servers.every((s) => s.spec.transport === "sse")
+  const disabled: Partial<Record<McpTarget, string>> = {
+    ...(route === "none" ? { claude: m.claudeMissing } : {}),
+    ...(allSse ? { codex: m.capCodexNoSse } : {}),
+  }
+  const chosen = [...targets].filter((tg) => !disabled[tg])
+
   const toggle = (tg: McpTarget) =>
     setTargets((prev) => {
       const next = new Set(prev)
@@ -63,13 +81,19 @@ export function ImportDialog({
     })
 
   const doImport = async () => {
-    if (!paths || servers.length === 0 || targets.size === 0) return
-    const tg = [...targets]
-    const steps = servers.flatMap((s) => mcpAddSpecStep(s.id, s.spec, tg, paths, t))
-    await run(steps)
-    toast.success(m.importDone(servers.length))
-    setText("")
-    onOpenChange(false)
+    if (!paths || servers.length === 0 || chosen.length === 0) return
+    const steps = servers.flatMap((s) =>
+      taken.has(s.id)
+        ? mcpEditStep(s.id, s.spec, chosen, paths, t, route)
+        : mcpAddSpecStep(s.id, s.spec, chosen, paths, t, route)
+    )
+    const reports = await run(steps)
+    // The paste is the only copy of what was being imported; keep it (and the
+    // dialog) until it is actually on disk.
+    if (runApplied(reports)) {
+      setText("")
+      onOpenChange(false)
+    }
     refresh()
   }
 
@@ -111,6 +135,9 @@ export function ImportDialog({
                   <Badge variant="outline" className="font-normal text-muted-foreground">
                     {s.spec.transport}
                   </Badge>
+                  {s.spec.transport === "sse" && chosen.includes("codex") ? (
+                    <span className="text-xs text-muted-foreground">{m.importSkipsCodex}</span>
+                  ) : null}
                   {taken.has(s.id) ? (
                     <span className="ml-auto text-xs text-amber-600">{m.importCollision}</span>
                   ) : null}
@@ -122,13 +149,24 @@ export function ImportDialog({
           <div className="flex flex-col gap-1.5">
             <Label>{m.importSelectTargets}</Label>
             <div className="flex flex-wrap items-center gap-4 text-sm">
-              {MCP_TARGETS.map((tg) => (
-                <label key={tg} className="flex cursor-pointer items-center gap-2">
-                  <Checkbox checked={targets.has(tg)} onCheckedChange={() => toggle(tg)} />
-                  <TargetDot target={tg} on={targets.has(tg)} />
-                  {m.targets[tg]}
-                </label>
-              ))}
+              {MCP_TARGETS.map((tg) => {
+                const reason = disabled[tg]
+                const on = targets.has(tg) && !reason
+                return (
+                  <label
+                    key={tg}
+                    title={reason}
+                    className={cn(
+                      "flex items-center gap-2",
+                      reason ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+                    )}
+                  >
+                    <Checkbox checked={on} disabled={!!reason} onCheckedChange={() => toggle(tg)} />
+                    <TargetDot target={tg} on={on} />
+                    {m.targets[tg]}
+                  </label>
+                )
+              })}
             </div>
           </div>
         </div>
@@ -138,7 +176,7 @@ export function ImportDialog({
             {m.cancel}
           </Button>
           <Button
-            disabled={servers.length === 0 || targets.size === 0}
+            disabled={servers.length === 0 || chosen.length === 0}
             onClick={() => void doImport()}
           >
             {m.importButton(servers.length)}

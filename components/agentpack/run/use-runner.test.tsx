@@ -137,6 +137,60 @@ describe("the review gate", () => {
     expect(result.current.pendingCount).toBe(0)
     expect(result.current.pendingSteps).toEqual([])
     expect(runSteps).not.toHaveBeenCalled()
+    // No rows left behind to be read as a finished run next time the panel opens.
+    expect(result.current.reports).toEqual([])
+  })
+
+  it("keeps the plan a run was built from, and none for a run that had none", async () => {
+    const plan: Plan = {
+      os: "mac",
+      clis: ["claude-code"],
+      skills: [],
+      mcps: [],
+      mcpKeys: {},
+      network: {},
+    }
+    const { result } = renderHook(() => useRunner(), { wrapper })
+    void stage(result, [cmd("a", "A")], { plan, activity: { title: "Quick setup" } })
+    await waitFor(() => expect(result.current.runPlan).toBe(plan))
+    expect(result.current.runTitle).toBe("Quick setup")
+    act(() => result.current.abandonPending())
+    void stage(result, [cmd("b", "B")])
+    await waitFor(() => expect(result.current.awaitingConfirm).toBe(true))
+    expect(result.current.runPlan).toBeNull()
+  })
+
+  it("refuses to stage over a run that is still executing, and brings it back", async () => {
+    // Hold the first run open so there is something in flight.
+    let finish!: () => void
+    ;(runSteps as jest.Mock).mockImplementationOnce(
+      (steps: { id: string; label: string }[]) =>
+        new Promise((resolve) => {
+          finish = () =>
+            resolve(steps.map((s) => ({ id: s.id, label: s.label, status: "done", output: [] })))
+        })
+    )
+    const { result } = renderHook(() => useRunner(), { wrapper })
+    const first = stage(result, [cmd("a", "A")])
+    await waitFor(() => expect(result.current.awaitingConfirm).toBe(true))
+    let applying!: Promise<void>
+    act(() => {
+      applying = result.current.applyPending()
+    })
+    await waitFor(() => expect(result.current.running).toBe(true))
+
+    // The user closed the panel mid-run and clicked another Apply somewhere.
+    act(() => useAppStore.setState({ panelOpen: false }))
+    await expect(stage(result, [cmd("b", "B")])).resolves.toEqual([])
+    expect(toast.message).toHaveBeenCalledWith(en.shell.runBusy)
+    expect(useAppStore.getState().panelOpen).toBe(true)
+
+    // The first caller still gets its own reports, not [] and not someone else's.
+    await act(async () => {
+      finish()
+      await applying
+    })
+    await expect(first).resolves.toEqual([expect.objectContaining({ id: "a", status: "done" })])
   })
 
   it("staging a second batch releases whoever was waiting on the first", async () => {

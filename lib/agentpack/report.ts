@@ -4,6 +4,19 @@ import type { Messages } from "@/lib/i18n/types"
 import type { Plan, StepReport } from "./types"
 
 /**
+ * Whether a run the user was asked to review actually happened, all of it.
+ *
+ * `run()` resolves `[]` when the user walks away from the review panel, and a
+ * cancelled run comes back with its remaining steps `skipped`. Callers that
+ * reacted to "the promise resolved" toasted success, cleared a form or dropped an
+ * "update available" flag for a write that never landed. This is the one test
+ * for "treat it as done": at least one step, and every step `done` or `warning`.
+ */
+export function runApplied(reports: readonly StepReport[]): boolean {
+  return reports.length > 0 && reports.every((r) => r.status === "done" || r.status === "warning")
+}
+
+/**
  * Selected MCP servers left without a key, as `{ id, env }`.
  *
  * The server id comes along because the completion screen has to decide whether
@@ -25,7 +38,8 @@ export function pendingKeyEnvs(plan: Plan): { id: string; env: string }[] {
  */
 export function summarize(
   reports: StepReport[],
-  plan: Plan,
+  /** Null for a run that wasn't built from a plan — it has no keys or next steps. */
+  plan: Plan | null,
   messages: Messages = en,
   dryRun = false
 ): string[] {
@@ -47,17 +61,17 @@ export function summarize(
     for (const r of warnings) lines.push(`  ⚠ ${r.label}`)
   }
 
-  const pending = pendingKeyEnvs(plan)
+  const pending = plan ? pendingKeyEnvs(plan) : []
   if (pending.length) {
     lines.push(s.pendingKeys)
     for (const k of pending) lines.push(`  • ${k.env}`)
   }
 
   const next: string[] = []
-  if (plan.clis.includes("claude-code")) {
+  if (plan?.clis.includes("claude-code")) {
     next.push(`${s.nextRunPrefix}claude${s.nextRunClaudeSuffix}`)
   }
-  if (plan.clis.includes("codex")) {
+  if (plan?.clis.includes("codex")) {
     next.push(`${s.nextRunPrefix}codex${s.nextRunCodexSuffix}`)
   }
   if (next.length) {

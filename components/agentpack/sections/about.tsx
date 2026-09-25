@@ -56,6 +56,12 @@ export function AboutSection() {
   const [system, setSystem] = useState<string | null>(null)
   const [systemResolved, setSystemResolved] = useState(false)
   const [updateError, setUpdateError] = useState<string | null>(null)
+  /**
+   * Which operation the error belongs to. A failed install is not a failed
+   * check: the update is still known and still installable, so it keeps its
+   * panel and its Install button, and it gets its own words.
+   */
+  const [failedOp, setFailedOp] = useState<"check" | "install" | null>(null)
 
   // Resolve the app version if the startup effect hasn't already (e.g. the user
   // lands here first). No-op in web mode (returns null).
@@ -81,17 +87,24 @@ export function AboutSection() {
   const checking = updateState === "checking"
   const downloading = updateState === "downloading" || updateState === "ready"
   const showUpdate =
-    (updateState === "available" || updateState === "downloading" || updateState === "ready") &&
+    (updateState === "available" ||
+      updateState === "downloading" ||
+      updateState === "ready" ||
+      // A failed install leaves the update exactly as available as it was.
+      (updateState === "error" && failedOp === "install")) &&
     !!updateInfo
 
   const onCheck = async () => {
     setUpdateError(null)
+    setFailedOp(null)
     setUpdateState("checking")
-    const checkedAt = Date.now()
-    setSettings({ lastCheckAt: checkedAt })
-    void saveSettings({ lastCheckAt: checkedAt })
     try {
       const info = await checkForUpdate()
+      // Stamped only once the feed actually answered. Stamping first meant a
+      // failed check read "Last checked: just now" beside the error.
+      const checkedAt = Date.now()
+      setSettings({ lastCheckAt: checkedAt })
+      void saveSettings({ lastCheckAt: checkedAt })
       if (info) {
         setUpdateInfo(info)
         setUpdateState("available")
@@ -101,6 +114,7 @@ export function AboutSection() {
       }
     } catch (error) {
       setUpdateError(error instanceof Error ? error.message : String(error))
+      setFailedOp("check")
       setUpdateState("error")
       toast.error(t.about.checkFailed)
     }
@@ -108,6 +122,7 @@ export function AboutSection() {
 
   const onInstall = async () => {
     setUpdateError(null)
+    setFailedOp(null)
     setUpdateState("downloading")
     setDownloadProgress(0)
     try {
@@ -116,8 +131,9 @@ export function AboutSection() {
       await restartApp()
     } catch (error) {
       setUpdateError(error instanceof Error ? error.message : String(error))
+      setFailedOp("install")
       setUpdateState("error")
-      toast.error(t.about.checkFailed)
+      toast.error(t.about.installFailed)
     }
   }
 
@@ -128,20 +144,25 @@ export function AboutSection() {
     void saveSettings({ skippedVersion: version })
     setUpdateInfo(null)
     setUpdateError(null)
+    setFailedOp(null)
     setUpdateState("idle")
   }
 
   const lastChecked = settings.lastCheckAt
     ? new Date(settings.lastCheckAt).toLocaleString()
     : t.about.never
+  // An error outranks the version: after a failed install the panel still
+  // offers the update, and the fact up top says why it isn't installed yet.
   const updateLabel = checking
     ? t.about.checking
-    : showUpdate && updateInfo
-      ? updateInfo.version
-      : updateState === "upToDate"
-        ? t.about.updateCurrent
-        : updateState === "error"
-          ? t.about.updateFailed
+    : updateState === "error"
+      ? failedOp === "install"
+        ? t.about.updateInstallFailed
+        : t.about.updateFailed
+      : showUpdate && updateInfo
+        ? updateInfo.version
+        : updateState === "upToDate"
+          ? t.about.updateCurrent
           : t.about.updateNotChecked
 
   return (

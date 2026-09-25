@@ -70,6 +70,19 @@ export function bucketsCsv(buckets: ExportBucket[]): string {
   ])
 }
 
+/** One five-hour window, as the JSON export writes it. */
+export interface ExportBlock {
+  start: string
+  end: string
+  tokens: number
+  /** Lower bound when `unpricedEntries > 0`. */
+  cost: number
+  entries: number
+  unpricedEntries: number
+  models: string[]
+  active: boolean
+}
+
 /** The whole aggregate, for scripts rather than spreadsheets. */
 export interface UsageExport {
   generatedAt: string
@@ -77,18 +90,14 @@ export interface UsageExport {
   granularity: Granularity
   stats: UsageStats
   buckets: ExportBucket[]
-  blocks: {
-    start: string
-    end: string
-    tokens: number
-    /** Lower bound when `unpricedEntries > 0`. */
-    cost: number
-    entries: number
-    unpricedEntries: number
-    models: string[]
-    active: boolean
-  }[]
-  tools: ToolStat[]
+  /**
+   * `null` when the per-message series hadn't loaded (or couldn't be read) at
+   * export time — the windows and tool tallies come only from it, and an empty
+   * array would state "no windows, no tool calls" as a measured fact.
+   */
+  blocks: ExportBlock[] | null
+  /** `null` for the same reason as `blocks`. */
+  tools: ToolStat[] | null
 }
 
 export function buildExport(args: {
@@ -97,8 +106,9 @@ export function buildExport(args: {
   granularity: Granularity
   stats: UsageStats
   buckets: ExportBucket[]
-  blocks: UsageBlock[]
-  tools: ToolStat[]
+  /** `null` when the series isn't loaded — see `UsageExport.blocks`. */
+  blocks: UsageBlock[] | null
+  tools: ToolStat[] | null
 }): UsageExport {
   const iso = (ms: number | null) => (ms == null ? null : new Date(ms).toISOString())
   return {
@@ -111,16 +121,17 @@ export function buildExport(args: {
     granularity: args.granularity,
     stats: args.stats,
     buckets: args.buckets,
-    blocks: args.blocks.map((b) => ({
-      start: new Date(b.start).toISOString(),
-      end: new Date(b.end).toISOString(),
-      tokens: b.usage.total,
-      cost: b.cost,
-      entries: b.entries,
-      unpricedEntries: b.unpricedEntries,
-      models: b.models,
-      active: b.active,
-    })),
+    blocks:
+      args.blocks?.map((b) => ({
+        start: new Date(b.start).toISOString(),
+        end: new Date(b.end).toISOString(),
+        tokens: b.usage.total,
+        cost: b.cost,
+        entries: b.entries,
+        unpricedEntries: b.unpricedEntries,
+        models: b.models,
+        active: b.active,
+      })) ?? null,
     tools: args.tools,
   }
 }

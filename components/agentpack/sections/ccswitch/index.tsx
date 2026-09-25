@@ -24,7 +24,12 @@ import {
   syncLiveConfigSteps,
   visibleAppsStep,
 } from "@/lib/agentpack/plan"
-import { DEFAULT_VISIBLE_APPS, readVisibleApps } from "@/lib/agentpack/ccswitch/settings"
+import {
+  DEFAULT_VISIBLE_APPS,
+  VISIBLE_APP_KEYS,
+  readVisibleApps,
+} from "@/lib/agentpack/ccswitch/settings"
+import { runApplied } from "@/lib/agentpack/report"
 import { detectUnmanagedProviders, type UnmanagedProvider } from "@/lib/agentpack/ccswitch/import"
 import { appsMissingOfficial } from "@/lib/agentpack/ccswitch/official"
 import {
@@ -54,7 +59,6 @@ import {
 } from "@/lib/agentpack/ccswitch/types"
 import {
   backupList,
-  ccInitDb,
   ccLoadProviders,
   ccSchemaStatus,
   detectCli,
@@ -99,11 +103,12 @@ export function CcSwitchSection() {
   const storeDetected = useAppStore((s) => s.detections["cc-switch"])
   const backend = useAppStore((s) => s.settings.providerBackend)
   const setSettings = useAppStore((s) => s.setSettings)
-  const { run } = useRunnerCtx()
+  const { run, onAfterRun } = useRunnerCtx()
 
-  const [detected, setDetected] = useState<boolean | null>(
-    storeDetected ? storeDetected.installed : null
-  )
+  // Read from the store the scan writes into, never copied at mount: a copy
+  // went stale the moment anything else re-detected (a retry in the review
+  // panel, the shell's post-run rescan) and the checklist kept the old answer.
+  const detected = storeDetected ? storeDetected.installed : null
   const [dbReady, setDbReady] = useState<boolean | null>(null)
   // Columns the existing DB lacks; non-empty => it predates agentpack's needs and
   // only cc-switch's own migrator should touch it.
@@ -114,6 +119,9 @@ export function CcSwitchSection() {
   const [loading, setLoading] = useState(tauri)
   const [initializing, setInitializing] = useState(false)
   const [providers, setProviders] = useState<Provider[] | null>(null)
+  // The provider read itself failed, as opposed to being skipped for an
+  // outdated schema — the empty list says which, instead of "not found".
+  const [listFailed, setListFailed] = useState(false)
   // Relay config already on disk that no provider row covers — offered for import
   // so a switch can't silently overwrite what the user configured by hand.
   const [unmanaged, setUnmanaged] = useState<UnmanagedProvider[]>([])
@@ -124,7 +132,11 @@ export function CcSwitchSection() {
   const [newAccount, setNewAccount] = useState("")
   // Set only when an import has name collisions worth asking about.
   const [importPlan, setImportPlan] = useState<ImportPlan | null>(null)
-  const [visible, setVisible] = useState<VisibleApps>(DEFAULT_VISIBLE_APPS)
+  // What cc-switch's settings file says, and the user's unapplied edit of it.
+  // Two slices, because a rescan (every run triggers one) used to overwrite the
+  // switches with the file and silently discard toggles nobody had applied.
+  const [visibleSaved, setVisibleSaved] = useState<VisibleApps>(DEFAULT_VISIBLE_APPS)
+  const [visibleDraft, setVisibleDraft] = useState<VisibleApps | null>(null)
   const [backups, setBackups] = useState<BackupEntry[]>([])
   const [formOpen, setFormOpen] = useState(false)
   const [formInitial, setFormInitial] = useState<Partial<ProviderFormData>>({})
@@ -153,23 +165,83 @@ export function CcSwitchSection() {
 
   // Refresh every slice from disk/DB: detection (mirrored into the shared store so
   // the dashboard agrees), providers, DB presence, visible apps, and backup list.
+  //
+  // Every read is settled on its own. They used to share one Promise.all, so an
+  // outdated DB — whose provider read rejects by design — took the schema
+  // status, the logins and the backups down with it: the checklist said
+  // "Checking…" forever and the list blamed a database that was right there.
   const scan = useCallback(async () => {
-    if (!isTauri()) return
+    if (!isTauri()) return undefined
     const epoch = ++scanEpoch.current
+    const current = () => mounted.current && epoch === scanEpoch.current
+    const cc = backend === "ccswitch"
     try {
-      const [d, list] = await Promise.all([
-        backend === "ccswitch" ? detectCli("cc-switch", true) : Promise.resolve(null),
-        backend === "native" ? providerLoad("native") : ccLoadProviders(),
+      const [d, schema] = await Promise.allSettled([
+        cc ? detectCli("cc-switch", true) : Promise.resolve(null),
+        cc
+          ? ccSchemaStatus()
+          : Promise.resolve({ exists: false, userVersion: 0, missingColumns: [] as string[] }),
       ])
-      if (!mounted.current || epoch !== scanEpoch.current) return
-      if (d) {
-        setDetected(d.installed)
-        useAppStore.getState().setDetection("cc-switch", d)
+      // Schema before providers: `cc_load_providers` refuses a DB missing the
+      // columns it SELECTs, so asking would only produce the same verdict as a
+      // raw error. Skipped, the list can say why it is empty.
+      const stale =
+        cc && schema.status === "fulfilled" && schema.value.exists
+          ? schema.value.missingColumns
+          : []
+      const [list] = await Promise.allSettled([
+        stale.length > 0 ? Promise.resolve(null) : cc ? ccLoadProviders() : providerLoad("native"),
+      ])
+      if (!current()) return undefined
+      if (d.status === "fulfilled" && d.value) {
+        useAppStore.getState().setDetection("cc-switch", d.value)
       }
-      setProviders(list)
+      if (schema.status === "fulfilled") {
+        setDbReady(!cc || (schema.value.exists && stale.length === 0))
+        setStaleColumns(stale)
+      }
+      const loaded = list.status === "fulfilled" ? list.value : null
+      setProviders(loaded)
+      setListFailed(list.status === "rejected")
+      let failed = [d, schema, list].some((result) => result.status === "rejected")
       if (paths) {
-        const [
-          schema,
+        const [settingsJson, bks, running, claudeJson, codexToml, who, opencodeJson, accountsJson] =
+          await Promise.allSettled([
+            cc ? readTextFile(paths.ccSwitchSettings) : Promise.resolve(""),
+            backupList(),
+            // Not `isProcessRunning("cc-switch")`: on macOS the process name is the
+            // binary inside the .app bundle, which the backend resolves for us.
+            cc ? ccSwitchRunning() : Promise.resolve(false),
+            readTextFile(paths.claudeSettings),
+            readTextFile(paths.codexConfig),
+            loginStatus(),
+            readTextFile(paths.opencodeConfig),
+            readTextFile(accountsPath(paths.home)),
+          ])
+        if (!current()) return undefined
+        const value = <T,>(result: PromiseSettledResult<T>): T | undefined =>
+          result.status === "fulfilled" ? result.value : undefined
+        setLogin(value(who) ?? null)
+        const accountsText = value(accountsJson)
+        if (accountsText !== undefined) setAccounts(parseAccounts(accountsText).profiles)
+        const settingsText = value(settingsJson)
+        if (settingsText !== undefined) setVisibleSaved(readVisibleApps(settingsText))
+        const backupsNow = value(bks)
+        if (backupsNow !== undefined) setBackups(backupsNow)
+        setCcRunning(cc ? (value(running) ?? null) : false)
+        // Without a provider list every live endpoint would read as unmanaged,
+        // which is an offer to import what may well already be stored.
+        setUnmanaged(
+          loaded
+            ? detectUnmanagedProviders({
+                claudeSettings: value(claudeJson) ?? "",
+                codexConfig: value(codexToml) ?? "",
+                opencodeConfig: value(opencodeJson) ?? "",
+                providers: loaded,
+              })
+            : []
+        )
+        failed ||= [
           settingsJson,
           bks,
           running,
@@ -178,53 +250,32 @@ export function CcSwitchSection() {
           who,
           opencodeJson,
           accountsJson,
-        ] = await Promise.all([
-          backend === "ccswitch"
-            ? ccSchemaStatus()
-            : Promise.resolve({ exists: false, userVersion: 0, missingColumns: [] }),
-          backend === "ccswitch" ? readTextFile(paths.ccSwitchSettings) : Promise.resolve(""),
-          backupList(),
-          // Not `isProcessRunning("cc-switch")`: on macOS the process name is the
-          // binary inside the .app bundle, which the backend resolves for us.
-          backend === "ccswitch" ? ccSwitchRunning() : Promise.resolve(false),
-          readTextFile(paths.claudeSettings),
-          readTextFile(paths.codexConfig),
-          loginStatus(),
-          readTextFile(paths.opencodeConfig),
-          readTextFile(accountsPath(paths.home)),
-        ])
-        if (!mounted.current || epoch !== scanEpoch.current) return
-        setLogin(who)
-        setAccounts(parseAccounts(accountsJson).profiles)
-        setDbReady(backend === "native" || (schema.exists && schema.missingColumns.length === 0))
-        setStaleColumns(backend === "ccswitch" && schema.exists ? schema.missingColumns : [])
-        setVisible(readVisibleApps(settingsJson))
-        setBackups(bks)
-        setCcRunning(backend === "ccswitch" ? running : false)
-        setUnmanaged(
-          detectUnmanagedProviders({
-            claudeSettings: claudeJson,
-            codexConfig: codexToml,
-            opencodeConfig: opencodeJson,
-            providers: list,
-          })
-        )
+        ].some((result) => result.status === "rejected")
       }
+      return { providers: loaded, failed }
     } finally {
       // A failed scan must never wedge the UI in a permanent loading state; the
       // user can retry via Refresh.
-      if (mounted.current && epoch === scanEpoch.current) setLoading(false)
+      if (current()) setLoading(false)
     }
   }, [backend, paths])
 
-  // Surface a failed scan instead of leaving an unhandled rejection — the user
+  // Surface a failed read instead of leaving an unhandled rejection — the user
   // retries via Refresh. (Handled here rather than a catch inside `scan`: a
-  // catch block makes the React Compiler bail out of memoizing it.)
+  // catch block makes the React Compiler bail out of memoizing it.) Resolves to
+  // the provider list the scan read, for the one caller that needs to look.
   const reload = useCallback(
     () =>
-      scan().catch(() => {
-        if (mounted.current) toast.error(c.loadFailed)
-      }),
+      scan().then(
+        (result) => {
+          if (result?.failed && mounted.current) toast.error(c.loadFailed)
+          return result?.providers ?? null
+        },
+        () => {
+          if (mounted.current) toast.error(c.loadFailed)
+          return null
+        }
+      ),
     [scan, c.loadFailed]
   )
 
@@ -232,11 +283,33 @@ export function CcSwitchSection() {
     void reload()
   }, [reload])
 
-  const runThen = async (steps: Parameters<typeof run>[0]) => {
-    const reports = await run(steps)
-    await reload()
-    return reports
-  }
+  /**
+   * A failed add re-opens its form, and the review panel's Retry can still land
+   * that very add afterwards. The form would then be a duplicate one Save away,
+   * so it remembers which row it is waiting for and closes once that row shows
+   * up. (An update is idempotent; saving it twice rewrites the same values.)
+   */
+  const reopenedAdd = useRef<{ app: ProviderApp; name: string; known: Set<string> } | null>(null)
+
+  // Every real run re-reads the page, retries in the review panel included —
+  // they never resolve a caller's `run()`, so a re-read chained onto that
+  // promise left the list describing the machine before the retry.
+  useEffect(
+    () =>
+      onAfterRun(() => {
+        void reload().then((list) => {
+          const add = reopenedAdd.current
+          if (!add || !list) return
+          const landed = list.some(
+            (p) => p.app_type === add.app && p.name === add.name && !add.known.has(p.id)
+          )
+          if (!landed) return
+          reopenedAdd.current = null
+          setFormOpen(false)
+        })
+      }),
+    [onAfterRun, reload]
+  )
 
   const selectBackend = (value: string) => {
     if (value !== "native" && value !== "ccswitch") return
@@ -306,42 +379,41 @@ export function CcSwitchSection() {
     const tool = CLI_TOOLS.find((x) => x.id === "cc-switch")!
     const cmd = tool.install[effectiveOS()]
     if (!cmd) return
-    void runThen([cliInstallStep("cc-switch", cmd, false, t)])
+    void run([cliInstallStep("cc-switch", cmd, false, t)])
   }
 
   // Create the SQLite DB ourselves rather than launching cc-switch and polling
-  // for the file it writes on first run. The info step keeps this write inside
-  // the same review flow as every other persisted capability change.
+  // for the file it writes on first run. A real step, not an `info` line with
+  // the write done afterwards: the preview names the file, and the report is
+  // the outcome of `cc_init_db` itself rather than of a line that always passes.
   const initInFlight = useRef(false)
   const initDb = useCallback(async () => {
-    if (initInFlight.current) return
+    if (initInFlight.current || !paths) return
     initInFlight.current = true
     setInitializing(true)
     try {
       const reports = await run([
-        {
-          kind: "info",
-          id: "ccswitch-init-db",
-          label: c.initDb,
-          lines: [c.initDbHint],
-        },
+        { kind: "ccInitDb", id: "ccswitch-init-db", label: c.initDb, path: paths.ccSwitchDb },
       ])
-      if (!reports.some((report) => report.id === "ccswitch-init-db" && report.status === "done")) {
-        return
+      if (reports.some((report) => report.id === "ccswitch-init-db" && report.status === "error")) {
+        toast.error(c.initFailed)
       }
-      await ccInitDb()
-    } catch {
-      if (mounted.current) toast.error(c.initFailed)
     } finally {
       initInFlight.current = false
       if (mounted.current) setInitializing(false)
-      await reload()
     }
-  }, [reload, run, c.initDb, c.initDbHint, c.initFailed])
+  }, [paths, run, c.initDb, c.initFailed])
 
-  const applyVisible = () => {
-    if (!paths) return
-    void runThen([visibleAppsStep(paths.ccSwitchSettings, visible, t)])
+  const visible = visibleDraft ?? visibleSaved
+  const visibleChanged =
+    visibleDraft !== null && VISIBLE_APP_KEYS.some((key) => visibleDraft[key] !== visibleSaved[key])
+
+  const applyVisible = async () => {
+    if (!paths || !visibleChanged) return
+    const reports = await run([visibleAppsStep(paths.ccSwitchSettings, visible, t)])
+    // Written, so the file is the truth again. Anything short of that keeps the
+    // draft on screen to apply once whatever stopped it is fixed.
+    if (runApplied(reports) && mounted.current) setVisibleDraft(null)
   }
 
   /**
@@ -360,7 +432,7 @@ export function CcSwitchSection() {
 
   const setCurrent = (p: Provider) => {
     if (!paths) return
-    void runThen(setCurrentSteps(p, paths))
+    void run(setCurrentSteps(p, paths))
   }
 
   // Manually push each app's current provider into the live config.
@@ -368,13 +440,14 @@ export function CcSwitchSection() {
     if (!paths || !providers) return
     const current = providers.filter((p) => p.is_current)
     if (!current.length) return
-    void runThen([
+    void run([
       snapshotStep("manual sync", t, backend),
       ...current.flatMap((p) => syncLiveConfigSteps(p, paths, t)),
     ])
   }
 
   const openAdd = (initial: Partial<ProviderFormData> = {}) => {
+    reopenedAdd.current = null
     setEditingId(undefined)
     setFormInitial(initial)
     setFormKey((k) => k + 1)
@@ -382,6 +455,7 @@ export function CcSwitchSection() {
   }
 
   const openEdit = (p: Provider) => {
+    reopenedAdd.current = null
     setEditingId(p.id)
     setFormInitial({
       name: p.name,
@@ -389,14 +463,19 @@ export function CcSwitchSection() {
       websiteUrl: p.website_url ?? undefined,
       notes: p.notes ?? undefined,
       ...parseSettingsConfig(p.app_type, p.settings_config),
+      // The fields merge into what is stored rather than replacing it — see
+      // `buildSettingsConfig`.
+      baseSettingsConfig: p.settings_config,
     })
     setFormKey((k) => k + 1)
     setFormOpen(true)
   }
 
   const submitForm = async (form: ProviderFormData) => {
+    reopenedAdd.current = null
     const id = editingId
     const op = id ? ("update" as const) : ("add" as const)
+    const writeId = providerStepId(op, form.app, backend)
     // The saved config must take effect immediately when this row is (or
     // becomes) the live one: editing the current provider, or adding the first
     // provider of an app (cc_write_provider marks it current).
@@ -413,18 +492,30 @@ export function CcSwitchSection() {
         is_current: true,
       }
       // dependsOn the DB write: a failed save must not rewrite live configs.
-      steps.push(...syncLiveConfigSteps(saved, paths, t, [providerStepId(op, form.app, backend)]))
+      steps.push(...syncLiveConfigSteps(saved, paths, t, [writeId]))
     }
-    const reports = await runThen(steps)
-    if (reports.some((r) => r.status === "error")) {
-      // The write failed (cc-switch running, stale row, …). The form already
-      // closed itself on submit; re-open it carrying the exact values the user
-      // tried so a transient failure never discards their input.
-      setEditingId(id)
-      setFormInitial(form)
-      setFormKey((k) => k + 1)
-      setFormOpen(true)
+    const reports = await run(steps)
+    // The form closed itself on submit. Unless the row write actually landed,
+    // re-open it carrying the exact values the user tried: a failed write
+    // (cc-switch running, a stale row…) and a review they walked away from ([])
+    // both saved nothing, and neither may throw away what they typed — a pasted
+    // token included. A landed write whose live sync failed is not re-opened;
+    // the row exists, and saving the form again would add it twice.
+    if (reports.some((r) => r.id === writeId && (r.status === "done" || r.status === "warning"))) {
+      return
     }
+    if (!mounted.current) return
+    if (op === "add") {
+      reopenedAdd.current = {
+        app: form.app,
+        name: form.name,
+        known: new Set((providers ?? []).map((p) => p.id)),
+      }
+    }
+    setEditingId(id)
+    setFormInitial(form)
+    setFormKey((k) => k + 1)
+    setFormOpen(true)
   }
 
   const writeAccounts = async (profiles: AccountProfile[]): Promise<boolean> => {
@@ -472,16 +563,23 @@ export function CcSwitchSection() {
   // `is_current` flag stays the only switch and the badges follow along.
   const applyAccount = (profile: AccountProfile) => {
     if (!paths || !providers) return
+    // The card disables Apply, with the reason, when this comes back empty.
     const targets = resolveAccount(profile, providers)
     if (!targets.length) return
-    void runThen(targets.flatMap((p) => setCurrentSteps(p, paths)))
+    void run(targets.flatMap((p) => setCurrentSteps(p, paths)))
   }
 
   const exportProviderBundle = async (includeTokens: boolean) => {
     if (!providers?.length) return
-    const path = await pickSavePath({ defaultPath: "agentpack.providers.json" })
-    if (!path) return
-    await writeTextFile(path, exportProviders(providers, { includeTokens }))
+    let path: string | null = null
+    try {
+      path = await pickSavePath({ defaultPath: "agentpack.providers.json" })
+      if (!path) return
+      await writeTextFile(path, exportProviders(providers, { includeTokens }))
+    } catch (error) {
+      toast.error(c.exportFailed(path ?? "agentpack.providers.json", String(error)))
+      return
+    }
     toast.success(t.shell.configSaved(path))
   }
 
@@ -496,13 +594,27 @@ export function CcSwitchSection() {
         ? plan.conflicts.map((c) => providerImportStep(c.entry, c.existing.id, t, backend))
         : []),
     ]
-    if (steps.length) void runThen(steps)
+    // "New only" on a file whose every entry already exists here would
+    // otherwise close the dialog and do nothing, which reads as a lost click.
+    if (!steps.length) {
+      toast.message(c.importNothingNew)
+      return
+    }
+    void run(steps)
   }
 
   const pickImportFile = async () => {
-    const path = await pickFile([{ name: "json", extensions: ["json"] }])
-    if (!path) return
-    const entries = parseProviderBundle(await readTextFile(path))
+    let path: string | null = null
+    let text: string
+    try {
+      path = await pickFile([{ name: "json", extensions: ["json"] }])
+      if (!path) return
+      text = await readTextFile(path)
+    } catch (error) {
+      toast.error(c.importReadFailed(path ?? "", String(error)))
+      return
+    }
+    const entries = parseProviderBundle(text)
     if (!entries.length) return toast.error(c.importNothing)
     const plan = planImport(entries, providers ?? [])
     // Nothing to decide when no name collides — just run it.
@@ -529,10 +641,12 @@ export function CcSwitchSection() {
       ],
       { activity: { title: t.steps.snapshotRestore(id), source: "restore" } }
     )
-    if (reports.length === 0) return
-    if (reports.some((r) => r.status === "error")) toast.error(c.restoreFailed)
-    else toast.success(c.restored)
-    await reload()
+    // A walked-away or stopped restore wrote nothing; a failed one is
+    // explained in the panel and also here, since the list behind it is stale.
+    // Success needs no toast — the panel it went through says "All set".
+    if (!runApplied(reports) && reports.some((r) => r.status === "error")) {
+      toast.error(c.restoreFailed)
+    }
   }
 
   const tool = CLI_TOOLS.find((x) => x.id === "cc-switch")!
@@ -549,6 +663,19 @@ export function CcSwitchSection() {
   // cc-switch locks its SQLite DB while open, so every write would fail; block the
   // editing controls and guide the user to close it first.
   const editingBlocked = backend === "ccswitch" && ccRunning === true
+  // Adding a row needs somewhere to put it. Without this the form opened, the
+  // review ran, and the write failed with a raw error from Rust.
+  const addBlockedReason = needsMigration ? c.addNeedsMigration : needsDb ? c.addNeedsDb : undefined
+  // Why there is no list, when there is none. "Not found" was the answer for
+  // every cause, including a database that was right there but too old to read.
+  const listUnavailable =
+    providers !== null
+      ? undefined
+      : needsMigration
+        ? c.listOutdated
+        : listFailed
+          ? c.loadFailed
+          : undefined
   const activeAccounts = accountsForBackend(accounts, backend)
   const currentProviderCount = providers?.filter((provider) => provider.is_current).length ?? 0
   const providerCount = providers?.length ?? 0
@@ -581,7 +708,14 @@ export function CcSwitchSection() {
             id: "install",
             title: c.stepInstallTitle,
             description: canInstall ? c.stepInstallDesc : tool.manualNote,
-            note: detected === null ? c.checking : detected ? c.detected : c.notDetected,
+            note:
+              detected === null
+                ? loading
+                  ? c.checking
+                  : c.loadFailed
+                : detected
+                  ? c.detected
+                  : c.notDetected,
             status: detected === null ? "waiting" : detected ? "done" : "current",
             action:
               tauri && !detected && canInstall ? (
@@ -610,10 +744,14 @@ export function CcSwitchSection() {
                   ? "waiting"
                   : "current",
             action: needsMigration ? (
+              /* The same launch the app card does: it settles, re-reads the
+                 schema once cc-switch has migrated it, and names a failed
+                 launch as one — not as a failed database creation. */
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => void launchCcSwitch().catch(() => toast.error(c.initFailed))}
+                disabled={appBusy !== null}
+                onClick={() => void openApp()}
               >
                 {c.launchCcSwitch}
               </Button>
@@ -635,7 +773,11 @@ export function CcSwitchSection() {
       title: c.stepProviderTitle,
       description: c.stepProviderDesc,
       note: providerCount > 0 ? c.stepProviderDone(providerCount) : undefined,
-      status: providers === null ? "waiting" : providerCount > 0 ? "done" : "current",
+      /* Its precondition is the database. Accenting it while that is missing
+         put a third "do this now" on the page for a step whose every control
+         would fail. */
+      status:
+        providers === null || addBlockedReason ? "waiting" : providerCount > 0 ? "done" : "current",
     },
     {
       id: "current",
@@ -652,7 +794,8 @@ export function CcSwitchSection() {
   const quickAdd = (flat: boolean) => (
     <QuickAddCard
       missingOfficial={missingOfficial}
-      disabled={editingBlocked || !tauri}
+      disabled={editingBlocked || !tauri || !!addBlockedReason}
+      disabledReason={addBlockedReason}
       flat={flat}
       onPick={openAdd}
     />
@@ -728,13 +871,19 @@ export function CcSwitchSection() {
                     )}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
+                {/* One primary, and it is the safe one: replacing rows is the
+                    choice that can lose something, so it must not look like
+                    the default. */}
                 <AlertDialogFooter>
                   <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
+                  <AlertDialogAction
+                    variant="outline"
+                    onClick={() => importPlan && runImport(importPlan, true)}
+                  >
+                    {c.importOverwrite}
+                  </AlertDialogAction>
                   <AlertDialogAction onClick={() => importPlan && runImport(importPlan, false)}>
                     {c.importFreshOnly}
-                  </AlertDialogAction>
-                  <AlertDialogAction onClick={() => importPlan && runImport(importPlan, true)}>
-                    {c.importOverwrite}
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
@@ -756,9 +905,10 @@ export function CcSwitchSection() {
             {backend === "ccswitch" ? (
               <VisibleAppsCard
                 visible={visible}
+                changed={visibleChanged}
                 disabled={editingBlocked || !tauri}
-                onChange={setVisible}
-                onApply={applyVisible}
+                onChange={setVisibleDraft}
+                onApply={() => void applyVisible()}
               />
             ) : null}
           </>
@@ -775,6 +925,8 @@ export function CcSwitchSection() {
               loading={loading}
               unmanaged={unmanaged}
               editingBlocked={editingBlocked}
+              addBlockedReason={addBlockedReason}
+              unavailable={listUnavailable}
               tauri={tauri}
               hasCurrent={hasCurrent}
               filters={filters}
@@ -785,9 +937,7 @@ export function CcSwitchSection() {
               onEdit={openEdit}
               onSetCurrent={setCurrent}
               onDelete={(p) =>
-                void runThen([
-                  providerStep("delete", p.app_type, p.name, undefined, p.id, t, backend),
-                ])
+                void run([providerStep("delete", p.app_type, p.name, undefined, p.id, t, backend)])
               }
               onSync={syncCurrent}
               onExport={(withTokens) => void exportProviderBundle(withTokens)}
@@ -806,7 +956,7 @@ export function CcSwitchSection() {
                 onNewAccountChange={setNewAccount}
                 onSave={saveAccount}
                 onUpdate={(profile) =>
-                  void writeAccounts(
+                  writeAccounts(
                     accounts.map((account) => (account.id === profile.id ? profile : account))
                   )
                 }
@@ -826,7 +976,11 @@ export function CcSwitchSection() {
       <ProviderForm
         key={formKey}
         open={formOpen}
-        onOpenChange={setFormOpen}
+        onOpenChange={(open) => {
+          // Closed by hand: nothing is waiting on a retry any more.
+          if (!open) reopenedAdd.current = null
+          setFormOpen(open)
+        }}
         initial={formInitial}
         editing={!!editingId}
         onSubmit={submitForm}

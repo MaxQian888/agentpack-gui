@@ -22,15 +22,16 @@ import { useMounted } from "@/hooks/use-mounted"
 import { isTauri } from "@/lib/tauri"
 import { backupList, cleanupQuarantineList, fileStat, listSkillBackups } from "@/lib/tauri/commands"
 import { BACKUP_SUFFIX, fileRestoreStep } from "@/lib/agentpack/plan"
-import type { StepDescriptor } from "@/lib/agentpack/types"
-import type { SectionKey } from "@/lib/agentpack/workspaces"
+import { runApplied } from "@/lib/agentpack/report"
+import type { Paths, StepDescriptor } from "@/lib/agentpack/types"
+import type { NavigateIntent, SectionKey } from "@/lib/agentpack/workspaces"
 import {
   buildTimeline,
+  configBackupCandidates,
   countBySafety,
   emptyTimeline,
   pathsToCheck,
   restoreSafety,
-  type ConfigBackupLike,
   type LiveFileStat,
   type RecoveryKind,
   type RecoveryPoint,
@@ -79,9 +80,12 @@ const OWNER: Partial<Record<RecoveryKind, SectionKey>> = {
  * things — and "can't tell" is one of them, because the reading this must never
  * produce is a confident "nothing to lose" drawn from an absence of information.
  *
- * The config backups are dated by stat'ing the `.agentpack.bak` sibling. The scan
- * only reports that one exists, and an undated point can never be judged safe —
- * one extra stat is the whole difference between a warning and a shrug.
+ * The config backups are found and dated by stat'ing the `.agentpack.bak`
+ * sibling of every file the app edits, on every read. The dashboard scan only
+ * reports one for two of those files and is cached, so listing from it hid most
+ * of them and kept showing one after it was gone. An undated point can never be
+ * judged safe — one extra stat is the whole difference between a warning and a
+ * shrug.
  */
 /** What one pass over the four stores produced. */
 interface Reading {
@@ -101,10 +105,7 @@ interface Reading {
  * three that opened — and `degraded` is what keeps that honest: a short list
  * that says it is short beats a short list that looks complete.
  */
-async function readSources(
-  scan: DashboardScan | null,
-  paths: { claudeSettings: string; codexConfig: string } | null
-): Promise<Reading> {
+async function readSources(paths: Paths | null): Promise<Reading> {
   let degraded = false
   const guard = async <T,>(read: Promise<T>, fallback: T): Promise<T> => {
     try {
@@ -120,15 +121,18 @@ async function readSources(
     guard(listSkillBackups(), []),
     guard(cleanupQuarantineList(), []),
   ])
-  // Date each config backup from its own `.agentpack.bak` sibling. The scan only
-  // reports that one exists, and an undated point can never be judged safe — so
-  // one extra stat is the whole difference between a warning and a shrug.
-  const configBackups = await Promise.all(
-    configBackupsOf(scan, paths).map(async (backup) => ({
-      ...backup,
-      takenAt: (await guard(fileStat(`${backup.path}${BACKUP_SUFFIX}`), MISSING)).modifiedMs,
+  // Find and date each config backup from its own `.agentpack.bak` sibling. An
+  // undated point can never be judged safe, so the stat that finds it also
+  // dates it.
+  const found = await Promise.all(
+    (paths ? configBackupCandidates(paths) : []).map(async (backup) => ({
+      backup,
+      stat: await guard(fileStat(`${backup.path}${BACKUP_SUFFIX}`), MISSING),
     }))
   )
+  const configBackups = found
+    .filter(({ stat }) => stat.exists)
+    .map(({ backup, stat }) => ({ ...backup, takenAt: stat.modifiedMs }))
   const timeline = buildTimeline({
     configSnapshots,
     skillBackups,
@@ -153,9 +157,13 @@ export function RecoverySection({
   scan,
   onNavigate,
 }: {
+  /**
+   * The last dashboard scan. Only its arrival is used — as the cue to re-read,
+   * since a new scan means a run just finished. What exists is stat'ed here.
+   */
   scan: DashboardScan | null
   /** Follow a hand-off to the section that owns that kind of restore. */
-  onNavigate?: (section: SectionKey) => void
+  onNavigate?: (section: SectionKey, intent?: NavigateIntent) => void
 }) {
   const t = useT()
   const r = t.recoveryCentre
@@ -174,11 +182,13 @@ export function RecoverySection({
   }, [])
 
   // Fire and forget, with state set in the continuation. `cancelled` keeps a
-  // read that outlives the section from writing into an unmounted tree.
+  // read that outlives the section from writing into an unmounted tree. `scan`
+  // is not read — a new one means a run just finished and may have left a
+  // backup behind, which is reason enough to look again.
   useEffect(() => {
     if (!isTauri()) return
     let cancelled = false
-    void readSources(scan, paths).then((reading) => {
+    void readSources(paths).then((reading) => {
       if (!cancelled) apply(reading)
     })
     return () => {
@@ -189,11 +199,11 @@ export function RecoverySection({
   const refresh = useCallback(async () => {
     setRefreshing(true)
     try {
-      apply(await readSources(scan, paths))
+      apply(await readSources(paths))
     } finally {
       setRefreshing(false)
     }
-  }, [scan, paths, apply])
+  }, [paths, apply])
 
   /**
    * The step a restore amounts to, or null for the two kinds this page hands
@@ -223,8 +233,11 @@ export function RecoverySection({
     // Walked away from the panel: nothing ran, so there is nothing to report.
     if (reports.length === 0) return
     if (reports.some((report) => report.status === "error")) toast.error(r.restoreFailed)
+    // Stopped before the step ran: it comes back `skipped`, and "Restored."
+    // would be a success toast for a write that never happened.
+    else if (!runApplied(reports)) toast.message(r.restoreCancelled)
     else {
-      toast.success(r.restored)
+      // No toast: the review panel says the restore went through.
       // The list is now wrong about this machine — a restore changes the very
       // mtimes every verdict on this page was measured against.
       await refresh()
@@ -276,7 +289,12 @@ export function RecoverySection({
             value: newest ? formatWhen(newest.takenAt) : readout(r.undated),
           },
         ]}
-        notes={[!desktop && mounted ? r.notTauri : null, timeline.degraded ? r.degradedNote : null]}
+        notes={[
+          !desktop && mounted ? r.notTauri : null,
+          // The first read is in flight: say why the facts are dashes.
+          desktop && !timeline.measured ? r.loadingNote : null,
+          timeline.degraded ? r.degradedNote : null,
+        ]}
       />
 
       {desktop && timeline.measured && timeline.points.length === 0 ? (
@@ -339,7 +357,7 @@ function Row({
   safety: RestoreSafety
   onRestore: (point: RecoveryPoint, safety: RestoreSafety) => void
   /** Absent when nothing was wired up; the hand-off button is then omitted. */
-  onOpen?: (section: SectionKey) => void
+  onOpen?: (section: SectionKey, intent?: NavigateIntent) => void
 }) {
   const t = useT()
   const r = t.recoveryCentre
@@ -373,7 +391,12 @@ function Row({
             variant="outline"
             size="sm"
             className="shrink-0 whitespace-nowrap"
-            onClick={() => onOpen(owner)}
+            // A skill backup lands on the Skills backups list itself, where the
+            // restore asks which agents to go back into — not on the skills
+            // page with the Backups button left to be found.
+            onClick={() =>
+              owner === "skills" ? onOpen(owner, { skills: "backups" }) : onOpen(owner)
+            }
           >
             {r.restoreIn(t.menu[owner === "skills" ? "skills" : "cleanup"])}
           </Button>
@@ -390,26 +413,6 @@ function Row({
       )}
     </li>
   )
-}
-
-/**
- * The two config files this app repairs, as restore points — but only the ones
- * that actually have a backup. Without `paths` there is nothing to restore *to*,
- * so nothing is offered.
- */
-function configBackupsOf(
-  scan: DashboardScan | null,
-  paths: { claudeSettings: string; codexConfig: string } | null
-): ConfigBackupLike[] {
-  if (!scan || !paths) return []
-  return (
-    [
-      { health: scan.claudeSettings, path: paths.claudeSettings, target: "claude" },
-      { health: scan.codexConfig, path: paths.codexConfig, target: "codex" },
-    ] as const
-  )
-    .filter((entry) => entry.health.hasBackup)
-    .map(({ path, target }) => ({ path, target }))
 }
 
 /** Epoch ms as a plain local date-time. Locale-formatted, not hand-assembled. */

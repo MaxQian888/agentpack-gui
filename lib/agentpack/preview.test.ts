@@ -201,6 +201,22 @@ it("skillCreate preview lists the SKILL.md dests it would write", () => {
   expect(previewLines(s, paths)).toEqual(["would write /h/.claude/skills/web"])
 })
 
+it("skillRestore preview names the backup and every dir it would replace", () => {
+  const s: StepDescriptor = {
+    kind: "skillRestore",
+    id: "r",
+    label: "r",
+    backupId: "web-1700000000000",
+    dirName: "web",
+    targets: ["claude", "codex"],
+    dests: ["/h/.claude/skills/web", "/h/.codex/skills/web"],
+  }
+  expect(previewLines(s, paths)).toEqual([
+    "would restore web-1700000000000 -> /h/.claude/skills/web",
+    "would restore web-1700000000000 -> /h/.codex/skills/web",
+  ])
+})
+
 /**
  * The two highest-side-effect kinds, and until now the only two with no preview
  * test at all. `releaseInstall` downloads and runs an installer; `snapshot` is
@@ -259,4 +275,15 @@ describe("releaseInstall preview", () => {
 it("snapshot preview announces the backup without taking one", () => {
   const s: StepDescriptor = { kind: "snapshot", id: "s", label: "s", reason: "before import" }
   expect(previewLines(s, paths)).toEqual(["would back up cc-switch DB and live configs"])
+})
+
+it("appSettings preview is the caller's own lines, already masked", () => {
+  const s: StepDescriptor = {
+    kind: "appSettings",
+    id: "settings",
+    label: "Save 1 app setting",
+    patch: { ghMirrorPrefix: "https://m/" },
+    lines: ['ghMirrorPrefix: null → "https://m/"'],
+  }
+  expect(previewLines(s, paths)).toEqual(['ghMirrorPrefix: null → "https://m/"'])
 })

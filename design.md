@@ -166,9 +166,19 @@ things move:
 2. **State indication** — a running step's spinner, a progress bar, the tray
    sliding in at 260ms.
 
-Animate `transform` and `opacity` only. Use the three named easings; never the
-browser default `ease`, never bounce or overshoot. The focus ring never
-animates. `prefers-reduced-motion: reduce` collapses all of it to ≈0ms globally
+Both entrances live in `app/globals.css` as `hm-enter` (a destination arriving,
+replayed by the shell on every navigation, `--hm-rise` of travel) and
+`hm-tray-in`. Overlays are part of the same system: dialogs and the review
+panel enter on `--hm-ease-out` at `--hm-dur-base` / `--hm-dur-slow` and leave
+faster on `--hm-ease-in` — an exit is never slower than the entrance.
+
+Anything that _moves_ animates `transform` and `opacity` only — never
+top/left/width/height, which is why the tour's spotlight jumps rather than
+glides. A control changing colour on hover or press may cross-fade at
+`--hm-dur-fast`; that is a state change, not motion, and it never uses
+`transition-all`. Use the three named easings; never the browser default
+`ease`, never bounce or overshoot. The focus ring never animates.
+`prefers-reduced-motion: reduce` collapses all of it to ≈0ms globally
 (`app/globals.css`), and nothing that carries information is motion-only.
 
 If removing an animation would lose the user no information, remove it.

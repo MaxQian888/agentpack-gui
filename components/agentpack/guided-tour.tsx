@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { useT } from "@/lib/i18n/provider"
@@ -100,7 +100,10 @@ export function GuidedTour({
 
   // Navigate to the step's section, then measure its target once the DOM settles
   // (a section swap remounts the heading, so retry a few frames until it exists).
-  // The old ring animates to the new position, so no synchronous reset is needed.
+  // A target that never appears clears the ring rather than leaving it where it
+  // was: the tray only exists while something is selected, and a ring still
+  // drawn round the previous step's control would point at the wrong thing
+  // while the copy described the right one.
   useEffect(() => {
     onNavigate(step.section)
     let cancel = () => {}
@@ -112,13 +115,17 @@ export function GuidedTour({
         setRect({ top: r.top, left: r.left, width: r.width, height: r.height })
       } else if (tries++ < 20) {
         cancel = nextFrame(measure)
+      } else {
+        setRect(null)
       }
     }
     cancel = nextFrame(measure)
     return () => cancel()
   }, [step.section, step.target, onNavigate])
 
-  // Keep the spotlight aligned as the window resizes or the content scrolls.
+  // Keep the spotlight aligned as the window resizes or the content scrolls —
+  // and once a destination's entrance has settled, since the first measurement
+  // is taken while it is still rising into place.
   useEffect(() => {
     const remeasure = () => {
       const el = document.querySelector(`[data-tour="${step.target}"]`)
@@ -129,11 +136,21 @@ export function GuidedTour({
     }
     window.addEventListener("resize", remeasure)
     window.addEventListener("scroll", remeasure, true)
+    window.addEventListener("animationend", remeasure, true)
     return () => {
       window.removeEventListener("resize", remeasure)
       window.removeEventListener("scroll", remeasure, true)
+      window.removeEventListener("animationend", remeasure, true)
     }
   }, [step.target])
+
+  // The tour is modal, so the keyboard starts inside it. Without this, focus
+  // stayed on whatever launched the tour, behind the scrim, and Enter pressed
+  // that again instead of advancing.
+  const nextRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    nextRef.current?.focus()
+  }, [])
 
   // Esc closes the tour.
   useEffect(() => {
@@ -162,7 +179,10 @@ export function GuidedTour({
       {rect ? (
         <div
           data-testid="tour-spotlight"
-          className="pointer-events-none absolute rounded-lg ring-2 ring-primary transition-all"
+          // No transition: the ring's box is top/left/width/height, and design.md
+          // § 6 animates transform and opacity only. It moves as the card does —
+          // at once, with the step.
+          className="pointer-events-none absolute rounded-lg ring-2 ring-primary"
           style={{
             top: rect.top - 4,
             left: rect.left - 4,
@@ -196,7 +216,7 @@ export function GuidedTour({
                 {t.tour.back}
               </Button>
             ) : null}
-            <Button size="sm" onClick={next}>
+            <Button ref={nextRef} size="sm" onClick={next}>
               {isLast ? t.tour.done : t.tour.next}
             </Button>
           </div>

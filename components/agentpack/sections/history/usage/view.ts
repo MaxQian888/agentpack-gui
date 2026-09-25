@@ -60,11 +60,18 @@ export interface UsageView {
   toolSplit: ToolSplit
   /** True when the series hasn't been fetched yet, so those panels can say so. */
   seriesReady: boolean
+  /**
+   * The series fetch failed outright, so it never will be ready this scan. The
+   * panels say so instead of "Loading…", which would otherwise never end.
+   */
+  seriesFailed: boolean
 }
 
 export function buildView(args: {
   sessions: SessionSummary[]
   series: SessionSeries[] | null
+  /** Set when `series` is null because the fetch failed, not because it is pending. */
+  seriesFailed?: boolean
   range: TimeRange
   granularity: Granularity
   now: number
@@ -97,5 +104,6 @@ export function buildView(args: {
     tools,
     toolSplit: splitToolOrigin(tools),
     seriesReady: series !== null,
+    seriesFailed: series === null && (args.seriesFailed ?? false),
   }
 }

@@ -1,5 +1,6 @@
 "use client"
 
+import { useRef } from "react"
 import { Eye, Play } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
@@ -17,7 +18,7 @@ import { useAppStore } from "@/store/app-store"
 import { preflight } from "@/lib/agentpack/preflight"
 import { buildInventory } from "@/lib/agentpack/inventory"
 import type { InventoryInput } from "@/lib/agentpack/inventory"
-import type { SectionKey } from "@/lib/agentpack/workspaces"
+import type { NavigateIntent, SectionKey } from "@/lib/agentpack/workspaces"
 import { useRunnerCtx } from "./runner-context"
 import { StepLog } from "./step-log"
 import { Completion } from "./completion"
@@ -47,13 +48,12 @@ export function ExecutionPanel({
    * than claim it is empty.
    */
   scan?: InventoryInput["scan"]
-  /** Follow a failure's reading to the page that fixes it. */
-  onNavigate?: (section: SectionKey) => void
+  /** Follow a failure's reading (or a to-do) to the page that fixes it. */
+  onNavigate?: (section: SectionKey, intent?: NavigateIntent) => void
 } = {}) {
   const t = useT()
   const open = useAppStore((s) => s.panelOpen)
   const setPanelOpen = useAppStore((s) => s.setPanelOpen)
-  const plan = useAppStore((s) => s.plan)
   // Folded here rather than in the shell, and read from the store here too.
   // `refreshDetections` writes `latestVersions` and `cliManagers` once per
   // installed CLI, un-batched — subscribing the shell to those slices made every
@@ -72,6 +72,8 @@ export function ExecutionPanel({
     awaitingConfirm,
     lastWasPreview,
     cancelled,
+    runPlan,
+    runTitle,
     previewPending,
     applyPending,
     abandonPending,
@@ -94,7 +96,9 @@ export function ExecutionPanel({
     ? busy
       ? null
       : preflight(t, pendingSteps, {
-          plan,
+          // The run's own plan, or none: an MCP add must not be briefed about
+          // the API keys of whatever preset is sitting in the tray.
+          plan: runPlan ?? undefined,
           // Only folded while the panel is actually asking — the readings are
           // otherwise recomputed on every store write for a panel nobody sees.
           inventory: buildInventory({
@@ -118,44 +122,67 @@ export function ExecutionPanel({
     setPanelOpen(next)
   }
 
+  // Where the keyboard starts. Left to Radix it was the first focusable element —
+  // Discard — so a reflexive Enter threw the staged steps away. The log is what
+  // there is to read, so it takes focus; the decision stays one Tab away.
+  const logRef = useRef<HTMLDivElement>(null)
+
   return (
     <Sheet open={open} onOpenChange={close}>
-      <SheetContent side="right" className="flex w-full flex-col gap-0 sm:max-w-xl">
+      <SheetContent
+        side="right"
+        className="flex w-full flex-col gap-0 sm:max-w-xl"
+        onOpenAutoFocus={(e) => {
+          e.preventDefault()
+          logRef.current?.focus()
+        }}
+      >
         <SheetHeader>
-          <SheetTitle>{awaitingConfirm ? t.review.heading : t.shell.run}</SheetTitle>
+          <SheetTitle>{awaitingConfirm ? t.review.heading : (runTitle ?? t.shell.run)}</SheetTitle>
           <SheetDescription>
             {previewed
               ? t.review.previewDone
               : awaitingConfirm
                 ? t.review.stepCount(reports.length)
-                : t.brand}
+                : busy
+                  ? t.shell.runningDesc
+                  : t.shell.finishedDesc}
           </SheetDescription>
         </SheetHeader>
 
         {reports.length > 0 && !awaitingConfirm ? (
           <div className="flex items-center gap-3 px-4 pb-3">
             <Progress value={(doneCount / reports.length) * 100} className="h-1.5 flex-1" />
-            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+            <span
+              aria-live="polite"
+              className="shrink-0 text-xs tabular-nums text-muted-foreground"
+            >
               {doneCount}/{reports.length}
             </span>
           </div>
         ) : null}
 
-        <div className="flex-1 space-y-4 overflow-auto px-4">
+        <div
+          ref={logRef}
+          tabIndex={-1}
+          className="flex-1 space-y-4 overflow-auto px-4 outline-none"
+        >
           {brief ? <PreflightBrief report={brief} /> : null}
           {finished ? (
             <Completion
               reports={reports}
+              plan={runPlan}
               dryRun={lastWasPreview}
               cancelled={cancelled}
               onNavigate={
                 onNavigate
-                  ? (section) => {
+                  ? (section, intent) => {
                       // Leaving for the fix closes the panel behind you: a sheet
                       // left open over the page it just sent you to is a page
                       // you cannot use.
                       setPanelOpen(false)
-                      onNavigate(section)
+                      if (intent) onNavigate(section, intent)
+                      else onNavigate(section)
                     }
                   : undefined
               }

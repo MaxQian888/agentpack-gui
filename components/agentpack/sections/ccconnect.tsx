@@ -32,6 +32,7 @@ import {
   CC_CONNECT_BRIDGE_PORT,
   CC_CONNECT_MANAGEMENT_PORT,
   CC_CONNECT_WEBHOOK_PORT,
+  configPlaceholders,
   countProjects,
   dashboardUrl,
   ensureWebAdmin,
@@ -110,12 +111,12 @@ export function CcConnectSection() {
   const latestVersions = useAppStore((s) => s.latestVersions)
   const cliManagers = useAppStore((s) => s.cliManagers)
   const storeDetected = useAppStore((s) => s.detections["cc-connect"])
-  const { run } = useRunnerCtx()
+  const { run, onAfterRun } = useRunnerCtx()
 
-  const [detected, setDetected] = useState<boolean | null>(
-    storeDetected ? storeDetected.installed : null
-  )
-  const [version, setVersion] = useState<string | undefined>(storeDetected?.version)
+  // Read from the store the scan writes into rather than copied at mount, so a
+  // re-detection anywhere else (the shell's post-run rescan, a retry) shows here.
+  const detected = storeDetected ? storeDetected.installed : null
+  const version = storeDetected?.version
   const [running, setRunning] = useState<boolean | null>(null)
   const [configExists, setConfigExists] = useState<boolean | null>(null)
   const [mgmtPort, setMgmtPort] = useState(CC_CONNECT_MANAGEMENT_PORT)
@@ -127,6 +128,8 @@ export function CcConnectSection() {
   // this — not "is web admin on" — is what decides whether the service can run
   // at all. Null until the first scan lands.
   const [projects, setProjects] = useState<number | null>(null)
+  // Starter-config values still waiting to be replaced (work_dir, app_id, …).
+  const [placeholders, setPlaceholders] = useState<string[]>([])
   // Start/stop in flight — the buttons stay disabled until the state flip is
   // confirmed (or the poll gives up), so a double-click can't race the service.
   const [busy, setBusy] = useState(false)
@@ -166,6 +169,7 @@ export function CcConnectSection() {
       setWebhookPort(parseWebhookPort(cfg))
       setMgmtEnabled(isSectionEnabled(cfg, "management"))
       setProjects(countProjects(cfg))
+      setPlaceholders(configPlaceholders(cfg))
       setSummary(summarizeConfig(cfg))
     }
     const [d, proc, mUp, bUp] = await Promise.all([
@@ -175,8 +179,6 @@ export function CcConnectSection() {
       probePort(bridge),
     ])
     if (!mounted.current) return
-    setDetected(d.installed)
-    setVersion(d.version)
     useAppStore.getState().setDetection("cc-connect", d)
     setRunning(proc || mUp || bUp)
   }, [paths])
@@ -196,11 +198,10 @@ export function CcConnectSection() {
     void reload()
   }, [reload])
 
-  const runThen = async (steps: Parameters<typeof run>[0]) => {
-    const reports = await run(steps)
-    await reload()
-    return reports
-  }
+  // Every real run re-reads the page, a retry in the review panel included — a
+  // retry never resolves the `run()` its caller awaited, so a re-read chained
+  // onto that promise left the checklist describing the machine before it.
+  useEffect(() => onAfterRun(() => void reload()), [onAfterRun, reload])
 
   const tool = findCli("cc-connect")!
   const os = effectiveOS()
@@ -210,16 +211,16 @@ export function CcConnectSection() {
 
   const install = () => {
     if (!installMethod) return
-    void runThen([cliInstallStep("cc-connect", installMethod.command, false, t)])
+    void run([cliInstallStep("cc-connect", installMethod.command, false, t)])
   }
 
   const upgrade = () => {
     if (!upgradeCmd) return
-    void runThen([cliInstallStep("cc-connect", upgradeCmd, true, t)])
+    void run([cliInstallStep("cc-connect", upgradeCmd, true, t)])
   }
 
   const uninstall = () => {
-    void runThen([cliUninstallStep("cc-connect", tool.uninstall?.[os], t)])
+    void run([cliUninstallStep("cc-connect", tool.uninstall?.[os], t)])
   }
 
   // Start/stop the bridge process, then poll until the service state confirms
@@ -367,7 +368,16 @@ export function CcConnectSection() {
   // gated on the one before it. `waiting` is not "disabled" — the row says
   // which step it is waiting on, which is the thing a greyed-out button never
   // manages to say.
-  const configured = configExists === true && (projects ?? 0) > 0
+  //
+  // Only the first unmet step is `current`: the accent is the one "do this
+  // now" on the page. The starter config's placeholders keep "Configure a
+  // project" unmet — the service can still start on them, which is how the
+  // dashboard comes up to fix them from, but nothing is configured yet.
+  const hasProject = configExists === true && (projects ?? 0) > 0
+  const configured = hasProject && placeholders.length === 0
+  const installedNow = detected === true
+  const bridgeRunning = running === true
+  const dashboardCurrent = installedNow && configured && bridgeRunning
   const steps: SetupStep[] = [
     {
       id: "install",
@@ -426,6 +436,9 @@ export function CcConnectSection() {
               {configExists ? c.configInitialized : c.configMissing}
             </span>
           ) : null}
+          {hasProject && placeholders.length > 0 ? (
+            <span className="mt-1 block">{c.stepConfigPlaceholders(placeholders.join(", "))}</span>
+          ) : null}
         </>
       ),
       note: paths ? (
@@ -434,7 +447,7 @@ export function CcConnectSection() {
           {configured ? <span className="block">{c.stepConfigDone(projects ?? 0)}</span> : null}
         </>
       ) : undefined,
-      status: !detected ? "waiting" : configured ? "done" : "current",
+      status: !installedNow ? "waiting" : configured ? "done" : "current",
       action: paths ? (
         <CcConnectConfigEditor
           path={paths.ccConnectConfig}
@@ -458,9 +471,13 @@ export function CcConnectSection() {
     {
       id: "service",
       title: c.stepStartTitle,
-      description: running ? c.daemonNote : c.stepStartDesc,
+      description: running
+        ? c.daemonNote
+        : installedNow && configExists === false
+          ? c.stepStartNeedsConfig
+          : c.stepStartDesc,
       note: running === null ? undefined : running ? c.running : c.stopped,
-      status: !configured ? "waiting" : running ? "done" : "current",
+      status: bridgeRunning ? "done" : installedNow && configured ? "current" : "waiting",
       action: running ? (
         <Button
           variant="outline"
@@ -477,7 +494,10 @@ export function CcConnectSection() {
           variant="outline"
           size="sm"
           className="gap-1"
-          disabled={busy || detected !== true}
+          // With no project the bridge refuses to start at all; the alert
+          // above the checklist says why. A button whose only effect was an
+          // error toast restating that alert is not a button.
+          disabled={busy || detected !== true || !hasProject}
           onClick={() => void setService(true)}
         >
           {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
@@ -500,10 +520,13 @@ export function CcConnectSection() {
             ? c.managementEnabled
             : c.managementDisabled
           : undefined,
-      status: !configured ? "waiting" : "current",
+      status: dashboardCurrent ? "current" : "waiting",
+      /* Primary only while it is the step you are on. Before that the page's
+         one "do this now" is higher up, and a primary here was a second one. */
       action: (
         <Button
           size="sm"
+          variant={dashboardCurrent ? "default" : "outline"}
           className="gap-1"
           disabled={webBusy || detected !== true || !paths}
           onClick={() => void openDashboard("embed")}

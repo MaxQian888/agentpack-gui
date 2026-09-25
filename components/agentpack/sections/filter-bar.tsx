@@ -22,10 +22,19 @@ import { cn } from "@/lib/utils"
  */
 export function FilterToolbar({
   scope,
+  label,
   children,
 }: {
   /** The always-visible chip row: scope, and the counts that legend the list. */
   scope: React.ReactNode
+  /**
+   * Names the chip row for assistive tech, e.g. "Filter by resource". Without
+   * it the row is a bare run of toggle buttons with nothing saying what they
+   * filter, and a chip that repeats a word used elsewhere on the page (a
+   * resource kind that is both a filter and a per-package switch) is
+   * indistinguishable from it.
+   */
+  label?: string
   /** Search plus `<MoreFilters>`, pushed to the trailing edge when there's room. */
   children: React.ReactNode
 }) {
@@ -34,7 +43,13 @@ export function FilterToolbar({
     // two tiers don't fit on one line, each wrapped line justifies itself, so
     // the search box lands under the chips instead of stranded at the far right.
     <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2">
-      <div className="flex min-w-0 flex-wrap items-center gap-1.5">{scope}</div>
+      <div
+        role={label ? "group" : undefined}
+        aria-label={label}
+        className="flex min-w-0 flex-wrap items-center gap-1.5"
+      >
+        {scope}
+      </div>
       <div className="flex min-w-0 flex-wrap items-center gap-2">{children}</div>
     </div>
   )

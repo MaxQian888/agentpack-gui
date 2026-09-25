@@ -24,11 +24,14 @@ import type { ProviderApp, ProviderForm as ProviderFormData } from "@/lib/agentp
 export function QuickAddCard({
   missingOfficial,
   disabled,
+  disabledReason,
   flat = false,
   onPick,
 }: {
   missingOfficial: readonly ProviderApp[]
   disabled: boolean
+  /** Said under the hint when the buttons are off for a reason this card owns. */
+  disabledReason?: string
   /**
    * Drop the panel chrome. Inside the provider list's empty state this is
    * already within a panel, and design.md is blunt about a box inside a box —
@@ -47,6 +50,9 @@ export function QuickAddCard({
     >
       <h3 className="font-medium">{c.quickAddTitle}</h3>
       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{c.quickAddHint}</p>
+      {disabledReason ? (
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{disabledReason}</p>
+      ) : null}
 
       <div className="mt-3 min-w-0 space-y-3">
         <div className="min-w-0">

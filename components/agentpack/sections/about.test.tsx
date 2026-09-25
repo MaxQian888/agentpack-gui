@@ -32,6 +32,7 @@ const mockedCheck = checkForUpdate as jest.Mock
 const info = { version: "2.0.0", currentVersion: "1.0.0", body: "New stuff" }
 
 beforeEach(() => {
+  jest.clearAllMocks()
   useAppStore.setState({
     appVersion: null,
     updateState: "idle",
@@ -124,6 +125,47 @@ it("toasts when the update check fails", async () => {
   await userEvent.click(screen.getByRole("button", { name: en.about.checkNow }))
   await waitFor(() => expect(toast.error).toHaveBeenCalledWith(en.about.checkFailed))
   expect(screen.getByRole("alert")).toHaveTextContent(en.about.updateError("offline"))
+})
+
+it("does not stamp a failed check as the last check", async () => {
+  // Stamping before the answer meant "Last checked: just now" beside the error.
+  mockedCheck.mockRejectedValueOnce(new Error("offline"))
+  renderAbout()
+  await userEvent.click(screen.getByRole("button", { name: en.about.checkNow }))
+  await waitFor(() => expect(toast.error).toHaveBeenCalled())
+  expect(useAppStore.getState().settings.lastCheckAt).toBeNull()
+  expect(saveSettings).not.toHaveBeenCalledWith(
+    expect.objectContaining({ lastCheckAt: expect.any(Number) })
+  )
+  // The line also carries the system summary, hence the substring match.
+  expect(
+    screen.getByText(en.about.lastChecked(en.about.never), { exact: false })
+  ).toBeInTheDocument()
+})
+
+it("stamps a check that answered", async () => {
+  mockedCheck.mockResolvedValueOnce(null)
+  renderAbout()
+  await userEvent.click(screen.getByRole("button", { name: en.about.checkNow }))
+  await screen.findByText(en.about.upToDate)
+  expect(useAppStore.getState().settings.lastCheckAt).toEqual(expect.any(Number))
+  expect(saveSettings).toHaveBeenCalledWith({ lastCheckAt: expect.any(Number) })
+})
+
+it("keeps the update on offer after a failed install, and says the install failed", async () => {
+  // A failed install is not a failed check: the update is still known, so the
+  // panel and its Install button stay.
+  mockedCheck.mockResolvedValueOnce(info)
+  ;(downloadAndInstallUpdate as jest.Mock).mockRejectedValueOnce(new Error("signature mismatch"))
+  renderAbout()
+  await userEvent.click(screen.getByRole("button", { name: en.about.checkNow }))
+  await userEvent.click(await screen.findByRole("button", { name: en.about.installAndRestart }))
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith(en.about.installFailed))
+  expect(toast.error).not.toHaveBeenCalledWith(en.about.checkFailed)
+  expect(screen.getByRole("alert")).toHaveTextContent(en.about.updateError("signature mismatch"))
+  expect(screen.getByRole("button", { name: en.about.installAndRestart })).toBeEnabled()
+  expect(screen.getByText(en.about.updateInstallFailed)).toBeInTheDocument()
+  expect(restartApp).not.toHaveBeenCalled()
 })
 
 it("opens the releases page", async () => {

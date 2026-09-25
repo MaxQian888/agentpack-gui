@@ -5,7 +5,7 @@ const sections = [
   { id: "dashboard", primary: "System inventory", aside: "Usage and activity" },
   { id: "presets", primary: "Preset and component selection", aside: "Selected items" },
   { id: "clis", primary: "CLI catalog", aside: "CLI selection guidance" },
-  { id: "environment", primary: "Runtime catalog", aside: "Runtime detection controls" },
+  { id: "environment", primary: "Environment catalog", aside: "Environment detection controls" },
   { id: "network", primary: "Proxy configuration", aside: "Network discovery" },
   { id: "cleanup", primary: "Cleanup targets", aside: "Cleanup recovery" },
   { id: "preferences", primary: "Application preferences", aside: "Guidance and defaults" },

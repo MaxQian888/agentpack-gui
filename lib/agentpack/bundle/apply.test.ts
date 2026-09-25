@@ -2,11 +2,13 @@ import type { Profile } from "../profile"
 import type { Plan } from "../types"
 import type { AppSettings } from "@/lib/tauri/settings"
 import {
+  describeSettingsChange,
   diffFiles,
   diffPlan,
   diffProfiles,
   diffSettings,
   keepLocalSecrets,
+  keepLocalSettingsSecrets,
   mergePlan,
   mergeProfiles,
   retargetPlanOs,
@@ -134,7 +136,15 @@ describe("profiles", () => {
   ]
 
   it("counts fresh and updated entries", () => {
-    expect(diffProfiles(local, incoming)).toEqual({ fresh: 1, updated: 1 })
+    expect(diffProfiles(local, incoming)).toMatchObject({ fresh: 1, updated: 1 })
+  })
+
+  it("counts the local profiles a replace would delete", () => {
+    // Replace used to drop every local profile the bundle didn't carry without
+    // the dialog saying how many.
+    const mine: Profile[] = [...local, { id: "c", name: "Mine only", createdAt: 4, plan: base }]
+    expect(diffProfiles(mine, incoming).dropped).toBe(1)
+    expect(diffProfiles(local, incoming).dropped).toBe(0)
   })
 
   it("merges by id, keeping local order and appending the new ones", () => {
@@ -182,5 +192,48 @@ describe("diffSettings", () => {
   it("lists only the keys that genuinely change", () => {
     const out = diffSettings(local, { autoCheckUpdates: true, ghMirrorPrefix: "https://m/" })
     expect(out).toEqual([{ key: "ghMirrorPrefix", from: null, to: "https://m/" }])
+  })
+})
+
+describe("settings secrets", () => {
+  const local = {
+    proxy: {
+      mode: "manual",
+      targets: ["npm"],
+      httpUrl: "http://p:1",
+      password: "local-pw",
+      clientKeyPassphrase: "local-pass",
+    },
+  } as unknown as AppSettings
+
+  it("puts back the proxy credentials a redacted bundle blanked", () => {
+    const incoming = { proxy: { mode: "manual", targets: ["npm"], httpUrl: "http://q:2" } }
+    const out = keepLocalSettingsSecrets(incoming as Partial<AppSettings>, local)
+    expect(out.proxy).toMatchObject({
+      httpUrl: "http://q:2",
+      password: "local-pw",
+      clientKeyPassphrase: "local-pass",
+    })
+  })
+
+  it("keeps a credential the bundle really carried", () => {
+    const incoming = { proxy: { mode: "manual", targets: ["npm"], password: "theirs" } }
+    const out = keepLocalSettingsSecrets(incoming as Partial<AppSettings>, local)
+    expect(out.proxy?.password).toBe("theirs")
+  })
+
+  it("leaves a bundle without a proxy alone", () => {
+    const incoming = { ghMirrorPrefix: "https://m/" }
+    expect(keepLocalSettingsSecrets(incoming, local)).toBe(incoming)
+  })
+
+  it("masks proxy credentials in the review line", () => {
+    const line = describeSettingsChange({ key: "proxy", from: local.proxy, to: null })
+    expect(line).not.toContain("local-pw")
+    expect(line).not.toContain("local-pass")
+    expect(line).toContain("proxy: ")
+    expect(describeSettingsChange({ key: "ghMirrorPrefix", from: null, to: "https://m/" })).toBe(
+      'ghMirrorPrefix: null → "https://m/"'
+    )
   })
 })

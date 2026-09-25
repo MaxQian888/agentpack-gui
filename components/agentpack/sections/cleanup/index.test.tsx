@@ -19,7 +19,7 @@ jest.mock("@/lib/tauri/commands", () => ({
   pathExists: jest.fn(async () => false),
 }))
 
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { act, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
@@ -28,6 +28,7 @@ import type { CleanupRoots, CleanupStat } from "@/lib/agentpack/cleanup"
 import {
   cleanupApply,
   cleanupQuarantineList,
+  cleanupQuarantinePurge,
   cleanupRoots,
   cleanupScan,
   isProcessRunning,
@@ -63,6 +64,7 @@ const mocked = {
   scan: cleanupScan as jest.Mock,
   apply: cleanupApply as jest.Mock,
   trash: cleanupQuarantineList as jest.Mock,
+  purge: cleanupQuarantinePurge as jest.Mock,
   running: isProcessRunning as jest.Mock,
   read: readTextFile as jest.Mock,
   write: writeTextFile as jest.Mock,
@@ -93,7 +95,9 @@ function seedScan(present: Record<string, { bytes: number; files: number; degrad
 }
 
 function renderSection(opts: { panel?: boolean } = {}) {
-  useAppStore.setState({ paths })
+  // `panelOpen` is global: a panel left open by the previous test would render
+  // this one's section behind a modal from the first paint.
+  useAppStore.setState({ paths, panelOpen: false })
   return render(
     <I18nProvider>
       <RunnerHarness autoApply={!opts.panel} panel={opts.panel}>
@@ -222,6 +226,37 @@ it("ticks only regenerated data in the quick clean, never records", async () => 
   expect(byName(en.cleanup.targets["codex-chats"].title)).not.toBeChecked()
 })
 
+it("adds the caches to what is already ticked, and says what it selects", async () => {
+  seedScan({
+    "codex-chats": { bytes: 2_000_000_000, files: 900 },
+    "claude-cache": { bytes: 1_024, files: 3 },
+  })
+  renderSection()
+  await screen.findByText(en.cleanup.targets["claude-cache"].title)
+  const boxes = screen.getAllByRole("checkbox")
+  const byName = (title: string) =>
+    boxes.find((b) => b.closest("label")?.textContent?.includes(title))!
+
+  await userEvent.click(byName(en.cleanup.targets["codex-chats"].title))
+  const quick = screen.getByRole("button", { name: en.cleanup.quickClean })
+  expect(quick).toHaveAccessibleDescription(en.cleanup.quickCleanHint)
+  await userEvent.click(quick)
+
+  // A deliberate pick survives the quick action rather than being replaced by it.
+  expect(byName(en.cleanup.targets["codex-chats"].title)).toBeChecked()
+  expect(byName(en.cleanup.targets["claude-cache"].title)).toBeChecked()
+})
+
+it("disables the quick action with a reason when nothing regenerated was found", async () => {
+  seedScan({ "codex-chats": { bytes: 500, files: 5 } })
+  renderSection()
+  await screen.findByText(en.cleanup.targets["codex-chats"].title)
+
+  const quick = screen.getByRole("button", { name: en.cleanup.quickClean })
+  expect(quick).toBeDisabled()
+  expect(quick).toHaveAccessibleDescription(en.cleanup.quickCleanNone)
+})
+
 /**
  * Invariant 5 of the app: every write goes through the review panel. A cleanup
  * that deleted on click would be the one destructive path with no gate.
@@ -238,6 +273,89 @@ it("writes nothing until the review panel is applied", async () => {
   expect(mocked.apply).not.toHaveBeenCalled()
   await userEvent.click(await screen.findByRole("button", { name: en.review.apply }))
   await waitFor(() => expect(mocked.apply).toHaveBeenCalled())
+})
+
+it("keeps the selection when the review panel is discarded", async () => {
+  seedScan({ "claude-cache": { bytes: 1_024, files: 3 } })
+  renderSection({ panel: true })
+  await screen.findByText(en.cleanup.targets["claude-cache"].title)
+  await userEvent.click(screen.getByRole("checkbox"))
+  const scansBefore = mocked.scan.mock.calls.length
+
+  await userEvent.click(screen.getByRole("button", { name: en.cleanup.clean }))
+  await userEvent.click(await screen.findByRole("button", { name: en.review.discard }))
+
+  // Nothing moved, so what the user built is still exactly what they meant —
+  // and the numbers on screen are still true, so nothing is re-measured.
+  await waitFor(() => expect(screen.getByRole("checkbox")).toBeChecked())
+  expect(mocked.apply).not.toHaveBeenCalled()
+  expect(mocked.scan.mock.calls.length).toBe(scansBefore)
+})
+
+it("ignores a slower scan for a filter the user has already moved off", async () => {
+  renderSection()
+  await screen.findByText(en.cleanup.empty)
+
+  // Hold every scan so two filter changes in a row can land out of order.
+  const held: ((present: boolean) => void)[] = []
+  mocked.scan.mockImplementation(
+    (specs: { id: string; path: string }[]) =>
+      new Promise<CleanupStat[]>((resolve) =>
+        held.push((present) =>
+          resolve(
+            specs.map((spec) => {
+              const hit = present && spec.id === "claude-cache"
+              return {
+                id: spec.id,
+                path: spec.path,
+                exists: hit,
+                bytes: hit ? 5_000_000 : 0,
+                files: hit ? 7 : 0,
+                newestMs: 0,
+                oldestMs: 0,
+                degraded: false,
+              }
+            })
+          )
+        )
+      )
+  )
+  const pick = async (days: number) => {
+    await userEvent.click(screen.getByRole("combobox", { name: en.cleanup.age.label }))
+    await userEvent.click(await screen.findByRole("option", { name: en.cleanup.age.days(days) }))
+  }
+  await pick(30)
+  await waitFor(() => expect(held).toHaveLength(1))
+  await pick(90)
+  await waitFor(() => expect(held).toHaveLength(2))
+
+  // The 90-day answer lands first; the stale 30-day one lands after it and
+  // must not replace it — nor end the "measuring" state on its own.
+  const settle = (answer: () => void) =>
+    act(async () => {
+      answer()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+  await settle(() => held[1](false))
+  const panel = screen.getByRole("region", { name: en.cleanup.targetsPanel })
+  expect(within(panel).getByText(en.cleanup.empty)).toBeInTheDocument()
+  await settle(() => held[0](true))
+  expect(screen.queryByText(en.cleanup.targets["claude-cache"].title)).not.toBeInTheDocument()
+  expect(within(panel).getByText(en.cleanup.empty)).toBeInTheDocument()
+})
+
+it("measures nothing stale into the review while a newer scan is still out", async () => {
+  seedScan({ "claude-cache": { bytes: 1_024, files: 3 } })
+  renderSection()
+  await screen.findByText(en.cleanup.targets["claude-cache"].title)
+  await userEvent.click(screen.getByRole("checkbox"))
+
+  mocked.scan.mockImplementation(() => new Promise(() => {}))
+  await userEvent.click(screen.getByRole("combobox", { name: en.cleanup.age.label }))
+  await userEvent.click(await screen.findByRole("option", { name: en.cleanup.age.days(30) }))
+
+  // Sizes on screen were measured under the old filter, so Clean waits.
+  expect(screen.getByRole("button", { name: en.cleanup.clean })).toBeDisabled()
 })
 
 it("cleans the selection in the chosen mode, with the age filter applied", async () => {
@@ -320,6 +438,45 @@ it("marks a partially readable target rather than quoting its size as final", as
   seedScan({ "claude-cache": { bytes: 100, files: 1, degraded: true } })
   renderSection()
   expect(await screen.findByText(en.cleanup.degraded)).toBeInTheDocument()
+})
+
+it("asks before emptying one batch, naming its size", async () => {
+  mocked.trash.mockResolvedValue([
+    { id: "trash-1", ts: 1, bytes: 2_048, items: 4, targetIds: ["claude-cache"] },
+  ])
+  renderSection()
+  const trashPanel = screen.getByRole("region", { name: en.cleanup.trashPanel })
+  await userEvent.click(
+    await within(trashPanel).findByRole("button", { name: en.cleanup.trash.purge })
+  )
+
+  // The batch is the only copy of what it holds: nothing goes on the first click.
+  const dialog = await screen.findByRole("alertdialog")
+  expect(within(dialog).getByText(en.cleanup.trash.purgeBatchConfirmTitle)).toBeInTheDocument()
+  expect(within(dialog).getByText(en.cleanup.trash.purgeConfirmBody("2.0 KB"))).toBeInTheDocument()
+  expect(mocked.purge).not.toHaveBeenCalled()
+
+  await userEvent.click(within(dialog).getByRole("button", { name: en.cleanup.trash.purge }))
+  await waitFor(() => expect(mocked.purge).toHaveBeenCalledWith("trash-1"))
+})
+
+it("re-measures the targets after a batch is put back", async () => {
+  mocked.trash.mockResolvedValue([
+    { id: "trash-1", ts: 1, bytes: 2_048, items: 4, targetIds: ["claude-cache"] },
+  ])
+  renderSection()
+  const restore = await screen.findByRole("button", { name: en.cleanup.trash.restore })
+  const scansBefore = mocked.scan.mock.calls.length
+
+  // What was put back is on disk again, so "Reclaimable" has to count it.
+  seedScan({ "claude-cache": { bytes: 2_048, files: 4 } })
+  await userEvent.click(restore)
+
+  await waitFor(() => expect(mocked.scan.mock.calls.length).toBeGreaterThan(scansBefore))
+  const targets = screen.getByRole("region", { name: en.cleanup.targetsPanel })
+  expect(
+    await within(targets).findByText(en.cleanup.targets["claude-cache"].title)
+  ).toBeInTheDocument()
 })
 
 it("shows what the recycle area is holding", async () => {

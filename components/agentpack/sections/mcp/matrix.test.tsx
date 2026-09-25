@@ -14,6 +14,8 @@ import { toast } from "sonner"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { readTextFile } from "@/lib/tauri/commands"
+import { en } from "@/lib/i18n/en"
+import type { ClaudeMcpRoute } from "@/lib/agentpack/plan"
 import { MatrixTab } from "./matrix"
 import type { DashboardScan } from "../dashboard"
 
@@ -39,8 +41,13 @@ const paths = {
   opencodeConfig: "/h/.config/opencode/opencode.json",
 } as never
 
+/** What `run()` resolves with once the user applied and every step landed. */
+const applied = (steps: { id: string; label: string }[]) =>
+  steps.map((s) => ({ id: s.id, label: s.label, status: "done", output: [] }))
+
 beforeEach(() => {
-  mockRun.mockClear()
+  mockRun.mockReset()
+  mockRun.mockImplementation(async (steps) => applied(steps))
   ;(toast.success as jest.Mock).mockClear()
   useAppStore.getState().resetPlan()
   useAppStore.setState({
@@ -49,10 +56,10 @@ beforeEach(() => {
   })
 })
 
-function renderMatrix(over: Partial<DashboardScan> = {}) {
+function renderMatrix(over: Partial<DashboardScan> = {}, route: ClaudeMcpRoute = "cli") {
   render(
     <I18nProvider>
-      <MatrixTab scan={scan(over)} refresh={() => {}} />
+      <MatrixTab scan={scan(over)} refresh={() => {}} route={route} />
     </I18nProvider>
   )
 }
@@ -64,7 +71,8 @@ it("renders a server row and copies a known server to a missing target", async (
   await waitFor(() => expect(mockRun).toHaveBeenCalled())
   const steps = mockRun.mock.calls[0][0] as { id: string }[]
   expect(steps.some((s) => s.id === "mcp-add-codex-context7")).toBe(true)
-  expect(toast.success).toHaveBeenCalled()
+  // The review panel reports success; a toast on top would say it twice.
+  expect(toast.success).not.toHaveBeenCalled()
 })
 
 it("removes a present target after confirming", async () => {
@@ -98,4 +106,34 @@ it("copies a custom server using its on-disk spec", async () => {
 it("shows the empty state when nothing is configured", () => {
   renderMatrix({ claudeMcps: { known: [], custom: [] } })
   expect(screen.getByText(/No MCP servers configured yet/i)).toBeInTheDocument()
+})
+
+it("doesn't toast a copy the user walked away from", async () => {
+  mockRun.mockResolvedValue([])
+  renderMatrix()
+  await userEvent.click(screen.getByTitle("Copy to Codex"))
+  await waitFor(() => expect(mockRun).toHaveBeenCalled())
+  expect(toast.success).not.toHaveBeenCalled()
+})
+
+it("disables Claude's cells, add and remove alike, with the reason, when there is no route", async () => {
+  renderMatrix({}, "none")
+  // Context7 is on Claude: the remove used to stage nothing and toast "empty plan".
+  const cell = await screen.findByTitle(en.mcp.claudeMissing)
+  await waitFor(() => expect(readTextFile).toHaveBeenCalled())
+  expect(cell).toBeDisabled()
+  expect(screen.queryByTitle("Remove from Claude Code")).not.toBeInTheDocument()
+})
+
+it("names why a custom server's cell can't copy when its entry is unreadable", async () => {
+  // "mine" is listed on Codex, but no config file has an entry to copy from.
+  ;(readTextFile as jest.Mock).mockImplementation(async () => "{}")
+  renderMatrix({
+    claudeMcps: { known: [], custom: [] },
+    codexMcps: { known: [], custom: ["mine"] },
+  })
+  const cells = await screen.findAllByTitle(en.mcp.copyNoSpec)
+  // Claude and OpenCode: both empty, both blocked, both saying why.
+  expect(cells).toHaveLength(2)
+  for (const cell of cells) expect(cell).toBeDisabled()
 })

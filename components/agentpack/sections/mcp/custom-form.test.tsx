@@ -114,3 +114,90 @@ it("calls onCancel from the Cancel button", async () => {
   await userEvent.click(screen.getByRole("button", { name: /Cancel/i }))
   expect(onCancel).toHaveBeenCalledTimes(1)
 })
+
+it("editing a remote server keeps every header, and a non-bearer Authorization verbatim", async () => {
+  const { onSubmit } = renderForm({
+    mode: "edit",
+    initial: {
+      id: "remote",
+      spec: {
+        transport: "http",
+        url: "https://x/mcp",
+        headers: { Authorization: "Basic dXNlcjpwdw==", "X-Api-Key": "k1" },
+      },
+      targets: ["claude"],
+    },
+  })
+  // A Basic credential is not a bearer token: it stays a header, not the token field.
+  expect(screen.getByLabelText(/^Bearer token$/i)).toHaveValue("")
+  await userEvent.click(screen.getByRole("button", { name: /Save changes/i }))
+  expect(onSubmit.mock.calls[0][0].spec).toEqual({
+    transport: "http",
+    url: "https://x/mcp",
+    headers: { Authorization: "Basic dXNlcjpwdw==", "X-Api-Key": "k1" },
+  })
+})
+
+it("reads a bearer Authorization as the token and writes it back as one", async () => {
+  const { onSubmit } = renderForm({
+    mode: "edit",
+    initial: {
+      id: "remote",
+      spec: {
+        transport: "sse",
+        url: "https://x/sse",
+        headers: { authorization: "Bearer abc", "X-Trace": "1" },
+      },
+      targets: ["claude"],
+    },
+  })
+  expect(screen.getByLabelText(/^Bearer token$/i)).toHaveValue("abc")
+  await userEvent.click(screen.getByRole("button", { name: /Save changes/i }))
+  expect(onSubmit.mock.calls[0][0].spec).toEqual({
+    transport: "sse",
+    url: "https://x/sse",
+    headers: { "X-Trace": "1", Authorization: "Bearer abc" },
+  })
+})
+
+it("adds an extra header to a new remote server", async () => {
+  const { onSubmit } = renderForm()
+  await userEvent.type(screen.getByLabelText(/Server id/i), "remote-two")
+  await userEvent.click(screen.getByRole("button", { name: /Remote \(http\)/i }))
+  await userEvent.type(screen.getByLabelText(/Server URL/i), "https://x/mcp")
+  await userEvent.click(screen.getByRole("button", { name: /Add header/i }))
+  await userEvent.type(screen.getByPlaceholderText("Header-Name"), "X-Api-Key")
+  await userEvent.type(screen.getByLabelText(/X-Api-Key value/i), "k2")
+  await userEvent.click(screen.getByRole("button", { name: /Add server/i }))
+  expect(onSubmit.mock.calls[0][0].spec).toMatchObject({ headers: { "X-Api-Key": "k2" } })
+})
+
+it("refuses a bearer token and an Authorization header at once", async () => {
+  const { onSubmit } = renderForm({
+    mode: "edit",
+    initial: {
+      id: "remote",
+      spec: { transport: "http", url: "https://x/mcp", headers: { Authorization: "Basic x" } },
+      targets: ["claude"],
+    },
+  })
+  await userEvent.type(screen.getByLabelText(/^Bearer token$/i), "tok")
+  await userEvent.click(screen.getByRole("button", { name: /Save changes/i }))
+  expect(onSubmit).not.toHaveBeenCalled()
+  expect(screen.getByText(/not both/i)).toBeInTheDocument()
+})
+
+it("keeps a target the machine can't write unticked and says why", async () => {
+  const { onSubmit } = renderForm({ disabledTargets: { claude: "Install Claude Code first" } })
+  const [claude, codex] = screen.getAllByRole("checkbox")
+  expect(claude).toBeDisabled()
+  expect(claude).not.toBeChecked()
+  expect(screen.getByTitle("Install Claude Code first")).toBeInTheDocument()
+  await userEvent.type(screen.getByLabelText(/Server id/i), "my-server")
+  await userEvent.click(screen.getByRole("button", { name: /Add server/i }))
+  // Claude was the default target; with it gone, a target has to be chosen.
+  expect(onSubmit).not.toHaveBeenCalled()
+  await userEvent.click(codex)
+  await userEvent.click(screen.getByRole("button", { name: /Add server/i }))
+  expect(onSubmit.mock.calls[0][0].targets).toEqual(["codex"])
+})

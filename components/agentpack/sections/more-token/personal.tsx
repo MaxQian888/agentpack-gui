@@ -25,7 +25,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
@@ -46,22 +45,20 @@ import { useT } from "@/lib/i18n/provider"
 import { isTauri } from "@/lib/tauri"
 import { hasInjectedMoreTokenPort } from "@/lib/more-token/port"
 import { openUrl } from "@/lib/tauri/system"
+import { cn } from "@/lib/utils"
 import {
   cancelPersonalOAuth,
   credentialState,
-  downloadCsv,
   forgetCredential,
   listInstances,
   loginPersonalInstance,
   managementRequest,
-  ManagementApiError,
   operationId,
   pairInstance,
   pollPersonalOAuth,
   quotaCurrencyLabel,
   quotaCurrencyParts,
   sameOriginServerUrl,
-  saveInstance,
   startPersonalOAuth,
 } from "@/lib/more-token/client"
 import type {
@@ -82,16 +79,15 @@ import type {
 } from "@/lib/more-token/types"
 import { DesktopOnlyNote } from "../../desktop-only-note"
 import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "../capability-workbench"
+import { resetInstanceQueries, useForgetCredential } from "./credential"
+import { saveCsv } from "./csv"
+import { errorText } from "./errors"
+import { InstanceDialog } from "./instance-dialog"
 
 const PERSONAL_CLIENT_ID = "agentpack-personal-desktop"
 
 function request<T>(instanceId: string, operation: Parameters<typeof managementRequest>[1]) {
   return managementRequest<T>(instanceId, operation).then((response) => response.data)
-}
-
-function errorText(error: unknown): string {
-  if (error instanceof ManagementApiError) return `${error.code}: ${error.message}`
-  return error instanceof Error ? error.message : String(error)
 }
 
 function formatNumber(value: number): string {
@@ -105,14 +101,33 @@ function formatTime(value: number): string {
   )
 }
 
-export function PersonalMoreTokenSection({ view }: { view: PersonalView }) {
+export function PersonalMoreTokenSection({
+  view,
+  onOpenSecurity,
+}: {
+  view: PersonalView
+  /**
+   * Goes to My account → Security. Navigation belongs to the shell, so the
+   * required-password notice offers the way there only when it is given one.
+   */
+  onOpenSecurity?: () => void
+}) {
   const m = useT()
   const personal = m.personal
   const management = m.management
   const queryClient = useQueryClient()
   const tauri = isTauri() || hasInjectedMoreTokenPort()
   const [selectedId, setSelectedId] = useState("")
-  const [instanceOpen, setInstanceOpen] = useState(false)
+  // Same dialog as the management workspace: a personal connection is edited
+  // and removed exactly like a management one. `seq` remounts it per opening.
+  const [instanceDialog, setInstanceDialog] = useState<{
+    open: boolean
+    mode: "add" | "edit"
+    seq: number
+  }>({ open: false, mode: "add", seq: 0 })
+  const openInstanceDialog = (mode: "add" | "edit") =>
+    setInstanceDialog((current) => ({ open: true, mode, seq: current.seq + 1 }))
+  const { forget, dialog: forgetDialog } = useForgetCredential()
   const instancesQuery = useQuery({
     queryKey: ["more-token", "instances"],
     queryFn: listInstances,
@@ -122,7 +137,11 @@ export function PersonalMoreTokenSection({ view }: { view: PersonalView }) {
   const instances = (instancesQuery.data ?? []).filter(
     (instance) => instance.package === "personal"
   )
-  const activeId = selectedId || instances[0]?.id || ""
+  // A selection the list no longer holds (removed, or not refetched yet) falls
+  // back to the first instance rather than to a null one.
+  const activeId = instances.some((item) => item.id === selectedId)
+    ? selectedId
+    : instances[0]?.id || ""
   const instance = instances.find((item) => item.id === activeId) ?? null
   const credential = useQuery({
     queryKey: ["more-token", activeId, "credential"],
@@ -149,23 +168,27 @@ export function PersonalMoreTokenSection({ view }: { view: PersonalView }) {
   }
 
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ["more-token", activeId] })
-  const actions = (
-    <div className="flex items-center gap-2">
-      <Button variant="outline" size="sm" onClick={() => setInstanceOpen(true)}>
-        <Plus className="size-4" />
-        <span className="hidden sm:inline">{management.addInstance}</span>
-      </Button>
-      <Button
-        variant="outline"
-        size="icon-sm"
-        aria-label={management.retry}
-        disabled={!activeId}
-        onClick={refresh}
-      >
-        <RefreshCw className="size-4" />
-      </Button>
-    </div>
-  )
+  const actions =
+    // With no instance yet, the empty state's own "Add instance" is the one way
+    // in; this header copy (and the aside's) would make it three buttons for
+    // one action on an otherwise empty page.
+    instances.length === 0 ? null : (
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="sm" onClick={() => openInstanceDialog("add")}>
+          <Plus className="size-4" />
+          <span className="hidden sm:inline">{management.addInstance}</span>
+        </Button>
+        <Button
+          variant="outline"
+          size="icon-sm"
+          aria-label={management.retry}
+          disabled={!activeId}
+          onClick={refresh}
+        >
+          <RefreshCw className="size-4" />
+        </Button>
+      </div>
+    )
 
   const title = personal.tabs[view.replace("my-", "") as keyof typeof personal.tabs]
   const connected = credential.data?.connected === true
@@ -181,7 +204,7 @@ export function PersonalMoreTokenSection({ view }: { view: PersonalView }) {
   ) : instancesQuery.isLoading ? (
     <PersonalLoading />
   ) : instances.length === 0 ? (
-    <FlatEmpty text={management.noInstances} action={() => setInstanceOpen(true)} />
+    <FlatEmpty text={management.noInstances} action={() => openInstanceDialog("add")} />
   ) : credential.isError ? (
     <PersonalError error={credential.error} retry={() => void credential.refetch()} />
   ) : credential.isLoading ? (
@@ -196,7 +219,14 @@ export function PersonalMoreTokenSection({ view }: { view: PersonalView }) {
         <Alert variant="destructive">
           <KeyRound className="size-4" />
           <AlertTitle>{personal.mustChangePassword}</AlertTitle>
-          <AlertDescription>{personal.mustChangePasswordHint}</AlertDescription>
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+            <span>{personal.mustChangePasswordHint}</span>
+            {onOpenSecurity && view !== "my-security" ? (
+              <Button variant="outline" size="sm" onClick={onOpenSecurity}>
+                {personal.openSecurity}
+              </Button>
+            ) : null}
+          </AlertDescription>
         </Alert>
       ) : null}
       {view === "my-account" ? (
@@ -242,7 +272,8 @@ export function PersonalMoreTokenSection({ view }: { view: PersonalView }) {
           <CapabilityMetric
             label={management.health}
             value={
-              instancesQuery.isLoading || credential.isLoading || credential.isError
+              // No instance is nothing to measure, not an unavailable one.
+              !instance || instancesQuery.isLoading || credential.isLoading || credential.isError
                 ? "—"
                 : connected
                   ? management.healthy
@@ -303,33 +334,32 @@ export function PersonalMoreTokenSection({ view }: { view: PersonalView }) {
                       : management.memoryCredential
                     : personal.signInTitle}
                 </p>
-                {connected ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={async () => {
-                      try {
-                        await forgetCredential(activeId)
-                      } catch (error) {
-                        const confirmed = window.confirm(
-                          `${errorText(error)}\n\n${management.localOnlyCredentialWarning}`
-                        )
-                        if (!confirmed) return
-                        await forgetCredential(activeId, true)
-                      }
-                      await credential.refetch()
-                    }}
-                  >
-                    <Unplug className="size-4" />
-                    {management.disconnect}
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={() => openInstanceDialog("edit")}>
+                    {management.editInstance}
                   </Button>
-                ) : null}
+                  {connected ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={async () => {
+                        try {
+                          await forget(activeId)
+                        } catch (error) {
+                          toast.error(errorText(error))
+                        }
+                      }}
+                    >
+                      <Unplug className="size-4" />
+                      {management.disconnect}
+                    </Button>
+                  ) : null}
+                </div>
               </div>
             ) : (
-              <Button variant="outline" size="sm" onClick={() => setInstanceOpen(true)}>
-                <Plus className="size-4" />
-                {management.addInstance}
-              </Button>
+              // Nothing is connected, and the empty state beside this already
+              // says how to start — the tile doesn't repeat it.
+              <p className="font-mono text-sm text-muted-foreground">—</p>
             )}
           </CapabilityTile>
           <CapabilityTile title={personal.packageLabel} description={personal.isolationNote}>
@@ -341,14 +371,18 @@ export function PersonalMoreTokenSection({ view }: { view: PersonalView }) {
         </>
       }
       detail={
-        <PersonalInstanceDialog
-          open={instanceOpen}
-          onOpenChange={setInstanceOpen}
-          onSaved={async (saved) => {
-            await queryClient.invalidateQueries({ queryKey: ["more-token", "instances"] })
-            setSelectedId(saved.id)
-          }}
-        />
+        <>
+          <InstanceDialog
+            key={instanceDialog.seq}
+            open={instanceDialog.open}
+            instance={instanceDialog.mode === "edit" ? instance : null}
+            pkg="personal"
+            onOpenChange={(open) => setInstanceDialog((current) => ({ ...current, open }))}
+            onSaved={(saved) => setSelectedId(saved.id)}
+            onRemoved={() => setSelectedId("")}
+          />
+          {forgetDialog}
+        </>
       }
     />
   )
@@ -442,24 +476,48 @@ function PersonalPairPanel({
     },
     onError: (error) => toast.error(errorText(error)),
   })
+  // The poll has to outlive renders. The parent passes an inline `onPaired`, so
+  // with it in the effect's deps every unrelated parent re-render (an instance
+  // or credential refetch) tore the poll down — and the cleanup cancelled the
+  // very authorization the user was approving in the browser. The callback and
+  // copy ride in a ref instead; the poll restarts only for a new handle.
+  const latest = useRef({
+    onPaired,
+    persistent: m.persistentCredential,
+    memory: m.memoryCredential,
+  })
+  useEffect(() => {
+    latest.current = {
+      onPaired,
+      persistent: m.persistentCredential,
+      memory: m.memoryCredential,
+    }
+  })
+  const instanceId = instance.id
   useEffect(() => {
     if (!oauth) return
     let cancelled = false
+    // An authorized or failed handle has nothing left to cancel on the server.
+    let finished = false
     let timer: ReturnType<typeof setTimeout> | undefined
     const poll = async () => {
       try {
-        const result = await pollPersonalOAuth(instance.id, oauth.handle)
+        const result = await pollPersonalOAuth(instanceId, oauth.handle)
         if (cancelled) return
         if (result.status === "authorized" && result.credential) {
+          finished = true
           toast.success(
-            result.credential.credentialPersistent ? m.persistentCredential : m.memoryCredential
+            result.credential.credentialPersistent
+              ? latest.current.persistent
+              : latest.current.memory
           )
-          onPaired()
+          latest.current.onPaired()
           return
         }
         timer = setTimeout(poll, (result.status === "slow_down" ? 6 : oauth.intervalSeconds) * 1000)
       } catch (error) {
         if (!cancelled) {
+          finished = true
           setOauth(null)
           toast.error(errorText(error))
         }
@@ -469,9 +527,14 @@ function PersonalPairPanel({
     return () => {
       cancelled = true
       if (timer) clearTimeout(timer)
-      void cancelPersonalOAuth(instance.id, oauth.handle).catch(() => undefined)
+      if (!finished) void cancelPersonalOAuth(instanceId, oauth.handle).catch(() => undefined)
     }
-  }, [instance.id, m.memoryCredential, m.persistentCredential, oauth, onPaired])
+  }, [instanceId, oauth])
+  // Leaving the browser tab of the panel stops waiting on the browser.
+  const selectMode = (next: typeof mode) => {
+    if (next !== "browser") setOauth(null)
+    setMode(next)
+  }
   return (
     <div className="mx-auto max-w-xl space-y-4 border-y py-8">
       <div>
@@ -496,7 +559,7 @@ function PersonalPairPanel({
           type="button"
           variant={mode === "browser" ? "secondary" : "ghost"}
           size="sm"
-          onClick={() => setMode("browser")}
+          onClick={() => selectMode("browser")}
         >
           {personal.browserOption}
         </Button>
@@ -504,7 +567,7 @@ function PersonalPairPanel({
           type="button"
           variant={mode === "password" ? "secondary" : "ghost"}
           size="sm"
-          onClick={() => setMode("password")}
+          onClick={() => selectMode("password")}
         >
           {personal.passwordOption}
         </Button>
@@ -512,7 +575,7 @@ function PersonalPairPanel({
           type="button"
           variant={mode === "pairing" ? "secondary" : "ghost"}
           size="sm"
-          onClick={() => setMode("pairing")}
+          onClick={() => selectMode("pairing")}
         >
           {personal.pairingOption}
         </Button>
@@ -533,6 +596,26 @@ function PersonalPairPanel({
             <ExternalLink className="size-4" />
             {oauth ? personal.waitingForBrowser : personal.browserSignIn}
           </Button>
+          {oauth ? (
+            <div className="flex flex-wrap gap-2">
+              {/* Clearing the handle cancels it (the poll's cleanup); a restart
+                  then asks for a fresh one and opens the browser again. */}
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={browser.isPending}
+                onClick={() => {
+                  setOauth(null)
+                  browser.mutate()
+                }}
+              >
+                {personal.restartBrowserSignIn}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setOauth(null)}>
+                {m.cancel}
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : mode === "password" ? (
         <form
@@ -1003,7 +1086,9 @@ function PersonalBalanceView({ instance }: { instance: MoreTokenInstance }) {
 }
 
 function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
-  const m = useT().personal
+  const t = useT()
+  const m = t.personal
+  const management = t.management
   const [now] = useState(() => Math.floor(Date.now() / 1000))
   const [days, setDays] = useState(30)
   const [model, setModel] = useState("")
@@ -1042,6 +1127,9 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
       page,
     ],
     queryFn: () => request<PersonalUsage>(instance.id, buildUsageOperation(page, pageSize)),
+    // A filter or page change keeps the last reply on screen (dimmed) instead of
+    // flashing the whole view back to a skeleton.
+    placeholderData: (previous) => previous,
   })
   const exportUsage = useMutation({
     mutationFn: async () => {
@@ -1054,54 +1142,65 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
       }
       return records
     },
-    onSuccess: (records) => {
+    onSuccess: async (records) => {
       if (!usage.data) return
-      downloadCsv(`more-token-usage-${new Date().toISOString().slice(0, 10)}.csv`, [
-        [m.usageDefinition, usage.data.definition],
+      await saveCsv(
+        `more-token-usage-${new Date().toISOString().slice(0, 10)}.csv`,
         [
-          m.usageRange,
-          `${new Date(usage.data.start * 1000).toISOString()} – ${new Date(usage.data.end * 1000).toISOString()}`,
+          [m.usageDefinition, usage.data.definition],
+          [
+            m.usageRange,
+            `${new Date(usage.data.start * 1000).toISOString()} – ${new Date(usage.data.end * 1000).toISOString()}`,
+          ],
+          [m.timezone, Intl.DateTimeFormat().resolvedOptions().timeZone],
+          [m.generatedAt, new Date(usage.data.generated_at * 1000).toISOString()],
+          [],
+          [
+            m.generatedAt,
+            m.model,
+            m.usageStatus,
+            m.apiKey,
+            m.accountGroup,
+            m.promptTokens,
+            m.completionTokens,
+            m.rawQuota,
+            m.duration,
+            m.requestId,
+          ],
+          ...records.map((record) => [
+            new Date(record.created_at * 1000).toISOString(),
+            record.model_name,
+            record.status,
+            record.token_name,
+            record.group,
+            record.prompt_tokens,
+            record.completion_tokens,
+            record.quota,
+            record.use_time,
+            record.request_id,
+          ]),
         ],
-        [m.timezone, Intl.DateTimeFormat().resolvedOptions().timeZone],
-        [m.generatedAt, new Date(usage.data.generated_at * 1000).toISOString()],
-        [],
-        [
-          m.generatedAt,
-          m.model,
-          m.usageStatus,
-          m.apiKey,
-          m.accountGroup,
-          m.promptTokens,
-          m.completionTokens,
-          m.rawQuota,
-          m.duration,
-          m.requestId,
-        ],
-        ...records.map((record) => [
-          new Date(record.created_at * 1000).toISOString(),
-          record.model_name,
-          record.status,
-          record.token_name,
-          record.group,
-          record.prompt_tokens,
-          record.completion_tokens,
-          record.quota,
-          record.use_time,
-          record.request_id,
-        ]),
-      ])
+        { saved: management.csvSaved, failed: management.csvSaveFailed }
+      )
     },
     onError: (error) => toast.error(errorText(error)),
   })
-  if (usage.isError) return <PersonalError error={usage.error} retry={() => void usage.refetch()} />
-  if (!usage.data) return <PersonalLoading />
-  const max = Math.max(1, ...usage.data.series.map((point) => Math.abs(point.quota)))
-  const records = usage.data.records ?? []
-  const modelBreakdown = usage.data.model_breakdown ?? []
-  const currentPage = usage.data.page ?? page
-  const currentPageSize = usage.data.page_size ?? pageSize
-  const total = usage.data.total ?? records.length
+  // The toolbar stays through loading and errors: when a filter is what the
+  // server rejected, changing that filter is the way out.
+  const data = usage.data
+  const max = Math.max(1, ...(data?.series ?? []).map((point) => Math.abs(point.quota)))
+  const records = data?.records ?? []
+  const modelBreakdown = data?.model_breakdown ?? []
+  const currentPage = data?.page ?? page
+  const currentPageSize = data?.page_size ?? pageSize
+  const total = data?.total ?? records.length
   const pages = Math.max(1, Math.ceil(total / currentPageSize))
+  // A selected filter the latest reply doesn't list (or that a failed reply
+  // couldn't list) must still read as selected, not silently as "All".
+  const withSelected = (options: string[] | undefined, selected: string) => {
+    const list = options ?? []
+    return selected && !list.includes(selected) ? [selected, ...list] : list
+  }
   return (
     <div className="space-y-5">
       <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
@@ -1130,7 +1229,7 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
             className="h-11 rounded-md border bg-background px-3 text-sm"
           >
             <option value="">{m.allGroups}</option>
-            {(usage.data?.filter_options?.groups ?? []).map((item) => (
+            {withSelected(data?.filter_options?.groups, group).map((item) => (
               <option key={item} value={item}>
                 {item}
               </option>
@@ -1146,7 +1245,7 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
             className="h-11 rounded-md border bg-background px-3 text-sm"
           >
             <option value="">{m.allApiKeys}</option>
-            {(usage.data?.filter_options?.token_names ?? []).map((item) => (
+            {withSelected(data?.filter_options?.token_names, tokenName).map((item) => (
               <option key={item} value={item}>
                 {item}
               </option>
@@ -1162,9 +1261,12 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
             className="h-11 min-w-40 rounded-md border bg-background px-3 text-sm"
           >
             <option value="">{m.allModels}</option>
-            {(catalog.data?.items ?? []).map((item) => (
-              <option key={item.model_name} value={item.model_name}>
-                {item.model_name}
+            {withSelected(
+              catalog.data?.items.map((item) => item.model_name),
+              model
+            ).map((item) => (
+              <option key={item} value={item}>
+                {item}
               </option>
             ))}
           </select>
@@ -1187,6 +1289,7 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
             variant="outline"
             className="h-11"
             disabled={exportUsage.isPending || total === 0}
+            title={total === 0 ? management.nothingToExport : undefined}
             onClick={() => exportUsage.mutate()}
           >
             <Download className="size-4" />
@@ -1194,165 +1297,185 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
           </Button>
         </div>
       </div>
-      <MetricStrip
-        items={[
-          { label: m.requests, value: formatNumber(usage.data.metrics.requests) },
-          { label: m.promptTokens, value: formatNumber(usage.data.metrics.prompt_tokens) },
-          { label: m.completionTokens, value: formatNumber(usage.data.metrics.completion_tokens) },
-          {
-            label: m.used,
-            value: quotaCurrencyLabel(usage.data.metrics.quota, usage.data.quota_display),
-            hint: `${m.rawQuota}: ${formatNumber(usage.data.metrics.quota)}`,
-          },
-        ]}
-      />
-      <section className="border-y py-5">
-        <div className="flex h-52 items-end gap-1" aria-label={m.usageDefinition}>
-          {usage.data.series.map((point) => (
-            <div
-              key={point.bucket}
-              className={`min-w-1 flex-1 ${point.quota < 0 ? "bg-destructive/70" : "bg-primary/75"}`}
-              style={{ height: `${Math.max(2, (Math.abs(point.quota) / max) * 100)}%` }}
-              title={`${formatTime(point.bucket)} · ${formatNumber(point.quota)}`}
-            />
-          ))}
-        </div>
-        <p className="mt-3 text-xs text-muted-foreground">
-          {m.generatedAt}: {formatTime(usage.data.generated_at)}
-        </p>
-      </section>
-      <section className="border-y py-5">
-        <h3 className="font-medium">{m.modelBreakdown}</h3>
-        <div className="mt-3 overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{m.model}</TableHead>
-                <TableHead>{m.requests}</TableHead>
-                <TableHead>{m.promptTokens}</TableHead>
-                <TableHead>{m.completionTokens}</TableHead>
-                <TableHead>{m.used}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {modelBreakdown.map((item) => (
-                <TableRow key={item.model_name}>
-                  <TableCell className="font-medium">{item.model_name || "—"}</TableCell>
-                  <TableCell className="tabular-nums">{formatNumber(item.requests)}</TableCell>
-                  <TableCell className="tabular-nums">{formatNumber(item.prompt_tokens)}</TableCell>
-                  <TableCell className="tabular-nums">
-                    {formatNumber(item.completion_tokens)}
-                  </TableCell>
-                  <TableCell className="tabular-nums">
-                    {quotaCurrencyLabel(item.quota, usage.data.quota_display)}
-                  </TableCell>
-                </TableRow>
+      {usage.isError ? (
+        <PersonalError error={usage.error} retry={() => void usage.refetch()} />
+      ) : null}
+      {data ? (
+        <div
+          aria-busy={usage.isPlaceholderData}
+          className={cn(
+            "space-y-5",
+            usage.isPlaceholderData &&
+              "opacity-60 transition-opacity duration-(--hm-dur-fast) ease-(--hm-ease-out)"
+          )}
+        >
+          <MetricStrip
+            items={[
+              { label: m.requests, value: formatNumber(data.metrics.requests) },
+              { label: m.promptTokens, value: formatNumber(data.metrics.prompt_tokens) },
+              { label: m.completionTokens, value: formatNumber(data.metrics.completion_tokens) },
+              {
+                label: m.used,
+                value: quotaCurrencyLabel(data.metrics.quota, data.quota_display),
+                hint: `${m.rawQuota}: ${formatNumber(data.metrics.quota)}`,
+              },
+            ]}
+          />
+          <section className="border-y py-5">
+            <div className="flex h-52 items-end gap-1" aria-label={m.usageDefinition}>
+              {data.series.map((point) => (
+                <div
+                  key={point.bucket}
+                  className={`min-w-1 flex-1 ${point.quota < 0 ? "bg-destructive/70" : "bg-primary/75"}`}
+                  style={{ height: `${Math.max(2, (Math.abs(point.quota) / max) * 100)}%` }}
+                  title={`${formatTime(point.bucket)} · ${formatNumber(point.quota)}`}
+                />
               ))}
-            </TableBody>
-          </Table>
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              {m.generatedAt}: {formatTime(data.generated_at)}
+            </p>
+          </section>
+          <section className="border-y py-5">
+            <h3 className="font-medium">{m.modelBreakdown}</h3>
+            <div className="mt-3 overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{m.model}</TableHead>
+                    <TableHead>{m.requests}</TableHead>
+                    <TableHead>{m.promptTokens}</TableHead>
+                    <TableHead>{m.completionTokens}</TableHead>
+                    <TableHead>{m.used}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {modelBreakdown.map((item) => (
+                    <TableRow key={item.model_name}>
+                      <TableCell className="font-medium">{item.model_name || "—"}</TableCell>
+                      <TableCell className="tabular-nums">{formatNumber(item.requests)}</TableCell>
+                      <TableCell className="tabular-nums">
+                        {formatNumber(item.prompt_tokens)}
+                      </TableCell>
+                      <TableCell className="tabular-nums">
+                        {formatNumber(item.completion_tokens)}
+                      </TableCell>
+                      <TableCell className="tabular-nums">
+                        {quotaCurrencyLabel(item.quota, data.quota_display)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </section>
+          <section className="border-y py-5">
+            <div className="flex items-end justify-between gap-3">
+              <div>
+                <h3 className="font-medium">{m.usageRecords}</h3>
+                <p className="mt-1 text-sm text-muted-foreground">{m.usageRecordsHint}</p>
+              </div>
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {formatNumber(total)}
+              </span>
+            </div>
+            <div className="mt-3 overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{m.recordedAt}</TableHead>
+                    <TableHead>{m.model}</TableHead>
+                    <TableHead>{m.usageStatus}</TableHead>
+                    <TableHead>{m.apiKey}</TableHead>
+                    <TableHead>{m.accountGroup}</TableHead>
+                    <TableHead>{m.promptTokens}</TableHead>
+                    <TableHead>{m.completionTokens}</TableHead>
+                    <TableHead>{m.used}</TableHead>
+                    <TableHead>{m.duration}</TableHead>
+                    <TableHead>{m.requestId}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {records.map((record) => (
+                    <TableRow key={`${record.request_id}-${record.created_at}`}>
+                      <TableCell className="whitespace-nowrap">
+                        {formatTime(record.created_at)}
+                      </TableCell>
+                      <TableCell className="font-medium">{record.model_name || "—"}</TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={
+                            record.status === "error"
+                              ? "destructive"
+                              : record.status === "refund"
+                                ? "outline"
+                                : "secondary"
+                          }
+                        >
+                          {record.status === "success"
+                            ? m.statusSuccess
+                            : record.status === "refund"
+                              ? m.statusRefund
+                              : record.status === "error"
+                                ? m.statusError
+                                : record.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{record.token_name || "—"}</TableCell>
+                      <TableCell>{record.group || "—"}</TableCell>
+                      <TableCell className="tabular-nums">
+                        {formatNumber(record.prompt_tokens)}
+                      </TableCell>
+                      <TableCell className="tabular-nums">
+                        {formatNumber(record.completion_tokens)}
+                      </TableCell>
+                      <TableCell className="tabular-nums">
+                        {quotaCurrencyLabel(record.quota, data.quota_display)}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap tabular-nums">
+                        {m.durationMs(formatNumber(record.use_time))}
+                      </TableCell>
+                      <TableCell className="max-w-48 truncate font-mono text-xs">
+                        {record.request_id || "—"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {records.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={10} className="h-28 text-center text-muted-foreground">
+                        {m.noUsageRecords}
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </div>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <span className="mr-2 text-xs tabular-nums text-muted-foreground">
+                {m.pageSummary(currentPage, pages)}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentPage <= 1}
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+              >
+                {m.previousPage}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentPage >= pages}
+                onClick={() => setPage((current) => current + 1)}
+              >
+                {m.nextPage}
+              </Button>
+            </div>
+          </section>
         </div>
-      </section>
-      <section className="border-y py-5">
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <h3 className="font-medium">{m.usageRecords}</h3>
-            <p className="mt-1 text-sm text-muted-foreground">{m.usageRecordsHint}</p>
-          </div>
-          <span className="text-xs tabular-nums text-muted-foreground">{formatNumber(total)}</span>
-        </div>
-        <div className="mt-3 overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{m.recordedAt}</TableHead>
-                <TableHead>{m.model}</TableHead>
-                <TableHead>{m.usageStatus}</TableHead>
-                <TableHead>{m.apiKey}</TableHead>
-                <TableHead>{m.accountGroup}</TableHead>
-                <TableHead>{m.promptTokens}</TableHead>
-                <TableHead>{m.completionTokens}</TableHead>
-                <TableHead>{m.used}</TableHead>
-                <TableHead>{m.duration}</TableHead>
-                <TableHead>{m.requestId}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {records.map((record) => (
-                <TableRow key={`${record.request_id}-${record.created_at}`}>
-                  <TableCell className="whitespace-nowrap">
-                    {formatTime(record.created_at)}
-                  </TableCell>
-                  <TableCell className="font-medium">{record.model_name || "—"}</TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        record.status === "error"
-                          ? "destructive"
-                          : record.status === "refund"
-                            ? "outline"
-                            : "secondary"
-                      }
-                    >
-                      {record.status === "success"
-                        ? m.statusSuccess
-                        : record.status === "refund"
-                          ? m.statusRefund
-                          : record.status === "error"
-                            ? m.statusError
-                            : record.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{record.token_name || "—"}</TableCell>
-                  <TableCell>{record.group || "—"}</TableCell>
-                  <TableCell className="tabular-nums">
-                    {formatNumber(record.prompt_tokens)}
-                  </TableCell>
-                  <TableCell className="tabular-nums">
-                    {formatNumber(record.completion_tokens)}
-                  </TableCell>
-                  <TableCell className="tabular-nums">
-                    {quotaCurrencyLabel(record.quota, usage.data.quota_display)}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap tabular-nums">
-                    {formatNumber(record.use_time)} ms
-                  </TableCell>
-                  <TableCell className="max-w-48 truncate font-mono text-xs">
-                    {record.request_id || "—"}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {records.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={10} className="h-28 text-center text-muted-foreground">
-                    {m.noUsageRecords}
-                  </TableCell>
-                </TableRow>
-              ) : null}
-            </TableBody>
-          </Table>
-        </div>
-        <div className="mt-4 flex items-center justify-end gap-2">
-          <span className="mr-2 text-xs tabular-nums text-muted-foreground">
-            {m.pageSummary(currentPage, pages)}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={currentPage <= 1}
-            onClick={() => setPage((current) => Math.max(1, current - 1))}
-          >
-            {m.previousPage}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={currentPage >= pages}
-            onClick={() => setPage((current) => current + 1)}
-          >
-            {m.nextPage}
-          </Button>
-        </div>
-      </section>
+      ) : usage.isError ? null : (
+        <PersonalLoading />
+      )}
     </div>
   )
 }
@@ -1632,7 +1755,9 @@ function PersonalSecurityView({
   instance: MoreTokenInstance
   capabilities: PersonalCapabilities
 }) {
-  const m = useT().personal
+  const t = useT()
+  const m = t.personal
+  const management = t.management
   const queryClient = useQueryClient()
   const overview = useQuery({
     queryKey: ["more-token", instance.id, "personal-overview"],
@@ -1642,6 +1767,17 @@ function PersonalSecurityView({
     queryKey: ["more-token", instance.id, "personal-sessions"],
     queryFn: () => request<PersonalSession[]>(instance.id, { kind: "personalSessions" }),
   })
+  // The server has already revoked every desktop session for this user, this
+  // one included, so only the local copy is left to delete — and the cached
+  // profile and balance go with it (design.md § 10).
+  const signOutLocally = async () => {
+    try {
+      await forgetCredential(instance.id, true)
+    } catch (error) {
+      toast.error(errorText(error))
+    }
+    await resetInstanceQueries(queryClient, instance.id)
+  }
   const revoke = useMutation({
     mutationFn: (id: number) => request(instance.id, { kind: "revokePersonalSession", id }),
     onSuccess: () => {
@@ -1655,8 +1791,7 @@ function PersonalSecurityView({
       request(instance.id, { kind: "changePersonalPassword", body }),
     onSuccess: async () => {
       toast.success(m.changePassword)
-      await forgetCredential(instance.id, true)
-      void queryClient.invalidateQueries({ queryKey: ["more-token", instance.id] })
+      await signOutLocally()
     },
     onError: (error) => toast.error(errorText(error)),
   })
@@ -1665,44 +1800,71 @@ function PersonalSecurityView({
       request(instance.id, { kind: "closePersonalAccount", body }),
     onSuccess: async () => {
       toast.success(m.closeAccount)
-      await forgetCredential(instance.id, true)
-      void queryClient.invalidateQueries({ queryKey: ["more-token", instance.id] })
+      await signOutLocally()
     },
     onError: (error) => toast.error(errorText(error)),
   })
+  const readOnlyNote = instance.readOnly ? management.readonlyBanner : null
+  const passwordBlocked = capabilities.features.password_change_enabled
+    ? readOnlyNote
+    : m.passwordChangeDisabled
+  const closeBlocked = capabilities.features.account_close_enabled
+    ? readOnlyNote
+    : m.accountCloseDisabled
   return (
     <div className="divide-y border-y">
       <section className="py-5">
         <h3 className="font-medium">{m.sessions}</h3>
         <p className="mt-1 text-sm text-muted-foreground">{m.sessionsHint}</p>
-        <div className="mt-4 divide-y rounded-md border">
-          {(sessions.data ?? []).map((session) => (
-            <div
-              key={session.id}
-              className="flex flex-col justify-between gap-3 p-3 sm:flex-row sm:items-center"
-            >
-              <div>
-                <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
-                  {session.client_label || session.client_id}
-                  {session.id === capabilities.current_session_id ? (
-                    <Badge variant="outline">{m.currentSession}</Badge>
-                  ) : null}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {formatTime(session.last_used_at || session.created_at)} ·{" "}
-                  {formatTime(session.expires_at)}
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={session.revoked_at > 0 || revoke.isPending || instance.readOnly}
-                onClick={() => revoke.mutate(session.id)}
-              >
-                {session.revoked_at ? m.revoked : m.revokeSession}
-              </Button>
+        {readOnlyNote ? <p className="mt-1 text-xs text-muted-foreground">{readOnlyNote}</p> : null}
+        <div className="mt-4">
+          {sessions.isError ? (
+            <PersonalError error={sessions.error} retry={() => void sessions.refetch()} />
+          ) : sessions.isLoading ? (
+            <Skeleton className="h-16" aria-busy="true" />
+          ) : !sessions.data?.length ? (
+            <p className="text-sm text-muted-foreground">{m.noSessions}</p>
+          ) : (
+            <div className="divide-y rounded-md border">
+              {sessions.data.map((session) => {
+                // Revoking the session this desktop is using would leave the
+                // app holding a dead credential that still reads "connected";
+                // signing this desktop out is Forget credential's job.
+                const current = session.id === capabilities.current_session_id
+                return (
+                  <div
+                    key={session.id}
+                    className="flex flex-col justify-between gap-3 p-3 sm:flex-row sm:items-center"
+                  >
+                    <div className="min-w-0">
+                      <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                        {session.client_label || session.client_id}
+                        {current ? <Badge variant="outline">{m.currentSession}</Badge> : null}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatTime(session.last_used_at || session.created_at)} ·{" "}
+                        {formatTime(session.expires_at)}
+                      </p>
+                      {current && !session.revoked_at ? (
+                        <p className="mt-1 text-xs text-muted-foreground">{m.currentSessionHint}</p>
+                      ) : null}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      disabled={
+                        current || session.revoked_at > 0 || revoke.isPending || instance.readOnly
+                      }
+                      onClick={() => revoke.mutate(session.id)}
+                    >
+                      {session.revoked_at ? m.revoked : m.revokeSession}
+                    </Button>
+                  </div>
+                )
+              })}
             </div>
-          ))}
+          )}
         </div>
       </section>
       <section className="py-5">
@@ -1739,18 +1901,18 @@ function PersonalSecurityView({
               maxLength={20}
             />
           </div>
-          <Button
-            type="submit"
-            size="sm"
-            className="sm:col-span-2 sm:w-fit"
-            disabled={
-              password.isPending ||
-              instance.readOnly ||
-              !capabilities.features.password_change_enabled
-            }
-          >
-            {m.changePassword}
-          </Button>
+          <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
+            <Button
+              type="submit"
+              size="sm"
+              disabled={password.isPending || passwordBlocked !== null}
+            >
+              {m.changePassword}
+            </Button>
+            {passwordBlocked ? (
+              <p className="text-xs text-muted-foreground">{passwordBlocked}</p>
+            ) : null}
+          </div>
         </form>
       </section>
       <section className="py-5">
@@ -1796,101 +1958,19 @@ function PersonalSecurityView({
             <Label htmlFor="close-reason">{m.closeReason}</Label>
             <Textarea id="close-reason" name="reason" />
           </div>
-          <Button
-            type="submit"
-            variant="destructive"
-            size="sm"
-            className="sm:col-span-2 sm:w-fit"
-            disabled={
-              close.isPending || instance.readOnly || !capabilities.features.account_close_enabled
-            }
-          >
-            {m.closeAccount}
-          </Button>
+          <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
+            <Button
+              type="submit"
+              variant="destructive"
+              size="sm"
+              disabled={close.isPending || closeBlocked !== null}
+            >
+              {m.closeAccount}
+            </Button>
+            {closeBlocked ? <p className="text-xs text-muted-foreground">{closeBlocked}</p> : null}
+          </div>
         </form>
       </section>
     </div>
-  )
-}
-
-function PersonalInstanceDialog({
-  open,
-  onOpenChange,
-  onSaved,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  onSaved: (instance: MoreTokenInstance) => void
-}) {
-  const m = useT().management
-  const mutation = useMutation({
-    mutationFn: async (form: HTMLFormElement) => {
-      const values = new FormData(form)
-      return saveInstance({
-        id: `personal-${Date.now()}`,
-        name: String(values.get("name") ?? ""),
-        baseUrl: String(values.get("baseUrl") ?? ""),
-        customCaPath: String(values.get("customCaPath") ?? "") || null,
-        clearCustomCa: false,
-        readOnly: values.get("readOnly") === "on",
-        displayCurrency: null,
-        package: "personal",
-      })
-    },
-    onSuccess: (instance) => {
-      onOpenChange(false)
-      onSaved(instance)
-    },
-    onError: (error) => toast.error(errorText(error)),
-  })
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{m.addInstance}</DialogTitle>
-          <DialogDescription>{useT().personal.isolationNote}</DialogDescription>
-        </DialogHeader>
-        <form
-          id="personal-instance-form"
-          className="space-y-4"
-          onSubmit={(event) => {
-            event.preventDefault()
-            mutation.mutate(event.currentTarget)
-          }}
-        >
-          <div className="space-y-2">
-            <Label htmlFor="personal-instance-name">{m.instanceName}</Label>
-            <Input id="personal-instance-name" name="name" required />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="personal-instance-url">{m.instanceUrl}</Label>
-            <Input
-              id="personal-instance-url"
-              name="baseUrl"
-              type="url"
-              placeholder="https://more-token.example.com"
-              required
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="personal-ca-path">{m.customCa}</Label>
-            <Input id="personal-ca-path" name="customCaPath" />
-            <p className="text-xs text-muted-foreground">{m.customCaHint}</p>
-          </div>
-          <label className="flex min-h-11 items-center gap-3 text-sm">
-            <input type="checkbox" name="readOnly" />
-            {m.readOnly}
-          </label>
-        </form>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {m.cancel}
-          </Button>
-          <Button form="personal-instance-form" type="submit" disabled={mutation.isPending}>
-            {m.save}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   )
 }

@@ -245,6 +245,8 @@ export interface DashboardSectionProps {
   onNavigate: (key: SectionKey) => void
   /** The startup chat-history scan, feeding the spend card. */
   history: HistoryFeed
+  /** Open History on its Usage tab, from the spend card's link. */
+  onOpenUsage?: () => void
 }
 
 export function DashboardSection({
@@ -253,6 +255,7 @@ export function DashboardSection({
   rescan,
   onNavigate,
   history,
+  onOpenUsage,
 }: DashboardSectionProps) {
   const t = useT()
   const d = t.dashboard
@@ -265,19 +268,18 @@ export function DashboardSection({
   const settings = useAppStore((s) => s.settings)
   const setSettings = useAppStore((s) => s.setSettings)
   const setOnboardingOpen = useAppStore((s) => s.setOnboardingOpen)
-  const setPanelOpen = useAppStore((s) => s.setPanelOpen)
   const { run } = useRunnerCtx()
   // `isTauri()` is false in the pre-rendered HTML but true inside the desktop
   // webview; gate the runtime-only branch on mount so the first client render
   // matches the server and we don't trip a hydration mismatch.
   const mounted = useMounted()
 
-  const runThen = (steps: Parameters<typeof run>[0]) => {
+  const runThen = (steps: Parameters<typeof run>[0], title?: string) => {
     if (steps.length === 0) return
     // `review: true` opens the confirm gate and returns *before* the steps run,
     // so we must not rescan here. The central afterRun hook (app-shell) re-scans
     // and re-detects once the reviewed steps actually execute.
-    void run(steps)
+    void run(steps, title ? { activity: { title, source: "section" } } : undefined)
   }
 
   const view = scan ?? emptyScan()
@@ -419,14 +421,28 @@ export function DashboardSection({
   const actOnBatch = (batch: InboxBatch) => {
     const steps = batch.items.flatMap(stepsFor)
     if (steps.length !== batch.items.length) return onNavigate(batch.items[0].destination)
-    runThen(steps)
+    // Named as the button was — "Upgrade 2 tools" — not after its first step,
+    // or the activity log and the panel title call a batch of two by one name.
+    runThen(steps, t.diagnostics.batch[batch.key](batch.items.length))
   }
 
   // The quick-start card is a safety net for anyone who skipped the welcome
   // wizard: shown until they've set up an assistant (Claude Code / Codex) or
   // explicitly hide it via "don't show again". It reopens the same wizard.
+  //
+  // On the desktop, not before the machine has been read — detections start
+  // empty, so the card flashed up on a machine that had Claude installed and
+  // vanished a second later — and not beside the "no coding agent" finding,
+  // which says the same thing with its own "Set one up". Two buttons to one
+  // wizard, the louder one second, is one too many. In web mode nothing is ever
+  // measured, and the card is the only way in.
   const noAgentCli = !detections["claude-code"]?.installed && !detections["codex"]?.installed
-  const showQuickStart = !settings.quickStartDismissed && noAgentCli
+  const agentsKnown = desktopAvailable ? inventory.measured : true
+  const showQuickStart =
+    !settings.quickStartDismissed &&
+    noAgentCli &&
+    agentsKnown &&
+    !diagnostics.some((d) => d.id === "no-agent")
   const dismissQuickStart = () => {
     setSettings({ quickStartDismissed: true })
     void saveSettings({ quickStartDismissed: true })
@@ -657,11 +673,14 @@ export function DashboardSection({
       }
       aside={
         <>
-          <SpendCard history={history} onNavigate={onNavigate} />
+          <SpendCard history={history} onNavigate={onNavigate} onOpenUsage={onOpenUsage} />
           <ActivityCard
             records={activity}
             available={desktopAvailable}
-            onOpenPanel={() => setPanelOpen(true)}
+            // The runs listed here are what Recovery points can undo. The run
+            // panel this used to open shows only the latest run — and nothing
+            // at all after a relaunch.
+            onOpenRecovery={() => onNavigate("recovery")}
           />
         </>
       }

@@ -23,7 +23,7 @@ jest.mock("@/lib/tauri/system", () => ({
   notify: jest.fn(async () => undefined),
 }))
 
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { act, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { RunnerHarness } from "../run/__testing__/harness"
@@ -42,6 +42,7 @@ import {
 } from "@/lib/tauri/commands"
 import { openUrl, revealPath } from "@/lib/tauri/system"
 import {
+  defaultConfigToml,
   getConfigValue,
   isSectionEnabled,
   parseConfigDoc,
@@ -238,10 +239,9 @@ it("refuses to start a projectless config instead of polling a dead process", as
   ;(pathExists as jest.Mock).mockResolvedValue(true)
   ;(readTextFile as jest.Mock).mockResolvedValue("[management]\nenabled = true\n")
   renderCc()
-  const start = await screen.findByRole("button", { name: en.ccconnect.start })
-  await waitFor(() => expect(start).toBeEnabled())
-  await userEvent.click(start)
-  await waitFor(() => expect(toast.error).toHaveBeenCalledWith(en.ccconnect.needsProject))
+  // Disabled, with the reason on the page — not a button that only toasts it.
+  expect(await screen.findByText(en.ccconnect.needsProject)).toBeInTheDocument()
+  expect(screen.getByRole("button", { name: en.ccconnect.start })).toBeDisabled()
   expect(startCcConnect).not.toHaveBeenCalled()
 })
 
@@ -608,4 +608,48 @@ it("toasts when the scan fails and recovers on refresh", async () => {
   await waitFor(() => expect(toast.error).toHaveBeenCalledWith(en.ccconnect.loadFailed))
   await userEvent.click(screen.getByRole("button", { name: en.ccconnect.refresh }))
   expect(await screen.findByText(en.ccconnect.notDetected)).toBeInTheDocument()
+})
+
+it("keeps 'Configure a project' open while the starter placeholders are still in it", async () => {
+  // The starter config passes cc-connect's validation, so a project count alone
+  // ticked a project that names no folder and no chat-app credentials.
+  ;(detectCli as jest.Mock).mockResolvedValue({ installed: true, version: "1.4.1" })
+  ;(pathExists as jest.Mock).mockResolvedValue(true)
+  ;(readTextFile as jest.Mock).mockResolvedValue(defaultConfigToml())
+  renderCc()
+  await screen.findByText(en.ccconnect.stepConfigTitle)
+  const rows = screen.getAllByRole("listitem")
+  expect(
+    await screen.findByText(en.ccconnect.stepConfigPlaceholders("work_dir, app_id, app_secret"))
+  ).toBeInTheDocument()
+  expect(rows[1].dataset.status).toBe("current")
+  expect(rows[2].dataset.status).toBe("waiting")
+  expect(rows[3].dataset.status).toBe("waiting")
+  // Starting stays possible: it is how the dashboard comes up to fix them from.
+  expect(screen.getByRole("button", { name: en.ccconnect.start })).toBeEnabled()
+})
+
+it("accents the dashboard only once the bridge runs, and keeps its button quiet before", async () => {
+  ;(detectCli as jest.Mock).mockResolvedValue({ installed: true, version: "1.4.1" })
+  ;(pathExists as jest.Mock).mockResolvedValue(true)
+  ;(readTextFile as jest.Mock).mockResolvedValue(RUNNABLE)
+  renderCc()
+  await screen.findByText(en.ccconnect.stepConfigTitle)
+  const rows = screen.getAllByRole("listitem")
+  await waitFor(() => expect(rows[2].dataset.status).toBe("current"))
+  // One "do this now" on the page: the stopped bridge, not also the dashboard.
+  expect(rows[3].dataset.status).toBe("waiting")
+  expect(screen.getByRole("button", { name: en.ccconnect.openWeb })).toHaveAttribute(
+    "data-variant",
+    "outline"
+  )
+})
+
+it("follows a re-detection made anywhere else instead of a copy taken at mount", async () => {
+  renderCc()
+  await screen.findByText(en.ccconnect.notDetected)
+  act(() => {
+    useAppStore.getState().setDetection("cc-connect", { installed: true, version: "2.0.0" })
+  })
+  expect(await screen.findByText(`${en.ccconnect.detected} · 2.0.0`)).toBeInTheDocument()
 })

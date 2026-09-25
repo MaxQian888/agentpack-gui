@@ -2,37 +2,49 @@
 
 import { AlertTriangle, CheckCircle2, Circle, Loader2, MinusCircle, XCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useT } from "@/lib/i18n/provider"
 import type { StepReport, StepStatus } from "@/lib/agentpack/types"
 
+/** Status colour from the tokens (design.md § 3): a mark, never a fill. */
 function StatusIcon({ status }: { status: StepStatus }) {
+  const props = { className: "size-4 shrink-0", "aria-hidden": true } as const
   switch (status) {
     case "running":
-      return <Loader2 className="size-4 animate-spin text-blue-500" />
+      return (
+        <Loader2
+          {...props}
+          className={cn(props.className, "animate-spin text-[var(--hm-accent)]")}
+        />
+      )
     case "done":
-      return <CheckCircle2 className="size-4 text-emerald-500" />
+      return <CheckCircle2 {...props} className={cn(props.className, "text-[var(--hm-ok)]")} />
     case "error":
-      return <XCircle className="size-4 text-red-500" />
+      return <XCircle {...props} className={cn(props.className, "text-[var(--hm-danger)]")} />
     case "warning":
-      return <AlertTriangle className="size-4 text-amber-500" />
+      return <AlertTriangle {...props} className={cn(props.className, "text-[var(--hm-warn)]")} />
     case "skipped":
-      return <MinusCircle className="size-4 text-muted-foreground" />
+      return <MinusCircle {...props} className={cn(props.className, "text-[var(--hm-neutral)]")} />
     default:
-      return <Circle className="size-4 text-muted-foreground/50" />
+      return <Circle {...props} className={cn(props.className, "text-muted-foreground/50")} />
   }
 }
 
 export function StepLog({ reports }: { reports: StepReport[] }) {
+  const t = useT()
   return (
     <ol className="flex flex-col gap-2">
       {reports.map((r) => (
         <li key={r.id} className="rounded-md border bg-card p-3">
           <div className="flex items-center gap-2">
             <StatusIcon status={r.status} />
+            {/* The icon is colour and shape only; this is the same fact as a
+                word, so a screen reader can tell which step failed. */}
+            <span className="sr-only">{t.review.status[r.status]}: </span>
             <span
               className={cn(
                 "text-sm",
-                r.status === "error" && "text-red-500",
-                r.status === "warning" && "text-amber-600"
+                r.status === "error" && "text-[var(--hm-danger)]",
+                r.status === "warning" && "text-[var(--hm-warn)]"
               )}
             >
               {r.label}

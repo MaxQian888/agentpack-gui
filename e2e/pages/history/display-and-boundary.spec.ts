@@ -8,7 +8,7 @@ test("shows the history purpose and supported chat sources", async ({ page }) =>
 
   await expect(page.getByRole("heading", { name: "Chat history" })).toBeVisible()
   await expect(
-    page.getByText("Read past sessions and token usage across Claude Code, Codex and OpenCode.")
+    page.getByText("Read past sessions and token usage across Claude Code, Codex, OpenCode and Pi.")
   ).toBeVisible()
 })
 

@@ -85,7 +85,8 @@ it("loads the existing config and saves a form edit back through TOML", async ()
   await waitFor(() =>
     expect(writeTextFile).toHaveBeenCalledWith(PATH, expect.stringContaining("port = 9999"))
   )
-  expect(toast.success).toHaveBeenCalledWith(en.ccconnect.saved)
+  // Silent: the review panel the save went through reports it.
+  expect(toast.success).not.toHaveBeenCalled()
   expect(onSaved).toHaveBeenCalled()
 })
 

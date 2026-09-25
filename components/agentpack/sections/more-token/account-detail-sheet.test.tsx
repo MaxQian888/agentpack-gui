@@ -1,6 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
+import { zhCN } from "@/lib/i18n/zh-CN"
 import type {
   AccountDetail,
   ManagementCapabilities,
@@ -111,4 +113,40 @@ it("localizes child lifecycle states in account details", () => {
 
   expect(screen.getByText("Child A · 正常")).toBeInTheDocument()
   expect(screen.queryByText(/Child A · active/)).not.toBeInTheDocument()
+})
+
+function renderSheet(props: Partial<React.ComponentProps<typeof AccountDetailSheet>>) {
+  const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <I18nProvider>
+        <AccountDetailSheet
+          account={null}
+          quotaDisplay={capabilities.quota_display}
+          instance={instance}
+          capabilities={capabilities}
+          onDone={jest.fn()}
+          onOpenChange={jest.fn()}
+          {...props}
+        />
+      </I18nProvider>
+    </QueryClientProvider>
+  )
+}
+
+// The provider caches the language per module, so these render in the zh-CN
+// the first test selected.
+it("opens on the click with a loading body before the detail arrives", () => {
+  renderSheet({ open: true })
+  const sheet = screen.getByRole("dialog")
+  expect(sheet.querySelector('[aria-busy="true"]')).toBeInTheDocument()
+})
+
+it("shows a failed detail request with a retry instead of closing silently", async () => {
+  const onRetry = jest.fn()
+  renderSheet({ open: true, error: new Error("account 404"), onRetry })
+  const sheet = screen.getByRole("dialog")
+  expect(within(sheet).getByText("account 404")).toBeInTheDocument()
+  await userEvent.click(within(sheet).getByRole("button", { name: zhCN.management.retry }))
+  expect(onRetry).toHaveBeenCalled()
 })

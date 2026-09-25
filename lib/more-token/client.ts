@@ -1,4 +1,7 @@
 import { z } from "zod"
+import { isTauri } from "@/lib/tauri"
+import { writeTextFile } from "@/lib/tauri/commands"
+import { pickSavePath } from "@/lib/tauri/dialog"
 import { getMoreTokenPort } from "./port"
 import { parseManagementOperation, parseManagementResponseData } from "./schemas"
 import type {
@@ -242,22 +245,44 @@ export function quotaCurrencyParts(
   return { primary: label.slice(0, separator), raw: label.slice(separator + 3) }
 }
 
-export function downloadCsv(filename: string, rows: Array<Array<string | number>>): void {
-  const csv = rows
-    .map((row) =>
-      row
-        .map((cell) => {
-          return escapeCsvCell(cell)
-        })
-        .join(",")
-    )
-    .join("\n")
-  const url = URL.createObjectURL(new Blob([`\ufeff${csv}`], { type: "text/csv;charset=utf-8" }))
+/** The file body, BOM first so a spreadsheet opens it as UTF-8. */
+export function csvText(rows: Array<Array<string | number>>): string {
+  return `\ufeff${rows.map((row) => row.map(escapeCsvCell).join(",")).join("\n")}`
+}
+
+export type CsvSaveResult =
+  { kind: "saved"; path: string } | { kind: "downloaded" } | { kind: "cancelled" }
+
+/**
+ * The desktop build is a WebKit view, where `<a download>` on a blob URL does
+ * nothing at all \u2014 so there it goes through the native save dialog and the
+ * Rust writer, like the usage export. Only web mode (the injected e2e port)
+ * falls back to a blob download, and even there the URL outlives the click:
+ * WebKit reads the blob after `click()` returns.
+ */
+export async function downloadCsv(
+  filename: string,
+  rows: Array<Array<string | number>>
+): Promise<CsvSaveResult> {
+  const text = csvText(rows)
+  if (isTauri()) {
+    const path = await pickSavePath({
+      defaultPath: filename,
+      filters: [{ name: "CSV", extensions: ["csv"] }],
+    })
+    if (!path) return { kind: "cancelled" }
+    await writeTextFile(path, text)
+    return { kind: "saved", path }
+  }
+  const url = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }))
   const anchor = document.createElement("a")
   anchor.href = url
   anchor.download = filename
+  document.body.appendChild(anchor)
   anchor.click()
-  URL.revokeObjectURL(url)
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  return { kind: "downloaded" }
 }
 
 export function escapeCsvCell(cell: string | number): string {

@@ -15,6 +15,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
@@ -32,7 +33,13 @@ import {
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { useIncremental } from "@/hooks/use-incremental"
-import { mcpAddSpecStep, mcpEditStep, mcpRemoveStep } from "@/lib/agentpack/plan"
+import {
+  mcpAddSpecStep,
+  mcpEditStep,
+  mcpRemoveStep,
+  type ClaudeMcpRoute,
+} from "@/lib/agentpack/plan"
+import { runApplied } from "@/lib/agentpack/report"
 import { findMcp } from "@/lib/agentpack/registry"
 import {
   parseClaudeMcpEntry,
@@ -58,10 +65,13 @@ type Sort = "name" | "targets"
 export function InstalledTab({
   scan,
   refresh,
+  route,
   onBrowseCatalog,
 }: {
   scan: DashboardScan | null
   refresh: () => void
+  /** How Claude's config is reached (`claudeMcpRoute`), decided by the section. */
+  route: ClaudeMcpRoute
   /** Opens the built-in catalog — the empty state's one next step. */
   onBrowseCatalog?: () => void
 }) {
@@ -112,7 +122,7 @@ export function InstalledTab({
 
   const removeOne = async (id: string, target: McpTarget) => {
     if (!paths) return
-    await run(mcpRemoveStep(id, [target], paths, t))
+    await run(mcpRemoveStep(id, [target], paths, t, route))
     refresh()
   }
 
@@ -149,10 +159,30 @@ export function InstalledTab({
   const copyTo = async (row: McpRow, target: McpTarget) => {
     if (!paths) return
     const spec = await resolveRowSpec(row)
-    if (!spec) return
-    await run(mcpAddSpecStep(row.id, spec, [target], paths, t))
-    toast.success(m.copyDone(m.targets[target]))
+    if (!spec) {
+      toast.error(m.copyNoSpec)
+      return
+    }
+    const steps = mcpAddSpecStep(row.id, spec, [target], paths, t, route)
+    // The builder drops what it can't write — an SSE server for Codex. Staging
+    // nothing would read as "select something first"; say why instead.
+    if (steps.length === 0) {
+      toast.info(target === "codex" ? m.capCodexNoSse : m.claudeMissing)
+      return
+    }
+    // Success is the review panel's "All set"; a toast would say it twice.
+    await run(steps)
     refresh()
+  }
+
+  /** Open the edit form on the server's on-disk spec — the detail view if it can't be read. */
+  const editRow = async (row: McpRow) => {
+    const spec = await resolveRowSpec(row)
+    if (!spec) {
+      setDetailId(row.id)
+      return
+    }
+    setEditing({ id: row.id, spec, targets: MCP_TARGETS.filter((tg) => row.presence[tg]) })
   }
 
   const saveEdit = async ({ id, spec, targets }: CustomFormValue) => {
@@ -161,15 +191,19 @@ export function InstalledTab({
       (tg) => scan && installedRows(scan).find((r) => r.id === id)?.presence[tg]
     )
     const removed = present.filter((tg) => !targets.includes(tg))
-    await run([
-      ...mcpEditStep(id, spec, targets, paths, t),
-      ...mcpRemoveStep(id, removed, paths, t),
+    const reports = await run([
+      ...mcpEditStep(id, spec, targets, paths, t, route),
+      ...mcpRemoveStep(id, removed, paths, t, route),
     ])
-    setEditing(null)
+    // The form holds the edit; close it only once the edit is on disk.
+    if (runApplied(reports)) setEditing(null)
     refresh()
   }
 
   const SOURCES: SourceFilter[] = ["all", ...MCP_TARGETS]
+  const claudeBlocked = route === "none"
+  const writable = (targets: readonly McpTarget[]) =>
+    targets.filter((tg) => !(tg === "claude" && claudeBlocked))
 
   return (
     <div className="flex flex-col gap-3">
@@ -226,6 +260,7 @@ export function InstalledTab({
           <CapabilityList label={m.installedListLabel}>
             {filtered.slice(0, visible).map((row) => {
               const present = MCP_TARGETS.filter((tg) => row.presence[tg])
+              const missing = writable(MCP_TARGETS.filter((tg) => !row.presence[tg]))
               return (
                 <CapabilityRow
                   key={row.id}
@@ -255,20 +290,26 @@ export function InstalledTab({
                           <Play className="size-4" /> {m.test}
                         </DropdownMenuItem>
                         {!row.known ? (
-                          <DropdownMenuItem onSelect={() => setDetailId(row.id)}>
+                          <DropdownMenuItem onSelect={() => void editRow(row)}>
                             <Pencil className="size-4" /> {m.edit}
                           </DropdownMenuItem>
                         ) : null}
-                        {MCP_TARGETS.filter((tg) => !row.presence[tg]).length > 0 ? (
-                          <DropdownMenuSeparator />
-                        ) : null}
-                        {MCP_TARGETS.filter((tg) => !row.presence[tg]).map((tg) => (
+                        {missing.length > 0 ? <DropdownMenuSeparator /> : null}
+                        {missing.map((tg) => (
                           <DropdownMenuItem key={tg} onSelect={() => void copyTo(row, tg)}>
                             <Copy className="size-4" /> {m.copyToTarget(m.targets[tg])}
                           </DropdownMenuItem>
                         ))}
                         <DropdownMenuSeparator />
-                        {present.map((tg) => (
+                        {/* Neither Claude Code nor the desktop app: there is no
+                            route to Claude's config, so its items say why
+                            they're missing instead of staging nothing. */}
+                        {claudeBlocked ? (
+                          <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                            {m.claudeMissing}
+                          </DropdownMenuLabel>
+                        ) : null}
+                        {writable(present).map((tg) => (
                           <DropdownMenuItem
                             key={tg}
                             variant="destructive"
@@ -307,6 +348,7 @@ export function InstalledTab({
               mode="edit"
               initial={editing}
               takenIds={new Set()}
+              disabledTargets={claudeBlocked ? { claude: m.claudeMissing } : undefined}
               onSubmit={(v) => void saveEdit(v)}
               onCancel={() => setEditing(null)}
             />

@@ -208,3 +208,60 @@ it("edits SKILL.md and saves the new content through the runner", async () => {
     )
   )
 })
+
+it("asks before Esc throws away an edited SKILL.md", async () => {
+  const onOpenChange = jest.fn()
+  render(
+    <I18nProvider>
+      <RunnerHarness autoApply>
+        <SkillDetailDialog row={row} open onOpenChange={onOpenChange} refresh={jest.fn()} />
+      </RunnerHarness>
+    </I18nProvider>
+  )
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.edit }))
+  await userEvent.type(screen.getByRole("textbox"), " more")
+  await userEvent.keyboard("{Escape}")
+  expect(await screen.findByText(en.skillsBrowser.editDiscardTitle)).toBeInTheDocument()
+  expect(onOpenChange).not.toHaveBeenCalled()
+  // Keep editing: the draft is still there.
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.editKeep }))
+  expect(screen.getByRole("textbox")).toHaveValue(`${skillMd} more`)
+  // Discard: now it closes.
+  await userEvent.keyboard("{Escape}")
+  await userEvent.click(await screen.findByRole("button", { name: en.skillsBrowser.editDiscard }))
+  expect(onOpenChange).toHaveBeenCalledWith(false)
+})
+
+it("closes without asking when the draft is unchanged", async () => {
+  const onOpenChange = jest.fn()
+  render(
+    <I18nProvider>
+      <RunnerHarness autoApply>
+        <SkillDetailDialog row={row} open onOpenChange={onOpenChange} refresh={jest.fn()} />
+      </RunnerHarness>
+    </I18nProvider>
+  )
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.edit }))
+  await userEvent.keyboard("{Escape}")
+  expect(onOpenChange).toHaveBeenCalledWith(false)
+  expect(screen.queryByText(en.skillsBrowser.editDiscardTitle)).not.toBeInTheDocument()
+})
+
+it("stays in the editor, draft intact, when the save fails", async () => {
+  ;(writeTextFile as jest.Mock).mockRejectedValueOnce(new Error("read-only file system"))
+  const refresh = jest.fn()
+  render(
+    <I18nProvider>
+      <RunnerHarness autoApply>
+        <SkillDetailDialog row={row} open onOpenChange={jest.fn()} refresh={refresh} />
+      </RunnerHarness>
+    </I18nProvider>
+  )
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.edit }))
+  const textarea = screen.getByRole("textbox")
+  await userEvent.clear(textarea)
+  await userEvent.type(textarea, "edited body")
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.editSave }))
+  await waitFor(() => expect(refresh).toHaveBeenCalled())
+  expect(screen.getByRole("textbox")).toHaveValue("edited body")
+})

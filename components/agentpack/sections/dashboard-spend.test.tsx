@@ -2,7 +2,12 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
-import type { ListResult, SessionSummary, TokenUsage } from "@/lib/history/types"
+import {
+  WHOLE_SCAN,
+  type ListResult,
+  type SessionSummary,
+  type TokenUsage,
+} from "@/lib/history/types"
 import { SpendCard, type HistoryFeed } from "./dashboard-spend"
 
 jest.mock("@/lib/tauri", () => ({ isTauri: () => true }))
@@ -102,5 +107,45 @@ describe("SpendCard states", () => {
     const { onNavigate } = renderCard({ data: scanned([session()]), progress: null })
     await userEvent.click(screen.getByRole("button", { name: s.details }))
     expect(onNavigate).toHaveBeenCalledWith("history")
+  })
+})
+
+describe("SpendCard honesty about the read", () => {
+  it("says the read failed, with a way to read again, instead of 'no sessions yet'", async () => {
+    const retry = jest.fn()
+    renderCard({
+      data: { sessions: [], errors: [{ source: WHOLE_SCAN, message: "disk on fire" }] },
+      progress: null,
+      retry,
+    })
+    expect(screen.getByText(s.failed("disk on fire"))).toBeInTheDocument()
+    expect(screen.queryByText(s.empty)).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: s.retry }))
+    expect(retry).toHaveBeenCalled()
+  })
+
+  it("marks a total read from only some sources as partial", () => {
+    renderCard({
+      data: { sessions: [session()], errors: [{ source: "codex", message: "unreadable" }] },
+      progress: null,
+    })
+    expect(screen.getByText(s.partial(1))).toBeInTheDocument()
+  })
+
+  it("opens the usage dashboard where the link says it goes", async () => {
+    const onOpenUsage = jest.fn()
+    const onNavigate = jest.fn()
+    render(
+      <I18nProvider>
+        <SpendCard
+          history={{ data: scanned([session()]), progress: null }}
+          onNavigate={onNavigate}
+          onOpenUsage={onOpenUsage}
+        />
+      </I18nProvider>
+    )
+    await userEvent.click(screen.getByRole("button", { name: s.details }))
+    expect(onOpenUsage).toHaveBeenCalled()
+    expect(onNavigate).not.toHaveBeenCalled()
   })
 })

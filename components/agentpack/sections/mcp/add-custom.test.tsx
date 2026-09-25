@@ -41,7 +41,7 @@ beforeEach(() => {
 function renderAdd(s: DashboardScan | null = scan(), refresh = jest.fn()) {
   render(
     <I18nProvider>
-      <AddCustomTab scan={s} refresh={refresh} />
+      <AddCustomTab scan={s} refresh={refresh} route="cli" />
     </I18nProvider>
   )
   return { refresh }

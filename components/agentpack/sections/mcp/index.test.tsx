@@ -105,3 +105,11 @@ it("shows a not-desktop notice when not running under Tauri", () => {
   expect(screen.queryByRole("button", { name: /Add custom/i })).not.toBeInTheDocument()
   expect(screen.queryByRole("list", { name: en.mcp.installedListLabel })).not.toBeInTheDocument()
 })
+
+it("shows the scan as pending, not as an empty inventory, before the first scan lands", () => {
+  // The startup scan runs without setting `loading`; "No MCP servers configured
+  // yet" here was a claim about files nothing had read.
+  renderSection(false, null)
+  expect(screen.getByText(en.mcp.loading)).toBeInTheDocument()
+  expect(screen.queryByText(en.mcp.empty)).not.toBeInTheDocument()
+})

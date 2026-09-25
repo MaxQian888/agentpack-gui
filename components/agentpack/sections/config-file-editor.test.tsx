@@ -15,6 +15,8 @@ import { BACKUP_SUFFIX } from "@/lib/agentpack/plan"
 import { en } from "@/lib/i18n/en"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { pathExists, readTextFile, writeTextFile } from "@/lib/tauri/commands"
+import { useAppStore } from "@/store/app-store"
+import { RunnerHarness } from "../run/__testing__/harness"
 import { ConfigFileEditor } from "./config-file-editor"
 
 const t = en.configFiles
@@ -27,21 +29,36 @@ const SETTINGS_PATH = "/h/.claude/settings.json"
 beforeEach(() => {
   jest.clearAllMocks()
   ;(pathExists as jest.Mock).mockResolvedValue(false)
+  ;(readTextFile as jest.Mock).mockResolvedValue("")
+  useAppStore.setState({ paths: { home: "/h" } as never, panelOpen: false })
 })
 
+/**
+ * Saving goes through the review panel like every other write, so the editor
+ * mounts inside a runner. `autoApply` stands in for the user who says yes;
+ * `panel` renders the real gate for the tests whose subject is the gate.
+ */
 async function openEditor(
   def = claudeSettings,
-  { exists = true, path = SETTINGS_PATH, onSaved = jest.fn(), onOpenMcp = jest.fn() } = {}
+  {
+    exists = true,
+    path = SETTINGS_PATH,
+    onSaved = jest.fn(),
+    onOpenMcp = jest.fn(),
+    review = false,
+  } = {}
 ) {
   render(
     <I18nProvider>
-      <ConfigFileEditor
-        def={def}
-        path={path}
-        exists={exists}
-        onSaved={onSaved}
-        onOpenMcp={onOpenMcp}
-      />
+      <RunnerHarness autoApply={!review} panel={review}>
+        <ConfigFileEditor
+          def={def}
+          path={path}
+          exists={exists}
+          onSaved={onSaved}
+          onOpenMcp={onOpenMcp}
+        />
+      </RunnerHarness>
     </I18nProvider>
   )
   await userEvent.click(screen.getByRole("button", { name: exists ? t.edit : t.create }))
@@ -58,6 +75,43 @@ it("offers Create wording and seeds an empty JSON doc when the file is missing",
   await openEditor(claudeSettings, { exists: false })
   expect(readTextFile).not.toHaveBeenCalled()
   expect((await rawArea()).value).toBe("{}\n")
+})
+
+it("creates a missing file without calling it changed on disk", async () => {
+  // The editor opens a missing file as `{}` while the disk reads as "" — and
+  // comparing the two turned every Create into a false conflict.
+  const { onSaved } = await openEditor(claudeSettings, { exists: false })
+  await userEvent.type(await screen.findByLabelText(t.fields.claudeModel), "opus")
+  await userEvent.click(screen.getByRole("button", { name: t.save }))
+  await waitFor(() => expect(writeTextFile).toHaveBeenCalledWith(SETTINGS_PATH, expect.any(String)))
+  expect(screen.queryByText(t.conflictTitle)).not.toBeInTheDocument()
+  expect(JSON.parse((writeTextFile as jest.Mock).mock.calls.at(-1)![1])).toEqual({ model: "opus" })
+  expect(onSaved).toHaveBeenCalled()
+})
+
+it("writes nothing until the change is reviewed and applied", async () => {
+  // design.md § 1: the review panel is the only door, the config editor included.
+  ;(readTextFile as jest.Mock).mockResolvedValue('{"model": "sonnet"}')
+  await openEditor(claudeSettings, { review: true })
+  await userEvent.type(await screen.findByLabelText(t.fields.claudeModel), "!")
+  await userEvent.click(screen.getByRole("button", { name: t.save }))
+  expect(await screen.findByText(t.stepLabel(SETTINGS_PATH))).toBeInTheDocument()
+  expect(writeTextFile).not.toHaveBeenCalled()
+})
+
+it("refuses at apply time if the file moved while the change sat in review", async () => {
+  let reads = 0
+  ;(readTextFile as jest.Mock).mockImplementation(async () =>
+    // Load and the pre-save check see the original; the runner's own re-read,
+    // right before the write, sees what another writer left meanwhile.
+    ++reads <= 2 ? '{"model": "sonnet"}' : '{"model": "elsewhere"}'
+  )
+  const { onSaved } = await openEditor()
+  await userEvent.type(await screen.findByLabelText(t.fields.claudeModel), "!")
+  await userEvent.click(screen.getByRole("button", { name: t.save }))
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith(t.saveFailed))
+  expect(writeTextFile).not.toHaveBeenCalledWith(SETTINGS_PATH, expect.anything())
+  expect(onSaved).not.toHaveBeenCalled()
 })
 
 it("keeps unknown top-level keys when a form edit rewrites the file", async () => {

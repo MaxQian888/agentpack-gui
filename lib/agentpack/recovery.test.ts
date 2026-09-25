@@ -1,7 +1,9 @@
 import {
   buildTimeline,
+  configBackupCandidates,
   countBySafety,
   emptyTimeline,
+  OWN_WRITE_GRACE_MS,
   pathsToCheck,
   RECOVERY_KINDS,
   RECOVERY_VERSION,
@@ -221,6 +223,65 @@ describe("would restoring throw away newer work", () => {
   it("trusts a restore command that refuses to overwrite", () => {
     const guarded = point({ selfGuarded: true, paths: [], takenAt: 0 })
     expect(restoreSafety(guarded, [])).toBe("safe")
+  })
+
+  it("does not count the write the backup was taken for as newer work", () => {
+    // mergeFile writes the `.agentpack.bak` and then the live file, and a
+    // provider write snapshots and then writes — so the live file is always a
+    // little newer. Reading that as "stale" put the warning on every point the
+    // moment it existed, which is how a warning gets clicked through.
+    expect(restoreSafety(point(), [live("/h/config.json", NOON + 40)])).toBe("safe")
+    expect(restoreSafety(point(), [live("/h/config.json", NOON + OWN_WRITE_GRACE_MS)])).toBe("safe")
+  })
+
+  it("still warns about a write that came after that grace", () => {
+    expect(restoreSafety(point(), [live("/h/config.json", NOON + OWN_WRITE_GRACE_MS + 1)])).toBe(
+      "stale"
+    )
+  })
+})
+
+describe("which config backups exist to look for", () => {
+  const paths = {
+    home: "/h",
+    claudeSettings: "/h/.claude/settings.json",
+    claudeConfig: "/h/.claude.json",
+    codexConfig: "/h/.codex/config.toml",
+    opencodeConfig: "/h/.config/opencode/opencode.json",
+    piSettings: "/h/.pi/agent/settings.json",
+    ccConnectConfig: "/h/.cc-connect/config.toml",
+    ccSwitchSettings: "/h/.cc-switch/settings.json",
+    shellProfile: "",
+    mcpDisabledStore: "/h/.agentpack/mcp-disabled.json",
+  } as unknown as Parameters<typeof configBackupCandidates>[0]
+
+  it("covers every file the app edits, not just the two the scan reports", () => {
+    const listed = configBackupCandidates(paths).map((c) => c.path)
+    expect(listed).toEqual(
+      expect.arrayContaining([
+        "/h/.claude/settings.json",
+        "/h/.claude.json",
+        "/h/.codex/config.toml",
+        "/h/.config/opencode/opencode.json",
+        "/h/.agentpack/profiles.json",
+        "/h/.agentpack/accounts.json",
+      ])
+    )
+  })
+
+  it("skips a path this platform doesn't have, and lists each file once", () => {
+    // The shell profile is empty on Windows: stat'ing "" + suffix would ask
+    // about a file in the working directory.
+    const listed = configBackupCandidates({ ...paths, codexConfig: paths.claudeSettings }).map(
+      (c) => c.path
+    )
+    expect(listed).not.toContain("")
+    expect(new Set(listed).size).toBe(listed.length)
+  })
+
+  it("names a config backup by its file, so two rows can be told apart", () => {
+    const p = fold({ configBackups: [{ path: "/h/.claude.json", target: "claude" }] }).points[0]
+    expect(p.name).toBe("/h/.claude.json")
   })
 })
 

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
@@ -123,12 +123,60 @@ describe("OverviewPanel — period-over-period", () => {
 })
 
 describe("OverviewPanel — drill-down", () => {
-  it("hands the clicked project back to the caller", async () => {
+  it("hands the clicked project back by its exact key, not as a search", async () => {
     const user = userEvent.setup()
     const { onDrilldown } = renderPanel([
       session({ id: "a", projectName: "alpha", usage: usage({ total: 10 }) }),
     ])
     await user.click(screen.getByRole("cell", { name: "alpha" }))
-    expect(onDrilldown).toHaveBeenCalledWith({ query: "alpha" })
+    expect(onDrilldown).toHaveBeenCalledWith({ project: "alpha" })
+  })
+
+  it("reaches a project row from the keyboard, firing once per press", async () => {
+    const user = userEvent.setup()
+    const { onDrilldown } = renderPanel([
+      session({ id: "a", projectName: "alpha", usage: usage({ total: 10 }) }),
+    ])
+    screen.getByRole("button", { name: "alpha" }).focus()
+    await user.keyboard("{Enter}")
+    expect(onDrilldown).toHaveBeenCalledTimes(1)
+    expect(onDrilldown).toHaveBeenCalledWith({ project: "alpha" })
+  })
+
+  it("only calls the day chart clickable when it is grouped by day", () => {
+    const weekly = buildView({
+      sessions: [session({ updatedAt: day(19) })],
+      series: null,
+      range: resolveRange("30d", NOW),
+      granularity: "week",
+      now: NOW,
+    })
+    render(
+      <I18nProvider>
+        <OverviewPanel view={weekly} onDrilldown={jest.fn()} />
+      </I18nProvider>
+    )
+    expect(screen.queryByText(h.clickDayToDrill)).not.toBeInTheDocument()
+  })
+})
+
+describe("OverviewPanel — cost figure", () => {
+  it("marks an estimated total with ~", () => {
+    renderPanel([
+      session({ model: "claude-opus-4-8", cost: null, usage: usage({ input: 1e6, total: 1e6 }) }),
+    ])
+    // The headline tile and the average are the same money, so both say ~.
+    expect(screen.getAllByText("~$5.00").length).toBeGreaterThan(0)
+  })
+
+  it("says — rather than $0.00 when no model in the period has a rate", () => {
+    renderPanel([session({ model: "mystery-llm", cost: null, usage: usage({ total: 5e5 }) })])
+    // The provenance card's "Recorded $0.00 / Estimated $0.00" are real sums of
+    // nothing; the headline is the figure that must not pretend.
+    const tile = screen
+      .getByText(h.statCost, { selector: "div" })
+      .closest<HTMLElement>("[data-slot=card]")!
+    expect(within(tile).getByText("—")).toBeInTheDocument()
+    expect(within(tile).getByText(h.unpricedExcluded(1))).toBeInTheDocument()
   })
 })

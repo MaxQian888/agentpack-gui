@@ -1,6 +1,10 @@
-import { render, screen } from "@testing-library/react"
+import { render as rtlRender, screen } from "@testing-library/react"
+import { I18nProvider } from "@/lib/i18n/provider"
+import { en } from "@/lib/i18n/en"
 import { StepLog } from "./step-log"
 import type { StepReport } from "@/lib/agentpack/types"
+
+const render = (ui: React.ReactElement) => rtlRender(<I18nProvider>{ui}</I18nProvider>)
 
 const report = (over: Partial<StepReport>): StepReport => ({
   id: "x",
@@ -50,4 +54,10 @@ it("shows an output/error pre block only when there is content", () => {
   expect(pres).toHaveLength(1)
   expect(pres[0].textContent).toContain("log line")
   expect(pres[0].textContent).toContain("boom")
+})
+
+it("says each step's state in words, not only with a coloured icon", () => {
+  render(<StepLog reports={[report({ id: "a", label: "Install X", status: "error" })]} />)
+  // The icon is aria-hidden; the word is what a screen reader hears.
+  expect(screen.getByRole("listitem")).toHaveTextContent(`${en.review.status.error}: Install X`)
 })

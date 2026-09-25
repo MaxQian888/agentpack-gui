@@ -1,8 +1,9 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { format } from "date-fns"
 import { ChevronRight, X } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Dialog,
@@ -27,14 +28,23 @@ import {
   type SessionDetail,
   type SessionSummary,
 } from "@/lib/history/types"
-import { dayKey, formatCost, formatTokens } from "@/lib/history/format"
-import { matchesQuery, sessionCost } from "@/lib/history/stats"
+import { dayKey, formatCostFigure, formatTokens } from "@/lib/history/format"
+import { inRange } from "@/lib/history/range"
+import { matchesQuery, projectKey, sessionCost, sessionCostFigure } from "@/lib/history/stats"
 import { SOURCE_COLORS } from "@/lib/history/display"
 import { detailCacheKey, getCachedDetail, setCachedDetail } from "@/lib/history/detail-cache"
 import { branchOptions, messagesForLeaf } from "@/lib/history/tree"
 import { useIncremental } from "@/hooks/use-incremental"
 import { Transcript } from "./transcript"
-import { FilterField, FilterToolbar, MoreFilters, ScopeChip, SearchField } from "../filter-bar"
+import type { UsageDrilldown } from "./usage"
+import {
+  FilterField,
+  FilterToolbar,
+  MoreFilters,
+  ScopeChip,
+  SearchField,
+  scopeChipClass,
+} from "../filter-bar"
 
 type SortKey = "recent" | "tokens" | "messages"
 
@@ -83,12 +93,13 @@ function SessionRow({
   ].filter(Boolean) as string[]
 
   return (
+    // No `aria-label`: it replaced the row's whole content with the title, so a
+    // screen reader heard neither the tool, the project nor what it cost.
     <button
       type="button"
       onClick={onOpen}
-      aria-label={session.title}
       className={cn(
-        "flex w-full min-w-0 items-center gap-3 border-b px-4 py-3 text-left last:border-b-0",
+        "flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left",
         "transition-colors duration-(--hm-dur-fast) ease-(--hm-ease-out) hover:bg-muted",
         "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none"
       )}
@@ -125,7 +136,7 @@ function SessionRow({
         </span>
         {cost.value > 0 ? (
           <span className="font-mono text-xs tabular-nums text-muted-foreground">
-            {cost.estimated ? t.rowCostEst(formatCost(cost.value)) : formatCost(cost.value)}
+            {formatCostFigure(sessionCostFigure(session))}
           </span>
         ) : null}
       </span>
@@ -144,7 +155,10 @@ function TranscriptBody({ session }: { session: SessionSummary }) {
   const t = useT().history
   const key = detailCacheKey(session.source, session.path, session.updatedAt)
   const [detail, setDetail] = useState<SessionDetail | null>(() => getCachedDetail(key) ?? null)
-  const [error, setError] = useState(false)
+  // The reason as the system gave it; null while there is no failure.
+  const [error, setError] = useState<string | null>(null)
+  // Bumped by Retry: the effect below re-runs on it, and on nothing else new.
+  const [attempt, setAttempt] = useState(0)
   const [selectedLeaf, setSelectedLeaf] = useState<string | null>(null)
 
   useEffect(() => {
@@ -155,16 +169,33 @@ function TranscriptBody({ session }: { session: SessionSummary }) {
         setCachedDetail(key, d)
         if (!cancelled) setDetail(d)
       })
-      .catch(() => {
-        if (!cancelled) setError(true)
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
       })
     return () => {
       cancelled = true
     }
-  }, [session, key])
+  }, [session, key, attempt])
 
-  if (error) {
-    return <p className="p-10 text-center text-sm text-muted-foreground">{t.loadFailed}</p>
+  if (error !== null) {
+    // What failed, why, and the one thing to try — a bare "couldn't load" left
+    // closing the dialog and reopening it as the only way to try again.
+    return (
+      <div role="alert" className="flex flex-col items-center gap-3 p-10 text-center text-sm">
+        <p className="text-muted-foreground">{t.loadFailed}</p>
+        <p className="font-mono text-xs break-all text-destructive">{error}</p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            setError(null)
+            setAttempt((n) => n + 1)
+          }}
+        >
+          {t.retry}
+        </Button>
+      </div>
+    )
   }
   if (!detail) {
     return (
@@ -206,39 +237,55 @@ function TranscriptBody({ session }: { session: SessionSummary }) {
 function TranscriptDialog({
   session,
   subagents,
+  viewingPath,
+  onView,
   onClose,
 }: {
   session: SessionSummary | null
   subagents: SessionSummary[]
+  /**
+   * Which transcript the dialog shows: the parent session (null), or one of
+   * its sub-agent runs. Resolved against the *current* session's sub-agents, so
+   * a path that isn't one of them falls back to the parent.
+   */
+  viewingPath: string | null
+  onView: (path: string | null) => void
   onClose: () => void
 }) {
   const t = useT().history
-  // Which transcript the dialog shows: the parent session, or one of its
-  // sub-agent runs. Held as a path and resolved against the *current* session's
-  // sub-agents, so opening a different session falls back to its parent without
-  // needing an effect to reset it.
-  const [viewingPath, setViewingPath] = useState<string | null>(null)
+  // What had focus when the dialog opened — a session row, or a row in the
+  // usage tab's table — so closing can hand it back.
+  const opener = useRef<HTMLElement | null>(null)
   const viewing = subagents.find((s) => s.path === viewingPath) ?? null
   const shown = viewing ?? session
 
-  const cost = shown ? sessionCost(shown) : null
   const meta = shown
     ? [
         t.sources[shown.source] ?? shown.source,
         shown.projectName,
         shown.model || t.noModel,
         `${formatTokens(shown.usage.total)} ${t.tokensLabel}`,
-        ...(cost && cost.value > 0
-          ? [
-              `${cost.estimated ? "~" : ""}${formatCost(cost.value)}${cost.estimated ? ` (${t.estBadge})` : ""}`,
-            ]
-          : []),
+        ...(sessionCost(shown).value > 0 ? [formatCostFigure(sessionCostFigure(shown))] : []),
       ].join("  ·  ")
     : ""
 
   return (
     <Dialog open={!!session} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="flex h-[85vh] max-w-4xl flex-col gap-0 overflow-hidden p-0">
+      <DialogContent
+        className="flex h-[85vh] max-w-4xl flex-col gap-0 overflow-hidden p-0"
+        // Opened by state rather than a `DialogTrigger`, so Radix had nothing to
+        // hand focus back to and it fell to <body> — a keyboard user was sent
+        // back to the top of the page after every transcript. Focus hasn't
+        // moved into the dialog yet when the open event fires.
+        onOpenAutoFocus={() => {
+          opener.current =
+            document.activeElement instanceof HTMLElement ? document.activeElement : null
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault()
+          opener.current?.focus()
+        }}
+      >
         <DialogHeader className="border-b p-4 text-left">
           <DialogTitle className="flex items-center gap-2 truncate pr-6">
             {shown ? <SourceDot source={shown.source} /> : null}
@@ -248,18 +295,15 @@ function TranscriptDialog({
         </DialogHeader>
         {/* A session's sub-agent runs are separate transcripts on disk; surface
             them here rather than as peers in the list, which is where they'd
-            otherwise bury the real sessions. */}
+            otherwise bury the real sessions. Same chip as the list's source
+            filter — it is the same kind of choice: which one to show. */}
         {subagents.length > 0 && session ? (
           <div className="flex flex-wrap gap-1.5 border-b px-4 py-2">
             <button
               type="button"
-              onClick={() => setViewingPath(null)}
-              className={cn(
-                "rounded-full border px-2.5 py-0.5 text-xs transition-colors",
-                viewing === null
-                  ? "border-primary bg-primary/10 font-medium"
-                  : "text-muted-foreground hover:bg-accent/50"
-              )}
+              aria-pressed={viewing === null}
+              onClick={() => onView(null)}
+              className={scopeChipClass(viewing === null)}
             >
               {t.subagentParent}
             </button>
@@ -267,15 +311,11 @@ function TranscriptDialog({
               <button
                 key={sub.path}
                 type="button"
-                onClick={() => setViewingPath(sub.path)}
-                className={cn(
-                  "max-w-[16rem] truncate rounded-full border px-2.5 py-0.5 text-xs transition-colors",
-                  viewing?.path === sub.path
-                    ? "border-primary bg-primary/10 font-medium"
-                    : "text-muted-foreground hover:bg-accent/50"
-                )}
+                aria-pressed={viewing?.path === sub.path}
+                onClick={() => onView(sub.path)}
+                className={scopeChipClass(viewing?.path === sub.path, "max-w-[16rem] min-w-0")}
               >
-                {sub.agentName ?? sub.title}
+                <span className="truncate">{sub.agentName ?? sub.title}</span>
               </button>
             ))}
           </div>
@@ -293,18 +333,33 @@ function TranscriptDialog({
 }
 
 /**
- * A drill-down request from the usage dashboard: "show me the sessions behind
- * this bar". `nonce` is what makes re-clicking the same bar work — the props are
- * otherwise identical, so without it the second click would change nothing.
+ * A filter the list didn't start with — one that arrived from a chart or table
+ * on the usage tab. It has to be visible and self-cancelling: a hidden one
+ * would leave the list inexplicably short after switching tabs.
  */
-export interface BrowserFocus {
-  /** Seeds the search box; matches title / project / cwd / model. */
-  query?: string
-  source?: HistorySource | "all"
-  /** Restrict to sessions last active on this local day (`YYYY-MM-DD`). */
-  day?: string
-  nonce: number
+function FilterChip({ label, onClear }: { label: string; onClear: () => void }) {
+  const t = useT().history
+  return (
+    <button
+      type="button"
+      onClick={onClear}
+      // Names the action *and* keeps the chip's own text, so a reader hears
+      // which filter this removes rather than a bare "Clear".
+      aria-label={t.clearFilter(label)}
+      className={scopeChipClass(true, "max-w-[18rem] min-w-0")}
+    >
+      <span className="truncate">{label}</span>
+      <X aria-hidden="true" className="size-3.5 shrink-0" />
+    </button>
+  )
 }
+
+/**
+ * A drill-down request from the usage dashboard: "show me what's behind this".
+ * `nonce` is what makes re-clicking the same bar work — the props are otherwise
+ * identical, so without it the second click would change nothing.
+ */
+export type BrowserFocus = UsageDrilldown & { nonce: number }
 
 export function SessionBrowser({
   sessions,
@@ -317,22 +372,21 @@ export function SessionBrowser({
   const [source, setSource] = useState<HistorySource | "all">("all")
   const [query, setQuery] = useState("")
   const [day, setDay] = useState<string | null>(null)
+  const [project, setProject] = useState<string | null>(null)
+  const [period, setPeriod] = useState<NonNullable<UsageDrilldown["period"]> | null>(null)
   const [sort, setSort] = useState<SortKey>("recent")
   const [selected, setSelected] = useState<SessionSummary | null>(null)
+  // Which of `selected`'s transcripts is open — held here, not in the dialog,
+  // so closing resets it and a drill-down can open a sub-agent directly.
+  const [viewingPath, setViewingPath] = useState<string | null>(null)
 
-  // Apply an incoming drill-down by adjusting state during render (React's
-  // "changed a prop, reset some state" pattern) rather than in an effect, which
-  // would render the stale filters first and then immediately re-render.
-  // Keyed on the nonce so clicking the same chart element twice re-applies it,
-  // and so editing the filters by hand afterwards isn't undone.
-  // Starts `undefined`, not at the incoming nonce: switching tabs unmounts this
-  // subtree, so a drill-down arrives on a *fresh* mount and must still apply.
-  const [appliedNonce, setAppliedNonce] = useState<number | undefined>(undefined)
-  if (focus && focus.nonce !== appliedNonce) {
-    setAppliedNonce(focus.nonce)
-    setQuery(focus.query ?? "")
-    setSource(focus.source ?? "all")
-    setDay(focus.day ?? null)
+  const open = (s: SessionSummary) => {
+    setSelected(s)
+    setViewingPath(null)
+  }
+  const close = () => {
+    setSelected(null)
+    setViewingPath(null)
   }
 
   // Sub-agent runs are separate transcripts on disk but belong to the session
@@ -344,9 +398,13 @@ export function SessionBrowser({
   // Every descendant is attached to the *root* ancestor rather than its
   // immediate parent: only top-level sessions get a card, so anything grouped
   // under a nested parent would have no card to appear on.
-  const { roots, subagentsByParent } = useMemo(() => {
+  //
+  // `rootOf` keeps that answer per transcript (keyed `source:path`), which is
+  // how a drill-down to a sub-agent finds the card it lives under.
+  const { roots, subagentsByParent, rootOf } = useMemo(() => {
     const byId = new Map(sessions.map((s) => [s.id, s]))
     const byParent = new Map<string, SessionSummary[]>()
+    const rootByKey = new Map<string, SessionSummary>()
     const tops: SessionSummary[] = []
     for (const s of sessions) {
       let root = s
@@ -357,6 +415,7 @@ export function SessionBrowser({
         seen.add(parent.id)
         root = parent
       }
+      rootByKey.set(`${s.source}:${s.path}`, root)
       if (root === s) {
         tops.push(s)
         continue
@@ -365,8 +424,36 @@ export function SessionBrowser({
       if (group) group.push(s)
       else byParent.set(root.id, [s])
     }
-    return { roots: tops, subagentsByParent: byParent }
+    return { roots: tops, subagentsByParent: byParent, rootOf: rootByKey }
   }, [sessions])
+
+  // Apply an incoming drill-down by adjusting state during render (React's
+  // "changed a prop, reset some state" pattern) rather than in an effect, which
+  // would render the stale filters first and then immediately re-render.
+  // Keyed on the nonce so clicking the same chart element twice re-applies it,
+  // and so editing the filters by hand afterwards isn't undone. This list stays
+  // mounted while the usage tab shows, so an applied nonce is never forgotten
+  // and a stale drill-down can't re-apply on the way back.
+  const [appliedNonce, setAppliedNonce] = useState<number | undefined>(undefined)
+  if (focus && focus.nonce !== appliedNonce) {
+    setAppliedNonce(focus.nonce)
+    if (focus.session) {
+      // One transcript: open it, leaving the list as the user had it. A
+      // sub-agent opens inside the session that spawned it, its chip selected.
+      const key = `${focus.session.source}:${focus.session.path}`
+      const root = rootOf.get(key)
+      if (root) {
+        setSelected(root)
+        setViewingPath(`${root.source}:${root.path}` === key ? null : focus.session.path)
+      }
+    } else {
+      setQuery("")
+      setSource("all")
+      setDay(focus.day ?? null)
+      setProject(focus.project ?? null)
+      setPeriod(focus.period ?? null)
+    }
+  }
 
   const counts = useMemo(() => {
     const map: Record<string, number> = { all: roots.length }
@@ -379,6 +466,8 @@ export function SessionBrowser({
       (s) =>
         (source === "all" || s.source === source) &&
         (day === null || dayKey(s.updatedAt) === day) &&
+        (project === null || projectKey(s) === project) &&
+        (period === null || inRange(s.updatedAt, period.range)) &&
         matchesQuery(s, query)
     )
     const sorted = [...list]
@@ -386,13 +475,13 @@ export function SessionBrowser({
     else if (sort === "messages") sorted.sort((a, b) => b.messageCount - a.messageCount)
     else sorted.sort((a, b) => b.updatedAt - a.updatedAt)
     return sorted
-  }, [roots, source, query, day, sort])
+  }, [roots, source, query, day, project, period, sort])
 
   // Render the list in windows so a few thousand sessions don't all mount at
   // once. Window resets whenever the filter/sort changes.
   const { visible, sentinelRef, hasMore } = useIncremental(
     filtered.length,
-    `${source}|${query}|${day}|${sort}`,
+    `${source}|${query}|${day}|${project}|${period?.label}|${sort}`,
     50
   )
 
@@ -415,24 +504,16 @@ export function SessionBrowser({
                 count={counts[key] ?? 0}
               />
             ))}
-            {/* The day filter arrives from a chart click, so it has to be
-                visible and self-cancelling — a hidden one would leave the list
-                inexplicably short after switching tabs. */}
+            {/* Filters that arrive from the usage tab, each visible and each
+                clearing itself. */}
             {day !== null ? (
-              <button
-                type="button"
-                onClick={() => setDay(null)}
-                aria-label={t.clearDay}
-                className={cn(
-                  "flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs",
-                  "border-[var(--hm-accent)] bg-[var(--hm-accent-soft)] font-medium text-[var(--hm-ink)]",
-                  "transition-colors duration-(--hm-dur-fast) ease-(--hm-ease-out)",
-                  "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none"
-                )}
-              >
-                {t.dayFilter(day)}
-                <X aria-hidden="true" className="size-3.5" />
-              </button>
+              <FilterChip label={t.dayFilter(day)} onClear={() => setDay(null)} />
+            ) : null}
+            {project !== null ? (
+              <FilterChip label={t.projectFilter(project)} onClear={() => setProject(null)} />
+            ) : null}
+            {period !== null ? (
+              <FilterChip label={t.periodFilter(period.label)} onClear={() => setPeriod(null)} />
             ) : null}
           </>
         }
@@ -479,13 +560,17 @@ export function SessionBrowser({
             aria-label={t.listPanel}
             className="min-w-0 overflow-hidden rounded-lg border"
           >
+            {/* The rule sits on the item, not on the button inside it: the
+                button is always its item's last child, so `last:` there would
+                match every row. */}
             {filtered.slice(0, visible).map((s) => (
-              <SessionRow
-                key={`${s.source}:${s.id}`}
-                session={s}
-                subagentCount={subagentsByParent.get(s.id)?.length ?? 0}
-                onOpen={() => setSelected(s)}
-              />
+              <div key={`${s.source}:${s.id}`} role="listitem" className="border-b last:border-b-0">
+                <SessionRow
+                  session={s}
+                  subagentCount={subagentsByParent.get(s.id)?.length ?? 0}
+                  onOpen={() => open(s)}
+                />
+              </div>
             ))}
             {hasMore ? <div ref={sentinelRef} className="h-1" aria-hidden /> : null}
           </div>
@@ -495,7 +580,9 @@ export function SessionBrowser({
       <TranscriptDialog
         session={selected}
         subagents={selected ? (subagentsByParent.get(selected.id) ?? []) : []}
-        onClose={() => setSelected(null)}
+        viewingPath={viewingPath}
+        onView={setViewingPath}
+        onClose={close}
       />
     </div>
   )

@@ -6,14 +6,27 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Check, Download, Plus, Upload, X } from "lucide-react"
 import { toast } from "sonner"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import { Input } from "@/components/ui/input"
 import { isTauri } from "@/lib/tauri"
+import { cn } from "@/lib/utils"
 import { readTextFile, writeTextFile } from "@/lib/tauri/commands"
 import { pickFile, pickSavePath } from "@/lib/tauri/dialog"
+import { retargetPlanOs } from "@/lib/agentpack/bundle/apply"
 import { parseConfig, serializePlan } from "@/lib/agentpack/config"
+import { planHasSelections } from "@/lib/agentpack/plan"
 import {
   buildInventory,
   type InventoryInput,
@@ -24,6 +37,7 @@ import type { Plan } from "@/lib/agentpack/types"
 import {
   parseProfiles,
   profilesPath,
+  profilesUnreadable,
   serializeProfiles,
   PROFILE_VERSION,
 } from "@/lib/agentpack/profile"
@@ -34,6 +48,18 @@ import { ImportBundleDialog } from "./bundle/import-dialog"
 import { ConfigFilesCard } from "./sections/config-files-card"
 import { CapabilityTile, CapabilityWorkbench } from "./sections/capability-workbench"
 import { SectionStatus } from "./sections/section-status"
+
+/** What a rejected promise said, as the system said it. */
+const reasonOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+/**
+ * Why profiles.json can't be taken at its word. Kept as data rather than as a
+ * rendered sentence so a language switch doesn't leave the old one on screen.
+ */
+type StoreProblem = { kind: "unreadable"; reason: string } | { kind: "corrupt" }
+
+/** How a write of the profile list went. `web` is "nowhere to write it", not a failure. */
+type PersistResult = "written" | "web" | "failed"
 
 /**
  * Profiles and the two ways a setup leaves this machine: the plan-only config
@@ -49,6 +75,7 @@ import { SectionStatus } from "./sections/section-status"
 export function ConfigIO({
   scan = null,
   onOpenMcp,
+  onReview,
 }: {
   /**
    * The last dashboard scan, so each profile can say how much of it this
@@ -57,10 +84,18 @@ export function ConfigIO({
    */
   scan?: InventoryInput["scan"]
   onOpenMcp?: () => void
+  /**
+   * Opens the review panel for the current selection — the next move after a
+   * profile is loaded into it. Absent, the toast still says nothing installs
+   * until the changes are reviewed; it just can't take you there.
+   */
+  onReview?: () => void
 }) {
   const t = useT()
   const plan = useAppStore((s) => s.plan)
+  const selectionPicked = planHasSelections(plan)
   const loadPlan = useAppStore((s) => s.loadPlan)
+  const effectiveOS = useAppStore((s) => s.effectiveOS)
   const paths = useAppStore((s) => s.paths)
   const profiles = useAppStore((s) => s.profiles)
   const currentProfileId = useAppStore((s) => s.currentProfileId)
@@ -97,58 +132,113 @@ export function ConfigIO({
   const [newName, setNewName] = useState("")
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState("")
+  /** The profile a delete confirmation is currently about, or null. */
+  const [deleting, setDeleting] = useState<{ id: string; name: string } | null>(null)
+  /**
+   * Set when profiles.json exists but couldn't be read or isn't a profile list.
+   * It blocks every write from this section: `parseProfiles` reads a broken file
+   * as empty, and the next save would serialize that empty list over whatever
+   * the file really held — for good.
+   */
+  const [storeProblem, setStoreProblem] = useState<StoreProblem | null>(null)
+  /** Bumped by "Read again" to re-run the load below. */
+  const [readTick, setReadTick] = useState(0)
 
-  // Load the profile store from disk on mount.
+  const storePath = profilesPath(paths?.home ?? "~")
+
+  // Load the profile store from disk on mount (and on "Read again").
   useEffect(() => {
     if (!isTauri() || !paths) return
+    let cancelled = false
     readTextFile(profilesPath(paths.home))
-      .then((json) => setProfiles(parseProfiles(json).profiles))
-      .catch(() => {})
-  }, [paths, setProfiles])
+      .then((json) => {
+        if (cancelled) return
+        if (profilesUnreadable(json)) {
+          setStoreProblem({ kind: "corrupt" })
+          return
+        }
+        setStoreProblem(null)
+        setProfiles(parseProfiles(json).profiles)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setStoreProblem({ kind: "unreadable", reason: reasonOf(error) })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [paths, setProfiles, readTick])
 
   /**
    * Persist whatever the store currently holds (called after each mutation).
    * Reports whether the write actually happened: in web mode there is nowhere to
    * write, and the callers below used to announce success regardless — telling
-   * the user their profile was saved when nothing had been.
+   * the user their profile was saved when nothing had been. A write that fails
+   * says which file and why.
    */
-  const persist = useCallback(async (): Promise<boolean> => {
-    if (!isTauri() || !paths) return false
+  const persist = useCallback(async (): Promise<PersistResult> => {
+    if (!isTauri() || !paths) return "web"
+    const path = profilesPath(paths.home)
     const list = useAppStore.getState().profiles
-    await writeTextFile(
-      profilesPath(paths.home),
-      serializeProfiles({ version: PROFILE_VERSION, profiles: list })
-    )
-    return true
-  }, [paths])
+    try {
+      await writeTextFile(path, serializeProfiles({ version: PROFILE_VERSION, profiles: list }))
+      return "written"
+    } catch (error) {
+      toast.error(t.profiles.writeFailed(path, reasonOf(error)))
+      return "failed"
+    }
+  }, [paths, t])
 
-  const onSaveProfile = async () => {
-    const name = newName.trim()
-    if (!name) return toast.error(t.profiles.nameRequired)
-    saveCurrentAsProfile(name)
-    setNewName("")
-    if (!(await persist())) return toast.error(t.shell.notInTauri)
-    toast.success(t.profiles.saved(name))
+  /**
+   * Change the profile list and write it, as one act. A write that fails puts
+   * the list back: the store changes first, and a row left on screen after its
+   * write failed reads as saved.
+   */
+  const commit = async (change: () => void, done?: string): Promise<PersistResult> => {
+    const before = useAppStore.getState().profiles
+    change()
+    const result = await persist()
+    if (result === "failed") setProfiles(before)
+    else if (result === "web") toast.error(t.shell.notInTauri)
+    else if (done) toast.success(done)
+    return result
   }
 
-  // No write involved — applying a profile only touches the in-memory plan, so
-  // it genuinely does work in web mode.
+  const onSaveProfile = async () => {
+    // Enter reaches here without the button's disabled state.
+    if (storeProblem || !selectionPicked) return
+    const name = newName.trim()
+    if (!name) return toast.error(t.profiles.nameRequired)
+    const result = await commit(() => saveCurrentAsProfile(name), t.profiles.saved(name))
+    // Keep the name after a failed write, so trying again is one click.
+    if (result !== "failed") setNewName("")
+  }
+
+  // No write involved — loading a profile only replaces the in-memory
+  // selection, so it genuinely works in web mode. It installs nothing: that is
+  // the review panel's job, which is where the toast points.
   const onApply = (id: string, name: string) => {
     applyProfile(id)
-    toast.success(t.profiles.applied(name))
+    // A profile saved on another OS carries that OS. Re-stamp it onto this one,
+    // exactly as an imported backup is, or winget picks land in a Mac plan.
+    loadPlan(retargetPlanOs(useAppStore.getState().plan, effectiveOS()))
+    if (onReview) {
+      toast.success(t.profiles.applied(name), {
+        action: { label: t.tray.review, onClick: onReview },
+      })
+    } else {
+      toast.success(t.profiles.applied(name))
+    }
   }
 
   const onDelete = async (id: string, name: string) => {
-    deleteProfile(id)
-    if (!(await persist())) return toast.error(t.shell.notInTauri)
-    toast.success(t.profiles.deleted(name))
+    if (storeProblem) return
+    await commit(() => deleteProfile(id), t.profiles.deleted(name))
   }
 
   const onRenameCommit = async () => {
     const name = editName.trim()
-    if (editingId && name) {
-      renameProfile(editingId, name)
-      if (!(await persist())) toast.error(t.shell.notInTauri)
+    if (editingId && name && !storeProblem) {
+      await commit(() => renameProfile(editingId, name))
     }
     setEditingId(null)
     setEditName("")
@@ -158,8 +248,12 @@ export function ConfigIO({
     if (!isTauri()) return toast.error(t.shell.notInTauri)
     const path = await pickSavePath({ defaultPath: "agentpack.config.json" })
     if (!path) return
-    await writeTextFile(path, serializePlan(plan))
-    toast.success(t.shell.configSaved(path))
+    try {
+      await writeTextFile(path, serializePlan(plan))
+      toast.success(t.shell.configSaved(path))
+    } catch (error) {
+      toast.error(t.profiles.configWriteFailed(path, reasonOf(error)))
+    }
   }
 
   const load = async () => {
@@ -167,7 +261,9 @@ export function ConfigIO({
     const path = await pickFile([{ name: "json", extensions: ["json"] }])
     if (!path) return
     try {
-      loadPlan(parseConfig(await readTextFile(path), t))
+      // Same re-stamp as a profile or a backup: a config written on Windows
+      // would otherwise stage winget commands on this machine.
+      loadPlan(retargetPlanOs(parseConfig(await readTextFile(path), t), effectiveOS()))
       toast.success(t.shell.configLoaded)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t.errors.invalidJson)
@@ -185,7 +281,9 @@ export function ConfigIO({
         <SectionStatus
           label={t.profiles.summaryLabel}
           facts={[
-            { label: t.profiles.metricSaved, value: profiles.length },
+            // A store that couldn't be read has no count yet — a 0 there would
+            // be the plausible-looking zero design.md § 2 rules out.
+            { label: t.profiles.metricSaved, value: storeProblem ? "—" : profiles.length },
             { label: t.profiles.metricActive, value: activeProfile?.name ?? t.profiles.none },
             {
               label: t.profiles.metricSelection,
@@ -211,14 +309,42 @@ export function ConfigIO({
                 placeholder={t.profiles.namePlaceholder}
                 className="h-9 max-w-xs flex-1"
               />
-              <Button onClick={() => void onSaveProfile()} className="h-9 gap-2">
+              <Button
+                onClick={() => void onSaveProfile()}
+                disabled={!!storeProblem || !newName.trim() || !selectionPicked}
+                className="h-9 gap-2"
+              >
                 <Plus className="size-4" />
                 {t.profiles.saveAs}
               </Button>
             </div>
+            {!selectionPicked && !storeProblem ? (
+              <p className="mt-2 text-xs text-muted-foreground">{t.profiles.emptySelection}</p>
+            ) : null}
           </div>
 
-          {profiles.length === 0 ? (
+          {/* A broken store is said out loud, with the one thing to do about it,
+              instead of reading as "no profiles saved yet". */}
+          {storeProblem ? (
+            <div
+              role="alert"
+              className={cn(
+                "flex flex-col items-start gap-2 p-4",
+                profiles.length > 0 && "border-b"
+              )}
+            >
+              <p className="max-w-prose text-sm text-[var(--hm-danger)] [overflow-wrap:anywhere]">
+                {storeProblem.kind === "corrupt"
+                  ? t.profiles.storeCorrupt(storePath)
+                  : t.profiles.storeUnreadable(storePath, storeProblem.reason)}
+              </p>
+              <Button size="sm" variant="outline" onClick={() => setReadTick((n) => n + 1)}>
+                {t.profiles.readAgain}
+              </Button>
+            </div>
+          ) : null}
+
+          {storeProblem && profiles.length === 0 ? null : profiles.length === 0 ? (
             <Empty className="border-0 p-8">
               <EmptyHeader>
                 <EmptyTitle className="text-sm">{t.profiles.empty}</EmptyTitle>
@@ -285,10 +411,10 @@ export function ConfigIO({
                         {" · "}
                         {t.profiles.savedAt(new Date(p.createdAt).toLocaleDateString())}
                       </p>
-                      {/* What Apply would actually do. It is the same dedup the
-                          run itself performs, so this states the size of the
-                          job rather than describing it a second way — and an
-                          unmeasured machine says nothing at all. */}
+                      {/* What installing it would actually do. It is the same
+                          dedup the run itself performs, so this states the size
+                          of the job rather than describing it a second way — and
+                          an unmeasured machine says nothing at all. */}
                       <ProfileGap inventory={inventory} plan={p.plan} />
                     </div>
                   )}
@@ -311,7 +437,8 @@ export function ConfigIO({
                         size="sm"
                         variant="ghost"
                         className="text-[var(--hm-danger)] hover:text-[var(--hm-danger)]"
-                        onClick={() => void onDelete(p.id, p.name)}
+                        disabled={!!storeProblem}
+                        onClick={() => setDeleting({ id: p.id, name: p.name })}
                       >
                         {t.profiles.delete}
                       </Button>
@@ -321,6 +448,33 @@ export function ConfigIO({
               ))}
             </div>
           )}
+
+          {/* Deleting is the one permanent act on this page — profiles.json keeps
+              no copy — so it asks once. */}
+          <AlertDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  {deleting ? t.profiles.deleteTitle(deleting.name) : null}
+                </AlertDialogTitle>
+                <AlertDialogDescription className="[overflow-wrap:anywhere]">
+                  {t.profiles.deleteBody(storePath)}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => {
+                    const target = deleting
+                    setDeleting(null)
+                    if (target) void onDelete(target.id, target.name)
+                  }}
+                >
+                  {t.profiles.delete}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </section>
       }
       aside={
@@ -355,9 +509,9 @@ export function ConfigIO({
 /**
  * How much of a profile this machine already has.
  *
- * One more fact on the line the row already carries, not a new control: Apply
- * dedups against the same reading, so this states the size of the job Apply
- * would do rather than offering a second way to do it.
+ * One more fact on the line the row already carries, not a new control: the
+ * run a loaded profile goes on to dedups against the same reading, so this
+ * states the size of that job rather than offering a second way to do it.
  *
  * An unmeasured machine renders nothing. "0 missing" and "we haven't looked"
  * are opposite claims, and only one of them is safe to make.

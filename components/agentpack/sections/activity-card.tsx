@@ -41,12 +41,12 @@ function when(at: number, lang: string): string {
 export function ActivityCard({
   records,
   available,
-  onOpenPanel,
+  onOpenRecovery,
 }: {
   records: ActivityRecord[]
   /** False in web mode, where there is no machine to have changed. */
   available: boolean
-  onOpenPanel?: () => void
+  onOpenRecovery?: () => void
 }) {
   const t = useT()
   const a = t.activity
@@ -90,11 +90,11 @@ export function ActivityCard({
           })}
         </ul>
       )}
-      {onOpenPanel && records.length > 0 ? (
+      {onOpenRecovery && records.length > 0 ? (
         <Button
           variant="link"
           size="sm"
-          onClick={onOpenPanel}
+          onClick={onOpenRecovery}
           className="h-auto self-start p-0 text-sm text-[var(--hm-accent)]"
         >
           {a.viewAll}

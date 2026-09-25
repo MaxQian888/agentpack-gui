@@ -19,11 +19,21 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart"
 import { useT } from "@/lib/i18n/provider"
-import { formatCost, formatDuration, formatNumber, formatTokens } from "@/lib/history/format"
+import { cn } from "@/lib/utils"
+import {
+  formatCost,
+  formatCostFigure,
+  formatDuration,
+  formatNumber,
+  formatTokens,
+} from "@/lib/history/format"
 import { CHART_SERIES, SOURCE_COLORS } from "@/lib/history/display"
 import { bucketLabel } from "@/lib/history/range"
+import { statsCostFigure } from "@/lib/history/stats"
 import { Stat, PanelTitle } from "./stat"
+import { DrillButton } from "./drill-button"
 import type { UsageView } from "./view"
+import type { UsageDrilldown } from "./index"
 
 const INPUT_COLOR = CHART_SERIES.input
 const OUTPUT_COLOR = CHART_SERIES.output
@@ -34,7 +44,7 @@ export function OverviewPanel({
   onDrilldown,
 }: {
   view: UsageView
-  onDrilldown: (focus: { query?: string; day?: string }) => void
+  onDrilldown: (focus: UsageDrilldown) => void
 }) {
   const t = useT().history
   const { stats, previous, buckets, granularity } = view
@@ -42,6 +52,13 @@ export function OverviewPanel({
 
   const delta = (current: number, key: (s: typeof stats) => number) =>
     previous ? pct(current, key(previous)) : undefined
+  // Only a day bucket maps cleanly onto a session filter; a week or month would
+  // need a range filter the browser doesn't have. So the chart says it is
+  // clickable only when a click will do something.
+  const dayDrill = granularity === "day"
+  // A single bucket is one point, and an area needs two to draw anything — a
+  // "Today" chart used to render as an empty frame. The point is drawn instead.
+  const dot = buckets.length < 2
 
   const dayConfig: ChartConfig = {
     input: { label: t.statInput, color: INPUT_COLOR },
@@ -84,7 +101,8 @@ export function OverviewPanel({
         <Stat label={t.statOutput} value={formatTokens(totals.usage.output)} />
         <Stat
           label={t.statCost}
-          value={formatCost(totals.cost)}
+          value={formatCostFigure(statsCostFigure(stats))}
+          sub={unpriced.transcripts > 0 ? t.unpricedExcluded(unpriced.transcripts) : undefined}
           delta={delta(totals.cost, (s) => s.totals.cost)}
           tone="up-bad"
         />
@@ -133,7 +151,10 @@ export function OverviewPanel({
           )}
         />
         <Stat label={t.statAvgTokens} value={formatTokens(averages.tokensPerSession)} />
-        <Stat label={t.statAvgCost} value={formatCost(averages.costPerSession)} />
+        <Stat
+          label={t.statAvgCost}
+          value={formatCostFigure(statsCostFigure(stats, averages.costPerSession))}
+        />
       </div>
 
       {totals.durationSessions > 0 ? (
@@ -148,16 +169,17 @@ export function OverviewPanel({
       ) : null}
 
       <Card className="gap-3 p-4">
-        <PanelTitle title={t.chartByDay} hint={t.clickToDrill} />
-        <ChartContainer config={dayConfig} className="h-[240px] w-full">
+        <PanelTitle title={t.chartByDay} hint={dayDrill ? t.clickDayToDrill : undefined} />
+        <ChartContainer
+          config={dayConfig}
+          className={cn("h-[240px] w-full", dayDrill && "cursor-pointer")}
+        >
           <AreaChart
             data={buckets}
             margin={{ left: 4, right: 4, top: 4 }}
             onClick={(state) => {
-              // Only a day bucket maps cleanly onto a session filter; a week or
-              // month would need a range filter the browser doesn't have.
               const label = state?.activeLabel
-              if (granularity === "day" && typeof label === "string") onDrilldown({ day: label })
+              if (dayDrill && typeof label === "string") onDrilldown({ day: label })
             }}
           >
             <CartesianGrid vertical={false} />
@@ -186,6 +208,7 @@ export function OverviewPanel({
               stackId="a"
               stroke={INPUT_COLOR}
               fill="url(#fillInput)"
+              dot={dot ? { r: 4, fill: INPUT_COLOR, strokeWidth: 0 } : false}
             />
             <Area
               dataKey="output"
@@ -193,6 +216,7 @@ export function OverviewPanel({
               stackId="a"
               stroke={OUTPUT_COLOR}
               fill="url(#fillOutput)"
+              dot={dot ? { r: 4, fill: OUTPUT_COLOR, strokeWidth: 0 } : false}
             />
             <ChartLegend content={<ChartLegendContent />} />
           </AreaChart>
@@ -264,13 +288,20 @@ export function OverviewPanel({
               <TableRow
                 key={p.project}
                 className="cursor-pointer"
-                onClick={() => onDrilldown({ query: p.project })}
+                onClick={() => onDrilldown({ project: p.project })}
               >
-                <TableCell className="max-w-[18rem] truncate font-medium">{p.project}</TableCell>
+                <TableCell className="max-w-[18rem] truncate font-medium">
+                  <DrillButton>{p.project}</DrillButton>
+                </TableCell>
                 <TableCell className="text-right tabular-nums">{p.sessions}</TableCell>
                 <TableCell className="text-right tabular-nums">{formatTokens(p.total)}</TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {p.cost > 0 ? formatCost(p.cost) : "—"}
+                  {formatCostFigure({
+                    value: p.cost,
+                    estimated: p.estimated,
+                    unpriced: p.unpriced,
+                    transcripts: p.transcripts,
+                  })}
                 </TableCell>
               </TableRow>
             ))}

@@ -3,7 +3,7 @@ jest.mock("@tauri-apps/plugin-store", () => ({ load: jest.fn() }))
 
 import { isTauri } from "@/lib/tauri"
 import { load } from "@tauri-apps/plugin-store"
-import { DEFAULT_SETTINGS, loadSettings, saveSettings } from "./settings"
+import { DEFAULT_SETTINGS, loadSettings, saveSettings, writeSettings } from "./settings"
 
 const mockedIsTauri = isTauri as jest.Mock
 const mockedLoad = load as jest.Mock
@@ -12,6 +12,7 @@ function storeMock(saved?: unknown) {
   return {
     get: jest.fn().mockResolvedValue(saved),
     set: jest.fn().mockResolvedValue(undefined),
+    save: jest.fn().mockResolvedValue(undefined),
   }
 }
 
@@ -44,6 +45,7 @@ describe("loadSettings", () => {
       uiScale: 100,
       reduceMotion: false,
       startupSection: null,
+      osOverride: null,
     })
   })
 
@@ -90,5 +92,26 @@ describe("saveSettings", () => {
     store.set.mockRejectedValue(new Error("write failed"))
     mockedLoad.mockResolvedValue(store)
     expect(await saveSettings({ lastCheckAt: 42 })).toMatchObject({ lastCheckAt: 42 })
+  })
+})
+
+describe("writeSettings", () => {
+  it("persists and flushes the merged settings", async () => {
+    const store = storeMock(undefined)
+    mockedLoad.mockResolvedValue(store)
+    await writeSettings({ ghMirrorPrefix: "https://m/" })
+    expect(store.set).toHaveBeenCalledWith("app", {
+      ...DEFAULT_SETTINGS,
+      ghMirrorPrefix: "https://m/",
+    })
+    expect(store.save).toHaveBeenCalled()
+  })
+
+  it("rejects when the store refuses, unlike saveSettings", async () => {
+    // The runner's appSettings step reports done only if this resolves.
+    const store = storeMock(undefined)
+    store.save.mockRejectedValue(new Error("disk full"))
+    mockedLoad.mockResolvedValue(store)
+    await expect(writeSettings({ lastCheckAt: 42 })).rejects.toThrow("disk full")
   })
 })

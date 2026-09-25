@@ -1,4 +1,6 @@
 import {
+  CC_CONNECT_PLACEHOLDERS,
+  configPlaceholders,
   CC_CONNECT_BRIDGE_PORT,
   CC_CONNECT_MANAGEMENT_PORT,
   CC_CONNECT_WEBHOOK_PORT,
@@ -356,5 +358,20 @@ describe("ensureWebAdmin", () => {
     const base = parseConfigDoc('[[projects]]\nname = "keep"\n')!
     const { doc } = ensureWebAdmin(base, TOKENS)
     expect(countProjects(serializeConfigDoc(doc))).toBe(1)
+  })
+})
+
+describe("configPlaceholders", () => {
+  it("names the starter config's placeholders until they are replaced", () => {
+    expect(configPlaceholders(defaultConfigToml())).toEqual(["work_dir", "app_id", "app_secret"])
+    const edited = defaultConfigToml()
+      .replace(CC_CONNECT_PLACEHOLDERS.work_dir, "/Users/me/repo")
+      .replace(CC_CONNECT_PLACEHOLDERS.app_id, "cli_a1b2")
+    expect(configPlaceholders(edited)).toEqual(["app_secret"])
+  })
+
+  it("finds nothing in a config without projects, or one that won't parse", () => {
+    expect(configPlaceholders("[management]\nenabled = true\n")).toEqual([])
+    expect(configPlaceholders("broken = [")).toEqual([])
   })
 })

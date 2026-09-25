@@ -46,6 +46,12 @@ describe("buildPalette", () => {
     expect(staged.find((i) => i.id === "action:review")?.label).toBe(en.palette.reviewCount(3))
   })
 
+  it("offers the running run instead of a review that would be refused", () => {
+    const items = buildPalette(en, { pendingChanges: 3, running: true })
+    expect(ids(items)).toContain("action:show-run")
+    expect(ids(items)).not.toContain("action:review")
+  })
+
   it("is fully translated — no key falls back to English", () => {
     const zh = buildPalette(zhCN, { pendingChanges: 1 })
     expect(ids(zh)).toEqual(ids(build(1)))

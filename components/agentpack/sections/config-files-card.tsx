@@ -62,6 +62,9 @@ export function ConfigFilesCard({ onOpenMcp }: { onOpenMcp?: () => void }) {
       <div className="divide-y">
         {(paths ? CONFIG_FILES : []).map((def) => {
           const path = paths![def.pathKey]
+          // Unprobed is not missing: until the probe answers, the row says it is
+          // checking rather than offering Create for a file that may be there.
+          const probing = !(def.id in present)
           const exists = present[def.id] ?? false
           return (
             <div
@@ -72,7 +75,7 @@ export function ConfigFilesCard({ onOpenMcp }: { onOpenMcp?: () => void }) {
                 <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-medium">
                   {t.files[def.id].title}
                   <Badge variant={exists ? "secondary" : "outline"} className="font-normal">
-                    {exists ? t.present : t.missing}
+                    {probing ? t.checking : exists ? t.present : t.missing}
                   </Badge>
                 </div>
                 <p className="mt-0.5 truncate font-mono text-[var(--hm-text-2xs)] text-muted-foreground">
@@ -83,6 +86,7 @@ export function ConfigFilesCard({ onOpenMcp }: { onOpenMcp?: () => void }) {
                 def={def}
                 path={path}
                 exists={exists}
+                probing={probing}
                 onSaved={() => setTick((n) => n + 1)}
                 onOpenMcp={onOpenMcp}
               />

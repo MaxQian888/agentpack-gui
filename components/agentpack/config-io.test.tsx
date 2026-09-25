@@ -19,7 +19,7 @@ jest.mock("./run/runner-context", () => ({
   useRunnerCtx: () => ({ run: jest.fn(async () => []) }),
 }))
 
-import { render, screen, within } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { toast } from "sonner"
 import { isTauri } from "@/lib/tauri"
@@ -34,7 +34,10 @@ import { useAppStore } from "@/store/app-store"
 import { ConfigIO } from "./config-io"
 
 beforeEach(() => {
+  jest.clearAllMocks()
   ;(isTauri as jest.Mock).mockReturnValue(true)
+  ;(writeTextFile as jest.Mock).mockResolvedValue(undefined)
+  useAppStore.setState({ osOverride: null, paths: null })
   useAppStore.getState().resetPlan()
 })
 
@@ -85,6 +88,37 @@ it("loads a valid config and applies it to the store", async () => {
   expect(toast.success).toHaveBeenCalled()
 })
 
+it("re-stamps a config written on another OS onto this one", async () => {
+  // A config written on Windows says `os: "win"`; loaded as-is on a Mac, the
+  // step builder would stage the Windows commands (winget, PowerShell) here.
+  const plan = {
+    ...useAppStore.getState().plan,
+    os: "win" as const,
+    clis: ["claude-code" as const],
+    cliMethods: { "claude-code": "native" },
+  }
+  openDialog.mockResolvedValue("/tmp/cfg.json")
+  ;(readTextFile as jest.Mock).mockResolvedValue(serializePlan(plan))
+  useAppStore.setState({ osOverride: "mac" })
+  renderIO()
+  await clickLoad()
+  expect(toast.success).toHaveBeenCalledWith(en.shell.configLoaded)
+  expect(useAppStore.getState().plan.os).toBe("mac")
+  // A method this OS also offers survives the re-stamp.
+  expect(useAppStore.getState().plan.cliMethods?.["claude-code"]).toBe("native")
+})
+
+it("says which file it couldn't write, and why", async () => {
+  saveDialog.mockResolvedValue("/tmp/agentpack.config.json")
+  ;(writeTextFile as jest.Mock).mockRejectedValue(new Error("EROFS"))
+  renderIO()
+  await clickSave()
+  expect(toast.error).toHaveBeenCalledWith(
+    en.profiles.configWriteFailed("/tmp/agentpack.config.json", "EROFS")
+  )
+  expect(toast.success).not.toHaveBeenCalled()
+})
+
 it("toasts an error for an invalid config file", async () => {
   openDialog.mockResolvedValue("/tmp/cfg.json")
   ;(readTextFile as jest.Mock).mockResolvedValue("{ not json")
@@ -128,21 +162,62 @@ describe("profiles", () => {
     )
   })
 
-  it("warns and saves nothing when the name is blank", async () => {
+  it("can't be saved without a name", async () => {
+    useAppStore.getState().toggleCli("codex")
     renderIO()
-    await userEvent.click(screen.getByRole("button", { name: /save current as profile/i }))
-    expect(useAppStore.getState().profiles).toHaveLength(0)
-    expect(toast.error).toHaveBeenCalled()
+    // Disabled rather than a click that only toasts "enter a name".
+    expect(screen.getByRole("button", { name: /save current as profile/i })).toBeDisabled()
+    await userEvent.type(screen.getByPlaceholderText(/profile name/i), "Work")
+    expect(screen.getByRole("button", { name: /save current as profile/i })).toBeEnabled()
   })
 
-  it("applies a saved profile back into the plan", async () => {
+  it("won't save an empty selection, and says what to do first", async () => {
+    renderIO()
+    await userEvent.type(screen.getByPlaceholderText(/profile name/i), "Nothing")
+    expect(screen.getByRole("button", { name: /save current as profile/i })).toBeDisabled()
+    expect(screen.getByText(en.profiles.emptySelection)).toBeInTheDocument()
+  })
+
+  it("loads a saved profile back into the selection", async () => {
     const plan: Plan = { ...useAppStore.getState().plan, clis: ["codex"] }
     ;(readTextFile as jest.Mock).mockResolvedValue(
       serializeProfiles({ version: 1, profiles: [{ id: "p1", name: "Work", createdAt: 0, plan }] })
     )
     renderIO()
-    await userEvent.click(await screen.findByRole("button", { name: /^apply$/i }))
+    await userEvent.click(await screen.findByRole("button", { name: en.profiles.apply }))
     expect(useAppStore.getState().plan.clis).toContain("codex")
+    // It installs nothing, and says so — the button used to read "Apply".
+    expect(toast.success).toHaveBeenCalledWith(en.profiles.applied("Work"))
+  })
+
+  it("points the load at the review panel when one is wired up", async () => {
+    const onReview = jest.fn()
+    const plan: Plan = { ...useAppStore.getState().plan, clis: ["codex"] }
+    ;(readTextFile as jest.Mock).mockResolvedValue(
+      serializeProfiles({ version: 1, profiles: [{ id: "p1", name: "Work", createdAt: 0, plan }] })
+    )
+    render(
+      <I18nProvider>
+        <ConfigIO onReview={onReview} />
+      </I18nProvider>
+    )
+    await userEvent.click(await screen.findByRole("button", { name: en.profiles.apply }))
+    const options = (toast.success as jest.Mock).mock.calls.at(-1)![1]
+    expect(options.action.label).toBe(en.tray.review)
+    options.action.onClick()
+    expect(onReview).toHaveBeenCalled()
+  })
+
+  it("re-stamps a profile saved on another OS onto this one", async () => {
+    const plan: Plan = { ...useAppStore.getState().plan, os: "win", clis: ["claude-code"] }
+    ;(readTextFile as jest.Mock).mockResolvedValue(
+      serializeProfiles({ version: 1, profiles: [{ id: "p1", name: "Win", createdAt: 0, plan }] })
+    )
+    useAppStore.setState({ osOverride: "mac" })
+    renderIO()
+    await userEvent.click(await screen.findByRole("button", { name: en.profiles.apply }))
+    expect(useAppStore.getState().plan.os).toBe("mac")
+    expect(useAppStore.getState().plan.clis).toEqual(["claude-code"])
   })
 
   it("reports how many profile requirements are missing from a measured machine", async () => {
@@ -197,8 +272,79 @@ describe("profiles", () => {
     await userEvent.click(screen.getByRole("button", { name: en.profiles.renameCommit }))
     expect(screen.getByText("New")).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole("button", { name: /delete/i }))
+    // Permanent, so it asks once — and nothing happens until it is answered.
+    await userEvent.click(screen.getByRole("button", { name: en.profiles.delete }))
+    expect(await screen.findByText(en.profiles.deleteTitle("New"))).toBeInTheDocument()
+    expect(useAppStore.getState().profiles).toHaveLength(1)
+    await userEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: en.profiles.delete })
+    )
     expect(useAppStore.getState().profiles).toHaveLength(0)
+  })
+
+  it("keeps a profile whose delete was cancelled", async () => {
+    ;(readTextFile as jest.Mock).mockResolvedValue(
+      serializeProfiles({
+        version: 1,
+        profiles: [{ id: "p1", name: "Old", createdAt: 0, plan: useAppStore.getState().plan }],
+      })
+    )
+    renderIO()
+    await screen.findByText("Old")
+    await userEvent.click(screen.getByRole("button", { name: en.profiles.delete }))
+    await userEvent.click(await screen.findByRole("button", { name: en.shell.cancel }))
+    expect(useAppStore.getState().profiles).toHaveLength(1)
+    expect(writeTextFile).not.toHaveBeenCalled()
+  })
+
+  it("says a broken profiles.json is broken, and refuses to write over it", async () => {
+    // Parsing degrades a corrupt file to "no profiles" — right for rendering,
+    // wrong for the next save, which would have replaced it for good.
+    ;(readTextFile as jest.Mock).mockResolvedValue("{ not json")
+    renderIO()
+    expect(
+      await screen.findByText(en.profiles.storeCorrupt("/h/.agentpack/profiles.json"))
+    ).toBeInTheDocument()
+    expect(screen.queryByText(en.profiles.empty)).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /save current as profile/i })).toBeDisabled()
+    expect(writeTextFile).not.toHaveBeenCalled()
+  })
+
+  it("says which file couldn't be read, and reads it again on request", async () => {
+    ;(readTextFile as jest.Mock).mockRejectedValueOnce(new Error("EACCES"))
+    renderIO()
+    expect(
+      await screen.findByText(en.profiles.storeUnreadable("/h/.agentpack/profiles.json", "EACCES"))
+    ).toBeInTheDocument()
+    ;(readTextFile as jest.Mock).mockResolvedValue(
+      serializeProfiles({
+        version: 1,
+        profiles: [{ id: "p1", name: "Back", createdAt: 0, plan: useAppStore.getState().plan }],
+      })
+    )
+    await userEvent.click(screen.getByRole("button", { name: en.profiles.readAgain }))
+    expect(await screen.findByText("Back")).toBeInTheDocument()
+    // Saving is possible again once the file reads.
+    useAppStore.getState().toggleCli("codex")
+    await userEvent.type(screen.getByPlaceholderText(/profile name/i), "Next")
+    expect(screen.getByRole("button", { name: /save current as profile/i })).toBeEnabled()
+  })
+
+  it("does not leave a profile on screen whose write failed", async () => {
+    ;(writeTextFile as jest.Mock).mockRejectedValue(new Error("ENOSPC"))
+    useAppStore.getState().toggleCli("codex")
+    renderIO()
+    await userEvent.type(screen.getByPlaceholderText(/profile name/i), "Work")
+    await userEvent.click(screen.getByRole("button", { name: /save current as profile/i }))
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        en.profiles.writeFailed("/h/.agentpack/profiles.json", "ENOSPC")
+      )
+    )
+    expect(useAppStore.getState().profiles).toHaveLength(0)
+    expect(toast.success).not.toHaveBeenCalled()
+    // The name is kept, so trying again is one click.
+    expect(screen.getByPlaceholderText(/profile name/i)).toHaveValue("Work")
   })
 
   /**
@@ -208,6 +354,7 @@ describe("profiles", () => {
    */
   it("does not claim a profile was saved when there is nowhere to save it", async () => {
     ;(isTauri as jest.Mock).mockReturnValue(false)
+    useAppStore.getState().toggleCli("codex")
     renderIO()
     await userEvent.type(screen.getByPlaceholderText(/profile name/i), "Work")
     await userEvent.click(screen.getByRole("button", { name: /save current as profile/i }))
@@ -227,7 +374,12 @@ describe("profiles", () => {
     renderIO()
     await screen.findByText("Old")
     ;(isTauri as jest.Mock).mockReturnValue(false)
-    await userEvent.click(screen.getByRole("button", { name: /delete/i }))
+    await userEvent.click(screen.getByRole("button", { name: en.profiles.delete }))
+    await userEvent.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: en.profiles.delete,
+      })
+    )
 
     expect(toast.error).toHaveBeenCalledWith(en.shell.notInTauri)
     expect(toast.success).not.toHaveBeenCalledWith(en.profiles.deleted("Old"))
@@ -240,7 +392,7 @@ describe("profiles", () => {
       serializeProfiles({ version: 1, profiles: [{ id: "p1", name: "Work", createdAt: 0, plan }] })
     )
     renderIO()
-    await userEvent.click(await screen.findByRole("button", { name: /^apply$/i }))
+    await userEvent.click(await screen.findByRole("button", { name: en.profiles.apply }))
     ;(isTauri as jest.Mock).mockReturnValue(false)
     expect(toast.success).toHaveBeenCalledWith(en.profiles.applied("Work"))
   })
@@ -285,6 +437,18 @@ describe("config files", () => {
     expect(await screen.findAllByRole("button", { name: en.configFiles.edit })).toHaveLength(
       CONFIG_FILES.length
     )
+  })
+
+  it("says it is still checking rather than calling every file missing", async () => {
+    // Before the probe answers, "missing" + Create would open a file that is
+    // there seeded with `{}` instead of its contents.
+    ;(pathExists as jest.Mock).mockReturnValue(new Promise(() => {}))
+    useAppStore.getState().setPaths(PATHS)
+    renderIO()
+    const pending = await screen.findAllByRole("button", { name: en.configFiles.checking })
+    expect(pending).toHaveLength(CONFIG_FILES.length)
+    for (const button of pending) expect(button).toBeDisabled()
+    expect(screen.queryByText(en.configFiles.missing)).not.toBeInTheDocument()
   })
 
   it("offers Create for a file that does not exist yet", async () => {

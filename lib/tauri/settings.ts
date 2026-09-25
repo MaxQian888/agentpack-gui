@@ -1,7 +1,7 @@
 import { isTauri } from "@/lib/tauri"
 import type { RepoSource } from "@/lib/skills/types"
 import type { Surface } from "@/lib/agentpack/presets"
-import type { ProxyConfig } from "@/lib/agentpack/types"
+import type { OS, ProxyConfig } from "@/lib/agentpack/types"
 import type { ProviderBackend } from "@/lib/agentpack/ccswitch/types"
 import type { SectionKey } from "@/lib/agentpack/workspaces"
 import { DEFAULT_UI_SCALE, type UiScale } from "@/lib/agentpack/appearance"
@@ -105,6 +105,15 @@ export interface AppSettings {
    * workspace so "open on Chat history" is expressible.
    */
   startupSection: SectionKey | null
+  /**
+   * "Build commands for" in Preferences: the OS install commands are generated
+   * for, or null for this machine's own. Remembered because the page says the
+   * desktop app remembers its preferences; restored at startup only when it is
+   * one of the three OS ids. Never exported in a backup — it describes this
+   * install, not a setup to carry elsewhere. Optional because it arrived after
+   * the rest: a settings object written before it simply has no override.
+   */
+  osOverride?: OS | null
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -123,6 +132,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   uiScale: DEFAULT_UI_SCALE,
   reduceMotion: false,
   startupSection: null,
+  osOverride: null,
 }
 
 const STORE_FILE = "settings.json"
@@ -153,6 +163,21 @@ export async function loadSettings(): Promise<AppSettings> {
   } catch {
     return { ...DEFAULT_SETTINGS }
   }
+}
+
+/**
+ * Merge `patch` into the persisted settings and flush them to disk, rejecting
+ * when the store refuses. `saveSettings` swallows that failure so a preference
+ * toggle never throws at the UI; the runner's `appSettings` step uses this one
+ * instead, because a step that reports `done` has to mean the write happened.
+ */
+export async function writeSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+  const next = { ...(await loadSettings()), ...patch }
+  if (!isTauri()) return next
+  const store = await openStore()
+  await store.set(SETTINGS_KEY, next)
+  await store.save()
+  return next
 }
 
 /** Merge `patch` into the persisted settings; returns the resulting settings. */

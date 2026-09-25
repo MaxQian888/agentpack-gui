@@ -150,6 +150,15 @@ export interface SourceError {
   message: string
 }
 
+/**
+ * `SourceError.source` for a scan that failed as a whole: the command itself
+ * rejected, so no source was read at all. Recorded as an error rather than as
+ * an empty result — an empty list says "this machine has no history", which is
+ * exactly the claim a failed read can't make. Not a `HistorySource`, so it is
+ * never looked up in the per-CLI tables.
+ */
+export const WHOLE_SCAN = "*"
+
 export interface ListResult {
   sessions: SessionSummary[]
   errors: SourceError[]

@@ -11,7 +11,7 @@ import {
   type Activity,
 } from "@/components/ui/calendar-heatmap"
 import { useLocale, useT } from "@/lib/i18n/provider"
-import { formatCost } from "@/lib/history/format"
+import { dayKey, formatCost } from "@/lib/history/format"
 import { CHART_SERIES } from "@/lib/history/display"
 import type { PeriodBucket } from "@/lib/history/insights"
 
@@ -38,6 +38,17 @@ function localDate(key: string): Date {
 }
 
 /**
+ * Days each arrow key moves by. Weeks are the columns and weekdays the rows,
+ * so left/right step a week and up/down a day — the way the grid reads.
+ */
+const ARROW_STEP: Record<string, number> = {
+  ArrowLeft: -7,
+  ArrowRight: 7,
+  ArrowUp: -1,
+  ArrowDown: 1,
+}
+
+/**
  * Daily cost as a GitHub-style contribution calendar.
  *
  * The alternative rendering of the same `dailyBuckets` the bar chart draws:
@@ -46,12 +57,18 @@ function localDate(key: string): Date {
  * actually has, which is why this is the default view.
  *
  * Cells are focusable and report into a shared readout line, so the figure a
- * mouse gets on hover is the same one a keyboard gets on focus.
+ * mouse gets on hover is the same one a keyboard gets on focus. The grid is one
+ * tab stop, not one per day: a 90-day range was ninety Tab presses between the
+ * toggle above it and whatever came after. Tab lands on one cell (the most
+ * recent until the user moves), and the arrow keys walk the grid from there.
  */
 export function CostHeatmap({ buckets }: { buckets: PeriodBucket[] }) {
   const t = useT().history
   const { lang } = useLocale()
   const [active, setActive] = useState<string | null>(null)
+  // The one cell in the tab order. Kept only while it is still in the range,
+  // so a range change can't leave the grid with no tab stop at all.
+  const [rovingKey, setRovingKey] = useState<string | null>(null)
 
   const data = useMemo<Activity[]>(
     () => buckets.map((b) => ({ date: b.key, value: b.cost })),
@@ -78,6 +95,35 @@ export function CostHeatmap({ buckets }: { buckets: PeriodBucket[] }) {
   const dayLabel = (key: string) => localDate(key).toLocaleDateString(lang, { dateStyle: "medium" })
   const cellLabel = (key: string, cost: number) =>
     cost > 0 ? t.heatmapCell(dayLabel(key), formatCost(cost)) : t.heatmapCellEmpty(dayLabel(key))
+
+  const tabStop =
+    rovingKey != null && buckets.some((b) => b.key === rovingKey)
+      ? rovingKey
+      : (buckets.at(-1)?.key ?? null)
+
+  const onGridKey = (event: React.KeyboardEvent<SVGRectElement>, key: string) => {
+    const d = localDate(key)
+    let target: string | null = null
+    if (event.key in ARROW_STEP) {
+      target = dayKey(
+        new Date(d.getFullYear(), d.getMonth(), d.getDate() + ARROW_STEP[event.key]).getTime()
+      )
+    } else if (event.key === "Home") {
+      target = buckets[0]?.key ?? null
+    } else if (event.key === "End") {
+      target = buckets.at(-1)?.key ?? null
+    } else {
+      return
+    }
+    // Arrows would otherwise scroll the page (or the grid's own scroller).
+    event.preventDefault()
+    const cell = event.currentTarget
+      .closest("[data-slot=calendar-heatmap-body]")
+      ?.querySelector<SVGRectElement>(`[data-slot=calendar-heatmap-block][data-date="${target}"]`)
+    if (!cell) return // past either end of the range
+    setRovingKey(target)
+    cell.focus()
+  }
 
   const activeBucket = active == null ? null : buckets.find((b) => b.key === active)
   const activeDays = buckets.filter((b) => b.cost > 0).length
@@ -106,12 +152,16 @@ export function CostHeatmap({ buckets }: { buckets: PeriodBucket[] }) {
             highlighted={active === activity.date}
             // The primitive only makes a cell tabbable when it is given a click
             // handler. There is nothing to click here, but a keyboard user still
-            // has to be able to reach the value.
-            tabIndex={0}
+            // has to be able to reach the value — through one stop, roved.
+            tabIndex={activity.date === tabStop ? 0 : -1}
             aria-label={cellLabel(activity.date, activity.value)}
             onCellHover={(a) => setActive(a?.date ?? null)}
-            onFocus={() => setActive(activity.date)}
+            onFocus={() => {
+              setActive(activity.date)
+              setRovingKey(activity.date)
+            }}
             onBlur={() => setActive(null)}
+            onKeyDown={(event) => onGridKey(event, activity.date)}
           />
         )}
       </CalendarHeatmapBody>

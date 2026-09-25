@@ -3,6 +3,7 @@ import type { McpSpec } from "./merge/mcp"
 
 const stdio = (command: string): McpSpec => ({ transport: "stdio", command, args: [], env: {} })
 const http = (url: string): McpSpec => ({ transport: "http", url, headers: {} })
+const sse = (url: string): McpSpec => ({ transport: "sse", url, headers: {} })
 
 function probes(over: Partial<HealthProbes> = {}): HealthProbes {
   return {
@@ -28,9 +29,17 @@ describe("httpTarget", () => {
     expect(httpTarget(http("http://localhost:8080/sse"))).toEqual({ host: "localhost", port: 8080 })
   })
 
-  it("returns null for a bad url or a non-http spec", () => {
+  it("returns null for a bad url or a stdio spec", () => {
     expect(httpTarget(http("not a url"))).toBeNull()
     expect(httpTarget(stdio("npx"))).toBeNull()
+  })
+
+  it("resolves an sse spec like any other remote one", () => {
+    // Returning null here failed every SSE server with "Invalid server URL".
+    expect(httpTarget(sse("https://mcp.example.com/sse"))).toEqual({
+      host: "mcp.example.com",
+      port: 443,
+    })
   })
 })
 
@@ -77,6 +86,16 @@ describe("checkSpecHealth", () => {
       status: "fail",
       reason: "http-unreachable",
     })
+  })
+
+  it("probes a reachable sse endpoint instead of calling its url invalid", async () => {
+    const p = probes({ probeHost: jest.fn(async () => ({ reachable: true, latencyMs: 8 })) })
+    expect(await checkSpecHealth(sse("http://localhost:8080/sse"), p)).toEqual({
+      status: "ok",
+      reason: "http-ok",
+      latencyMs: 8,
+    })
+    expect(p.probeHost).toHaveBeenCalledWith("localhost", 8080)
   })
 
   it("fails a malformed url without probing", async () => {

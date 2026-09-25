@@ -82,40 +82,19 @@ export function TrashCard({
 
   return (
     <Card className="gap-4 p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium">{c.title}</span>
-            {entries.length > 0 ? (
-              <Badge variant="secondary" className="font-normal">
-                {c.holding(formatBytes(held), entries.length)}
-              </Badge>
-            ) : null}
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">{c.subtitle}</p>
+      {/* Stacked, not opposed: this card lives in the ~340px aside, where a
+          title, a size badge and "Empty everything" on one line wrapped the
+          title in two and cut the size off mid-word. */}
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="text-sm font-medium">{c.title}</span>
+          {entries.length > 0 ? (
+            <Badge variant="secondary" className="font-normal">
+              {c.holding(formatBytes(held), entries.length)}
+            </Badge>
+          ) : null}
         </div>
-        {status === "ready" && entries.length > 0 ? (
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="outline" size="sm" className="shrink-0 gap-1.5" disabled={busy}>
-                <Trash2 className="size-3.5" />
-                {c.purgeAll}
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>{c.purgeConfirmTitle}</AlertDialogTitle>
-                <AlertDialogDescription>
-                  {c.purgeConfirmBody(formatBytes(held))}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
-                <AlertDialogAction onClick={() => void purge()}>{c.purgeAll}</AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        ) : null}
+        <p className="mt-1 text-xs text-muted-foreground">{c.subtitle}</p>
       </div>
 
       {status === "loading" ? (
@@ -136,19 +115,16 @@ export function TrashCard({
       ) : (
         <div className="flex flex-col gap-2">
           {entries.map((entry) => (
-            <div
-              key={entry.id}
-              className="flex items-center justify-between gap-3 rounded-md border p-3"
-            >
+            <div key={entry.id} className="flex flex-col gap-2 rounded-md border p-3">
               <div className="min-w-0">
-                <div className="truncate text-sm">
+                <div className="text-sm [overflow-wrap:anywhere]">
                   {entry.targetIds.map((id) => targetLabel(t, id)).join(" · ")}
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {c.batch(entry.items, formatBytes(entry.bytes))}
                 </p>
               </div>
-              <div className="flex shrink-0 gap-1.5">
+              <div className="flex flex-wrap gap-1.5">
                 <Button
                   variant="outline"
                   size="sm"
@@ -159,19 +135,57 @@ export function TrashCard({
                   <RotateCcw className="size-3.5" />
                   {c.restore}
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => void purge(entry.id)}
-                >
-                  {c.purge}
-                </Button>
+                {/* One batch is still the only copy of what it holds, so it gets
+                    the same confirmation as emptying everything — sized to it. */}
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="ghost" size="sm" disabled={busy}>
+                      {c.purge}
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>{c.purgeBatchConfirmTitle}</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        {c.purgeConfirmBody(formatBytes(entry.bytes))}
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
+                      <AlertDialogAction onClick={() => void purge(entry.id)}>
+                        {c.purge}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
             </div>
           ))}
         </div>
       )}
+      {/* The rare, irreversible action goes last, under what it would destroy. */}
+      {status === "ready" && entries.length > 0 ? (
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="outline" size="sm" className="self-start gap-1.5" disabled={busy}>
+              <Trash2 className="size-3.5" />
+              {c.purgeAll}
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{c.purgeConfirmTitle}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {c.purgeConfirmBody(formatBytes(held))}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
+              <AlertDialogAction onClick={() => void purge()}>{c.purgeAll}</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
     </Card>
   )
 }

@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { Check, Plus } from "lucide-react"
-import { toast } from "sonner"
 import {
   Table,
   TableBody,
@@ -29,7 +28,7 @@ import { readTextFile } from "@/lib/tauri/commands"
 import { useIncremental } from "@/hooks/use-incremental"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { findMcp } from "@/lib/agentpack/registry"
-import { claudeMcpRoute, mcpAddSpecStep, mcpRemoveStep } from "@/lib/agentpack/plan"
+import { mcpAddSpecStep, mcpRemoveStep, type ClaudeMcpRoute } from "@/lib/agentpack/plan"
 import {
   parseClaudeMcpEntry,
   parseCodexMcpEntry,
@@ -44,10 +43,13 @@ import { CapabilityEmpty } from "../capability-list"
 import { SearchField } from "../filter-bar"
 import { installedRows, MCP_TARGETS, TargetDot, type McpRow } from "./helpers"
 
-/** Read each installed server's on-disk spec once (first present target wins). */
-function useOnDiskSpecs(scan: DashboardScan | null): Record<string, McpSpec> {
+/**
+ * Read each installed server's on-disk spec once (first present target wins).
+ * `null` until the read lands, so a cell can say "reading" rather than "can't".
+ */
+function useOnDiskSpecs(scan: DashboardScan | null): Record<string, McpSpec> | null {
   const paths = useAppStore((s) => s.paths)
-  const [map, setMap] = useState<Record<string, McpSpec>>({})
+  const [map, setMap] = useState<Record<string, McpSpec> | null>(null)
   useEffect(() => {
     if (!paths || !isTauri()) return
     let cancelled = false
@@ -81,12 +83,20 @@ function useOnDiskSpecs(scan: DashboardScan | null): Record<string, McpSpec> {
  * clicking an empty cell copies the server there (catalog spec for known servers,
  * the on-disk spec for custom ones); clicking a filled cell removes it (confirmed).
  */
-export function MatrixTab({ scan, refresh }: { scan: DashboardScan | null; refresh: () => void }) {
+export function MatrixTab({
+  scan,
+  refresh,
+  route,
+}: {
+  scan: DashboardScan | null
+  refresh: () => void
+  /** How Claude's config is reached (`claudeMcpRoute`), decided by the section. */
+  route: ClaudeMcpRoute
+}) {
   const t = useT()
   const m = t.mcp
   const paths = useAppStore((s) => s.paths)
   const plan = useAppStore((s) => s.plan)
-  const detections = useAppStore((s) => s.detections)
   const { run } = useRunnerCtx()
   const onDisk = useOnDiskSpecs(scan)
 
@@ -94,10 +104,6 @@ export function MatrixTab({ scan, refresh }: { scan: DashboardScan | null; refre
   const [confirm, setConfirm] = useState<{ row: McpRow; target: McpTarget } | null>(null)
   const isMobile = useIsMobile()
 
-  const route = claudeMcpRoute(
-    !!detections["claude-code"]?.installed,
-    !!detections["claude-desktop"]?.installed
-  )
   const claudeDisabled = route === "none"
   const titleOf = (id: string) => t.catalog.mcp[id]?.title ?? id
 
@@ -115,16 +121,31 @@ export function MatrixTab({ scan, refresh }: { scan: DashboardScan | null; refre
   /** The spec to write when copying a server to a new target. */
   const specForCopy = (row: McpRow): McpSpec | undefined => {
     const known = findMcp(row.id)
-    return known ? resolveCatalogSpec(known, plan.mcpKeys[row.id]) : onDisk[row.id]
+    return known ? resolveCatalogSpec(known, plan.mcpKeys[row.id]) : onDisk?.[row.id]
   }
 
   const addTo = async (row: McpRow, target: McpTarget) => {
     if (!paths) return
     const spec = specForCopy(row)
     if (!spec) return
+    // Success is the review panel's "All set"; a toast would say it twice.
     await run(mcpAddSpecStep(row.id, spec, [target], paths, t, route))
-    toast.success(m.copyDone(m.targets[target]))
     refresh()
+  }
+
+  /**
+   * Why a cell can't be clicked, or `undefined` when it can. Every disabled
+   * cell used to carry the same "Copy to …" title as an enabled one, so the
+   * grid never said what was stopping it.
+   */
+  const blockedReason = (row: McpRow, tg: McpTarget): string | undefined => {
+    // No route to Claude's config: neither an add nor a remove has a way to it.
+    if (tg === "claude" && claudeDisabled) return m.claudeMissing
+    if (row.presence[tg]) return undefined
+    const spec = specForCopy(row)
+    if (!spec) return onDisk === null ? m.copyReading : m.copyNoSpec
+    if (tg === "codex" && spec.transport === "sse") return m.capCodexNoSse
+    return undefined
   }
 
   const removeFrom = async (row: McpRow, target: McpTarget) => {
@@ -136,12 +157,13 @@ export function MatrixTab({ scan, refresh }: { scan: DashboardScan | null; refre
   /** One server×target toggle, shared by the desktop table and the mobile cards. */
   const cellButton = (row: McpRow, tg: McpTarget) => {
     const on = row.presence[tg]
-    const disabled = (tg === "claude" && claudeDisabled && !on) || (!on && !specForCopy(row))
+    const reason = blockedReason(row, tg)
+    const disabled = !!reason
     return (
       <button
         type="button"
         disabled={disabled}
-        title={on ? m.removeFromTarget(m.targets[tg]) : m.copyToTarget(m.targets[tg])}
+        title={reason ?? (on ? m.removeFromTarget(m.targets[tg]) : m.copyToTarget(m.targets[tg]))}
         onClick={() => (on ? setConfirm({ row, target: tg }) : void addTo(row, tg))}
         className={cn(
           "flex size-7 items-center justify-center rounded-md border",

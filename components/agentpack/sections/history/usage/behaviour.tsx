@@ -21,14 +21,16 @@ import {
 } from "@/components/ui/chart"
 import { useT } from "@/lib/i18n/provider"
 import { cn } from "@/lib/utils"
-import { formatCost, formatNumber, formatTokens } from "@/lib/history/format"
+import { formatCost, formatCostFigure, formatNumber, formatTokens } from "@/lib/history/format"
 import { CHART_SERIES, modelColor } from "@/lib/history/display"
 import { bucketLabel } from "@/lib/history/range"
 import { isMcpTool, OTHER_MODELS } from "@/lib/history/series"
-import { UNKNOWN_MODEL } from "@/lib/history/stats"
+import { sessionCostFigure, UNKNOWN_MODEL } from "@/lib/history/stats"
 import { costBucketLabel } from "@/lib/history/insights"
-import { Stat, PanelTitle, EmptyPanel } from "./stat"
+import { Stat, PanelTitle, EmptyPanel, SeriesPending } from "./stat"
+import { DrillButton } from "./drill-button"
 import type { UsageView } from "./view"
+import type { UsageDrilldown } from "./index"
 
 const HIST_COLOR = CHART_SERIES.histogram
 
@@ -37,7 +39,7 @@ export function BehaviourPanel({
   onDrilldown,
 }: {
   view: UsageView
-  onDrilldown: (focus: { query?: string }) => void
+  onDrilldown: (focus: UsageDrilldown) => void
 }) {
   const t = useT().history
   const {
@@ -50,6 +52,7 @@ export function BehaviourPanel({
     modelMix,
     granularity,
     seriesReady,
+    seriesFailed,
   } = view
 
   const totalCalls = toolSplit.builtinCalls + toolSplit.mcpCalls
@@ -68,36 +71,52 @@ export function BehaviourPanel({
     label: costBucketLabel(b),
     sessions: b.sessions,
   }))
+  // All four tiles are series-backed. Before it arrives they have measured
+  // nothing, so they say `—` and why, not "0 calls, 0%, $0.00".
+  const pending = seriesFailed ? t.seriesUnavailable : t.seriesLoading
 
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label={t.statToolCalls} value={formatNumber(totalCalls)} />
-        <Stat
-          label={t.statMcpShare}
-          value={totalCalls > 0 ? `${Math.round((toolSplit.mcpCalls / totalCalls) * 100)}%` : "—"}
-          sub={t.mcpVsBuiltin(
-            formatNumber(toolSplit.mcpCalls),
-            formatNumber(toolSplit.builtinCalls)
-          )}
-        />
-        <Stat
-          label={t.statCacheHit}
-          value={`${Math.round(cache.hitRate * 100)}%`}
-          sub={t.cacheBreakdown(formatTokens(cache.read), formatTokens(cache.fresh))}
-        />
-        <Stat
-          label={t.statCacheSaved}
-          value={formatCost(cache.savedUsd)}
-          sub={t.cacheSavedNote}
-          tone="up-good"
-        />
+        {seriesReady ? (
+          <>
+            <Stat label={t.statToolCalls} value={formatNumber(totalCalls)} />
+            <Stat
+              label={t.statMcpShare}
+              value={
+                totalCalls > 0 ? `${Math.round((toolSplit.mcpCalls / totalCalls) * 100)}%` : "—"
+              }
+              sub={t.mcpVsBuiltin(
+                formatNumber(toolSplit.mcpCalls),
+                formatNumber(toolSplit.builtinCalls)
+              )}
+            />
+            <Stat
+              label={t.statCacheHit}
+              value={`${Math.round(cache.hitRate * 100)}%`}
+              sub={t.cacheBreakdown(formatTokens(cache.read), formatTokens(cache.fresh))}
+            />
+            <Stat
+              label={t.statCacheSaved}
+              value={formatCost(cache.savedUsd)}
+              sub={t.cacheSavedNote}
+              tone="up-good"
+            />
+          </>
+        ) : (
+          <>
+            <Stat label={t.statToolCalls} value="—" sub={pending} />
+            <Stat label={t.statMcpShare} value="—" sub={pending} />
+            <Stat label={t.statCacheHit} value="—" sub={pending} />
+            <Stat label={t.statCacheSaved} value="—" sub={pending} />
+          </>
+        )}
       </div>
 
       <Card className="gap-3 p-4">
         <PanelTitle title={t.toolsTitle} hint={t.toolsHint} />
         {!seriesReady ? (
-          <EmptyPanel message={t.seriesLoading} />
+          <SeriesPending failed={seriesFailed} />
         ) : topTools.length === 0 ? (
           <EmptyPanel message={t.toolsEmpty} />
         ) : (
@@ -146,7 +165,7 @@ export function BehaviourPanel({
       <Card className="gap-3 p-4">
         <PanelTitle title={t.modelMixTitle} hint={t.modelMixHint} />
         {!seriesReady ? (
-          <EmptyPanel message={t.seriesLoading} />
+          <SeriesPending failed={seriesFailed} />
         ) : modelMix.buckets.length === 0 ? (
           <EmptyPanel message={t.modelMixEmpty} />
         ) : (
@@ -171,6 +190,12 @@ export function BehaviourPanel({
                   stroke={modelColor(m)}
                   fill={modelColor(m)}
                   fillOpacity={0.35}
+                  // One bucket is one point, which an area can't draw.
+                  dot={
+                    modelMix.buckets.length < 2
+                      ? { r: 4, fill: modelColor(m), strokeWidth: 0 }
+                      : false
+                  }
                 />
               ))}
               <ChartLegend content={<ChartLegendContent />} />
@@ -242,7 +267,7 @@ export function BehaviourPanel({
       </div>
 
       <Card className="gap-3 p-4">
-        <PanelTitle title={t.topSessionsTitle} hint={t.clickToDrill} />
+        <PanelTitle title={t.topSessionsTitle} hint={t.clickToOpen} />
         <Table>
           <TableHeader>
             <TableRow>
@@ -257,11 +282,15 @@ export function BehaviourPanel({
               <TableRow
                 key={`${r.session.source}:${r.session.path}`}
                 className="cursor-pointer"
-                onClick={() => onDrilldown({ query: r.session.title })}
+                // By identity: a sub-agent run ranks here on its own cost but is
+                // nested out of the session list, so a title search found nothing.
+                onClick={() =>
+                  onDrilldown({ session: { source: r.session.source, path: r.session.path } })
+                }
               >
                 <TableCell className="max-w-[22rem] truncate font-medium">
                   <span className="flex items-center gap-2">
-                    <span className="truncate">{r.session.title}</span>
+                    <DrillButton>{r.session.title}</DrillButton>
                     {r.outlier ? (
                       <Badge variant="outline" className="shrink-0 text-[10px] text-amber-600">
                         {t.outlierBadge}
@@ -281,7 +310,7 @@ export function BehaviourPanel({
                       {t.unpricedBadge}
                     </Badge>
                   ) : (
-                    formatCost(r.cost)
+                    formatCostFigure(sessionCostFigure(r.session))
                   )}
                 </TableCell>
               </TableRow>

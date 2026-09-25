@@ -7,7 +7,9 @@ import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { isTauri } from "@/lib/tauri"
 import { useT } from "@/lib/i18n/provider"
+import { useAppStore } from "@/store/app-store"
 import { MCP_SERVERS } from "@/lib/agentpack/registry"
+import { claudeMcpRoute } from "@/lib/agentpack/plan"
 import { HelpTip } from "../../help-tip"
 import type { DashboardScan } from "../dashboard"
 import { installedRows } from "./helpers"
@@ -37,15 +39,31 @@ export interface McpSectionProps {
   scan: DashboardScan | null
   loading: boolean
   refresh: () => void
+  /**
+   * Arrive on the catalog filtered to servers that need a key — the completion
+   * screen's "add your key" to-do. The installed list has no key field, so
+   * landing there left the to-do's instruction with nothing to click.
+   */
+  landing?: "needsKey" | null
 }
 
-export function McpSection({ scan, loading, refresh }: McpSectionProps) {
+export function McpSection({ scan, loading, refresh, landing = null }: McpSectionProps) {
   const t = useT()
   const m = t.mcp
   const tauri = isTauri()
   /* One view at a time in the primary column, chosen from the aside — not the
      inventory plus whatever else you opened underneath it. */
-  const [view, setView] = useState<"installed" | "catalog" | "matrix" | "add">("installed")
+  const [view, setView] = useState<"installed" | "catalog" | "matrix" | "add">(
+    landing === "needsKey" ? "catalog" : "installed"
+  )
+  /* How Claude's config is reached, decided once for every view below. Four
+     views each writing to Claude, and only two of them asked: the other two
+     shelled out to a `claude` binary a desktop-only machine doesn't have, and
+     offered Claude on a machine with neither. Two booleans rather than the
+     whole detections map, so a re-detect doesn't re-render the section. */
+  const cliInstalled = useAppStore((s) => !!s.detections["claude-code"]?.installed)
+  const desktopInstalled = useAppStore((s) => !!s.detections["claude-desktop"]?.installed)
+  const route = claudeMcpRoute(cliInstalled, desktopInstalled)
 
   const total = MCP_SERVERS.length
   const rows = useMemo(() => installedRows(scan), [scan])
@@ -76,16 +94,28 @@ export function McpSection({ scan, loading, refresh }: McpSectionProps) {
       title={viewTitle}
       choice={view}
     >
-      {scan === null && loading ? (
+      {/* No scan yet is "not looked", not "nothing configured" — the first scan
+          at startup runs without setting `loading`, so this can't wait on it. */}
+      {scan === null ? (
         loadingPanel
       ) : view === "installed" ? (
-        <InstalledTab scan={scan} refresh={refresh} onBrowseCatalog={() => setView("catalog")} />
+        <InstalledTab
+          scan={scan}
+          refresh={refresh}
+          route={route}
+          onBrowseCatalog={() => setView("catalog")}
+        />
       ) : view === "catalog" ? (
-        <CatalogTab scan={scan} refresh={refresh} />
+        <CatalogTab
+          scan={scan}
+          refresh={refresh}
+          route={route}
+          initialFilter={landing === "needsKey" ? "needsKey" : "all"}
+        />
       ) : view === "matrix" ? (
-        <MatrixTab scan={scan} refresh={refresh} />
+        <MatrixTab scan={scan} refresh={refresh} route={route} />
       ) : (
-        <AddCustomTab scan={scan} refresh={refresh} />
+        <AddCustomTab scan={scan} refresh={refresh} route={route} />
       )}
     </SectionView>
   )

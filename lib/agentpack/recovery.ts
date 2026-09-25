@@ -32,8 +32,30 @@
  *    export or a disaster-recovery bundle would be built from.
  */
 
+import { accountsPath } from "./ccswitch/accounts"
+import { profilesPath } from "./profile"
+import type { Paths } from "./types"
+
 /** Schema version of a folded timeline, for anything that persists one. */
 export const RECOVERY_VERSION = 1
+
+/**
+ * How long after a backup a newer live file still counts as the write that
+ * backup was taken *for*.
+ *
+ * Every mechanism here backs up first and writes second: `mergeFile` leaves the
+ * `.agentpack.bak` and writes the live config milliseconds later, a provider
+ * write snapshots the store and then writes it, and a run stages its snapshot
+ * step ahead of the steps it protects. Compared naively, every one of those
+ * points reads "would overwrite newer work" the moment it exists — and a warning
+ * that is always on is one people learn to click through, which is the one thing
+ * this verdict can't afford.
+ *
+ * A minute covers a whole run of those steps with room to spare. The trade is
+ * deliberate and narrow: a hand edit landing inside that minute is judged safe,
+ * and past it the live file is judged exactly as before.
+ */
+export const OWN_WRITE_GRACE_MS = 60_000
 
 /**
  * Which mechanism took the backup. It decides which restore command the id goes
@@ -132,7 +154,10 @@ export interface QuarantineBatchLike {
   targetIds: readonly string[]
 }
 
-/** A config file whose `.agentpack.bak` sibling exists, from the dashboard scan. */
+/**
+ * A config file whose `.agentpack.bak` sibling exists — one of
+ * `configBackupCandidates` that the caller's stat found.
+ */
 export interface ConfigBackupLike {
   /** The live config's path — what `fileRestoreStep` takes. */
   path: string
@@ -140,7 +165,7 @@ export interface ConfigBackupLike {
   target: string
   /**
    * When the `.agentpack.bak` sibling was last written, if the caller stat'ed
-   * it. The scan only reports that a backup exists, and an undated point can
+   * it. Knowing only that a backup exists leaves an undated point, which can
    * never be judged safe — so a caller that can afford one extra stat should.
    */
   takenAt?: number
@@ -203,6 +228,9 @@ export function buildTimeline(input: RecoveryInput): RecoveryTimeline {
       paths: [backup.path],
       targets: [backup.target],
       items: 1,
+      // A dozen configs can each carry one of these; the file is the only thing
+      // that tells two rows apart.
+      name: backup.path,
     })
   }
 
@@ -257,8 +285,8 @@ export function sortPoints(points: readonly RecoveryPoint[]): RecoveryPoint[] {
 }
 
 /**
- * - `safe` — every path this would write over is older than the backup, or
- *   isn't there at all.
+ * - `safe` — every path this would write over is older than the backup (or was
+ *   last written inside `OWN_WRITE_GRACE_MS` after it), or isn't there at all.
  * - `stale` — at least one is NEWER. Restoring discards whatever produced that.
  * - `unknown` — we could not tell. Never rendered as safe.
  */
@@ -306,9 +334,47 @@ export function restoreSafety(point: RecoveryPoint, live: readonly LiveFileStat[
       sawUnknown = true
       continue
     }
-    if (stat.modifiedMs > point.takenAt) return "stale"
+    // The grace is for the write this backup was taken ahead of, not a licence
+    // to ignore later ones — see `OWN_WRITE_GRACE_MS`.
+    if (stat.modifiedMs > point.takenAt + OWN_WRITE_GRACE_MS) return "stale"
   }
   return sawUnknown ? "unknown" : "safe"
+}
+
+/**
+ * Every live file this app edits through `mergeFile` or the config editor, each
+ * of which may carry an `.agentpack.bak` sibling.
+ *
+ * Candidates, not points: the dashboard scan only reports a backup for two of
+ * these, and a list built from it hid every other way back the app had left
+ * behind. A caller stats `${path}${BACKUP_SUFFIX}` for each on every read and
+ * hands the ones that exist to `buildTimeline`. Empty paths (the shell profile on
+ * Windows) and duplicates are dropped rather than statted.
+ */
+export function configBackupCandidates(paths: Paths): ConfigBackupLike[] {
+  const all: ConfigBackupLike[] = [
+    { path: paths.claudeSettings, target: "claude" },
+    { path: paths.claudeConfig, target: "claude" },
+    { path: paths.codexConfig, target: "codex" },
+    { path: paths.opencodeConfig, target: "opencode" },
+    { path: paths.piSettings, target: "pi" },
+    { path: paths.ccConnectConfig, target: "cc-connect" },
+    { path: paths.ccSwitchSettings, target: "cc-switch" },
+    { path: paths.shellProfile, target: "shell" },
+    { path: paths.mcpDisabledStore, target: "agentpack" },
+    ...(paths.home
+      ? [
+          { path: profilesPath(paths.home), target: "agentpack" },
+          { path: accountsPath(paths.home), target: "agentpack" },
+        ]
+      : []),
+  ]
+  const seen = new Set<string>()
+  return all.filter(({ path }) => {
+    if (!path || seen.has(path)) return false
+    seen.add(path)
+    return true
+  })
 }
 
 /**

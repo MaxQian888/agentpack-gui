@@ -1,17 +1,14 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { toast } from "sonner"
-import type { ListResult, ScanProgress, UsageSeriesResult } from "@/lib/history/types"
 import type { SkillsScanResult } from "@/lib/skills/types"
 import { isTauri } from "@/lib/tauri"
 import {
   detectCli,
   detectRuntime,
   getPaths,
-  historyListSessions,
-  historyUsageSeries,
   latestVersion,
   npmOwns,
   pkgManagerOwns,
@@ -23,8 +20,13 @@ import { loadActivity } from "@/lib/tauri/activity"
 import { loadSettings, saveSettings, type OnboardingProgress } from "@/lib/tauri/settings"
 import { registerSummonShortcut } from "@/lib/tauri/shortcut"
 import { notify } from "@/lib/tauri/system"
-import { buildSteps, type InstalledState } from "@/lib/agentpack/plan"
-import { effectiveProxy } from "@/lib/agentpack/network/proxy"
+import {
+  buildSteps,
+  countSelections,
+  unappliedNetwork,
+  type InstalledState,
+} from "@/lib/agentpack/plan"
+import { effectiveProxy, isProxyActive } from "@/lib/agentpack/network/proxy"
 import { scanNetwork } from "@/lib/agentpack/network/scan"
 import { hostArch } from "@/lib/tauri/system"
 import {
@@ -39,6 +41,7 @@ import {
   hasTabs,
   SECTION_KEYS,
   workspaceOf,
+  type NavigateIntent,
   type SectionKey,
   type WorkspaceKey,
 } from "@/lib/agentpack/workspaces"
@@ -53,6 +56,7 @@ import { CommandPalette, useCommandShortcut } from "./command-palette"
 import { DashboardSection, scanEnvironment, type DashboardScan } from "./sections/dashboard"
 import { RecoverySection } from "./sections/recovery"
 import { HistorySection } from "./sections/history"
+import { useHistoryScans } from "./sections/history/use-history-scans"
 import { PresetsSection } from "./sections/presets"
 import { EnvironmentSection } from "./sections/environment"
 import { ClisSection } from "./sections/clis"
@@ -99,7 +103,17 @@ function ShellBody() {
   const setPanelOpen = useAppStore((s) => s.setPanelOpen)
   const tourActive = useAppStore((s) => s.tourActive)
   const setTourActive = useAppStore((s) => s.setTourActive)
-  const { run, onAfterRun, pendingCount } = useRunnerCtx()
+  const { run, onAfterRun, running, reports } = useRunnerCtx()
+  const panelOpen = useAppStore((s) => s.panelOpen)
+  // Only while the panel that shows it is closed — two progress readouts for one
+  // run is one too many.
+  const backgroundRun =
+    running && !panelOpen
+      ? {
+          done: reports.filter((r) => r.status !== "pending" && r.status !== "running").length,
+          total: reports.length,
+        }
+      : null
   // Where we are: a task domain, and which of its destinations is showing. Both
   // are held here because the header names them, the rail highlights one and the
   // tab strip the other — a single `section` would leave the rail guessing.
@@ -112,17 +126,56 @@ function ShellBody() {
   // yanking someone off a page they already opened is worse than ignoring the
   // preference for that launch.
   const navigatedRef = useRef(false)
+  // Which History tab the next visit opens on. Only the overview's "Open usage
+  // dashboard" asks for Usage; every other way in lands on Sessions, as before.
+  const [historyTab, setHistoryTab] = useState<"sessions" | "usage">("sessions")
+  // Likewise a hand-off that needs a particular view of its destination (see
+  // `NavigateIntent`); every other way in lands on the section's default view.
+  const [landing, setLanding] = useState<NavigateIntent | null>(null)
   const navigate = useCallback((next: WorkspaceKey, to: SectionKey) => {
     navigatedRef.current = true
+    setHistoryTab("sessions")
+    setLanding(null)
     setWorkspace(next)
     setSection(to)
   }, [])
 
   /** Navigate by destination — for the tour, the dashboard's links and the palette. */
   const goToSection = useCallback((to: SectionKey) => navigate(workspaceOf(to), to), [navigate])
+  const goWithIntent = useCallback(
+    (to: SectionKey, intent?: NavigateIntent) => {
+      goToSection(to)
+      if (intent) setLanding(intent)
+    },
+    [goToSection]
+  )
 
-  const openCommand = useCallback(() => setCommandOpen(true), [])
+  // Not during the tour: the palette would open *under* its z-100 overlay and
+  // take focus into a dialog nobody can see, and Esc would then close both.
+  const openCommand = useCallback(() => {
+    if (useAppStore.getState().tourActive) return
+    setCommandOpen(true)
+  }, [])
   useCommandShortcut(openCommand)
+
+  // Arriving somewhere starts at its top. `<main>` is one scroll container shared
+  // by every destination, so without this a tab opened from halfway down a long
+  // page (Skills, the usage dashboard) landed halfway down the new one too —
+  // below its heading and status band, which read as the click having missed.
+  // The entrance replays on the same beat; it is layout-effect so neither the
+  // old offset nor the un-faded content is ever painted.
+  const mainRef = useRef<HTMLElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    if (mainRef.current) mainRef.current.scrollTop = 0
+    const el = contentRef.current
+    if (!el) return
+    // Restart the CSS animation without remounting the section — a key would
+    // throw away state the more-token views share across their tabs.
+    el.style.animation = "none"
+    void el.offsetWidth
+    el.style.animation = ""
+  }, [section])
   // Interface scale + the reduced-motion override, applied to <html>. Reads the
   // store, so it covers both the restore at startup and a live change made in
   // Settings → Preferences.
@@ -154,28 +207,32 @@ function ShellBody() {
   // `<main>` and whatever section the user is scrolling with it. The one surface
   // that needs them folds them itself; see `ExecutionPanel`.
 
-  // Chat-history scan is lazy (it reads every JSONL + the OpenCode DB, too slow
-  // to run on startup) and cached here so returning to History reuses it.
-  const [historyResult, setHistoryResult] = useState<ListResult | null>(null)
-  const [historyLoading, setHistoryLoading] = useState(false)
-  // Rebuilding the caches means re-parsing gigabytes of JSONL, so the scan
-  // streams how far it has got rather than leaving a bare spinner up.
-  const [historyProgress, setHistoryProgress] = useState<ScanProgress | null>(null)
+  // Chat-history scans — the summaries at startup, the per-message series on
+  // first ask — cached here so returning to History reuses them. The hook owns
+  // the ordering rules (a Rescan's result is never overwritten by an older one).
+  const {
+    result: historyResult,
+    loading: historyLoading,
+    progress: historyProgress,
+    series: seriesResult,
+    seriesLoading,
+    rescan: loadHistory,
+    loadSeries,
+  } = useHistoryScans()
   const piController = usePiManagementController(
     historyResult?.sessions
       .filter((session) => session.source === "pi" && session.cwd)
       .map((session) => session.cwd) ?? []
   )
 
-  // The per-message usage series is one to two orders of magnitude larger than
-  // the summaries, so it loads only when the usage dashboard actually asks.
-  const [seriesResult, setSeriesResult] = useState<UsageSeriesResult | null>(null)
-  const [seriesLoading, setSeriesLoading] = useState(false)
-
   // Installed-skills scan (reads every SKILL.md across the four global roots):
   // lazy on first Skills visit, cached here, invalidated after every real run.
   const [skillsResult, setSkillsResult] = useState<SkillsScanResult | null>(null)
   const [skillsLoading, setSkillsLoading] = useState(false)
+  // A scan that failed is not an empty machine. The result still settles (so
+  // the lazy effect below doesn't retry in a loop), but the section is told
+  // why, and offers the retry, instead of reading "No skills found".
+  const [skillsError, setSkillsError] = useState<string | null>(null)
 
   // Measure the network once at startup, in the background. Doing it here rather
   // than in the Network section is the whole point: a user who never opens that
@@ -199,42 +256,12 @@ function ShellBody() {
     setSkillsLoading(true)
     try {
       setSkillsResult(await skillsScan())
-    } catch {
+      setSkillsError(null)
+    } catch (e) {
       setSkillsResult({ skills: [], errors: [] })
+      setSkillsError(e instanceof Error ? e.message : String(e))
     } finally {
       setSkillsLoading(false)
-    }
-  }, [])
-
-  const loadHistory = useCallback(async () => {
-    if (!isTauri()) return
-    // No blanket transcript-cache clear on Rescan: transcript keys fold in each
-    // session's `updatedAt`, so a session that grew on disk misses its stale
-    // entry and refetches, while unchanged sessions stay warm.
-    setHistoryLoading(true)
-    // Drop the series too: it was built from the same files, so keeping it
-    // would leave the dashboard showing pre-rescan numbers.
-    setSeriesResult(null)
-    try {
-      setHistoryResult(await historyListSessions(setHistoryProgress))
-    } catch {
-      setHistoryResult({ sessions: [], errors: [] })
-    } finally {
-      setHistoryLoading(false)
-      setHistoryProgress(null)
-    }
-  }, [])
-
-  const loadSeries = useCallback(async () => {
-    if (!isTauri()) return
-    setSeriesLoading(true)
-    try {
-      setSeriesResult(await historyUsageSeries(setHistoryProgress))
-    } catch {
-      setSeriesResult({ sessions: [], errors: [] })
-    } finally {
-      setSeriesLoading(false)
-      setHistoryProgress(null)
     }
   }, [])
 
@@ -381,6 +408,11 @@ function ShellBody() {
       const settings = await loadSettings()
       if (cancelled) return
       setSettings(settings)
+      // "Build commands for" is a preference like any other: restored here, or
+      // the page that says it is remembered forgets it on every launch.
+      if (settings.osOverride && ["win", "mac", "linux"].includes(settings.osOverride)) {
+        useAppStore.getState().setOsOverride(settings.osOverride)
+      }
       // Land on the screen the user chose in Preferences. Checked against the
       // live key list, not trusted: a section removed in a later release would
       // otherwise leave the shell rendering nothing at all.
@@ -427,7 +459,14 @@ function ShellBody() {
       if (!settings.autoCheckUpdates) return
       try {
         const info = await checkForUpdate()
-        if (cancelled || !info || info.version === settings.skippedVersion) return
+        if (cancelled) return
+        // The startup check is a check: About reads "Last checked" from here
+        // too, and used to say "never" on a machine that checks every launch.
+        const at = Date.now()
+        setSettings({ lastCheckAt: at })
+        void saveSettings({ lastCheckAt: at })
+        if (!info) setUpdateState("upToDate")
+        if (!info || info.version === settings.skippedVersion) return
         setUpdateInfo(info)
         setUpdateState("available")
         void notify(t.about.notifyTitle, t.about.notifyBody(info.version))
@@ -450,31 +489,9 @@ function ShellBody() {
     goToSection,
   ])
 
-  // Scan chat history once at startup — no longer gated on opening the History
-  // section, because the dashboard's spend card is now the first thing rendered
-  // and it reads these summaries. Cold that costs ~17s (every JSONL plus the
-  // OpenCode DB), so progress streams and the card holds a skeleton until it
-  // lands; warm it returns from cache in ~200ms. `historyResult === null` IS the
-  // loading signal — set state only in the async continuation (like the
-  // dashboard scan above) so no setState runs synchronously inside the effect.
-  // `loadHistory` (with its loading flag) still backs the manual Rescan button.
-  useEffect(() => {
-    if (!isTauri() || historyResult !== null) return
-    let cancelled = false
-    historyListSessions(setHistoryProgress)
-      .then((r) => {
-        if (!cancelled) setHistoryResult(r)
-      })
-      .catch(() => {
-        if (!cancelled) setHistoryResult({ sessions: [], errors: [] })
-      })
-      .finally(() => {
-        if (!cancelled) setHistoryProgress(null)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [historyResult])
+  // The chat-history startup scan is `useHistoryScans`' own effect: it runs once
+  // at startup, not on opening History, because the dashboard's spend card reads
+  // those summaries. `historyResult === null` is its loading signal.
 
   // Lazily scan installed skills the first time the user opens the Skills
   // section (same shape as the history effect above).
@@ -485,8 +502,10 @@ function ShellBody() {
       .then((r) => {
         if (!cancelled) setSkillsResult(r)
       })
-      .catch(() => {
-        if (!cancelled) setSkillsResult({ skills: [], errors: [] })
+      .catch((e: unknown) => {
+        if (cancelled) return
+        setSkillsResult({ skills: [], errors: [] })
+        setSkillsError(e instanceof Error ? e.message : String(e))
       })
     return () => {
       cancelled = true
@@ -512,6 +531,20 @@ function ShellBody() {
     [onAfterRun, refreshDetections, rescanDashboard, loadSkills]
   )
 
+  // Between the click and the panel opening there can be a full detection pass,
+  // a scan and an arch probe, with nothing on screen — and a second click in
+  // that gap staged the plan twice. The flag drives the tray button's label; the
+  // ref is the guard, since the callback is stable and can't read fresh state.
+  const [preparing, setPreparing] = useState(false)
+  const preparingRef = useRef(false)
+  // Mirrors `running` for the stable callback below: a review asked for while
+  // a run executes is refused at once, not after a detection pass and a scan
+  // that end in the same refusal.
+  const runningRef = useRef(running)
+  useEffect(() => {
+    runningRef.current = running
+  }, [running])
+
   // Turn the current selection into a reviewable change set, built against a
   // FRESH scan of the on-disk state so already-installed items are skipped
   // instead of re-installed. Plan and paths are read via getState() at call
@@ -525,9 +558,21 @@ function ShellBody() {
       void run([], { plan: useAppStore.getState().plan })
       return
     }
+    if (preparingRef.current) return
+    if (runningRef.current) {
+      toast.message(t.shell.runBusy)
+      setPanelOpen(true)
+      return
+    }
+    preparingRef.current = true
+    setPreparing(true)
+    const ready = () => {
+      preparingRef.current = false
+      setPreparing(false)
+    }
     void (async () => {
       if (Object.keys(useAppStore.getState().detections).length === 0) {
-        await refreshDetections()
+        await refreshDetections().catch(() => undefined)
       }
       const scan = await scanEnvironment(
         paths,
@@ -544,11 +589,15 @@ function ShellBody() {
       // here is the loud, confusing case.
       const effective = scan && !scan.degraded ? scan : lastGoodScan.current
       if (!effective) {
+        ready()
         toast.error(t.shell.scanFailed)
         return
       }
-      const { plan, detections, latestVersions, cliManagers, settings } = useAppStore.getState()
+      const { plan, detections, latestVersions, cliManagers, settings, appliedNpmRegistry } =
+        useAppStore.getState()
       const arch = await hostArch()
+        .catch(() => undefined)
+        .finally(ready)
       const installedTools = new Set(
         Object.entries(detections)
           .filter(([, d]) => d.installed)
@@ -564,12 +613,25 @@ function ShellBody() {
         claudeSkills: [...effective.claudeSkills.known, ...effective.claudeSkills.custom],
         codexSkills: [...effective.codexSkills.known, ...effective.codexSkills.custom],
       }
+      // A proxy or mirror that is already on the machine isn't written again:
+      // it isn't something the user picked this time, and the review would list
+      // four config writes they never asked for.
+      const toRun = {
+        ...plan,
+        network: unappliedNetwork(plan.network, {
+          proxy: settings.proxy,
+          npmRegistry: appliedNpmRegistry,
+        }),
+      }
       const reports = await run(
-        buildSteps(plan, paths, t, installedTools, installedState, {
+        buildSteps(toRun, paths, t, installedTools, installedState, {
           arch,
           ghMirrorPrefix: settings.ghMirrorPrefix,
         }),
-        { plan, activity: { title: t.tray.review, source: "quick-config" } }
+        {
+          plan,
+          activity: { title: t.tray.runTitle(countSelections(toRun)), source: "quick-config" },
+        }
       )
       // Clear the selection only once it has actually landed. An error or a
       // skipped step means part of the plan is still outstanding, and wiping it
@@ -578,13 +640,45 @@ function ShellBody() {
       // way — those are the machine's setup, not this batch's selection.
       const settled = reports.length > 0
       const incomplete = reports.some((r) => r.status === "error" || r.status === "skipped")
-      if (settled && !incomplete) useAppStore.getState().resetPlan()
+      if (settled && !incomplete) {
+        const store = useAppStore.getState()
+        store.markNetworkApplied(toRun.network)
+        // A proxy applied from here is as applied as one applied from the
+        // Network page: persisted, and used for agentpack's own traffic.
+        const proxy = toRun.network.proxy
+        if (proxy && isProxyActive(proxy)) {
+          store.setSettings({ proxy })
+          void saveSettings({ proxy })
+          const eff = effectiveProxy(proxy)
+          void setProcessProxy({
+            http: eff.http,
+            https: eff.https,
+            all: eff.all,
+            noProxy: eff.noProxy,
+          })
+        }
+        store.resetPlan()
+      }
     })()
-  }, [run, refreshDetections, rememberScan, t])
+  }, [run, refreshDetections, rememberScan, setPanelOpen, t])
+
+  // A wizard that was finished (Install or "Maybe later") starts over when it
+  // is opened again from Settings. It reads its progress only as initial state,
+  // so without a new key it reopened on its last screen — "Review and install" —
+  // as if the first three questions had been answered this time.
+  const wizardFinished = useRef(false)
+  const [wizardRun, setWizardRun] = useState(0)
+  useLayoutEffect(() => {
+    if (!onboardingOpen || !wizardFinished.current) return
+    wizardFinished.current = false
+    setRestoredProgress(null)
+    setWizardRun((n) => n + 1)
+  }, [onboardingOpen])
 
   // First-run wizard: the newcomer said "not now" (or just installed), so record
   // that they've been greeted and stop resuming. About can reopen it on demand.
   const dismissOnboarding = useCallback(() => {
+    wizardFinished.current = true
     setOnboardingOpen(false)
     onboardingProgress.current = null
     setSettings({ onboarded: true, onboardingProgress: null })
@@ -621,16 +715,25 @@ function ShellBody() {
 
   // Wizard "Take a tour": suspend rather than dismiss — taking the tour is a
   // detour, not a decision to skip setup, so the wizard is still waiting after.
+  const tourFromWizard = useRef(false)
   const startTourFromOnboarding = useCallback(() => {
     suspendOnboarding()
+    tourFromWizard.current = true
     setTourActive(true)
   }, [suspendOnboarding, setTourActive])
 
-  // The tour drives section navigation itself; when it ends, return home.
+  // The tour drives section navigation itself; when it ends, return home — and
+  // to the wizard, if that is where it was started from. "Still waiting after"
+  // was the promise; ending on the dashboard left the user to find the wizard
+  // again in Settings.
   const endTour = useCallback(() => {
     setTourActive(false)
     navigate("overview", "dashboard")
-  }, [setTourActive, navigate])
+    if (tourFromWizard.current) {
+      tourFromWizard.current = false
+      setOnboardingOpen(true)
+    }
+  }, [setTourActive, navigate, setOnboardingOpen])
 
   const renderSection = () => {
     switch (section) {
@@ -641,12 +744,21 @@ function ShellBody() {
             scanning={dashboardScanning}
             rescan={rescanMachine}
             onNavigate={goToSection}
-            history={{ data: historyResult, progress: historyProgress }}
+            history={{
+              data: historyResult,
+              progress: historyProgress,
+              retry: () => void loadHistory(),
+            }}
+            onOpenUsage={() => {
+              navigate("usage", "history")
+              setHistoryTab("usage")
+            }}
           />
         )
       case "history":
         return (
           <HistorySection
+            initialTab={historyTab}
             result={historyResult}
             loading={historyLoading}
             progress={historyProgress}
@@ -663,7 +775,12 @@ function ShellBody() {
       case "my-usage":
       case "my-models":
       case "my-security":
-        return <PersonalMoreTokenSection view={section} />
+        return (
+          <PersonalMoreTokenSection
+            view={section}
+            onOpenSecurity={() => goToSection("my-security")}
+          />
+        )
       case "management-overview":
       case "accounts":
       case "quota":
@@ -689,13 +806,20 @@ function ShellBody() {
         return (
           <SkillsSection
             scan={skillsResult}
+            error={skillsError}
+            landing={landing?.skills ?? null}
             loading={skillsLoading}
             refresh={() => void loadSkills()}
           />
         )
       case "mcp":
         return (
-          <McpSection scan={dashboardScan} loading={dashboardScanning} refresh={rescanDashboard} />
+          <McpSection
+            scan={dashboardScan}
+            loading={dashboardScanning}
+            refresh={rescanDashboard}
+            landing={landing?.mcp ?? null}
+          />
         )
       case "pi":
         return <PiSection controller={piController} onOpenClis={() => goToSection("clis")} />
@@ -710,9 +834,15 @@ function ShellBody() {
       case "preferences":
         return <PreferencesSection />
       case "config":
-        return <ConfigIO scan={dashboardScan} onOpenMcp={() => goToSection("mcp")} />
+        return (
+          <ConfigIO
+            scan={dashboardScan}
+            onOpenMcp={() => goToSection("mcp")}
+            onReview={reviewChanges}
+          />
+        )
       case "recovery":
-        return <RecoverySection scan={dashboardScan} onNavigate={goToSection} />
+        return <RecoverySection scan={dashboardScan} onNavigate={goWithIntent} />
       case "about":
         return <AboutSection />
     }
@@ -733,11 +863,14 @@ function ShellBody() {
           onNavigate={navigate}
           onOpenCommand={openCommand}
           onShowUpdates={() => goToSection("about")}
+          run={backgroundRun}
+          onShowRun={() => setPanelOpen(true)}
         />
         {hasTabs(workspace) ? (
           <WorkspaceTabs workspace={workspace} active={section} onSelect={setSection} />
         ) : null}
         <main
+          ref={mainRef}
           id={`panel-${section}`}
           role={hasTabs(workspace) ? "tabpanel" : undefined}
           aria-labelledby={hasTabs(workspace) ? `tab-${section}` : undefined}
@@ -752,23 +885,31 @@ function ShellBody() {
           // this repo already carries it.
           className="min-h-0 flex-1 overflow-auto p-4 sm:p-6"
         >
-          {renderSection()}
+          <div ref={contentRef} className="hm-enter">
+            {renderSection()}
+          </div>
         </main>
         {/* Docked to the workspace column rather than the window, so it never
             covers the rail — the tray is a summary of what you picked, not a
             modal you have to dismiss to navigate. */}
-        <ChangeTray onReview={reviewChanges} />
+        <ChangeTray
+          onReview={reviewChanges}
+          preparing={preparing}
+          running={running}
+          onShowRun={() => setPanelOpen(true)}
+        />
       </div>
-      <ExecutionPanel scan={dashboardScan} onNavigate={goToSection} />
+      <ExecutionPanel scan={dashboardScan} onNavigate={goWithIntent} />
       <CommandPalette
         open={commandOpen}
         onOpenChange={setCommandOpen}
-        pendingChanges={pendingCount}
+        running={running}
         handlers={{
           navigate: (a) => navigate(a.workspace, a.section),
           quickConfig: () => navigate("install", "presets"),
           rescan: () => void rescanMachine(),
-          review: () => setPanelOpen(true),
+          review: reviewChanges,
+          showRun: () => setPanelOpen(true),
           onboarding: () => setOnboardingOpen(true),
           updates: () => goToSection("about"),
         }}
@@ -777,7 +918,7 @@ function ShellBody() {
           which reads `progress` only as its initial state. It can flip at most
           once, during startup, before the user has touched anything. */}
       <OnboardingDialog
-        key={restoredProgress ? "resumed" : "fresh"}
+        key={`${restoredProgress ? "resumed" : "fresh"}-${wizardRun}`}
         open={onboardingOpen}
         progress={restoredProgress}
         onProgress={(p) => {

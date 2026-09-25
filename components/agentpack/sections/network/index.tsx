@@ -111,6 +111,7 @@ export function NetworkSection() {
         <DiscoveryCard
           probe={probe}
           scanning={scanning}
+          failed={!!scanError}
           onScan={() => void rescan()}
           onUse={adopt}
         />

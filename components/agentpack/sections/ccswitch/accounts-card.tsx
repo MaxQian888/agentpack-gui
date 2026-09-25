@@ -32,7 +32,11 @@ import {
 } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
 import { useT } from "@/lib/i18n/provider"
-import { missingPicks, type AccountProfile } from "@/lib/agentpack/ccswitch/accounts"
+import {
+  missingPicks,
+  resolveAccount,
+  type AccountProfile,
+} from "@/lib/agentpack/ccswitch/accounts"
 import { PROVIDER_APPS, type Provider, type ProviderApp } from "@/lib/agentpack/ccswitch/types"
 
 const UNCHANGED = "__unchanged__"
@@ -56,7 +60,8 @@ export function AccountsCard({
   editingBlocked: boolean
   onNewAccountChange: (value: string) => void
   onSave: () => void
-  onUpdate: (profile: AccountProfile) => void
+  /** Resolves true once the profiles file was actually written. */
+  onUpdate: (profile: AccountProfile) => Promise<boolean>
   onApply: (profile: AccountProfile) => void
   onDelete: (profile: AccountProfile) => void
 }) {
@@ -80,10 +85,16 @@ export function AccountsCard({
     })
   }
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (!editing || !editName.trim()) return
-    onUpdate({ ...editing, name: editName.trim(), picks: editPicks })
+    const profile = editing
     setEditing(null)
+    // The review panel is where this is confirmed. Walking away from it, or a
+    // write that failed, must not throw the edit away: the dialog comes back
+    // with the name and picks still in it.
+    if (!(await onUpdate({ ...profile, name: editName.trim(), picks: editPicks }))) {
+      setEditing(profile)
+    }
   }
 
   return (
@@ -96,13 +107,34 @@ export function AccountsCard({
             <TableBody>
               {accounts.map((account) => {
                 const stale = missingPicks(account, providers ?? [])
+                // Apply is a switch to the rows this profile names. When none
+                // of them needs switching there is nothing to review, and the
+                // button used to do nothing at all when pressed — so it says
+                // which of the two reasons it is instead.
+                const nothingToSwitch = resolveAccount(account, providers ?? []).length === 0
+                const active =
+                  nothingToSwitch && stale.length === 0 && Object.keys(account.picks).length > 0
+                const applyNote = !nothingToSwitch
+                  ? undefined
+                  : active
+                    ? c.accountActive
+                    : c.accountNothingToApply
+                const noteId = `account-apply-${account.id}`
                 return (
-                  <TableRow key={account.id}>
+                  <TableRow key={account.id} data-active={active ? "true" : "false"}>
                     <TableCell className="font-medium">
-                      {account.name}
+                      <span>{account.name}</span>
                       {stale.length ? (
                         <span className="ml-2 text-xs text-muted-foreground">
                           {c.accountStale(stale.join(", "))}
+                        </span>
+                      ) : null}
+                      {applyNote && providers ? (
+                        <span
+                          id={noteId}
+                          className="block text-xs font-normal text-muted-foreground"
+                        >
+                          {applyNote}
                         </span>
                       ) : null}
                     </TableCell>
@@ -119,7 +151,8 @@ export function AccountsCard({
                         <Button
                           variant="ghost"
                           size="sm"
-                          disabled={editingBlocked}
+                          disabled={editingBlocked || (!!providers && nothingToSwitch)}
+                          aria-describedby={applyNote && providers ? noteId : undefined}
                           onClick={() => onApply(account)}
                         >
                           {c.accountApply}
@@ -166,16 +199,32 @@ export function AccountsCard({
       </div>
       {/* Naming the current selection is what creates a profile, so the field
           sits under the list it adds to rather than in a panel of its own. */}
-      <div className="mt-3 flex min-w-0 gap-2 border-t pt-3">
+      <div className="mt-3 flex min-w-0 flex-wrap gap-2 border-t pt-3">
         <Input
           aria-label={c.accountNewLabel}
           placeholder={c.accountNewLabel}
           value={newAccount}
           onChange={(event) => onNewAccountChange(event.target.value)}
+          className="min-w-0 flex-1 basis-40"
         />
-        <Button variant="outline" onClick={onSave} disabled={!newAccount.trim() || !hasCurrent}>
+        <Button
+          variant="outline"
+          onClick={onSave}
+          disabled={!newAccount.trim() || !hasCurrent}
+          aria-describedby={hasCurrent ? undefined : "account-save-needs-current"}
+        >
           {c.accountSave}
         </Button>
+        {/* A profile is a snapshot of which row each app points at, so with
+            nothing current there is nothing to save — said, not just greyed. */}
+        {hasCurrent || !providers ? null : (
+          <p
+            id="account-save-needs-current"
+            className="basis-full text-xs leading-relaxed text-muted-foreground"
+          >
+            {c.accountSaveNeedsCurrent}
+          </p>
+        )}
       </div>
 
       <Dialog open={editing !== null} onOpenChange={(open) => !open && setEditing(null)}>
@@ -219,7 +268,7 @@ export function AccountsCard({
             ))}
           </FieldGroup>
           <DialogFooter>
-            <Button onClick={saveEdit} disabled={!editName.trim()}>
+            <Button onClick={() => void saveEdit()} disabled={!editName.trim()}>
               {c.accountUpdate}
             </Button>
           </DialogFooter>

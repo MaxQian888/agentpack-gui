@@ -32,6 +32,33 @@ it("shows detected version from the store and toggles selection", async () => {
   expect(useAppStore.getState().plan.clis.length).toBeGreaterThan(0)
 })
 
+it("unticking an agent re-points the staged skills and MCP servers away from it", async () => {
+  // Same rule as Quick setup's checklist: otherwise the plan still writes into
+  // ~/.codex after the user dropped Codex here.
+  useAppStore.getState().applyPreset("recommended")
+  const { container } = renderClis()
+  expect(useAppStore.getState().plan.mcps.every((m) => m.targets.includes("codex"))).toBe(true)
+
+  await userEvent.click(container.querySelector("#cli-codex")!)
+
+  const { mcps } = useAppStore.getState().plan
+  expect(mcps.length).toBeGreaterThan(0)
+  for (const m of mcps) expect(m.targets).toEqual(["claude"])
+})
+
+it("leaves a per-server target alone when the tick changes no agent", async () => {
+  // A companion tool moves no target, so re-syncing would only overwrite a
+  // choice made in the MCP section.
+  useAppStore.getState().applyPreset("minimal")
+  useAppStore.getState().setMcp("memory", ["codex"])
+  const { container } = renderClis()
+
+  await userEvent.click(container.querySelector("#cli-gemini-cli")!)
+
+  expect(useAppStore.getState().plan.clis).toContain("gemini-cli")
+  expect(useAppStore.getState().plan.mcps).toEqual([{ id: "memory", targets: ["codex"] }])
+})
+
 it("offers an upgrade action when a newer version is available", () => {
   useAppStore.setState({
     detections: { "claude-code": { installed: true, version: "1.0.0" } },

@@ -3,9 +3,11 @@ import {
   dayKey,
   emptyUsage,
   formatCost,
+  formatCostFigure,
   formatDuration,
   formatNumber,
   formatTokens,
+  parseUsd,
 } from "./format"
 import type { TokenUsage } from "./types"
 
@@ -75,6 +77,48 @@ describe("formatCost", () => {
     expect(formatCost(0)).toBe("$0.00")
     expect(formatCost(0.0123)).toBe("$0.0123")
     expect(formatCost(3.4)).toBe("$3.40")
+  })
+})
+
+describe("formatCostFigure", () => {
+  const figure = (over: Partial<Parameters<typeof formatCostFigure>[0]>) =>
+    formatCostFigure({ value: 3.4, estimated: false, unpriced: 0, transcripts: 2, ...over })
+
+  it("writes a recorded figure plainly", () => {
+    expect(figure({})).toBe("$3.40")
+  })
+  it("marks an estimate with ~", () => {
+    expect(figure({ estimated: true })).toBe("~$3.40")
+  })
+  it("marks a figure that left unpriced transcripts out as a lower bound", () => {
+    expect(figure({ estimated: true, unpriced: 1 })).toBe("≥$3.40")
+  })
+  it("says — rather than $0.00 when nothing in it could be priced", () => {
+    expect(figure({ value: 0, unpriced: 2 })).toBe("—")
+  })
+  it("keeps a real zero over an empty set", () => {
+    expect(figure({ value: 0, transcripts: 0 })).toBe("$0.00")
+  })
+})
+
+describe("parseUsd", () => {
+  it("reads plain numbers", () => {
+    expect(parseUsd("200")).toBe(200)
+    expect(parseUsd(" 19.5 ")).toBe(19.5)
+  })
+  it("accepts a dollar sign and thousands separators", () => {
+    expect(parseUsd("$200")).toBe(200)
+    expect(parseUsd("1,000")).toBe(1000)
+    expect(parseUsd("$1,250.50")).toBe(1250.5)
+  })
+  it("treats an empty field as not set", () => {
+    expect(parseUsd("")).toBeNull()
+    expect(parseUsd("   ")).toBeNull()
+  })
+  it("refuses what isn't a non-negative number instead of saving nothing", () => {
+    expect(parseUsd("abc")).toBeUndefined()
+    expect(parseUsd("-5")).toBeUndefined()
+    expect(parseUsd("$")).toBeUndefined()
   })
 })
 

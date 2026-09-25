@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 import { isTauri } from "@/lib/tauri"
 import { writeBinaryFile, writeTextFile } from "@/lib/tauri/commands"
 import { pickSavePath } from "@/lib/tauri/dialog"
@@ -57,7 +58,22 @@ export function ShareDialog({
   const t = useT().history
   const r = t.report
   const [copied, setCopied] = useState(false)
-  const [status, setStatus] = useState<string | null>(null)
+  // The outcome of the last save or copy, in words. `ok: false` is an error and
+  // reads as one; a failed write must never look like the success line.
+  const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null)
+
+  // A fresh dialog starts with no outcome. The dialog stays mounted between
+  // openings, so without this the last session's "Saved to …" greeted the next
+  // one, describing a file this opening never wrote. Adjusted during render
+  // rather than in an effect, so the stale line is never painted first.
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) {
+      setStatus(null)
+      setCopied(false)
+    }
+  }
 
   const labels: ReportLabels = useMemo(
     () => ({
@@ -85,37 +101,58 @@ export function ShareDialog({
   const markdown = useMemo(() => reportToMarkdown(data, labels), [data, labels])
 
   const copyMarkdown = async () => {
-    if (!(await copyText(markdown))) return
+    if (!(await copyText(markdown))) {
+      setStatus({ ok: false, text: r.copyFailed })
+      return
+    }
+    setStatus(null)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const savePng = async () => {
-    if (!isTauri()) return
-    const bytes = await svgToPng(svg, CARD_W, CARD_H)
-    if (!bytes) {
-      setStatus(r.renderFailed)
-      return
+  // Both saves share one failure path: a rejected dialog or write says what the
+  // system said, instead of an unhandled rejection and a dialog that looks idle.
+  const save = async (write: () => Promise<string | null>) => {
+    setStatus(null)
+    try {
+      const path = await write()
+      if (path) setStatus({ ok: true, text: r.saved(path) })
+    } catch (error) {
+      setStatus({
+        ok: false,
+        text: r.saveFailed(error instanceof Error ? error.message : String(error)),
+      })
     }
-    const path = await pickSavePath({
-      defaultPath: reportFilename(data, "png"),
-      filters: [{ name: "PNG", extensions: ["png"] }],
-    })
-    if (!path) return
-    await writeBinaryFile(path, bytes)
-    setStatus(r.saved(path))
   }
 
-  const saveSvg = async () => {
-    if (!isTauri()) return
-    const path = await pickSavePath({
-      defaultPath: reportFilename(data, "svg"),
-      filters: [{ name: "SVG", extensions: ["svg"] }],
+  const savePng = () =>
+    save(async () => {
+      if (!isTauri()) return null
+      const bytes = await svgToPng(svg, CARD_W, CARD_H)
+      if (!bytes) {
+        setStatus({ ok: false, text: r.renderFailed })
+        return null
+      }
+      const path = await pickSavePath({
+        defaultPath: reportFilename(data, "png"),
+        filters: [{ name: "PNG", extensions: ["png"] }],
+      })
+      if (!path) return null
+      await writeBinaryFile(path, bytes)
+      return path
     })
-    if (!path) return
-    await writeTextFile(path, svg)
-    setStatus(r.saved(path))
-  }
+
+  const saveSvg = () =>
+    save(async () => {
+      if (!isTauri()) return null
+      const path = await pickSavePath({
+        defaultPath: reportFilename(data, "svg"),
+        filters: [{ name: "SVG", extensions: ["svg"] }],
+      })
+      if (!path) return null
+      await writeTextFile(path, svg)
+      return path
+    })
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -135,7 +172,17 @@ export function ShareDialog({
           className="w-full rounded-lg border"
         />
 
-        {status ? <p className="text-xs break-all text-muted-foreground">{status}</p> : null}
+        {status ? (
+          <p
+            role={status.ok ? "status" : "alert"}
+            className={cn(
+              "text-xs break-all",
+              status.ok ? "text-muted-foreground" : "text-destructive"
+            )}
+          >
+            {status.text}
+          </p>
+        ) : null}
 
         <DialogFooter className="sm:justify-start">
           <Button variant="outline" size="sm" className="gap-2" onClick={() => void copyMarkdown()}>

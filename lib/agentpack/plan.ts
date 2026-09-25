@@ -79,6 +79,7 @@ import type {
   CommandStep,
   McpServer,
   McpTarget,
+  NetworkConfig,
   OS,
   Paths,
   Plan,
@@ -529,6 +530,49 @@ export function buildSteps(
 }
 
 /**
+ * The network config already on the machine — what a network selection is
+ * measured against. `proxy` is the one the user applied (persisted in settings,
+ * restored at startup); `npmRegistry` is the mirror the last applied run wrote.
+ */
+export interface AppliedNetwork {
+  proxy?: ProxyConfig | null
+  npmRegistry?: string
+}
+
+function sameProxy(a: ProxyConfig | null | undefined, b: ProxyConfig | null | undefined): boolean {
+  const on = isProxyActive(a ?? undefined)
+  if (on !== isProxyActive(b ?? undefined)) return false
+  if (!on) return true
+  const key = (c: ProxyConfig) => JSON.stringify([effectiveProxy(c), [...(c.targets ?? [])].sort()])
+  return key(a!) === key(b!)
+}
+
+/**
+ * The part of a plan's network config that isn't already applied.
+ *
+ * The network config rides in the plan because a run needs it first (step 0),
+ * and it survives clearing the selection because it is the user's environment,
+ * not this batch's pick. Counted as-is, that made an applied proxy a permanent
+ * "1 selected": the tray came back on every launch, Clear couldn't remove it, and
+ * each review wrote the same proxy to the same four places again. What the tray
+ * counts and what a run writes is the difference against what is already there.
+ */
+export function unappliedNetwork(
+  network: NetworkConfig,
+  applied: AppliedNetwork | undefined
+): NetworkConfig {
+  if (!applied) return network
+  return {
+    ...network,
+    npmRegistry:
+      network.npmRegistry && network.npmRegistry !== applied.npmRegistry
+        ? network.npmRegistry
+        : undefined,
+    proxy: sameProxy(network.proxy, applied.proxy) ? undefined : network.proxy,
+  }
+}
+
+/**
  * Whether a plan carries anything worth running — a CLI, a skill, an MCP server,
  * or network config. Network counts: an npm mirror or a proxy on its own is a
  * complete, runnable plan, so neither the runner's "your plan is empty" toast
@@ -542,9 +586,9 @@ export function buildSteps(
  * would be lying about what they chose. The network config counts as one
  * regardless of how many surfaces it writes to, for the same reason.
  */
-export function countSelections(plan: Plan | undefined): number {
+export function countSelections(plan: Plan | undefined, applied?: AppliedNetwork): number {
   if (!plan) return 0
-  const net = plan.network
+  const net = unappliedNetwork(plan.network, applied)
   const network = (net.npmRegistry ? 1 : 0) + (isProxyActive(net.proxy) ? 1 : 0)
   return plan.clis.length + plan.skills.length + plan.mcps.length + network
 }
@@ -1157,17 +1201,24 @@ export function mcpAddSpecStep(
  * NO in-place edit — `claude mcp add` rejects a duplicate id — so it removes
  * then re-adds; the remove is `verifyOnly` so that adding Claude as a *new*
  * target mid-edit (nothing to remove) is tolerated rather than failing.
+ *
+ * `route` matters here as much as for an add: on a desktop-only machine there
+ * is no `claude` binary, and the file merge already overwrites in place, so the
+ * edit is exactly the add. With no route there is nothing to write for Claude.
  */
 export function mcpEditStep(
   id: string,
   spec: McpSpec,
   targets: McpTarget[],
   paths: Paths,
-  messages: Messages = en
+  messages: Messages = en,
+  route: ClaudeMcpRoute = "cli"
 ): StepDescriptor[] {
   const title = mcpTitle(id, messages)
   const steps: StepDescriptor[] = []
-  if (targets.includes("claude")) {
+  if (targets.includes("claude") && route === "file") {
+    steps.push(...mcpAddSpecSteps(id, spec, ["claude"], paths, messages, route))
+  } else if (targets.includes("claude") && route === "cli") {
     steps.push({
       kind: "command",
       id: `mcp-edit-remove-claude-${id}`,

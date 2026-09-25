@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   AlertTriangle,
   CheckCircle2,
@@ -60,7 +60,8 @@ import type { CustomFormValue } from "./custom-form"
 
 type Specs = Partial<Record<McpTarget, McpSpec | undefined>>
 type HealthState = Partial<Record<McpTarget, McpHealth | "testing">>
-type DeepState = Partial<Record<McpTarget, McpProbeResult | "testing">>
+/** `failed` is the handshake command itself rejecting, not a server's answer. */
+type DeepState = Partial<Record<McpTarget, McpProbeResult | "testing" | { failed: string }>>
 
 /** A collapsible section built on native <details> — no state, fully testable. */
 function Foldable({
@@ -77,7 +78,7 @@ function Foldable({
       <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-1.5 text-xs font-medium text-muted-foreground">
         {icon}
         <span className="min-w-0 truncate">{label}</span>
-        <ChevronRight className="ml-auto size-3 shrink-0 transition-transform group-open:rotate-90" />
+        <ChevronRight className="ml-auto size-3 shrink-0 transition-transform duration-(--hm-dur-fast) ease-(--hm-ease-out) group-open:rotate-90" />
       </summary>
       <div className="border-t px-3 py-2">{children}</div>
     </details>
@@ -118,9 +119,24 @@ export function McpDetailDialog({
   const t = useT()
   const m = t.mcp
   const paths = useAppStore((s) => s.paths)
-  const [specs, setSpecs] = useState<Specs>({})
+  // `null` until this server's config files have been read. Stamped per id: the
+  // previous server's fields (and its Test button, pointed at its spec) used to
+  // stay on screen under the next server's title until the read landed.
+  const [specs, setSpecs] = useState<Specs | null>(null)
   const [health, setHealth] = useState<HealthState>({})
   const [deep, setDeep] = useState<DeepState>({})
+  const [shownId, setShownId] = useState(id)
+  if (id !== shownId) {
+    setShownId(id)
+    setSpecs(null)
+    setHealth({})
+    setDeep({})
+  }
+  // A test still running when the id changes must not report onto the new one.
+  const liveId = useRef(id)
+  useEffect(() => {
+    liveId.current = id
+  }, [id])
 
   useEffect(() => {
     if (!open || !id || !paths || !isTauri()) return
@@ -132,9 +148,6 @@ export function McpDetailDialog({
         readTextFile(paths.opencodeConfig).catch(() => ""),
       ])
       if (cancelled) return
-      // Reset any prior server's health results as the new specs land.
-      setHealth({})
-      setDeep({})
       setSpecs({
         claude: parseClaudeMcpEntry(claudeJson, id),
         codex: parseCodexMcpEntry(codexToml, id),
@@ -153,7 +166,7 @@ export function McpDetailDialog({
   const presence = presenceOf(scan, id)
   const presentTargets = MCP_TARGETS.filter((tg) => presence[tg])
 
-  const editSpec = presentTargets.map((tg) => specs[tg]).find(Boolean) ?? undefined
+  const editSpec = presentTargets.map((tg) => specs?.[tg]).find(Boolean) ?? undefined
   const canEdit = !known && !!onEdit && !!editSpec && presentTargets.length > 0
 
   const fieldLabels = {
@@ -165,14 +178,14 @@ export function McpDetailDialog({
   }
 
   const testTarget = async (tg: McpTarget) => {
-    const spec = specs[tg]
+    const spec = specs?.[tg]
     if (!spec) return
     setHealth((h) => ({ ...h, [tg]: "testing" }))
     const res = await checkSpecHealth(spec, { commandOnPath, probeHost })
-    setHealth((h) => ({ ...h, [tg]: res }))
+    if (liveId.current === id) setHealth((h) => ({ ...h, [tg]: res }))
   }
   const testAll = () => {
-    for (const tg of presentTargets) if (specs[tg]) void testTarget(tg)
+    for (const tg of presentTargets) if (specs?.[tg]) void testTarget(tg)
   }
 
   /**
@@ -180,17 +193,24 @@ export function McpDetailDialog({
    * stdio actually spawns the server — so it's an explicit, per-target action.
    */
   const deepTest = async (tg: McpTarget) => {
-    const spec = specs[tg]
+    const spec = specs?.[tg]
     if (!spec) return
     setDeep((d) => ({ ...d, [tg]: "testing" }))
-    const res =
-      spec.transport === "stdio"
-        ? await mcpProbeStdio(spec.command, spec.args, spec.env)
-        : await mcpProbeRemote(spec.url, spec.headers, spec.transport)
-    setDeep((d) => ({ ...d, [tg]: res }))
+    let res: McpProbeResult | { failed: string }
+    try {
+      res =
+        spec.transport === "stdio"
+          ? await mcpProbeStdio(spec.command, spec.args, spec.env)
+          : await mcpProbeRemote(spec.url, spec.headers, spec.transport)
+    } catch (e) {
+      // The probe command itself rejected. Without this the row spun forever.
+      res = { failed: String(e) }
+    }
+    if (liveId.current === id) setDeep((d) => ({ ...d, [tg]: res }))
   }
 
-  const probeText = (res: McpProbeResult): string => {
+  const probeText = (res: McpProbeResult | { failed: string }): string => {
+    if ("failed" in res) return m.probeFailed(res.failed)
     switch (res.reason) {
       case "ok": {
         const info = [res.serverName, res.protocolVersion].filter(Boolean).join(" · ")
@@ -286,8 +306,12 @@ export function McpDetailDialog({
           ) : (
             <div className="flex flex-col gap-3">
               {presentTargets.map((tg) => {
-                const spec = specs[tg]
+                const spec = specs?.[tg]
                 const h = health[tg]
+                const d = deep[tg]
+                // Why Test / Deep test can't run: still reading, or the entry on
+                // disk didn't parse into anything to test.
+                const blocked = spec ? undefined : specs ? m.detailUnreadable : m.detailReading
                 return (
                   <div key={tg} className="rounded-lg border p-3">
                     <div className="mb-2 flex items-center gap-2 text-sm font-medium">
@@ -320,6 +344,7 @@ export function McpDetailDialog({
                           size="sm"
                           className="h-6 gap-1 px-2 text-xs"
                           disabled={!spec}
+                          aria-describedby={blocked ? `mcp-detail-blocked-${tg}` : undefined}
                           onClick={() => void testTarget(tg)}
                         >
                           <Play className="size-3" />
@@ -329,7 +354,8 @@ export function McpDetailDialog({
                           variant="ghost"
                           size="sm"
                           className="h-6 gap-1 px-2 text-xs"
-                          disabled={!spec || deep[tg] === "testing"}
+                          disabled={!spec || d === "testing"}
+                          aria-describedby={blocked ? `mcp-detail-blocked-${tg}` : undefined}
                           title={m.deepTesting}
                           onClick={() => void deepTest(tg)}
                         >
@@ -338,9 +364,9 @@ export function McpDetailDialog({
                         </Button>
                       </div>
                     </div>
-                    {deep[tg] ? (
+                    {d ? (
                       <div className="mb-2 flex items-center gap-1.5 text-xs">
-                        {deep[tg] === "testing" ? (
+                        {d === "testing" ? (
                           <span className="flex items-center gap-1.5 text-muted-foreground">
                             <Spinner className="size-3.5" />
                             {m.deepTesting}
@@ -349,17 +375,15 @@ export function McpDetailDialog({
                           <span
                             className={cn(
                               "flex items-center gap-1.5",
-                              (deep[tg] as McpProbeResult).ok
-                                ? "text-emerald-600"
-                                : "text-amber-600"
+                              "ok" in d && d.ok ? "text-emerald-600" : "text-amber-600"
                             )}
                           >
-                            {(deep[tg] as McpProbeResult).ok ? (
+                            {"ok" in d && d.ok ? (
                               <CheckCircle2 className="size-3.5" />
                             ) : (
                               <AlertTriangle className="size-3.5" />
                             )}
-                            {probeText(deep[tg] as McpProbeResult)}
+                            {probeText(d)}
                           </span>
                         )}
                       </div>
@@ -389,7 +413,11 @@ export function McpDetailDialog({
                         </Foldable>
                       </>
                     ) : (
-                      <p className="text-xs text-muted-foreground">✓</p>
+                      /* A bare "✓" here read as "fine" for an entry nothing could
+                         parse; say which of the two it is. */
+                      <p id={`mcp-detail-blocked-${tg}`} className="text-xs text-muted-foreground">
+                        {blocked}
+                      </p>
                     )}
                   </div>
                 )

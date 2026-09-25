@@ -103,6 +103,31 @@ describe("CostHeatmap", () => {
     expect(screen.getByText(h.heatmapCell(date, "$4.00"))).toBeInTheDocument()
   })
 
+  // One stop per day made a 90-day grid ninety Tab presses long.
+  it("puts one cell in the tab order, not every day", () => {
+    renderHeatmap()
+    const stops = cells().filter((c) => c.getAttribute("tabindex") === "0")
+    expect(stops).toHaveLength(1)
+    expect(stops[0]).toHaveAttribute("data-date", "2026-07-17")
+  })
+
+  it("walks the grid with the arrow keys and keeps one tab stop", async () => {
+    const user = userEvent.setup()
+    renderHeatmap()
+    cellFor("2026-07-17").focus()
+    await user.keyboard("{ArrowUp}")
+    expect(cellFor("2026-07-16")).toHaveFocus()
+    expect(cellFor("2026-07-16")).toHaveAttribute("tabindex", "0")
+    expect(cellFor("2026-07-17")).toHaveAttribute("tabindex", "-1")
+    await user.keyboard("{Home}")
+    expect(cellFor("2026-07-13")).toHaveFocus()
+    // A week back is outside the range: focus stays where it was.
+    await user.keyboard("{ArrowLeft}")
+    expect(cellFor("2026-07-13")).toHaveFocus()
+    const date = new Date(2026, 6, 13).toLocaleDateString("en", { dateStyle: "medium" })
+    expect(screen.getByText(h.heatmapCell(date, "$2.00"))).toBeInTheDocument()
+  })
+
   it("falls back to the range summary once the pointer leaves", async () => {
     const user = userEvent.setup()
     renderHeatmap()

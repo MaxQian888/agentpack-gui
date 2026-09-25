@@ -123,7 +123,7 @@ export function CcConnectConfigEditor({ path, exists, onSaved }: Props) {
         if (reports.some((report) => report.status === "error")) toast.error(c.saveFailed)
         return
       }
-      toast.success(c.saved)
+      // Silent: the review panel the save went through says "All set".
       setOpen(false)
       onSaved()
     } catch {

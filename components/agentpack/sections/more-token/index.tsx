@@ -2,7 +2,7 @@
 /* Hallmark · genre: modern-minimal · macrostructure: Workbench · design-system: design.md · designed-as-app */
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useId, useMemo, useRef, useState } from "react"
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   AlertTriangle,
@@ -59,6 +59,12 @@ import { DesktopOnlyNote } from "../../desktop-only-note"
 import { CapabilityMetric, CapabilityTile, CapabilityWorkbench } from "../capability-workbench"
 import { AccountActionsMenu } from "./account-actions-menu"
 import { AccountDetailSheet } from "./account-detail-sheet"
+import { useConfirm } from "./confirm-dialog"
+import { useForgetCredential } from "./credential"
+import { saveCsv } from "./csv"
+import { errorText } from "./errors"
+import { InstanceDialog } from "./instance-dialog"
+import { useStepUp } from "./use-step-up"
 import { isTauri } from "@/lib/tauri"
 import { hasInjectedMoreTokenPort } from "@/lib/more-token/port"
 import { useT } from "@/lib/i18n/provider"
@@ -66,17 +72,14 @@ import { cn } from "@/lib/utils"
 import { notify } from "@/lib/tauri/system"
 import {
   credentialState,
-  downloadCsv,
-  forgetCredential,
   listInstances,
   managementRequest,
   ManagementApiError,
   operationId,
   pairInstance,
-  removeInstance,
-  saveInstance,
 } from "@/lib/more-token/client"
-import { authorizeManagementPreview } from "@/lib/more-token/step-up"
+import { parseLocalDateTimeInput, toLocalDateTimeInput } from "@/lib/more-token/datetime"
+import { isStepUpCancelled } from "@/lib/more-token/step-up"
 import { accountsCsvRows } from "@/lib/more-token/accounts"
 import {
   quotaAmountParts,
@@ -117,19 +120,9 @@ function data<T>(instanceId: string, operation: ManagementOperation, signal?: Ab
   return managementRequest<T>(instanceId, operation, signal).then((response) => response.data)
 }
 
-function errorText(error: unknown): string {
-  if (error instanceof ManagementApiError) return `${error.code}: ${error.message}`
-  return error instanceof Error ? error.message : String(error)
-}
-
-async function forgetCredentialRemoteFirst(instanceId: string, localOnlyWarning: string) {
-  try {
-    return await forgetCredential(instanceId)
-  } catch (error) {
-    const confirmed = window.confirm(`${errorText(error)}\n\n${localOnlyWarning}`)
-    if (!confirmed) throw error
-    return forgetCredential(instanceId, true)
-  }
+/** A write the user stopped (Cancel on a browser approval) is not a failure. */
+function reportError(error: unknown) {
+  if (!isStepUpCancelled(error)) toast.error(errorText(error))
 }
 
 function formatTime(value: number): string {
@@ -206,11 +199,25 @@ export function MoreTokenSection({ view, localUsage }: MoreTokenSectionProps) {
     staleTime: Infinity,
   })
   const [selectedId, setSelectedId] = useState("")
-  const [instanceOpen, setInstanceOpen] = useState(false)
+  // Add and edit are the same dialog with different subjects. `seq` remounts it
+  // per opening so an add never inherits an edit's fields or a previous add's
+  // suggested id.
+  const [instanceDialog, setInstanceDialog] = useState<{
+    open: boolean
+    mode: "add" | "edit"
+    seq: number
+  }>({ open: false, mode: "add", seq: 0 })
+  const openInstanceDialog = (mode: "add" | "edit") =>
+    setInstanceDialog((current) => ({ open: true, mode, seq: current.seq + 1 }))
+  const { forget, dialog: forgetDialog } = useForgetCredential()
   // Legacy records predate the package discriminator and remain management
   // connections. Explicit personal records never enter this surface.
   const instances = (instancesQuery.data ?? []).filter((item) => item.package !== "personal")
-  const activeId = selectedId || instances[0]?.id || ""
+  // A selection the list no longer holds (removed, or not refetched yet) falls
+  // back to the first instance rather than to a null one.
+  const activeId = instances.some((item) => item.id === selectedId)
+    ? selectedId
+    : instances[0]?.id || ""
   const instance = instances.find((item) => item.id === activeId) ?? null
   const credentialQuery = useQuery({
     queryKey: ["more-token", activeId, "credential"],
@@ -264,23 +271,27 @@ export function MoreTokenSection({ view, localUsage }: MoreTokenSectionProps) {
     )
   }
 
-  const actions = (
-    <div className="flex items-center gap-2">
-      <Button variant="outline" size="sm" onClick={() => setInstanceOpen(true)}>
-        <Plus className="size-4" />
-        <span className="hidden sm:inline">{m.addInstance}</span>
-      </Button>
-      <Button
-        variant="outline"
-        size="icon-sm"
-        onClick={refresh}
-        disabled={!activeId}
-        aria-label={m.retry}
-      >
-        <RefreshCw className="size-4" />
-      </Button>
-    </div>
-  )
+  const actions =
+    // With no instance yet, the empty state's own "Add instance" is the one way
+    // in; this header copy (and the aside's) would make it three buttons for
+    // one action on an otherwise empty page.
+    instances.length === 0 ? null : (
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="sm" onClick={() => openInstanceDialog("add")}>
+          <Plus className="size-4" />
+          <span className="hidden sm:inline">{m.addInstance}</span>
+        </Button>
+        <Button
+          variant="outline"
+          size="icon-sm"
+          onClick={refresh}
+          disabled={!activeId}
+          aria-label={m.retry}
+        >
+          <RefreshCw className="size-4" />
+        </Button>
+      </div>
+    )
 
   const title = m.tabs[view === "management-overview" ? "overview" : view]
   const connected = credentialQuery.data?.connected === true
@@ -298,7 +309,7 @@ export function MoreTokenSection({ view, localUsage }: MoreTokenSectionProps) {
   ) : instances.length === 0 ? (
     <EmptyPanel
       text={m.noInstances}
-      action={<Button onClick={() => setInstanceOpen(true)}>{m.addInstance}</Button>}
+      action={<Button onClick={() => openInstanceDialog("add")}>{m.addInstance}</Button>}
     />
   ) : credentialQuery.isError ? (
     <ErrorPanel error={credentialQuery.error} retry={() => void credentialQuery.refetch()} />
@@ -362,7 +373,11 @@ export function MoreTokenSection({ view, localUsage }: MoreTokenSectionProps) {
           <CapabilityMetric
             label={m.health}
             value={
-              instancesQuery.isLoading || credentialQuery.isLoading || credentialQuery.isError
+              // No instance is nothing to measure, not an unavailable one.
+              !instance ||
+              instancesQuery.isLoading ||
+              credentialQuery.isLoading ||
+              credentialQuery.isError
                 ? "—"
                 : connected
                   ? m.healthy
@@ -425,7 +440,7 @@ export function MoreTokenSection({ view, localUsage }: MoreTokenSectionProps) {
                     : m.pairTitle}
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" onClick={() => setInstanceOpen(true)}>
+                  <Button variant="outline" size="sm" onClick={() => openInstanceDialog("edit")}>
                     {m.editInstance}
                   </Button>
                   {connected ? (
@@ -434,8 +449,7 @@ export function MoreTokenSection({ view, localUsage }: MoreTokenSectionProps) {
                       size="sm"
                       onClick={async () => {
                         try {
-                          await forgetCredentialRemoteFirst(activeId, m.localOnlyCredentialWarning)
-                          await credentialQuery.refetch()
+                          await forget(activeId)
                         } catch (error) {
                           toast.error(errorText(error))
                         }
@@ -448,10 +462,9 @@ export function MoreTokenSection({ view, localUsage }: MoreTokenSectionProps) {
                 </div>
               </div>
             ) : (
-              <Button variant="outline" size="sm" onClick={() => setInstanceOpen(true)}>
-                <Plus className="size-4" />
-                {m.addInstance}
-              </Button>
+              // Nothing is connected, and the empty state beside this already
+              // says how to start — the tile doesn't repeat it.
+              <p className="font-mono text-sm text-muted-foreground">—</p>
             )}
           </CapabilityTile>
           <CapabilityTile title={m.workspace} description={m.workspaceHint}>
@@ -467,19 +480,18 @@ export function MoreTokenSection({ view, localUsage }: MoreTokenSectionProps) {
         </>
       }
       detail={
-        <InstanceDialog
-          open={instanceOpen}
-          instance={instance}
-          onOpenChange={setInstanceOpen}
-          onSaved={async (saved) => {
-            await queryClient.invalidateQueries({ queryKey: ["more-token", "instances"] })
-            setSelectedId(saved.id)
-          }}
-          onRemoved={async () => {
-            setSelectedId("")
-            await queryClient.invalidateQueries({ queryKey: ["more-token"] })
-          }}
-        />
+        <>
+          <InstanceDialog
+            key={instanceDialog.seq}
+            open={instanceDialog.open}
+            instance={instanceDialog.mode === "edit" ? instance : null}
+            pkg="management"
+            onOpenChange={(open) => setInstanceDialog((current) => ({ ...current, open }))}
+            onSaved={(saved) => setSelectedId(saved.id)}
+            onRemoved={() => setSelectedId("")}
+          />
+          {forgetDialog}
+        </>
       }
     />
   )
@@ -621,11 +633,19 @@ function OverviewView({
             >
               <div className="flex min-w-0 items-center justify-between gap-3 lg:justify-start">
                 <span className="truncate text-sm font-medium">{item.name}</span>
-                <Badge variant={query.isError ? "destructive" : "outline"}>
-                  {query.isError ? m.unavailable : m.healthy}
+                <Badge
+                  variant={
+                    query.isError ? "destructive" : query.isPending ? "secondary" : "outline"
+                  }
+                >
+                  {query.isError ? m.unavailable : query.isPending ? m.loading : m.healthy}
                 </Badge>
               </div>
-              {query.data ? (
+              {query.isError ? (
+                <p className="text-xs text-muted-foreground [overflow-wrap:anywhere] lg:col-span-3">
+                  {errorText(query.error)}
+                </p>
+              ) : query.data ? (
                 <>
                   <Metric label={m.accounts} value={number(query.data.summary.accounts)} />
                   <Metric label={m.totalQuota} value={number(query.data.summary.total_quota)} />
@@ -648,7 +668,9 @@ function OverviewView({
             <p className="text-xs text-muted-foreground">{m.topologyHint}</p>
           </div>
           <div className="mt-4">
-            {accounts.isLoading ? (
+            {accounts.isError ? (
+              <ErrorPanel error={accounts.error} retry={() => void accounts.refetch()} />
+            ) : accounts.isLoading ? (
               <Skeleton className="h-52" />
             ) : (
               <Topology accounts={accounts.data?.items ?? []} quotaDisplay={quotaDisplay} />
@@ -659,7 +681,13 @@ function OverviewView({
           <section className="py-5">
             <h3 className="font-medium">{m.balanceRisk}</h3>
             <div className="mt-4">
-              <RiskDistribution accounts={accounts.data?.items ?? []} />
+              {accounts.isError ? (
+                <p className="text-sm text-muted-foreground">{m.unavailable}</p>
+              ) : accounts.isLoading ? (
+                <Skeleton className="h-16" />
+              ) : (
+                <RiskDistribution accounts={accounts.data?.items ?? []} />
+              )}
             </div>
           </section>
           <section className="py-5">
@@ -668,7 +696,11 @@ function OverviewView({
               {m.pendingAlerts}
             </h3>
             <div className="mt-4 space-y-2">
-              {alerts.data?.items.length ? (
+              {alerts.isError ? (
+                <ErrorPanel error={alerts.error} retry={() => void alerts.refetch()} />
+              ) : alerts.isLoading ? (
+                <Skeleton className="h-16" />
+              ) : alerts.data?.items.length ? (
                 alerts.data.items.map((event) => (
                   <div key={event.id} className="border-l-2 border-[var(--hm-warn)] pl-3 text-sm">
                     <p className="font-medium">{event.message}</p>
@@ -1038,6 +1070,8 @@ function AccountsSkeleton() {
 
 const NO_SELECTION: ReadonlySet<number> = new Set<number>()
 
+type BulkAction = "enable" | "disable" | "archive"
+
 interface AccountFilterChip {
   key: string
   /** Omitted when the label already names the field it narrows. */
@@ -1147,33 +1181,65 @@ function AccountsView({
   })
   const canWrite = !instance.readOnly && capabilities.scopes.includes("accounts:write")
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["more-token", instance.id] })
-  const bulk = async (nextAction: "enable" | "disable" | "archive") => {
-    try {
-      const accountIds = [...selected].sort((left, right) => left - right)
+  const stepUp = useStepUp(instance.id)
+  const { confirm, dialog: confirmDialog } = useConfirm()
+  const bulk = useMutation({
+    mutationFn: async ({
+      action: nextAction,
+      accountIds,
+    }: {
+      action: BulkAction
+      accountIds: number[]
+    }) => {
       const draft = {
         batch_operation_id: operationId(),
         mode: "best_effort" as const,
         action: nextAction,
         account_ids: accountIds,
-        reason: `bulk ${nextAction}`,
+        reason: m.bulkReason[nextAction],
       }
       const preview = await data<{ preview_token: string }>(instance.id, {
         kind: "actionPreview",
         body: { action: "account_batch", payload: draft },
       })
-      await authorizeManagementPreview(instance.id, preview.preview_token)
+      await stepUp.authorize(preview.preview_token)
       const body: AccountBatchBody = { ...draft, preview_token: preview.preview_token }
-      const result = await data<{ succeeded: number; failed: number }>(instance.id, {
+      return data<{ succeeded: number; failed: number }>(instance.id, {
         kind: "createAccountBatch",
         body,
       })
-      toast.success(`${result.succeeded} succeeded · ${result.failed} failed`)
-      setSelected(new Set())
+    },
+    onSuccess: async (result) => {
+      // Best effort can come back all failed; that is not a success to toast.
+      const summary = m.bulkResult(result.succeeded, result.failed)
+      if (result.failed === 0) toast.success(summary)
+      else if (result.succeeded > 0) toast.warning(summary)
+      else toast.error(summary)
+      setSelection((current) => ({ ...current, ids: NO_SELECTION }))
       await invalidate()
-    } catch (error) {
-      toast.error(errorText(error))
+    },
+    onError: reportError,
+  })
+  const startBulk = async (nextAction: BulkAction) => {
+    const accountIds = [...selected].sort((left, right) => left - right)
+    // Archiving takes accounts out of the default list; say so before it goes
+    // to the browser for approval rather than after.
+    if (
+      nextAction === "archive" &&
+      !(await confirm({
+        title: m.batchArchiveTitle(accountIds.length),
+        description: m.batchArchiveBody,
+        confirmLabel: m.batchArchive,
+        cancelLabel: m.cancel,
+        destructive: true,
+      }))
+    ) {
+      return
     }
+    bulk.mutate({ action: nextAction, accountIds })
   }
+  const bulkLabel = (nextAction: BulkAction, label: string) =>
+    stepUp.waiting && bulk.variables?.action === nextAction ? m.waitingForBrowser : label
 
   const viewChildren = (account: Account) => {
     setMaster({ id: account.id, username: account.username })
@@ -1437,22 +1503,48 @@ function AccountsView({
 
       <div className="min-w-0 overflow-hidden rounded-[var(--hm-radius-surface)] border">
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 border-b px-3 py-2">
-          {selected.size ? (
+          {selected.size && canWrite ? (
             <>
               <span className="text-sm font-medium tabular-nums">{m.selected(selected.size)}</span>
               <div className="flex flex-wrap items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => void bulk("enable")}>
-                  {m.batchEnable}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={bulk.isPending}
+                  onClick={() => void startBulk("enable")}
+                >
+                  {bulkLabel("enable", m.batchEnable)}
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => void bulk("disable")}>
-                  {m.batchDisable}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={bulk.isPending}
+                  onClick={() => void startBulk("disable")}
+                >
+                  {bulkLabel("disable", m.batchDisable)}
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => void bulk("archive")}>
-                  {m.batchArchive}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={bulk.isPending}
+                  onClick={() => void startBulk("archive")}
+                >
+                  {bulkLabel("archive", m.batchArchive)}
                 </Button>
-                <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
-                  {m.clearSelection}
-                </Button>
+                {stepUp.waiting ? (
+                  <Button variant="ghost" size="sm" onClick={stepUp.cancel}>
+                    {m.cancelApproval}
+                  </Button>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={bulk.isPending}
+                    onClick={() => setSelected(new Set())}
+                  >
+                    {m.clearSelection}
+                  </Button>
+                )}
               </div>
             </>
           ) : (
@@ -1466,10 +1558,12 @@ function AccountsView({
               variant="outline"
               size="sm"
               disabled={!items.length}
+              title={items.length ? undefined : m.nothingToExport}
               onClick={() =>
-                downloadCsv(
+                void saveCsv(
                   `more-token-accounts-${instance.id}-${page}.csv`,
-                  accountsCsvRows(items)
+                  accountsCsvRows(items),
+                  { saved: m.csvSaved, failed: m.csvSaveFailed }
                 )
               }
             >
@@ -1480,10 +1574,16 @@ function AccountsView({
         </div>
         <div
           className={cn(
-            accounts.isFetching && !accounts.isLoading && "opacity-60 transition-opacity"
+            accounts.isFetching &&
+              !accounts.isLoading &&
+              "opacity-60 transition-opacity duration-(--hm-dur-fast) ease-(--hm-ease-out)"
           )}
         >
-          {accounts.isLoading ? (
+          {accounts.isError ? (
+            <div className="p-3">
+              <ErrorPanel error={accounts.error} retry={() => void accounts.refetch()} />
+            </div>
+          ) : accounts.isLoading ? (
             <AccountsSkeleton />
           ) : tree ? (
             <div className="p-3">
@@ -1506,6 +1606,7 @@ function AccountsView({
           ) : (
             <AccountTable
               accounts={items}
+              selectable={canWrite}
               selected={selected}
               setSelected={setSelected}
               onDetail={(account) => setDetailId(account.id)}
@@ -1560,7 +1661,10 @@ function AccountsView({
       />
       <AccountDetailSheet
         key={detailId ?? "closed"}
+        open={detailId !== null}
         account={detailQuery.data?.account ?? null}
+        error={detailQuery.isError ? detailQuery.error : null}
+        onRetry={() => void detailQuery.refetch()}
         quotaDisplay={capabilities.quota_display}
         instance={instance}
         capabilities={capabilities}
@@ -1573,12 +1677,14 @@ function AccountsView({
         }}
         onOpenChange={(open) => !open && setDetailId(null)}
       />
+      {confirmDialog}
     </div>
   )
 }
 
 function AccountTable({
   accounts,
+  selectable,
   selected,
   setSelected,
   onDetail,
@@ -1592,6 +1698,8 @@ function AccountTable({
   quotaDisplay,
 }: {
   accounts: Account[]
+  /** Selection only feeds the bulk actions, so it exists only where they do. */
+  selectable: boolean
   selected: ReadonlySet<number>
   setSelected: (value: ReadonlySet<number>) => void
   onDetail: (account: Account) => void
@@ -1616,12 +1724,14 @@ function AccountTable({
       <div className="divide-y sm:hidden">
         {accounts.map((account) => (
           <article key={account.id} className="flex min-w-0 items-start gap-3 p-3">
-            <Checkbox
-              className="mt-1 shrink-0"
-              aria-label={account.username}
-              checked={selected.has(account.id)}
-              onCheckedChange={(value) => toggle(account, value === true)}
-            />
+            {selectable ? (
+              <Checkbox
+                className="mt-1 shrink-0"
+                aria-label={account.username}
+                checked={selected.has(account.id)}
+                onCheckedChange={(value) => toggle(account, value === true)}
+              />
+            ) : null}
             <button className="min-w-0 flex-1 text-left" onClick={() => onDetail(account)}>
               <span className="block truncate font-medium">{account.username}</span>
               <span className="mt-0.5 block truncate text-xs text-muted-foreground">
@@ -1663,21 +1773,26 @@ function AccountTable({
         <Table>
           <TableHeader className="[&_th]:h-9 [&_th]:text-xs [&_th]:font-medium [&_th]:text-muted-foreground">
             <TableRow className="bg-muted/40 hover:bg-muted/40">
-              <TableHead className="w-10 pl-3">
-                <Checkbox
-                  aria-label={m.all}
-                  checked={accounts.length > 0 && selected.size === accounts.length}
-                  onCheckedChange={(value) =>
-                    setSelected(value ? new Set(accounts.map((account) => account.id)) : new Set())
-                  }
-                />
-              </TableHead>
+              {selectable ? (
+                <TableHead className="w-10 pl-3">
+                  <Checkbox
+                    aria-label={m.all}
+                    checked={accounts.length > 0 && selected.size === accounts.length}
+                    onCheckedChange={(value) =>
+                      setSelected(
+                        value ? new Set(accounts.map((account) => account.id)) : new Set()
+                      )
+                    }
+                  />
+                </TableHead>
+              ) : null}
               <SortableHead
                 column="username"
                 label={m.username}
                 sortBy={sortBy}
                 sortOrder={sortOrder}
                 onSort={onSort}
+                className={selectable ? undefined : "pl-3"}
               />
               <TableHead>{m.role}</TableHead>
               <TableHead>{m.relationship}</TableHead>
@@ -1701,14 +1816,16 @@ function AccountTable({
                 key={account.id}
                 data-state={selected.has(account.id) ? "selected" : undefined}
               >
-                <TableCell className="pl-3">
-                  <Checkbox
-                    aria-label={account.username}
-                    checked={selected.has(account.id)}
-                    onCheckedChange={(value) => toggle(account, value === true)}
-                  />
-                </TableCell>
-                <TableCell className="py-2.5">
+                {selectable ? (
+                  <TableCell className="pl-3">
+                    <Checkbox
+                      aria-label={account.username}
+                      checked={selected.has(account.id)}
+                      onCheckedChange={(value) => toggle(account, value === true)}
+                    />
+                  </TableCell>
+                ) : null}
+                <TableCell className={cn("py-2.5", !selectable && "pl-3")}>
                   <button
                     className="block min-w-0 max-w-[15rem] text-left"
                     onClick={() => onDetail(account)}
@@ -1765,6 +1882,7 @@ function CreateAccountDialog({
 }) {
   const m = useT().management
   const [temporaryPassword, setTemporaryPassword] = useState<string | null>(null)
+  const stepUp = useStepUp(instance.id)
   const mutation = useMutation({
     mutationFn: async (
       payload: Omit<import("@/lib/more-token/types").CreateAccountBody, "preview_token">
@@ -1773,7 +1891,7 @@ function CreateAccountDialog({
         kind: "actionPreview",
         body: { action: "create_account", payload },
       })
-      await authorizeManagementPreview(instance.id, preview.preview_token)
+      await stepUp.authorize(preview.preview_token)
       return data<{ temporary_password?: string; credential_mode: string }>(instance.id, {
         kind: "createAccount",
         body: { ...payload, preview_token: preview.preview_token },
@@ -1782,12 +1900,22 @@ function CreateAccountDialog({
     onSuccess: (result) => {
       onDone()
       if (result.temporary_password) setTemporaryPassword(result.temporary_password)
-      else onOpenChange(false)
+      else close()
     },
-    onError: (error) => toast.error(errorText(error)),
+    onError: reportError,
   })
+  // The dialog stays mounted between openings. A temporary password is shown
+  // once, so it must not outlive the dialog: left in state, reopening showed it
+  // again and turned Create into a button that could only close.
+  function close() {
+    stepUp.cancel()
+    setTemporaryPassword(null)
+    mutation.reset()
+    onOpenChange(false)
+  }
+  const invitesEnabled = capabilities.features.account_invites_enabled
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())}>
       <DialogContent>
         <form
           onSubmit={(event) => {
@@ -1800,9 +1928,7 @@ function CreateAccountDialog({
               group: String(form.get("group") ?? "default"),
               master_id: Number(form.get("master_id") || 0),
               initial_quota: Number(form.get("initial_quota") || 0),
-              invite_by_email:
-                capabilities.features.account_invites_enabled &&
-                form.get("invite_by_email") === "on",
+              invite_by_email: invitesEnabled && form.get("invite_by_email") === "on",
               operation_id: operationId(),
               reason: String(form.get("reason") ?? ""),
             })
@@ -1822,31 +1948,44 @@ function CreateAccountDialog({
                 </AlertDescription>
               </Alert>
             ) : null}
-            <Field name="username" label={m.username} required />
-            <Field name="display_name" label={m.displayName} />
-            <Field name="email" label={m.email} type="email" />
-            <Field name="group" label={m.group} defaultValue="default" required />
-            <Field name="master_id" label={m.masterId} type="number" min={0} />
-            <Field name="initial_quota" label={m.initialQuota} type="number" min={0} />
-            <Field name="reason" label={m.reason} required />
-            <label className="flex min-h-11 items-center gap-3 text-sm">
-              <Checkbox
-                name="invite_by_email"
-                disabled={!capabilities.features.account_invites_enabled}
-              />
-              {m.sendInvitationEmail}
-            </label>
+            <fieldset
+              disabled={temporaryPassword !== null || mutation.isPending}
+              className="grid min-w-0 gap-4"
+            >
+              <Field name="username" label={m.username} required />
+              <Field name="display_name" label={m.displayName} />
+              <Field name="email" label={m.email} type="email" />
+              <Field name="group" label={m.group} defaultValue="default" required />
+              <Field name="master_id" label={m.masterId} type="number" min={0} />
+              <Field name="initial_quota" label={m.initialQuota} type="number" min={0} />
+              <Field name="reason" label={m.reason} required />
+              <div>
+                <label className="flex min-h-11 items-center gap-3 text-sm">
+                  <Checkbox name="invite_by_email" disabled={!invitesEnabled} />
+                  {m.sendInvitationEmail}
+                </label>
+                {invitesEnabled ? null : (
+                  <p className="text-xs text-muted-foreground">{m.invitesDisabled}</p>
+                )}
+              </div>
+            </fieldset>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              {m.cancel}
-            </Button>
+            {temporaryPassword ? null : (
+              <Button type="button" variant="outline" onClick={close}>
+                {m.cancel}
+              </Button>
+            )}
             <Button
               type={temporaryPassword ? "button" : "submit"}
-              disabled={mutation.isPending}
-              onClick={temporaryPassword ? () => onOpenChange(false) : undefined}
+              disabled={!temporaryPassword && mutation.isPending}
+              onClick={temporaryPassword ? close : undefined}
             >
-              {temporaryPassword ? m.confirm : m.createAccount}
+              {temporaryPassword
+                ? m.confirm
+                : stepUp.waiting
+                  ? m.waitingForBrowser
+                  : m.createAccount}
             </Button>
           </DialogFooter>
         </form>
@@ -1854,6 +1993,8 @@ function CreateAccountDialog({
     </Dialog>
   )
 }
+
+type AccountActionPayload = Omit<AccountActionBody, "preview_token"> & { account_id: number }
 
 function AccountActionDialog({
   state,
@@ -1873,30 +2014,21 @@ function AccountActionDialog({
     preview_token: string
     impact: Array<{ id: number; quota: number; quota_version: number }>
   } | null>(null)
-  const [previewPayload, setPreviewPayload] = useState<
-    (Omit<AccountActionBody, "preview_token"> & { account_id: number }) | null
-  >(null)
+  const [previewPayload, setPreviewPayload] = useState<AccountActionPayload | null>(null)
   const formRef = useRef<HTMLFormElement>(null)
+  const stepUp = useStepUp(instance.id)
   const previewMutation = useMutation({
-    mutationFn: async (
-      payload: Omit<AccountActionBody, "preview_token"> & { account_id: number }
-    ) =>
+    mutationFn: async (payload: AccountActionPayload) =>
       data<typeof preview extends null ? never : NonNullable<typeof preview>>(instance.id, {
         kind: "actionPreview",
         body: { action: state?.action ?? "", payload },
       }),
     onSuccess: setPreview,
-    onError: (error) => toast.error(errorText(error)),
+    onError: reportError,
   })
   const commitMutation = useMutation({
-    mutationFn: async ({
-      payload,
-      token,
-    }: {
-      payload: Omit<AccountActionBody, "preview_token"> & { account_id: number }
-      token: string
-    }) => {
-      await authorizeManagementPreview(instance.id, token)
+    mutationFn: async ({ payload, token }: { payload: AccountActionPayload; token: string }) => {
+      await stepUp.authorize(token)
       const body: AccountActionBody = {
         preview_token: token,
         operation_id: payload.operation_id,
@@ -1923,18 +2055,40 @@ function AccountActionDialog({
       )
     },
     onSuccess: () => {
-      onOpenChange(false)
+      close()
       onDone()
     },
-    onError: (error) =>
-      toast.error(
-        error instanceof ManagementApiError && error.code === "VERSION_CONFLICT"
-          ? m.versionConflict
-          : errorText(error)
-      ),
+    onError: (error) => {
+      if (isStepUpCancelled(error)) return
+      if (error instanceof ManagementApiError && error.code === "VERSION_CONFLICT") {
+        // The preview is stale; back to the form so a fresh one can be taken.
+        editPayload()
+        toast.error(m.versionConflict)
+        return
+      }
+      toast.error(errorText(error))
+    },
   })
+  // The dialog stays mounted between openings, so every way out — Cancel, Esc,
+  // the overlay, a completed write — goes through here. Anything left behind
+  // greeted the next account: its preview, and a Confirm that sent the old
+  // payload with a token the server had already spent.
+  function close() {
+    stepUp.cancel()
+    setPreview(null)
+    setPreviewPayload(null)
+    previewMutation.reset()
+    commitMutation.reset()
+    onOpenChange(false)
+  }
+  // A preview certifies one payload. The fields lock while it stands, and
+  // changing them means dropping it and previewing again.
+  function editPayload() {
+    setPreview(null)
+    setPreviewPayload(null)
+  }
   if (!state) return null
-  const buildPayload = () => {
+  const buildPayload = (): AccountActionPayload => {
     const form = new FormData(formRef.current!)
     return {
       account_id: state.account.id,
@@ -1946,31 +2100,21 @@ function AccountActionDialog({
       password: String(form.get("password") ?? ""),
     }
   }
+  const busy = previewMutation.isPending || commitMutation.isPending
   return (
-    <Dialog
-      open
-      onOpenChange={(next) => {
-        if (!next) {
-          setPreview(null)
-          setPreviewPayload(null)
-        }
-        onOpenChange(next)
-      }}
-    >
+    <Dialog open onOpenChange={(next) => (next ? undefined : close())}>
       <DialogContent>
         <form
           ref={formRef}
           onSubmit={(event) => {
             event.preventDefault()
+            if (preview && previewPayload) {
+              commitMutation.mutate({ payload: previewPayload, token: preview.preview_token })
+              return
+            }
             const payload = buildPayload()
-            if (!preview) {
-              setPreviewPayload(payload)
-              previewMutation.mutate(payload)
-            } else
-              commitMutation.mutate({
-                payload: previewPayload ?? payload,
-                token: preview.preview_token,
-              })
+            setPreviewPayload(payload)
+            previewMutation.mutate(payload)
           }}
         >
           <DialogHeader>
@@ -1982,38 +2126,40 @@ function AccountActionDialog({
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <Field name="reason" label={m.reason} required />
-            <p className="text-xs text-muted-foreground">{m.reasonHint}</p>
-            {state.action === "attach" ? (
-              <Field name="master_id" label={m.masterId} type="number" min={1} required />
-            ) : null}
-            {state.action === "password" ? (
-              <Field
-                name="password"
-                label={m.password}
-                type="password"
-                minLength={8}
-                maxLength={20}
-                required
-              />
-            ) : null}
-            {state.action === "close" ? (
-              <>
-                <Field name="balance_target_id" label={m.balanceTarget} type="number" min={0} />
-                {managementRole === "root" ? (
-                  <label className="flex min-h-11 items-center gap-3 text-sm">
-                    <Checkbox name="write_off" />
-                    {m.writeOff}
-                  </label>
-                ) : null}
+            <fieldset disabled={preview !== null || busy} className="min-w-0 space-y-4">
+              <Field name="reason" label={m.reason} required />
+              <p className="text-xs text-muted-foreground">{m.reasonHint}</p>
+              {state.action === "attach" ? (
+                <Field name="master_id" label={m.masterId} type="number" min={1} required />
+              ) : null}
+              {state.action === "password" ? (
                 <Field
-                  name="confirm_name"
-                  label={m.confirmAccount}
+                  name="password"
+                  label={m.password}
+                  type="password"
+                  minLength={8}
+                  maxLength={20}
                   required
-                  pattern={state.account.username}
                 />
-              </>
-            ) : null}
+              ) : null}
+              {state.action === "close" ? (
+                <>
+                  <Field name="balance_target_id" label={m.balanceTarget} type="number" min={0} />
+                  {managementRole === "root" ? (
+                    <label className="flex min-h-11 items-center gap-3 text-sm">
+                      <Checkbox name="write_off" />
+                      {m.writeOff}
+                    </label>
+                  ) : null}
+                  <Field
+                    name="confirm_name"
+                    label={m.confirmAccount}
+                    required
+                    pattern={state.account.username}
+                  />
+                </>
+              ) : null}
+            </fieldset>
             {preview ? (
               <div className="rounded-md border border-[var(--hm-warn)] p-3">
                 <p className="text-sm font-medium">{m.previewImpact}</p>
@@ -2026,15 +2172,31 @@ function AccountActionDialog({
             ) : null}
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button type="button" variant="outline" onClick={close}>
               {m.cancel}
             </Button>
+            {preview ? (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={editPayload}
+                disabled={commitMutation.isPending}
+              >
+                {m.edit}
+              </Button>
+            ) : null}
             <Button
               type="submit"
               variant={state.action === "close" ? "destructive" : "default"}
-              disabled={previewMutation.isPending || commitMutation.isPending}
+              disabled={busy}
             >
-              {preview ? m.confirm : previewMutation.isPending ? m.previewing : m.preview}
+              {preview
+                ? stepUp.waiting
+                  ? m.waitingForBrowser
+                  : m.confirm
+                : previewMutation.isPending
+                  ? m.previewing
+                  : m.preview}
             </Button>
           </DialogFooter>
         </form>
@@ -2044,7 +2206,10 @@ function AccountActionDialog({
 }
 
 function Field({ label, ...props }: React.ComponentProps<typeof Input> & { label: string }) {
-  const id = `field-${props.name}`
+  // Several forms share field names ("reason" is in the policy editor and in
+  // every dialog over it), so a name-derived id would point a dialog's label at
+  // the page's input instead.
+  const id = useId()
   return (
     <div className="space-y-2">
       <Label htmlFor={id}>{label}</Label>
@@ -2090,13 +2255,20 @@ function QuotaView({
     queryFn: ({ signal }) => data<QuotaPolicy>(instance.id, { kind: "quotaPolicy" }, signal),
   })
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["more-token", instance.id] })
+  const transferScoped = capabilities.scopes.includes("quota:transfer")
   const canTransfer =
-    !instance.readOnly &&
-    capabilities.features.quota_transfer_enabled &&
-    capabilities.scopes.includes("quota:transfer")
+    !instance.readOnly && capabilities.features.quota_transfer_enabled && transferScoped
+  // Read-only and a server-closed feature each already say so in a banner
+  // above; a missing scope is the one reason nothing else on the page states.
+  const transferDenied =
+    !instance.readOnly && capabilities.features.quota_transfer_enabled && !transferScoped
+  const ledgerItems = ledger.data?.items ?? []
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {transferDenied ? (
+          <p className="mr-auto text-xs text-muted-foreground">{m.transferScopeDenied}</p>
+        ) : null}
         <Button size="sm" onClick={() => setTransferOpen(true)} disabled={!canTransfer}>
           <ArrowLeftRight className="size-4" />
           {m.transfer}
@@ -2124,32 +2296,40 @@ function QuotaView({
           <AlertDescription>{m.exchangeRateExpiredHint}</AlertDescription>
         </Alert>
       ) : null}
-      <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border lg:grid-cols-4 [&>div]:bg-background">
-        <CapabilityMetric
-          label={m.totalQuota}
-          value={
-            summary.data
-              ? quotaAmountWithRaw(summary.data.available, capabilities.quota_display)
-              : "—"
-          }
-        />
-        <CapabilityMetric
-          label={m.usedQuota}
-          value={
-            summary.data ? quotaAmountWithRaw(summary.data.used, capabilities.quota_display) : "—"
-          }
-        />
-        <CapabilityMetric
-          label={m.accounts}
-          value={summary.data ? number(summary.data.accounts) : "—"}
-        />
-        <CapabilityMetric
-          label={m.quotaTotal}
-          value={
-            summary.data ? quotaAmountWithRaw(summary.data.total, capabilities.quota_display) : "—"
-          }
-        />
-      </dl>
+      {summary.isError ? (
+        <ErrorPanel error={summary.error} retry={() => void summary.refetch()} />
+      ) : summary.isLoading ? (
+        <Skeleton className="h-20" aria-busy="true" />
+      ) : (
+        <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border lg:grid-cols-4 [&>div]:bg-background">
+          <CapabilityMetric
+            label={m.totalQuota}
+            value={
+              summary.data
+                ? quotaAmountWithRaw(summary.data.available, capabilities.quota_display)
+                : "—"
+            }
+          />
+          <CapabilityMetric
+            label={m.usedQuota}
+            value={
+              summary.data ? quotaAmountWithRaw(summary.data.used, capabilities.quota_display) : "—"
+            }
+          />
+          <CapabilityMetric
+            label={m.accounts}
+            value={summary.data ? number(summary.data.accounts) : "—"}
+          />
+          <CapabilityMetric
+            label={m.quotaTotal}
+            value={
+              summary.data
+                ? quotaAmountWithRaw(summary.data.total, capabilities.quota_display)
+                : "—"
+            }
+          />
+        </dl>
+      )}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(310px,0.75fr)]">
         <section className="min-w-0 overflow-hidden border-y">
           <div className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -2173,11 +2353,13 @@ function QuotaView({
               <Button
                 variant="outline"
                 size="sm"
-                disabled={!ledger.data?.items.length}
+                disabled={!ledgerItems.length}
+                title={ledgerItems.length ? undefined : m.nothingToExport}
                 onClick={() =>
-                  downloadCsv(
+                  void saveCsv(
                     `more-token-ledger-${instance.id}-${ledgerPage}.csv`,
-                    quotaTransactionsCsvRows(ledger.data?.items ?? [])
+                    quotaTransactionsCsvRows(ledgerItems),
+                    { saved: m.csvSaved, failed: m.csvSaveFailed }
                   )
                 }
               >
@@ -2187,12 +2369,18 @@ function QuotaView({
             </div>
           </div>
           <div className="min-w-0 overflow-x-auto">
-            <LedgerTable
-              items={ledger.data?.items ?? []}
-              instance={instance}
-              capabilities={capabilities}
-              onDone={invalidate}
-            />
+            {ledger.isError ? (
+              <ErrorPanel error={ledger.error} retry={() => void ledger.refetch()} />
+            ) : ledger.isLoading ? (
+              <AccountsSkeleton />
+            ) : (
+              <LedgerTable
+                items={ledgerItems}
+                instance={instance}
+                capabilities={capabilities}
+                onDone={invalidate}
+              />
+            )}
           </div>
           <PageControls
             page={ledgerPage}
@@ -2203,6 +2391,8 @@ function QuotaView({
         </section>
         <PolicyEditor
           policy={policy.data ?? null}
+          error={policy.isError ? policy.error : null}
+          retry={() => void policy.refetch()}
           instance={instance}
           capabilities={capabilities}
           onDone={invalidate}
@@ -2237,10 +2427,12 @@ function LedgerTable({
   onDone: () => void
 }) {
   const m = useT().management
+  const stepUp = useStepUp(instance.id)
+  const { confirm, dialog: confirmDialog } = useConfirm()
   const reverse = useMutation({
     mutationFn: async (transaction: QuotaTransaction) => {
       const op = operationId()
-      const reason = `reverse transaction ${transaction.id}`
+      const reason = m.reverseReason(transaction.id)
       const payload = {
         account_id: transaction.target_id,
         source_id: transaction.target_id,
@@ -2253,7 +2445,7 @@ function LedgerTable({
         kind: "actionPreview",
         body: { action: "quota_reverse", payload },
       })
-      await authorizeManagementPreview(instance.id, preview.preview_token)
+      await stepUp.authorize(preview.preview_token)
       return data(instance.id, {
         kind: "reverseQuota",
         id: transaction.id,
@@ -2261,8 +2453,24 @@ function LedgerTable({
       })
     },
     onSuccess: onDone,
-    onError: (error) => toast.error(errorText(error)),
+    onError: reportError,
   })
+  // A reversal moves quota back between two accounts. The browser approval
+  // that follows names neither, so the app says what it is about to ask for.
+  const requestReverse = async (transaction: QuotaTransaction) => {
+    const confirmed = await confirm({
+      title: m.reverseTitle(transaction.id),
+      description: m.reverseBody(
+        quotaAmountWithRaw(transaction.amount, capabilities.quota_display),
+        transaction.target_id,
+        transaction.source_id
+      ),
+      confirmLabel: m.reverse,
+      cancelLabel: m.cancel,
+      destructive: true,
+    })
+    if (confirmed) reverse.mutate(transaction)
+  }
   return (
     <div className="overflow-x-auto">
       <Table>
@@ -2277,38 +2485,58 @@ function LedgerTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {items.map((item) => (
-            <TableRow key={item.id}>
-              <TableCell>{item.type}</TableCell>
-              <TableCell className="font-mono text-xs">
-                #{item.source_id || "—"} → #{item.target_id || "—"}
-              </TableCell>
-              <TableCell className="text-right tabular-nums">
-                {quotaAmountWithRaw(item.amount, capabilities.quota_display)}
-              </TableCell>
-              <TableCell className="max-w-44 truncate">{item.reason}</TableCell>
-              <TableCell>
-                <Badge variant="outline">{item.status}</Badge>
-              </TableCell>
-              <TableCell>
-                {capabilities.scopes.includes("quota:reverse") && item.type !== "reversal" ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => reverse.mutate(item)}
-                    disabled={reverse.isPending || instance.readOnly}
-                  >
-                    {m.reverse}
-                  </Button>
-                ) : null}
+          {items.map((item) => {
+            const waiting = stepUp.waiting && reverse.variables?.id === item.id
+            return (
+              <TableRow key={item.id}>
+                <TableCell>{item.type}</TableCell>
+                <TableCell className="font-mono text-xs">
+                  #{item.source_id || "—"} → #{item.target_id || "—"}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {quotaAmountWithRaw(item.amount, capabilities.quota_display)}
+                </TableCell>
+                <TableCell className="max-w-44 truncate">{item.reason}</TableCell>
+                <TableCell>
+                  <Badge variant="outline">{item.status}</Badge>
+                </TableCell>
+                <TableCell>
+                  {capabilities.scopes.includes("quota:reverse") && item.type !== "reversal" ? (
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void requestReverse(item)}
+                        disabled={reverse.isPending || instance.readOnly}
+                      >
+                        {waiting ? m.waitingForBrowser : m.reverse}
+                      </Button>
+                      {waiting ? (
+                        <Button variant="ghost" size="sm" onClick={stepUp.cancel}>
+                          {m.cancelApproval}
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </TableCell>
+              </TableRow>
+            )
+          })}
+          {items.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                {m.noData}
               </TableCell>
             </TableRow>
-          ))}
+          ) : null}
         </TableBody>
       </Table>
+      {confirmDialog}
     </div>
   )
 }
+
+type TransferPayload = Omit<QuotaTransferBody, "preview_token">
 
 function TransferDialog({
   open,
@@ -2324,54 +2552,61 @@ function TransferDialog({
   onDone: () => void
 }) {
   const m = useT().management
-  const formRef = useRef<HTMLFormElement>(null)
   const [preview, setPreview] = useState<{
     preview_token: string
     impact: Array<{ id: number; quota: number }>
   } | null>(null)
-  const [previewPayload, setPreviewPayload] = useState<Omit<
-    QuotaTransferBody,
-    "preview_token"
-  > | null>(null)
-  const mutation = useMutation({
-    mutationFn: async (payload: Omit<QuotaTransferBody, "preview_token">) => {
-      if (!preview)
-        return data<{ preview_token: string; impact: Array<{ id: number; quota: number }> }>(
-          instance.id,
-          { kind: "actionPreview", body: { action: "quota_transfer", payload } }
-        )
-      await authorizeManagementPreview(instance.id, preview.preview_token)
+  const [previewPayload, setPreviewPayload] = useState<TransferPayload | null>(null)
+  const stepUp = useStepUp(instance.id)
+  const previewMutation = useMutation({
+    mutationFn: (payload: TransferPayload) =>
+      data<{ preview_token: string; impact: Array<{ id: number; quota: number }> }>(instance.id, {
+        kind: "actionPreview",
+        body: { action: "quota_transfer", payload },
+      }),
+    onSuccess: setPreview,
+    onError: reportError,
+  })
+  const commitMutation = useMutation({
+    mutationFn: async ({ payload, token }: { payload: TransferPayload; token: string }) => {
+      await stepUp.authorize(token)
       return data(instance.id, {
         kind: "quotaTransfer",
-        body: { ...payload, preview_token: preview.preview_token },
+        body: { ...payload, preview_token: token },
       })
     },
-    onSuccess: (result) => {
-      if (!preview && result && typeof result === "object" && "preview_token" in result)
-        setPreview(result as NonNullable<typeof preview>)
-      else {
-        onOpenChange(false)
-        onDone()
-      }
+    onSuccess: () => {
+      close()
+      onDone()
     },
-    onError: (error) => toast.error(errorText(error)),
+    onError: reportError,
   })
+  // Every way out resets. The dialog stays mounted, so a preview left behind
+  // reappeared on the next opening and Confirm re-sent its payload with a
+  // token the server had already spent.
+  function close() {
+    stepUp.cancel()
+    setPreview(null)
+    setPreviewPayload(null)
+    previewMutation.reset()
+    commitMutation.reset()
+    onOpenChange(false)
+  }
+  function editPayload() {
+    setPreview(null)
+    setPreviewPayload(null)
+  }
+  const busy = previewMutation.isPending || commitMutation.isPending
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) {
-          setPreview(null)
-          setPreviewPayload(null)
-        }
-        onOpenChange(next)
-      }}
-    >
+    <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())}>
       <DialogContent>
         <form
-          ref={formRef}
           onSubmit={(event) => {
             event.preventDefault()
+            if (preview && previewPayload) {
+              commitMutation.mutate({ payload: previewPayload, token: preview.preview_token })
+              return
+            }
             const form = new FormData(event.currentTarget)
             const payload = {
               operation_id: operationId(),
@@ -2380,8 +2615,8 @@ function TransferDialog({
               amount: Number(form.get("amount")),
               reason: String(form.get("reason")),
             }
-            if (!preview) setPreviewPayload(payload)
-            mutation.mutate(previewPayload ?? payload)
+            setPreviewPayload(payload)
+            previewMutation.mutate(payload)
           }}
         >
           <DialogHeader>
@@ -2389,10 +2624,15 @@ function TransferDialog({
             <DialogDescription>{m.reasonHint}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4 sm:grid-cols-2">
-            <Field name="source_id" label={m.sourceId} type="number" min={1} required />
-            <Field name="target_id" label={m.targetId} type="number" min={1} required />
-            <Field name="amount" label={m.amount} type="number" min={1} required />
-            <Field name="reason" label={m.reason} required />
+            <fieldset
+              disabled={preview !== null || busy}
+              className="grid min-w-0 gap-4 sm:col-span-2 sm:grid-cols-2"
+            >
+              <Field name="source_id" label={m.sourceId} type="number" min={1} required />
+              <Field name="target_id" label={m.targetId} type="number" min={1} required />
+              <Field name="amount" label={m.amount} type="number" min={1} required />
+              <Field name="reason" label={m.reason} required />
+            </fieldset>
             {preview ? (
               <div className="sm:col-span-2 rounded-md border p-3">
                 <p className="text-sm font-medium">{m.previewImpact}</p>
@@ -2411,11 +2651,27 @@ function TransferDialog({
             ) : null}
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button type="button" variant="outline" onClick={close}>
               {m.cancel}
             </Button>
-            <Button type="submit" disabled={mutation.isPending}>
-              {preview ? m.confirm : m.preview}
+            {preview ? (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={editPayload}
+                disabled={commitMutation.isPending}
+              >
+                {m.edit}
+              </Button>
+            ) : null}
+            <Button type="submit" disabled={busy}>
+              {preview
+                ? stepUp.waiting
+                  ? m.waitingForBrowser
+                  : m.confirm
+                : previewMutation.isPending
+                  ? m.previewing
+                  : m.preview}
             </Button>
           </DialogFooter>
         </form>
@@ -2423,6 +2679,8 @@ function TransferDialog({
     </Dialog>
   )
 }
+
+type BatchPayload = Omit<QuotaBatchBody, "preview_token">
 
 function BatchDialog({
   open,
@@ -2437,11 +2695,13 @@ function BatchDialog({
 }) {
   const m = useT().management
   const [preview, setPreview] = useState<string | null>(null)
-  const [payload, setPayload] = useState<Omit<QuotaBatchBody, "preview_token"> | null>(null)
+  const [payload, setPayload] = useState<BatchPayload | null>(null)
   const [batchId, setBatchId] = useState<number | null>(null)
+  const stepUp = useStepUp(instance.id)
   const batch = useQuery({
     queryKey: ["more-token", instance.id, "quota-batch", batchId],
-    enabled: batchId !== null,
+    // Progress is only polled while someone is looking at it.
+    enabled: open && batchId !== null,
     queryFn: () =>
       data<{
         batch: { id: number; status: string }
@@ -2449,15 +2709,8 @@ function BatchDialog({
       }>(instance.id, { kind: "quotaBatch", id: batchId! }),
     refetchInterval: 2_000,
   })
-  const mutation = useMutation({
+  const previewMutation = useMutation({
     mutationFn: async (form: HTMLFormElement) => {
-      if (preview && payload) {
-        await authorizeManagementPreview(instance.id, preview)
-        return data<{ id: number; status: string }>(instance.id, {
-          kind: "createQuotaBatch",
-          body: { ...payload, preview_token: preview },
-        })
-      }
       const fields = new FormData(form)
       const items = String(fields.get("items") ?? "")
         .split("\n")
@@ -2472,44 +2725,62 @@ function BatchDialog({
             reason: reason.join(",").trim(),
           }
         })
-      const next: Omit<QuotaBatchBody, "preview_token"> = {
+      const next: BatchPayload = {
         batch_operation_id: operationId(),
         mode: fields.get("mode") === "best_effort" ? "best_effort" : "atomic",
         items,
       }
-      setPayload(next)
       const result = await data<{ preview_token: string }>(instance.id, {
         kind: "actionPreview",
         body: { action: "quota_batch", payload: next },
       })
-      setPreview(result.preview_token)
-      return result
+      return { next, token: result.preview_token }
+    },
+    onSuccess: ({ next, token }) => {
+      setPayload(next)
+      setPreview(token)
+    },
+    onError: reportError,
+  })
+  const commitMutation = useMutation({
+    mutationFn: async ({ body, token }: { body: BatchPayload; token: string }) => {
+      await stepUp.authorize(token)
+      return data<{ id: number; status: string }>(instance.id, {
+        kind: "createQuotaBatch",
+        body: { ...body, preview_token: token },
+      })
     },
     onSuccess: (result) => {
-      if (preview && "id" in result) {
-        setBatchId(result.id)
-        onDone()
-      }
+      // The token is spent. What is left to do in this dialog is watch it run.
+      setPreview(null)
+      setBatchId(result.id)
+      onDone()
     },
-    onError: (error) => toast.error(errorText(error)),
+    onError: reportError,
   })
+  // Every way out resets, which is also what stops the progress poll.
+  function close() {
+    stepUp.cancel()
+    setPreview(null)
+    setPayload(null)
+    setBatchId(null)
+    previewMutation.reset()
+    commitMutation.reset()
+    onOpenChange(false)
+  }
+  function editPayload() {
+    setPreview(null)
+    setPayload(null)
+  }
+  const busy = previewMutation.isPending || commitMutation.isPending
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) {
-          setPreview(null)
-          setPayload(null)
-          setBatchId(null)
-        }
-        onOpenChange(next)
-      }}
-    >
+    <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())}>
       <DialogContent>
         <form
           onSubmit={(event) => {
             event.preventDefault()
-            mutation.mutate(event.currentTarget)
+            if (preview && payload) commitMutation.mutate({ body: payload, token: preview })
+            else previewMutation.mutate(event.currentTarget)
           }}
         >
           <DialogHeader>
@@ -2517,17 +2788,29 @@ function BatchDialog({
             <DialogDescription>{m.batchItemsHint}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <select name="mode" className="h-9 w-full rounded-md border bg-background px-2 text-sm">
-              <option value="atomic">{m.atomic}</option>
-              <option value="best_effort">{m.bestEffort}</option>
-            </select>
-            <Textarea
-              name="items"
-              rows={8}
-              required
-              placeholder={"1,2,100000,team allocation\n1,3,50000,trial"}
-              className="font-mono text-xs"
-            />
+            <fieldset
+              disabled={preview !== null || batchId !== null || busy}
+              className="min-w-0 space-y-4"
+            >
+              <select
+                name="mode"
+                aria-label={m.batchTransfer}
+                className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+              >
+                <option value="atomic">{m.atomic}</option>
+                <option value="best_effort">{m.bestEffort}</option>
+              </select>
+              <Textarea
+                name="items"
+                rows={8}
+                required
+                placeholder={"1,2,100000,team allocation\n1,3,50000,trial"}
+                className="font-mono text-xs"
+              />
+            </fieldset>
+            {batch.isError ? (
+              <ErrorPanel error={batch.error} retry={() => void batch.refetch()} />
+            ) : null}
             {batch.data ? (
               <div className="space-y-2 rounded-md border p-3">
                 <p className="text-sm font-medium">
@@ -2553,17 +2836,41 @@ function BatchDialog({
               <Alert>
                 <Check className="size-4" />
                 <AlertTitle>{m.previewImpact}</AlertTitle>
-                <AlertDescription>{payload?.items.length ?? 0} items</AlertDescription>
+                <AlertDescription>{m.batchItemCount(payload?.items.length ?? 0)}</AlertDescription>
               </Alert>
             ) : null}
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              {m.cancel}
-            </Button>
-            <Button type="submit" disabled={mutation.isPending}>
-              {preview ? m.submitBatch : m.preview}
-            </Button>
+            {batchId !== null ? (
+              <Button type="button" onClick={close}>
+                {m.done}
+              </Button>
+            ) : (
+              <>
+                <Button type="button" variant="outline" onClick={close}>
+                  {m.cancel}
+                </Button>
+                {preview ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={editPayload}
+                    disabled={commitMutation.isPending}
+                  >
+                    {m.edit}
+                  </Button>
+                ) : null}
+                <Button type="submit" disabled={busy}>
+                  {preview
+                    ? stepUp.waiting
+                      ? m.waitingForBrowser
+                      : m.submitBatch
+                    : previewMutation.isPending
+                      ? m.previewing
+                      : m.preview}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </form>
       </DialogContent>
@@ -2573,16 +2880,21 @@ function BatchDialog({
 
 function PolicyEditor({
   policy,
+  error,
+  retry,
   instance,
   capabilities,
   onDone,
 }: {
   policy: QuotaPolicy | null
+  error: unknown
+  retry: () => void
   instance: MoreTokenInstance
   capabilities: ManagementCapabilities
   onDone: () => void
 }) {
   const m = useT().management
+  const stepUp = useStepUp(instance.id)
   const mutation = useMutation({
     mutationFn: async (draft: QuotaPolicy & { reason: string }) => {
       const payload = { account_id: draft.master_id, ...draft }
@@ -2590,20 +2902,30 @@ function PolicyEditor({
         kind: "actionPreview",
         body: { action: "quota_policy_update", payload },
       })
-      await authorizeManagementPreview(instance.id, preview.preview_token)
+      await stepUp.authorize(preview.preview_token)
       const body: UpdateQuotaPolicyBody = { ...draft, preview_token: preview.preview_token }
       return data(instance.id, { kind: "updateQuotaPolicy", body })
     },
     onSuccess: onDone,
-    onError: (error) => toast.error(errorText(error)),
+    onError: reportError,
   })
+  if (error)
+    return (
+      <section className="border-y py-4">
+        <h3 className="font-medium">{m.policies}</h3>
+        <div className="mt-4">
+          <ErrorPanel error={error} retry={retry} />
+        </div>
+      </section>
+    )
   if (!policy)
     return (
-      <section className="border-y p-5">
+      <section className="border-y p-5" aria-busy="true">
         <Skeleton className="h-64" />
       </section>
     )
-  const canWrite = capabilities.scopes.includes("policy:write") && !instance.readOnly
+  const scoped = capabilities.scopes.includes("policy:write")
+  const canWrite = scoped && !instance.readOnly
   return (
     <section className="border-y py-4">
       <h3 className="font-medium">{m.policies}</h3>
@@ -2688,9 +3010,25 @@ function PolicyEditor({
           {!capabilities.features.quota_policy_automation_enabled ? (
             <p className="text-xs text-[var(--hm-warn)]">{m.automationOff}</p>
           ) : null}
-          <Button type="submit" className="w-full" disabled={!canWrite || mutation.isPending}>
-            {m.savePolicy}
+          {/* Outline: Transfer is this view's one primary action. */}
+          <Button
+            type="submit"
+            variant="outline"
+            className="w-full"
+            disabled={!canWrite || mutation.isPending}
+          >
+            {stepUp.waiting ? m.waitingForBrowser : m.savePolicy}
           </Button>
+          {stepUp.waiting ? (
+            <Button type="button" variant="ghost" className="w-full" onClick={stepUp.cancel}>
+              {m.cancelApproval}
+            </Button>
+          ) : null}
+          {canWrite ? null : (
+            <p className="text-xs text-muted-foreground">
+              {instance.readOnly ? m.readonlyBanner : m.policyWriteDenied}
+            </p>
+          )}
         </form>
       </div>
     </section>
@@ -2761,7 +3099,7 @@ function AnalyticsView({
   )
   const exportCsv = () => {
     if (!analytics.data) return
-    downloadCsv(`more-token-usage-${instance.id}-${analytics.data.generated_at}.csv`, [
+    const rows: Array<Array<string | number>> = [
       [m.analyticsDefinition],
       [m.instance, instance.name],
       [m.timezone, analytics.data.timezone],
@@ -2771,25 +3109,35 @@ function AnalyticsView({
       [],
       ["bucket", "rpm", "tpm", "quota"],
       ...analytics.data.series.map((point) => [point.bucket, point.rpm, point.tpm, point.quota]),
-    ])
+    ]
+    void saveCsv(`more-token-usage-${instance.id}-${analytics.data.generated_at}.csv`, rows, {
+      saved: m.csvSaved,
+      failed: m.csvSaveFailed,
+    })
   }
   return (
     <div className="space-y-5">
       <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2 lg:grid-cols-6">
         <FieldValue label={m.from}>
+          {/* Local wall-clock both ways (see lib/more-token/datetime). A cleared
+              segment reads as no value and is ignored, not turned into NaN. */}
           <Input
             type="datetime-local"
-            value={new Date(start * 1000).toISOString().slice(0, 16)}
-            onChange={(event) =>
-              setStart(Math.floor(new Date(event.target.value).getTime() / 1000))
-            }
+            value={toLocalDateTimeInput(start)}
+            onChange={(event) => {
+              const next = parseLocalDateTimeInput(event.target.value)
+              if (next !== null) setStart(next)
+            }}
           />
         </FieldValue>
         <FieldValue label={m.to}>
           <Input
             type="datetime-local"
-            value={new Date(end * 1000).toISOString().slice(0, 16)}
-            onChange={(event) => setEnd(Math.floor(new Date(event.target.value).getTime() / 1000))}
+            value={toLocalDateTimeInput(end)}
+            onChange={(event) => {
+              const next = parseLocalDateTimeInput(event.target.value)
+              if (next !== null) setEnd(next)
+            }}
           />
         </FieldValue>
         <FieldValue label={m.model}>
@@ -2819,6 +3167,9 @@ function AnalyticsView({
           {m.exportCsv}
         </Button>
       </div>
+      {analytics.isError ? (
+        <ErrorPanel error={analytics.error} retry={() => void analytics.refetch()} />
+      ) : null}
       <div className="grid overflow-hidden rounded-lg border lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.65fr)]">
         <section className="min-w-0 p-5 lg:border-r">
           <h3 className="font-medium">{m.serverBilling}</h3>
@@ -2869,7 +3220,11 @@ function AnalyticsView({
       <section className="border-y py-5">
         <h3 className="font-medium">{m.throughput}</h3>
         <div className="mt-5">
-          <UsageBars series={analytics.data?.series ?? []} />
+          {analytics.isLoading ? (
+            <Skeleton className="h-44" />
+          ) : (
+            <UsageBars series={analytics.data?.series ?? []} />
+          )}
         </div>
       </section>
     </div>
@@ -2953,10 +3308,7 @@ function AuditView({
       data<{ account: AccountDetail }>(instance.id, { kind: "account", id: detailId! }),
     enabled: detailId !== null,
   })
-  useEffect(() => {
-    if (!detail.isError || detailId === null) return
-    toast.error(errorText(detail.error))
-  }, [detail.error, detail.isError, detailId])
+  const { confirm, dialog: confirmDialog } = useConfirm()
   const ack = useMutation({
     mutationFn: (id: number) => data(instance.id, { kind: "acknowledgeAlert", id }),
     onSuccess: () =>
@@ -3002,6 +3354,13 @@ function AuditView({
           />
         </div>
         <div className="mt-5">
+          {audits.isError ? (
+            <ErrorPanel error={audits.error} retry={() => void audits.refetch()} />
+          ) : audits.isLoading ? (
+            <Skeleton className="h-40" />
+          ) : !audits.data?.items.length ? (
+            <p className="text-sm text-muted-foreground">{m.noData}</p>
+          ) : null}
           <div className="space-y-0">
             {audits.data?.items.map((event, index) => (
               <div key={event.id} className="relative grid grid-cols-[18px_1fr] gap-3 pb-5">
@@ -3075,7 +3434,11 @@ function AuditView({
             placeholder={m.searchAlertRules}
           />
           <div className="mt-4 space-y-2">
-            {rules.data?.items.length ? (
+            {rules.isError ? (
+              <ErrorPanel error={rules.error} retry={() => void rules.refetch()} />
+            ) : rules.isLoading ? (
+              <Skeleton className="h-16" />
+            ) : rules.data?.items.length ? (
               rules.data.items.map((rule) => (
                 <div
                   key={rule.id}
@@ -3105,8 +3468,15 @@ function AuditView({
                       variant="ghost"
                       size="icon-sm"
                       disabled={instance.readOnly || deleteRule.isPending}
-                      onClick={() => {
-                        if (window.confirm(`${m.delete}: ${rule.name}?`)) deleteRule.mutate(rule.id)
+                      onClick={async () => {
+                        const confirmed = await confirm({
+                          title: m.deleteRuleTitle(rule.name),
+                          description: m.deleteRuleBody,
+                          confirmLabel: m.delete,
+                          cancelLabel: m.cancel,
+                          destructive: true,
+                        })
+                        if (confirmed) deleteRule.mutate(rule.id)
                       }}
                       aria-label={`${m.delete}: ${rule.name}`}
                     >
@@ -3129,6 +3499,13 @@ function AuditView({
         <section className="py-5">
           <h3 className="font-medium">{m.alertEvents}</h3>
           <div className="mt-4 space-y-2">
+            {events.isError ? (
+              <ErrorPanel error={events.error} retry={() => void events.refetch()} />
+            ) : events.isLoading ? (
+              <Skeleton className="h-16" />
+            ) : !events.data?.items.length ? (
+              <p className="text-sm text-muted-foreground">{m.noData}</p>
+            ) : null}
             {events.data?.items.map((event) => (
               <div key={event.id} className="rounded-md border p-3">
                 <div className="flex items-start justify-between gap-3">
@@ -3180,13 +3557,17 @@ function AuditView({
       />
       <AccountDetailSheet
         key={detailId ?? "closed"}
+        open={detailId !== null}
         account={detail.data?.account ?? null}
+        error={detail.isError ? detail.error : null}
+        onRetry={() => void detail.refetch()}
         quotaDisplay={capabilities.quota_display}
         instance={instance}
         capabilities={capabilities}
         onDone={() => queryClient.invalidateQueries({ queryKey: ["more-token", instance.id] })}
         onOpenChange={(open) => !open && setDetailId(null)}
       />
+      {confirmDialog}
     </div>
   )
 }
@@ -3228,7 +3609,9 @@ function AlertRuleDialog({
               kind: String(form.get("kind")) as AlertRuleBody["kind"],
               threshold: Number(form.get("threshold")),
               cooldown_sec: Number(form.get("cooldown_sec")),
-              enabled: true,
+              // The dialog has no switch for this; the row does. Editing a
+              // rule's threshold must not quietly switch a disabled rule back on.
+              enabled: rule?.enabled ?? true,
               version: rule?.version,
             })
           }}
@@ -3273,129 +3656,6 @@ function AlertRuleDialog({
             <Button type="submit" disabled={mutation.isPending}>
               {m.save}
             </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function InstanceDialog({
-  open,
-  onOpenChange,
-  instance,
-  onSaved,
-  onRemoved,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  instance: MoreTokenInstance | null
-  onSaved: (instance: MoreTokenInstance) => void
-  onRemoved: () => void
-}) {
-  const m = useT().management
-  const [suggestedId] = useState(() => `more-token-${Date.now().toString(36)}`)
-  const mutation = useMutation({
-    mutationFn: saveInstance,
-    onSuccess: (saved) => {
-      onOpenChange(false)
-      onSaved(saved)
-    },
-    onError: (error) => toast.error(errorText(error)),
-  })
-  const remove = useMutation({
-    mutationFn: () => removeInstance(instance!.id),
-    onSuccess: () => {
-      onOpenChange(false)
-      onRemoved()
-    },
-    onError: (error) => toast.error(errorText(error)),
-  })
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault()
-            const form = new FormData(event.currentTarget)
-            mutation.mutate({
-              id: String(form.get("id")),
-              name: String(form.get("name")),
-              baseUrl: String(form.get("base_url")),
-              readOnly: form.get("read_only") === "on",
-              displayCurrency: String(form.get("display_currency") || "") || null,
-              package: instance?.package ?? "management",
-              customCaPath: String(form.get("custom_ca_path") || "") || null,
-              clearCustomCa: form.get("clear_custom_ca") === "on",
-            })
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>{instance ? m.editInstance : m.addInstance}</DialogTitle>
-            <DialogDescription>{m.customCaHint}</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <Field
-              name="id"
-              label={m.instanceId}
-              defaultValue={instance?.id ?? suggestedId}
-              readOnly={!!instance}
-              required
-              pattern="[A-Za-z0-9_-]+"
-            />
-            <Field
-              name="name"
-              label={m.instanceName}
-              defaultValue={instance?.name ?? "more-token"}
-              required
-            />
-            <Field
-              name="base_url"
-              label={m.instanceUrl}
-              defaultValue={instance?.baseUrl ?? "https://"}
-              required
-            />
-            <Field name="custom_ca_path" label={m.customCa} />
-            <Field
-              name="display_currency"
-              label={m.displayCurrency}
-              defaultValue={instance?.displayCurrency ?? ""}
-              maxLength={8}
-            />
-            <label className="flex min-h-11 items-center justify-between gap-3 text-sm">
-              {m.readOnly}
-              <Switch name="read_only" defaultChecked={instance?.readOnly} />
-            </label>
-            {instance?.caFingerprint ? (
-              <label className="flex min-h-11 items-center gap-3 text-sm">
-                <Checkbox name="clear_custom_ca" />
-                Remove CA ·{" "}
-                <code className="truncate text-xs">{instance.caFingerprint.slice(0, 16)}…</code>
-              </label>
-            ) : null}
-          </div>
-          <DialogFooter className="sm:justify-between">
-            {instance ? (
-              <Button
-                type="button"
-                variant="destructive"
-                onClick={() => remove.mutate()}
-                disabled={remove.isPending}
-              >
-                <Trash2 className="size-4" />
-                {m.removeInstance}
-              </Button>
-            ) : (
-              <span />
-            )}
-            <div className="flex gap-2">
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-                {m.cancel}
-              </Button>
-              <Button type="submit" disabled={mutation.isPending}>
-                {m.save}
-              </Button>
-            </div>
           </DialogFooter>
         </form>
       </DialogContent>

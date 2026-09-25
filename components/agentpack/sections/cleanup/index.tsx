@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AlertTriangle, RefreshCw, Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
@@ -65,9 +65,10 @@ const PROCESS_FOR_APP: Record<string, string> = {
  *
  * Two things are deliberately *not* offered:
  *
- * - **No "clean everything" button.** The quick action ticks the `safe` rows
- *   only. A one-click that also took chat history would train people to click
- *   past the one screen in this section that matters.
+ * - **No "clean everything" button.** The quick action adds the `safe` rows to
+ *   the selection and nothing else — it selects, it does not clean. A one-click
+ *   that also took chat history would train people to click past the one
+ *   screen in this section that matters.
  * - **No progress-free bulk mode.** Rows the scan couldn't fully read are marked
  *   as a floor, not rounded up into a confident total.
  */
@@ -100,6 +101,11 @@ export function CleanupSection() {
   // flashing an empty list that a moment later fills up.
   const [scanning, setScanning] = useState(true)
   const [scanned, setScanned] = useState(false)
+  // Which scan is the current one. Changing the age filter twice in a row starts
+  // two scans, and without this whichever resolved last would win — leaving
+  // sizes measured under the old filter on screen under the new one, and in the
+  // review panel after that.
+  const scanSeq = useRef(0)
 
   const refreshTrash = useCallback(async () => {
     if (!isTauri()) {
@@ -124,6 +130,7 @@ export function CleanupSection() {
       // and everything below is a setState. Web mode (no machine to measure)
       // awaits `null` and lands on "scanned, nothing found" rather than leaving
       // the spinner up forever beside the desktop-only note.
+      const seq = ++scanSeq.current
       setScanError(null)
       let result: CleanupScanResult | null = null
       let failure: string | null = null
@@ -134,6 +141,9 @@ export function CleanupSection() {
           failure = error instanceof Error ? error.message : String(error)
         }
       }
+      // A newer scan has started since: its answer is the one that describes
+      // the filter on screen, and `scanning` stays up until it lands.
+      if (seq !== scanSeq.current) return
       setRows(result?.rows ?? [])
       setConfigTargets(result?.configTargets ?? [])
       setRoots(result?.roots ?? null)
@@ -190,6 +200,7 @@ export function CleanupSection() {
   const selectedFiles = totalFiles(shown, selected)
   const reclaimable = shown.reduce((sum, r) => sum + r.bytes, 0)
   const hasSelection = selected.size > 0
+  const safeIds = useMemo(() => safeSelection(rows), [rows])
 
   const toggle = (id: string, on: boolean) =>
     setSelected((prev) => {
@@ -223,14 +234,36 @@ export function CleanupSection() {
     }
     if (steps.length === 0) return
 
-    await run(steps, { activity: { title: t.cleanup.title, source: "section" } })
+    const reports = await run(steps, { activity: { title: t.cleanup.title, source: "section" } })
+    // Empty means the review panel was closed without applying: nothing moved,
+    // so the selection the user built is still exactly what they meant.
+    if (reports.length === 0) return
     setSelected(new Set())
+    setScanning(true)
     await rescan(ageDays)
     await refreshTrash()
   }
 
+  // Putting a batch back changes what is on disk as much as a clean does, so
+  // the targets and "Reclaimable" are re-measured along with the recycle area.
+  // The rescan isn't awaited: the card only needs its own list to settle.
+  const refreshAfterTrash = useCallback(async () => {
+    setScanning(true)
+    void rescan(ageDays)
+    await refreshTrash()
+  }, [rescan, ageDays, refreshTrash])
+
   const notReady = !isTauri() && mounted
   const diskMeasured = scanned && !scanning && !scanError && isTauri() && !!paths
+  // The quick action's own line, which doubles as its disabled reason. While
+  // measuring there is none: the summary beside the buttons already says so.
+  const quickHint = scanning
+    ? null
+    : safeIds.length > 0
+      ? t.cleanup.quickCleanHint
+      : diskMeasured
+        ? t.cleanup.quickCleanNone
+        : null
 
   return (
     <CapabilityWorkbench
@@ -329,7 +362,9 @@ export function CleanupSection() {
                 {t.cleanup.mode.label}
               </Label>
               <Select value={mode} onValueChange={(v) => setMode(v as "quarantine" | "delete")}>
-                <SelectTrigger id="cleanup-mode" className="h-8 w-full min-w-0 sm:w-[190px]">
+                {/* Sized to its value, not to a width guessed from the English
+                    label — "Move to the recycle area" clipped at 190px. */}
+                <SelectTrigger id="cleanup-mode" className="h-8 w-full min-w-0 sm:w-fit">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -356,8 +391,12 @@ export function CleanupSection() {
             </div>
           ) : null}
 
+          {/* Capped, and scrolls inside itself, like `CapabilityList`: a list's
+              length is the machine's, not the design's. Uncapped, twenty-odd
+              targets put Clean ~2,500px below the row just ticked. Each app's
+              heading sticks, so a scrolled list still says whose files these are. */}
           {apps.length > 0 ? (
-            <div className="min-w-0 divide-y rounded-lg border">
+            <div className="max-h-(--hm-list-max-h) min-w-0 divide-y overflow-x-hidden overflow-y-auto rounded-lg border">
               {apps.map((app) => {
                 const appRows = rowsForApp(shown, app)
                 const appConfig = configTargets.filter((c) => c.app === app)
@@ -367,7 +406,7 @@ export function CleanupSection() {
                 const isUp = proc ? running[proc] : false
                 return (
                   <section key={app} className="flex min-w-0 flex-col gap-3 p-5">
-                    <div className="flex items-center justify-between gap-3">
+                    <div className="sticky top-0 z-10 -mt-1 flex items-center justify-between gap-3 bg-background py-1">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium">{t.cleanup.apps[app] ?? app}</span>
                         <Badge variant="secondary" className="font-normal">
@@ -433,11 +472,14 @@ export function CleanupSection() {
             <Button disabled={!hasSelection || scanning} onClick={() => void clean()}>
               {t.cleanup.clean}
             </Button>
+            {/* Selects, never cleans: it adds the regenerated rows to whatever is
+                already ticked, and Clean is still the only way on. */}
             <Button
               variant="outline"
               className="gap-2"
-              disabled={scanning || shown.length === 0}
-              onClick={() => setSelected(new Set(safeSelection(rows)))}
+              aria-describedby={quickHint ? "cleanup-quick-hint" : undefined}
+              disabled={scanning || safeIds.length === 0}
+              onClick={() => setSelected((prev) => new Set([...prev, ...safeIds]))}
             >
               <Sparkles className="size-4" />
               {t.cleanup.quickClean}
@@ -452,8 +494,17 @@ export function CleanupSection() {
                 ? t.cleanup.scanning
                 : hasSelection
                   ? t.cleanup.selectedSummary(formatBytes(selectedBytes), selectedFiles)
-                  : t.cleanup.reclaimable(formatBytes(reclaimable))}
+                  : // Unmeasured (web mode, a failed scan) is not "0 B can be
+                    // cleared" — the note or the error above already says why.
+                    diskMeasured
+                    ? t.cleanup.reclaimable(formatBytes(reclaimable))
+                    : null}
             </span>
+            {quickHint ? (
+              <p id="cleanup-quick-hint" className="basis-full text-xs text-muted-foreground">
+                {quickHint}
+              </p>
+            ) : null}
           </div>
         </section>
       }
@@ -463,7 +514,7 @@ export function CleanupSection() {
             entries={trash}
             status={trashStatus}
             error={trashError}
-            onChanged={refreshTrash}
+            onChanged={refreshAfterTrash}
           />
         </section>
       }

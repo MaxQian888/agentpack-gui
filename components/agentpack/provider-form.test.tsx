@@ -164,3 +164,40 @@ it("a form edit discards the hand-written config rather than contradicting it", 
   expect(form.rawSettingsConfig).toBeUndefined()
   expect(form.baseUrl).toBe("https://typed")
 })
+
+it("shows the stored config in the raw tab, not a rebuild of the form's fields", async () => {
+  const stored = JSON.stringify({
+    env: { ANTHROPIC_BASE_URL: "https://r", ANTHROPIC_AUTH_TOKEN: "sk", X_EXTRA: "1" },
+    permissions: { allow: ["Bash"] },
+  })
+  const { onSubmit } = renderForm({
+    editing: true,
+    initial: {
+      name: "Mine",
+      app: "claude",
+      baseUrl: "https://r",
+      token: "sk",
+      baseSettingsConfig: stored,
+    },
+  })
+  await openRawTab()
+  const raw = JSON.parse((screen.getByLabelText(en.ccswitch.rawLabel) as HTMLTextAreaElement).value)
+  expect(raw).toEqual(JSON.parse(stored))
+
+  // Saving from the form merges into the stored row rather than replacing it.
+  await userEvent.click(screen.getByRole("tab", { name: en.ccswitch.tabForm }))
+  await userEvent.clear(screen.getByLabelText(en.ccswitch.fieldBaseUrl))
+  await userEvent.type(screen.getByLabelText(en.ccswitch.fieldBaseUrl), "https://moved")
+  await userEvent.click(screen.getByRole("button", { name: /save/i }))
+  const form = onSubmit.mock.calls[0][0] as ProviderFormData
+  expect(form.baseSettingsConfig).toBe(stored)
+})
+
+it("drops a connection-test result once the endpoint it tested changes", async () => {
+  ;(httpGet as jest.Mock).mockResolvedValue({ status: 401, latencyMs: 30, body: "", error: null })
+  renderForm({ initial: { baseUrl: "https://relay.example", token: "sk-bad" } })
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.testConnection }))
+  expect(await screen.findByText(en.ccswitch.probeUnauthorized)).toBeInTheDocument()
+  await userEvent.type(screen.getByLabelText(en.ccswitch.fieldBaseUrl), "/v2")
+  expect(screen.queryByText(en.ccswitch.probeUnauthorized)).not.toBeInTheDocument()
+})

@@ -39,6 +39,7 @@ export function previewLines(
       return step.lines
     case "mergeFile":
     case "ccVisibleApps":
+    case "ccInitDb":
       return [out.wouldWrite(step.path)]
     case "skillInstall":
       return step.targets.map((target) =>
@@ -60,6 +61,8 @@ export function previewLines(
       return [out.wouldBackupSkill(step.path)]
     case "skillCreate":
       return step.dests.map((d) => out.wouldWrite(d))
+    case "skillRestore":
+      return step.dests.map((d) => out.wouldRestore(step.backupId, d))
     case "ccProvider": {
       // The only branch here that used to build its line by hand: it was
       // hardcoded English and leaked the internal op verb ("setCurrent") into
@@ -73,6 +76,10 @@ export function previewLines(
       return [out.wouldSnapshot]
     case "snapshotRestore":
       return [out.wouldRestoreSnapshot(step.snapshotId)]
+    case "appSettings":
+      // The caller wrote these (and masked any credential): which keys are
+      // secret is the settings' business, not this module's.
+      return step.lines
     case "cleanup": {
       // Every path and its measured size, so the review panel shows what will
       // go rather than a count. The sizes came from the section's scan — the

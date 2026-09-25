@@ -3,6 +3,8 @@ jest.mock("@/lib/tauri/commands", () => ({
   readTextFile: jest.fn(),
   commandOnPath: jest.fn(async () => true),
   probeHost: jest.fn(async () => ({ reachable: true, latencyMs: 12 })),
+  mcpProbeStdio: jest.fn(),
+  mcpProbeRemote: jest.fn(),
 }))
 jest.mock("@/lib/tauri/system", () => ({ openUrl: jest.fn() }))
 jest.mock("@/lib/tauri/clipboard", () => ({ copyText: jest.fn().mockResolvedValue(true) }))
@@ -11,7 +13,8 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-import { commandOnPath, readTextFile } from "@/lib/tauri/commands"
+import { commandOnPath, mcpProbeStdio, readTextFile } from "@/lib/tauri/commands"
+import { en } from "@/lib/i18n/en"
 import { copyText } from "@/lib/tauri/clipboard"
 import { openUrl } from "@/lib/tauri/system"
 import { McpDetailDialog } from "./detail-dialog"
@@ -85,7 +88,7 @@ it("renders nothing without a server id", () => {
   expect(container).toBeEmptyDOMElement()
 })
 
-it("shows the catalog badge and the parsed on-disk config, ✓ where absent", async () => {
+it("shows the catalog badge and the parsed on-disk config, and says which entry didn't parse", async () => {
   renderDialog({
     scan: scan({
       claudeMcps: { known: ["context7"], custom: [] },
@@ -95,9 +98,46 @@ it("shows the catalog badge and the parsed on-disk config, ✓ where absent", as
   expect(await screen.findByText("Context7")).toBeInTheDocument()
   expect(screen.getByText("catalog")).toBeInTheDocument()
   // Claude parses to a spec (command shown as a field value); OpenCode's empty
-  // "{}" config has no parseable entry, so it renders the ✓ fallback.
+  // "{}" config has no parseable entry — which used to render as a bare "✓".
   expect(await screen.findByText(/npx -y @upstash\/context7-mcp/)).toBeInTheDocument()
-  expect(screen.getByText("✓")).toBeInTheDocument()
+  expect(screen.getByText(en.mcp.detailUnreadable)).toBeInTheDocument()
+  expect(screen.queryByText("✓")).not.toBeInTheDocument()
+  // Its Test button is disabled, and points at the sentence that says why.
+  const tests = screen.getAllByRole("button", { name: "Test" })
+  expect(tests[1]).toBeDisabled()
+  expect(tests[1]).toHaveAccessibleDescription(en.mcp.detailUnreadable)
+})
+
+it("ends a deep test that rejects with the reason, not an endless spinner", async () => {
+  ;(mcpProbeStdio as jest.Mock).mockRejectedValue(new Error("spawn EACCES"))
+  renderDialog()
+  await screen.findByText(/npx -y @upstash\/context7-mcp/)
+  await userEvent.click(screen.getByRole("button", { name: /Deep test/ }))
+  expect(
+    await screen.findByText(/Couldn't run the handshake: Error: spawn EACCES/)
+  ).toBeInTheDocument()
+  expect(screen.queryByText(en.mcp.deepTesting)).not.toBeInTheDocument()
+})
+
+it("drops the previous server's config the moment the id changes", async () => {
+  const onOpenChange = jest.fn()
+  const view = (id: string) => (
+    <I18nProvider>
+      <McpDetailDialog
+        id={id}
+        open
+        onOpenChange={onOpenChange}
+        scan={scan({ claudeMcps: { known: ["context7"], custom: ["mine"] } })}
+      />
+    </I18nProvider>
+  )
+  const { rerender } = render(view("context7"))
+  expect(await screen.findByText(/npx -y @upstash\/context7-mcp/)).toBeInTheDocument()
+  // Hold the next read so the in-between render is observable.
+  ;(readTextFile as jest.Mock).mockImplementation(() => new Promise(() => {}))
+  rerender(view("mine"))
+  expect(screen.queryByText(/npx -y @upstash\/context7-mcp/)).not.toBeInTheDocument()
+  expect(screen.getByText(en.mcp.detailReading)).toBeInTheDocument()
 })
 
 it("runs a lightweight health check when Test is clicked", async () => {

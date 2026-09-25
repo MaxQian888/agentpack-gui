@@ -58,7 +58,11 @@ function Foldable({
         {icon}
         <span className="min-w-0 truncate">{label}</span>
         <ChevronRight
-          className={cn("ml-auto size-3 shrink-0 transition-transform", open && "rotate-90")}
+          aria-hidden="true"
+          className={cn(
+            "ml-auto size-3 shrink-0 transition-transform duration-(--hm-dur-fast) ease-(--hm-ease-out)",
+            open && "rotate-90"
+          )}
         />
       </button>
       {open ? <div className="border-t px-3 py-2">{children}</div> : null}

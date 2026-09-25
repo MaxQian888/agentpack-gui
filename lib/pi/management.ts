@@ -1,5 +1,5 @@
 import type { Paths, StepDescriptor } from "@/lib/agentpack/types"
-import type { PiResourceKind } from "./types"
+import type { PiPackageRecord, PiResourceKind, PiResourceState } from "./types"
 
 export type PiScope = { kind: "global" } | { kind: "project"; cwd: string; approved: boolean }
 
@@ -8,7 +8,8 @@ export type PiPackageAction =
 
 export interface PiManagementCopy {
   packageAction: (action: "install" | "remove" | "update" | "updateAll", source: string) => string
-  resourceAction: (enabled: boolean, kind: string, source: string) => string
+  /** `cleared` is how many configured file filters the change drops, when any. */
+  resourceAction: (enabled: boolean, kind: string, source: string, cleared?: number) => string
   errors: Record<string, string>
 }
 
@@ -62,7 +63,15 @@ export function redactPiPackageSource(source: string): string {
   return `${prefix}${value.replace(/([?#]).*$/, "$1***")}`
 }
 
-function assertSafePackageSource(source: string, copy: PiManagementCopy): void {
+/**
+ * Whether a package source is free of embedded credentials and query tokens.
+ *
+ * Exported so the install field can say no *before* the permission dialog: the
+ * throwing form below is the last line of defence, but a user who only finds
+ * out after approving "run this with my full permissions" has been asked to
+ * consent to something the app was always going to refuse.
+ */
+export function isSafePiPackageSource(source: string): boolean {
   const normalized = source.replace(/^git:/, "")
   const scheme = normalized.match(/^([a-z][a-z\d+.-]*):\/\//i)
   let unsafeUserInfo = false
@@ -99,7 +108,11 @@ function assertSafePackageSource(source: string, copy: PiManagementCopy): void {
       }
     }
   }
-  if (unsafeUserInfo || httpUserInfo || /[?#]/.test(normalized)) {
+  return !(unsafeUserInfo || httpUserInfo || /[?#]/.test(normalized))
+}
+
+function assertSafePackageSource(source: string, copy: PiManagementCopy): void {
+  if (!isSafePiPackageSource(source)) {
     throw new Error(copy.errors.PI_PACKAGE_SOURCE_UNSAFE)
   }
 }
@@ -199,6 +212,18 @@ export function piResourcePathEnabled(path: string, filters: string[]): boolean 
   return enabled
 }
 
+/** How many declared files from one resource kind this scope actually loads. */
+export function piResourcesOnFor(state: PiResourceState | undefined): number {
+  if (!state?.enabled) return 0
+  if (!state.configured) return state.declared.length
+  return state.declared.filter((path) => piResourcePathEnabled(path, state.filters)).length
+}
+
+/** Total declared files from a package that this scope actually loads. */
+export function piResourcesOnCount(pkg: PiPackageRecord): number {
+  return Object.values(pkg.resources).reduce((total, state) => total + piResourcesOnFor(state), 0)
+}
+
 /** Only concrete resource paths can use Pi's exact +path/-path override syntax. */
 export function isPiExactResourcePath(path: string): boolean {
   return path.length > 0 && !/^[!+-]/.test(path) && !/[?*\[\]{}]/.test(path)
@@ -263,6 +288,41 @@ export function setPackageResourcePathEnabled(
 }
 
 /**
+ * How many file filters a whole-kind toggle would drop from one package entry.
+ *
+ * Switching a kind on removes its array and switching it off empties it, so any
+ * narrowing glob or `+path`/`-path` override set on it goes with the toggle.
+ * That is Pi's own model — "off" has no room for per-file exceptions — so the
+ * step says so in its label rather than discarding them unannounced.
+ */
+export function clearedResourceFilters(
+  existing: string,
+  source: string,
+  kind: PiResourceKind,
+  enabled: boolean,
+  delta = false,
+  resourcePaths: string[] = []
+): number {
+  let settings: Record<string, unknown>
+  try {
+    settings = parseSettings(existing)
+  } catch {
+    return 0
+  }
+  const packages = Array.isArray(settings.packages) ? settings.packages : []
+  const entry = packages.map(packageObject).find((candidate) => candidate?.source === source)
+  const current = Array.isArray(entry?.[kind])
+    ? (entry![kind] as unknown[]).filter((item): item is string => typeof item === "string")
+    : []
+  if (!delta) return current.length
+  // A delta rewrites the array to the exact paths; only what it doesn't re-add is lost.
+  const next = new Set(
+    resourcePaths.filter(isPiExactResourcePath).map((path) => `${enabled ? "+" : "-"}${path}`)
+  )
+  return current.filter((item) => !next.has(item)).length
+}
+
+/**
  * Stage a settings merge against the exact content shown during review. The
  * runner re-reads immediately before writing; an external edit therefore fails
  * closed instead of being overwritten by a stale package toggle.
@@ -278,12 +338,21 @@ export function buildPiResourceToggleStep(
   resourcePaths: string[] = []
 ): StepDescriptor {
   const expectedHash = piSettingsHash(reviewedContent)
+  const cleared = clearedResourceFilters(
+    reviewedContent,
+    source,
+    kind,
+    enabled,
+    delta,
+    resourcePaths
+  )
+  const label = copy.resourceAction(enabled, kind, source, cleared)
   return {
     kind: "mergeFile",
     id: `pi-package-resource-${kind}-${source}`,
-    label: copy.resourceAction(enabled, kind, source),
+    label,
     path,
-    writtenNote: copy.resourceAction(enabled, kind, source),
+    writtenNote: label,
     merge: (existing) => {
       if (existing !== reviewedContent || piSettingsHash(existing) !== expectedHash) {
         throw new Error(copy.errors.PI_SETTINGS_CHANGED)

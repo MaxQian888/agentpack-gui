@@ -1,6 +1,13 @@
 "use client"
 
-import { useDeferredValue, useEffect, useMemo, useState } from "react"
+import {
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react"
 import {
   Copy,
   DownloadCloud,
@@ -58,6 +65,7 @@ import {
   parseOpencodeSkillPermissions,
 } from "@/lib/agentpack/merge/skill-config"
 import { SKILL_REGISTRY_IDS } from "@/lib/agentpack/scan"
+import { runApplied } from "@/lib/agentpack/report"
 import {
   filterRows,
   groupSkills,
@@ -139,6 +147,16 @@ interface SkillStatus {
 
 type SkillStatusFilter = "all" | "managed" | "unmanaged" | "updates" | "issues"
 
+/**
+ * Pending updates by installed path, or `null` before anything was checked.
+ *
+ * Owned by the section rather than this tab: the tab unmounts when another view
+ * is chosen, and the check it would lose is a network round-trip per skill.
+ */
+export type SkillUpdates = Map<string, SkillUpdateResult> | null
+
+const NO_UPDATES: Map<string, SkillUpdateResult> = new Map()
+
 function hasSkillConflict(row: SkillRow): boolean {
   if (row.nameMismatch) return true
   return new Set(Object.values(row.entries).map((entry) => entry.skillMd)).size > 1
@@ -147,14 +165,19 @@ function hasSkillConflict(row: SkillRow): boolean {
 export function InstalledSkillsTab({
   scan,
   refresh,
-  onUpdateCountChange,
+  updates: checked,
+  onUpdatesChange: setUpdates,
   onBrowseCatalog,
+  openBackups = false,
 }: {
   scan: SkillsScanResult
   refresh: () => void
-  onUpdateCountChange?: (count: number) => void
+  updates: SkillUpdates
+  onUpdatesChange: Dispatch<SetStateAction<SkillUpdates>>
   /** Opens the bundled catalog — the empty state's one next step. */
   onBrowseCatalog?: () => void
+  /** Arrive with the backups dialog open — Recovery's hand-off for a skill backup. */
+  openBackups?: boolean
 }) {
   const t = useT()
   const sb = t.skillsBrowser
@@ -172,7 +195,7 @@ export function InstalledSkillsTab({
   const [sort, setSort] = useState<SkillSort>("name")
   const [detail, setDetail] = useState<SkillRow | null>(null)
   const [toDelete, setToDelete] = useState<{ row: SkillRow; source: SkillSource } | null>(null)
-  const [backupsOpen, setBackupsOpen] = useState(false)
+  const [backupsOpen, setBackupsOpen] = useState(openBackups)
   // Batch selection (by dir name) + the scope its "Delete" acts on.
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [deleteScope, setDeleteScope] = useState<"all" | SkillSource>("all")
@@ -180,7 +203,7 @@ export function InstalledSkillsTab({
 
   const [overrides, setOverrides] = useState<Record<string, SkillStatus>>({})
   const [overridesBump, setOverridesBump] = useState(0)
-  const [updates, setUpdates] = useState<Map<string, SkillUpdateResult>>(new Map())
+  const updates = checked ?? NO_UPDATES
   const [checking, setChecking] = useState(false)
 
   const rows = useMemo(() => groupSkills(scan.skills), [scan])
@@ -240,9 +263,19 @@ export function InstalledSkillsTab({
     [rows, updates]
   )
 
-  useEffect(() => {
-    onUpdateCountChange?.(updateCount)
-  }, [onUpdateCountChange, updateCount])
+  /** Drop the pending flags of rows whose update step actually applied. */
+  const clearUpdated = (applied: SkillRow[]) =>
+    setUpdates((prev) => {
+      if (!prev) return prev
+      const next = new Map(prev)
+      for (const row of applied) {
+        for (const s of SKILL_SOURCES) {
+          const e = row.entries[s]
+          if (e) next.delete(e.path)
+        }
+      }
+      return next
+    })
 
   const doCheckUpdates = async () => {
     const queries = updateQueries(managedRows)
@@ -250,9 +283,9 @@ export function InstalledSkillsTab({
     setChecking(true)
     try {
       const results = await checkRepoUpdates(queries, mirrorPrefix)
+      // Silent on success (design.md § 7): the Updates figure in the band and
+      // the chips on each row already say what the check found.
       setUpdates(indexUpdates(results))
-      const n = results.filter((r) => r.hasUpdate).length
-      toast[n > 0 ? "success" : "info"](n > 0 ? sb.updatesFound(n) : sb.noUpdates)
     } catch (e) {
       toast.error(sb.checkFailed(String(e)))
     } finally {
@@ -266,32 +299,37 @@ export function InstalledSkillsTab({
     const first = managed.map((s) => row.entries[s]).find(Boolean)
     if (!first) return
     const dests = managed.map((s) => `${skillsDirFor(paths, s)}/${row.dirName}`)
-    await run([skillUpdateStep(row.dirName, first.path, managed, dests, mirrorPrefix, t)])
-    // The refreshed hash clears this row's pending flags.
-    setUpdates((prev) => {
-      const next = new Map(prev)
-      for (const s of managed) {
-        const e = row.entries[s]
-        if (e) next.delete(e.path)
-      }
-      return next
-    })
+    const reports = await run([
+      skillUpdateStep(row.dirName, first.path, managed, dests, mirrorPrefix, t),
+    ])
+    // The refreshed hash clears this row's pending flags — but only if the
+    // update landed. A walked-away or failed run leaves the skill as outdated
+    // as it was, and the flag is the only way back to the Update button.
+    if (runApplied(reports)) clearUpdated([row])
     refresh()
   }
 
   const updateAll = async () => {
     if (!paths) return
-    const steps = rows
-      .filter((r) => rowUpdateTargets(r, updates).length > 0)
-      .map((row) => {
-        const managed = SKILL_SOURCES.filter((s) => row.entries[s]?.origin)
-        const first = managed.map((s) => row.entries[s]).find(Boolean)!
-        const dests = managed.map((s) => `${skillsDirFor(paths, s)}/${row.dirName}`)
-        return skillUpdateStep(row.dirName, first.path, managed, dests, mirrorPrefix, t)
-      })
+    const pending = rows.filter((r) => rowUpdateTargets(r, updates).length > 0)
+    const stepRows = new Map<string, SkillRow>()
+    const steps = pending.map((row) => {
+      const managed = SKILL_SOURCES.filter((s) => row.entries[s]?.origin)
+      const first = managed.map((s) => row.entries[s]).find(Boolean)!
+      const dests = managed.map((s) => `${skillsDirFor(paths, s)}/${row.dirName}`)
+      const step = skillUpdateStep(row.dirName, first.path, managed, dests, mirrorPrefix, t)
+      stepRows.set(step.id, row)
+      return step
+    })
     if (steps.length === 0) return
-    await run(steps)
-    setUpdates(new Map())
+    const reports = await run(steps)
+    // One step per skill, so a partial run clears exactly the skills it updated.
+    clearUpdated(
+      reports
+        .filter((r) => r.status === "done" || r.status === "warning")
+        .map((r) => stepRows.get(r.id))
+        .filter((row): row is SkillRow => !!row)
+    )
     refresh()
   }
 
@@ -355,16 +393,36 @@ export function InstalledSkillsTab({
         )
       )
     if (steps.length === 0) return
-    await run(steps)
-    toast.success(sb.batchCopyDone(steps.length))
-    clearSelection()
+    const reports = await run(steps)
+    // Walked away: nothing ran, so keep the selection for another go.
+    if (reports.length === 0) return
+    // Silent on success — the review panel already reads "All set".
+    if (runApplied(reports)) clearSelection()
     refresh()
+  }
+
+  /** The selected rows that have a copy inside the chosen delete scope. */
+  const inDeleteScope = () =>
+    selectedRows().filter((r) =>
+      deleteScope === "all" ? SKILL_SOURCES.some((s) => r.entries[s]) : !!r.entries[deleteScope]
+    )
+
+  const askBatchDelete = () => {
+    // Opening a confirm for a delete that would do nothing, then doing nothing,
+    // read as a delete that silently failed.
+    if (inDeleteScope().length === 0) {
+      toast.info(
+        sb.batchNothingToDelete(deleteScope === "all" ? sb.deleteScopeAll : sb.sources[deleteScope])
+      )
+      return
+    }
+    setBatchDeleteOpen(true)
   }
 
   // Back up then remove each selected skill, within the chosen delete scope.
   const batchDelete = async () => {
     if (!paths) return
-    const steps = selectedRows().flatMap((r) => {
+    const steps = inDeleteScope().flatMap((r) => {
       const sources =
         deleteScope === "all"
           ? SKILL_SOURCES.filter((s) => r.entries[s])
@@ -378,8 +436,9 @@ export function InstalledSkillsTab({
       return [backup, { ...remove, dependsOn: [backup.id] }]
     })
     if (steps.length === 0) return
-    await run(steps)
-    clearSelection()
+    const reports = await run(steps)
+    if (reports.length === 0) return
+    if (runApplied(reports)) clearSelection()
     refresh()
   }
 
@@ -393,10 +452,17 @@ export function InstalledSkillsTab({
           className="gap-2"
           onClick={() => void doCheckUpdates()}
           disabled={checking || managedRows.length === 0 || !isTauri()}
+          aria-describedby={managedRows.length === 0 ? "skills-check-none" : undefined}
         >
           {checking ? <Spinner className="size-4" /> : <RefreshCw className="size-4" />}
           {checking ? sb.checking : sb.checkUpdates}
         </Button>
+        {/* The disabled button's reason, said where it can be read. */}
+        {managedRows.length === 0 ? (
+          <span id="skills-check-none" className="text-xs text-muted-foreground">
+            {sb.checkUpdatesNoneManaged}
+          </span>
+        ) : null}
         {updateCount > 0 ? (
           <Button size="sm" className="gap-2" onClick={() => void updateAll()}>
             <DownloadCloud className="size-4" />
@@ -519,12 +585,7 @@ export function InstalledSkillsTab({
                 ))}
               </SelectContent>
             </Select>
-            <Button
-              variant="destructive"
-              size="sm"
-              className="gap-1.5"
-              onClick={() => setBatchDeleteOpen(true)}
-            >
+            <Button variant="destructive" size="sm" className="gap-1.5" onClick={askBatchDelete}>
               <Trash2 className="size-4" />
               {sb.batchDelete}
             </Button>
@@ -533,10 +594,22 @@ export function InstalledSkillsTab({
       ) : null}
 
       {filtered.length === 0 ? (
+        /* "No skills found" is a claim about the disk; with every root that
+           failed listed above, it is only a claim about the scan. */
         <CapabilityEmpty
-          message={rows.length === 0 ? sb.empty : sb.emptyFiltered}
+          message={
+            rows.length > 0
+              ? sb.emptyFiltered
+              : scan.errors.length > 0
+                ? sb.emptyScanFailed
+                : sb.empty
+          }
           action={
-            rows.length === 0 && onBrowseCatalog ? (
+            rows.length === 0 && scan.errors.length > 0 ? (
+              <Button variant="outline" size="sm" onClick={refresh}>
+                {sb.refresh}
+              </Button>
+            ) : rows.length === 0 && onBrowseCatalog ? (
               <Button variant="outline" size="sm" onClick={onBrowseCatalog}>
                 {sb.emptyBrowse}
               </Button>
@@ -672,7 +745,12 @@ export function InstalledSkillsTab({
         refresh={refresh}
       />
 
-      <BackupsDialog open={backupsOpen} onOpenChange={setBackupsOpen} refresh={refresh} />
+      <BackupsDialog
+        open={backupsOpen}
+        onOpenChange={setBackupsOpen}
+        skills={scan.skills}
+        refresh={refresh}
+      />
 
       <AlertDialog open={toDelete !== null} onOpenChange={(open) => !open && setToDelete(null)}>
         <AlertDialogContent>

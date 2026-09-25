@@ -2,6 +2,7 @@ import {
   emptyProfileStore,
   parseProfiles,
   profilesPath,
+  profilesUnreadable,
   serializeProfiles,
   type Profile,
 } from "./profile"
@@ -63,4 +64,16 @@ it("parseProfiles drops entries missing id / name / plan", () => {
 
 it("profilesPath nests under ~/.agentpack", () => {
   expect(profilesPath("/home/me")).toBe("/home/me/.agentpack/profiles.json")
+})
+
+it("profilesUnreadable tells a broken store from an empty one", () => {
+  // Parsing degrades both to [], which is right for rendering — but a save
+  // after a broken read would serialize [] over profiles the parser couldn't see.
+  expect(profilesUnreadable("")).toBe(false)
+  expect(profilesUnreadable("  \n")).toBe(false)
+  expect(profilesUnreadable(serializeProfiles({ version: 1, profiles: [profile] }))).toBe(false)
+  expect(profilesUnreadable("{not json")).toBe(true)
+  expect(profilesUnreadable(JSON.stringify({ nope: true }))).toBe(true)
+  expect(profilesUnreadable("[]")).toBe(true)
+  expect(profilesUnreadable("null")).toBe(true)
 })

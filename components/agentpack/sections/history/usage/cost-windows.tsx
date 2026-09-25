@@ -21,13 +21,19 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart"
 import { useT } from "@/lib/i18n/provider"
-import { formatCost, formatDuration, formatTokens } from "@/lib/history/format"
+import {
+  formatCost,
+  formatCostFigure,
+  formatDuration,
+  formatTokens,
+  type CostFigure,
+} from "@/lib/history/format"
 import { CHART_SERIES, modelColor } from "@/lib/history/display"
 import { priceForModel } from "@/lib/history/pricing"
-import { UNKNOWN_MODEL } from "@/lib/history/stats"
+import { statsCostFigure, UNKNOWN_MODEL } from "@/lib/history/stats"
 import { bucketLabel } from "@/lib/history/range"
 import { burnRate, projectBlock, type UsageBlock } from "@/lib/history/blocks"
-import { Stat, PanelTitle, EmptyPanel } from "./stat"
+import { Stat, PanelTitle, EmptyPanel, SeriesPending } from "./stat"
 import { CostHeatmap } from "./cost-heatmap"
 import type { UsageView } from "./view"
 
@@ -49,7 +55,7 @@ export function CostWindowsPanel({
   subscriptionUsd: number | null
 }) {
   const t = useT().history
-  const { stats, blocks, activeBlock, p90Tokens, seriesReady } = view
+  const { stats, blocks, activeBlock, p90Tokens, seriesReady, seriesFailed } = view
   // Newest first; the table renders at most `BLOCK_ROWS` of them and says so
   // rather than trailing off, so a capped list never reads as the whole history.
   const finished = blocks.filter((b) => !b.active).reverse()
@@ -60,7 +66,7 @@ export function CostWindowsPanel({
       {activeBlock ? <ActiveBlockCard block={activeBlock} now={now} p90Tokens={p90Tokens} /> : null}
 
       {subscriptionUsd != null && subscriptionUsd > 0 ? (
-        <SubscriptionCard apiEquivalent={stats.totals.cost} paid={subscriptionUsd} />
+        <SubscriptionCard apiEquivalent={statsCostFigure(stats)} paid={subscriptionUsd} />
       ) : null}
 
       <CostOverTimeCard view={view} />
@@ -112,7 +118,7 @@ export function CostWindowsPanel({
       <Card className="gap-3 p-4">
         <PanelTitle title={t.blocksTitle} hint={t.blocksHint} />
         {!seriesReady ? (
-          <EmptyPanel message={t.seriesLoading} />
+          <SeriesPending failed={seriesFailed} />
         ) : finished.length === 0 ? (
           <EmptyPanel message={t.blocksEmpty} />
         ) : (
@@ -148,7 +154,15 @@ export function CostWindowsPanel({
                         b.unpricedEntries > 0 ? t.costLowerBound(b.unpricedEntries) : undefined
                       }
                     >
-                      {b.unpricedEntries > 0 ? `≥${formatCost(b.cost)}` : formatCost(b.cost)}
+                      {formatCostFigure({
+                        value: b.cost,
+                        // A window doesn't keep which of its entries were
+                        // recorded and which estimated, so only the lower
+                        // bound is marked — as it always was here.
+                        estimated: false,
+                        unpriced: b.unpricedEntries,
+                        transcripts: b.entries,
+                      })}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -305,18 +319,21 @@ function ActiveBlockCard({
  * user actually pays. Only shown once they've entered a figure — the
  * transcripts carry no evidence of which plan is in force.
  */
-function SubscriptionCard({ apiEquivalent, paid }: { apiEquivalent: number; paid: number }) {
+function SubscriptionCard({ apiEquivalent, paid }: { apiEquivalent: CostFigure; paid: number }) {
   const t = useT().history
+  const figure = formatCostFigure(apiEquivalent)
   // `paid` is guaranteed positive by the caller's guard — no division guard here
-  // would ever fire, and an unreachable one only pretends to be safety.
-  const ratio = apiEquivalent / paid
+  // would ever fire, and an unreachable one only pretends to be safety. A ratio
+  // over a figure that priced nothing would be a made-up 0.0×, so it follows
+  // the figure to `—`.
+  const ratio = figure === "—" ? "—" : `${(apiEquivalent.value / paid).toFixed(1)}×`
   return (
     <Card className="gap-3 p-4">
       <PanelTitle title={t.subscriptionTitle} hint={t.subscriptionHint} />
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-        <Stat label={t.subscriptionApi} value={formatCost(apiEquivalent)} />
+        <Stat label={t.subscriptionApi} value={figure} />
         <Stat label={t.subscriptionPaid} value={formatCost(paid)} />
-        <Stat label={t.subscriptionRatio} value={`${ratio.toFixed(1)}×`} />
+        <Stat label={t.subscriptionRatio} value={ratio} />
       </div>
     </Card>
   )

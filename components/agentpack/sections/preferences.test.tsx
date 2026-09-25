@@ -158,10 +158,13 @@ it("admits what it cannot do outside the desktop app", () => {
   expect(screen.getByText(prefs.hotkeyDesktopOnly)).toBeInTheDocument()
 })
 
-it("targets another OS for generated install commands", async () => {
+it("targets another OS for generated install commands, and remembers it", async () => {
+  // The page says the desktop app remembers these; this one used to live only
+  // in memory and was gone at the next launch.
   renderPreferences()
   await userEvent.selectOptions(screen.getByLabelText(prefs.osLabel), "win")
   expect(useAppStore.getState().osOverride).toBe("win")
+  expect(saveSettings).toHaveBeenCalledWith({ osOverride: "win" })
 })
 
 it("opens both guided help entry points", async () => {
@@ -193,13 +196,17 @@ it("restores this page's defaults and leaves everything else alone", async () =>
 
   expect(mockSetTheme).toHaveBeenCalledWith("system")
   expect(useAppStore.getState().osOverride).toBeNull()
-  expect(saveSettings).toHaveBeenCalledWith({
-    uiScale: 100,
-    reduceMotion: false,
-    startupSection: null,
-    autoCheckUpdates: true,
-    quickStartDismissed: false,
-  })
+  await waitFor(() =>
+    expect(saveSettings).toHaveBeenCalledWith({
+      uiScale: 100,
+      reduceMotion: false,
+      startupSection: null,
+      autoCheckUpdates: true,
+      quickStartDismissed: false,
+      summonShortcut: null,
+      osOverride: null,
+    })
+  )
   const after = useAppStore.getState().settings
   expect(after.proxy).toEqual({
     mode: "manual",
@@ -207,4 +214,18 @@ it("restores this page's defaults and leaves everything else alone", async () =>
     targets: ["npm"],
   })
   expect(after.ghMirrorPrefix).toBe("https://mirror/")
+})
+
+it("releases the global hotkey as part of this page's defaults", async () => {
+  // The hint says the reset covers this page, and the hotkey is on it. Leaving
+  // it claimed would keep a system-wide key behind a page that reads "default".
+  useAppStore.setState({
+    settings: { ...DEFAULT_SETTINGS, summonShortcut: DEFAULT_SUMMON_SHORTCUT },
+  })
+  renderPreferences()
+  await userEvent.click(screen.getByRole("button", { name: prefs.defaultsAction }))
+  await waitFor(() =>
+    expect(unregisterSummonShortcut).toHaveBeenCalledWith(DEFAULT_SUMMON_SHORTCUT)
+  )
+  expect(useAppStore.getState().settings.summonShortcut).toBeNull()
 })

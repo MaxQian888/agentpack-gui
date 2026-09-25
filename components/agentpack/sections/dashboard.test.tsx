@@ -93,7 +93,8 @@ function DashboardHarness({ onNavigate }: { onNavigate: (key: SectionKey) => voi
   }, [paths])
   // setState in the async continuation (not the effect body) avoids cascading renders.
   useEffect(() => {
-    if (!paths) return
+    // Like the shell: web mode has no machine to scan.
+    if (!paths || !isTauri()) return
     let cancelled = false
     scanEnvironment(paths).then((result) => {
       if (!cancelled) setScan(result)
@@ -376,31 +377,41 @@ it("truncates a long list and hands off to the owning section", async () => {
   expect(onNavigate).toHaveBeenCalledWith("mcp")
 })
 
-it("shows the quick-start card on a fresh, empty setup", async () => {
+it("on a fresh setup, offers the wizard once — from the finding, not twice", async () => {
   renderDashboard()
-  expect(screen.getByText(en.quickStart.title)).toBeInTheDocument()
+  // Nothing before the machine is read: an empty detection list is not "no agent".
+  expect(screen.queryByText(en.quickStart.title)).not.toBeInTheDocument()
   await screen.findByText("my-custom") // flush the async scan
-})
-
-it("reopens the welcome wizard from the quick-start card", async () => {
-  renderDashboard()
-  await userEvent.click(screen.getByRole("button", { name: en.quickStart.openGuide }))
+  expect(screen.getByText(en.diagnostics.noAgentTitle)).toBeInTheDocument()
+  expect(screen.queryByText(en.quickStart.title)).not.toBeInTheDocument()
+  await userEvent.click(screen.getByRole("button", { name: en.diagnostics.setUp }))
   expect(useAppStore.getState().onboardingOpen).toBe(true)
 })
 
-it("hides the quick-start card once an assistant is installed", async () => {
+it("shows neither the card nor the finding once an assistant is installed", async () => {
   useAppStore.setState({ detections: { "claude-code": { installed: true, version: "1.0.0" } } })
   renderDashboard()
   await screen.findByText("my-custom") // flush the async scan
   expect(screen.queryByText(en.quickStart.title)).not.toBeInTheDocument()
+  expect(screen.queryByText(en.diagnostics.noAgentTitle)).not.toBeInTheDocument()
 })
 
-it("permanently hides the quick-start card on Don't show again", async () => {
-  renderDashboard()
-  await userEvent.click(screen.getByRole("button", { name: en.quickStart.dismiss }))
-  expect(screen.queryByText(en.quickStart.title)).not.toBeInTheDocument()
-  expect(useAppStore.getState().settings.quickStartDismissed).toBe(true)
-  expect(saveSettings).toHaveBeenCalledWith({ quickStartDismissed: true })
+describe("the quick-start card, in web mode", () => {
+  beforeEach(() => (isTauri as jest.Mock).mockReturnValue(false))
+
+  it("is the way into the wizard where nothing can be measured", async () => {
+    renderDashboard()
+    await userEvent.click(await screen.findByRole("button", { name: en.quickStart.openGuide }))
+    expect(useAppStore.getState().onboardingOpen).toBe(true)
+  })
+
+  it("hides for good on Don't show again", async () => {
+    renderDashboard()
+    await userEvent.click(await screen.findByRole("button", { name: en.quickStart.dismiss }))
+    expect(screen.queryByText(en.quickStart.title)).not.toBeInTheDocument()
+    expect(useAppStore.getState().settings.quickStartDismissed).toBe(true)
+    expect(saveSettings).toHaveBeenCalledWith({ quickStartDismissed: true })
+  })
 })
 
 it("says a rescan is in flight rather than dating the reading it is replacing", () => {

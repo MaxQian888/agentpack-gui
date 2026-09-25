@@ -28,11 +28,11 @@ const r = en.history.report
 const NOW = new Date(2026, 6, 20, 12).getTime()
 const day = (d: number) => new Date(2026, 6, d, 9).getTime()
 
-function renderDialog(sessions: SessionSummary[] = [session({ updatedAt: day(18) })]) {
-  render(
+function dialog(open: boolean, sessions: SessionSummary[]) {
+  return (
     <I18nProvider>
       <ShareDialog
-        open
+        open={open}
         onOpenChange={jest.fn()}
         sessions={sessions}
         range={resolveRange("30d", NOW)}
@@ -42,6 +42,12 @@ function renderDialog(sessions: SessionSummary[] = [session({ updatedAt: day(18)
     </I18nProvider>
   )
 }
+
+function renderDialog(sessions: SessionSummary[] = [session({ updatedAt: day(18) })]) {
+  return render(dialog(true, sessions))
+}
+
+beforeEach(() => jest.clearAllMocks())
 
 describe("ShareDialog", () => {
   it("previews the card as an inline data URL, fetching nothing", () => {
@@ -92,6 +98,33 @@ describe("ShareDialog", () => {
     const [path, content] = (writeTextFile as jest.Mock).mock.calls[0]
     expect(path).toBe("/tmp/card.svg")
     expect(content.startsWith("<svg")).toBe(true)
+  })
+
+  it("says the clipboard write failed instead of doing nothing", async () => {
+    ;(copyText as jest.Mock).mockResolvedValueOnce(false)
+    renderDialog()
+    await userEvent.click(screen.getByRole("button", { name: r.copyMarkdown }))
+    expect(await screen.findByRole("alert")).toHaveTextContent(r.copyFailed)
+    expect(screen.queryByText(r.copied)).not.toBeInTheDocument()
+  })
+
+  it("reports a failed save with the system's reason", async () => {
+    ;(pickSavePath as jest.Mock).mockResolvedValue("/tmp/card.svg")
+    ;(writeTextFile as jest.Mock).mockRejectedValueOnce(new Error("disk full"))
+    renderDialog()
+    await userEvent.click(screen.getByRole("button", { name: r.saveSvg }))
+    expect(await screen.findByRole("alert")).toHaveTextContent(r.saveFailed("disk full"))
+  })
+
+  it("forgets the last opening's outcome when it opens again", async () => {
+    ;(pickSavePath as jest.Mock).mockResolvedValue("/tmp/card.svg")
+    const sessions = [session({ updatedAt: day(18) })]
+    const { rerender } = renderDialog(sessions)
+    await userEvent.click(screen.getByRole("button", { name: r.saveSvg }))
+    expect(await screen.findByText(r.saved("/tmp/card.svg"))).toBeInTheDocument()
+    rerender(dialog(false, sessions))
+    rerender(dialog(true, sessions))
+    expect(screen.queryByText(r.saved("/tmp/card.svg"))).not.toBeInTheDocument()
   })
 
   it("renders the empty-state card when the range holds no sessions", () => {

@@ -26,6 +26,7 @@ export type PaletteAction =
   | { kind: "quickConfig" }
   | { kind: "rescan" }
   | { kind: "review" }
+  | { kind: "showRun" }
   | { kind: "toggleTheme" }
   | { kind: "onboarding" }
   | { kind: "updates" }
@@ -41,11 +42,13 @@ export interface PaletteItem {
 
 export interface PaletteContext {
   /**
-   * How many changes are staged but not yet applied. Zero hides the review
-   * command outright rather than offering an action that would open an empty
-   * panel.
+   * How many changes are selected and not yet applied — the change tray's count.
+   * Zero hides the review command outright rather than offering an action that
+   * would open an empty panel.
    */
   pendingChanges: number
+  /** A run is executing, possibly behind a closed panel. */
+  running?: boolean
 }
 
 export const WORKSPACE_LABEL: Record<WorkspaceKey, (m: Messages) => string> = {
@@ -142,7 +145,14 @@ export function buildPalette(t: Messages, ctx: PaletteContext): PaletteItem[] {
     label: t.palette.rescan,
     action: { kind: "rescan" },
   })
-  if (ctx.pendingChanges > 0) {
+  if (ctx.running) {
+    items.push({
+      id: "action:show-run",
+      group: "action",
+      label: t.shell.showRun,
+      action: { kind: "showRun" },
+    })
+  } else if (ctx.pendingChanges > 0) {
     items.push({
       id: "action:review",
       group: "action",

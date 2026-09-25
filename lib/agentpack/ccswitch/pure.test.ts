@@ -339,3 +339,140 @@ it("keeps unrelated codex tables and providers intact", () => {
   expect(out.mcp_servers?.["foo"]).toBeDefined()
   expect(out.model_providers?.["other"]).toBeDefined()
 })
+
+// --- editing a stored row: the form's fields merge into it -------------------
+
+const edit = (
+  app: "claude" | "codex" | "opencode",
+  base: unknown,
+  over: Partial<Parameters<typeof buildSettingsConfig>[0]> = {}
+) =>
+  buildSettingsConfig({
+    name: "Relay",
+    app,
+    baseUrl: "https://new",
+    token: "sk-new",
+    claudeAuthKind: "auth_token",
+    baseSettingsConfig: JSON.stringify(base),
+    ...over,
+  })
+
+it("keeps every claude key the form doesn't model when a row is edited", () => {
+  const out = JSON.parse(
+    edit("claude", {
+      env: {
+        ANTHROPIC_AUTH_TOKEN: "sk-old",
+        ANTHROPIC_BASE_URL: "https://old",
+        CLAUDE_CODE_MAX_OUTPUT_TOKENS: "64000",
+      },
+      permissions: { allow: ["Bash"] },
+    })
+  )
+  expect(out).toEqual({
+    env: {
+      ANTHROPIC_AUTH_TOKEN: "sk-new",
+      ANTHROPIC_BASE_URL: "https://new",
+      CLAUDE_CODE_MAX_OUTPUT_TOKENS: "64000",
+    },
+    permissions: { allow: ["Bash"] },
+  })
+})
+
+it("an edit that switches the claude auth kind leaves only the chosen variable", () => {
+  const out = JSON.parse(
+    edit("claude", { env: { ANTHROPIC_AUTH_TOKEN: "sk-old" } }, { claudeAuthKind: "api_key" })
+  )
+  expect(out.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+  expect(out.env.ANTHROPIC_API_KEY).toBe("sk-new")
+})
+
+it("leaves an unchanged row byte-for-byte as it was stored", () => {
+  const stored = {
+    env: { ANTHROPIC_BASE_URL: "https://r", X_EXTRA: "1", ANTHROPIC_AUTH_TOKEN: "sk" },
+  }
+  const parsed = parseSettingsConfig("claude", JSON.stringify(stored))
+  expect(
+    buildSettingsConfig({
+      name: "Relay",
+      app: "claude",
+      ...parsed,
+      baseSettingsConfig: JSON.stringify(stored),
+    })
+  ).toBe(JSON.stringify(stored))
+})
+
+it("reads and edits a codex row whose provider table is not named `custom`", () => {
+  // How cc-switch stores a relay: the table is named after the provider.
+  const stored = {
+    auth: { OPENAI_API_KEY: "sk-old" },
+    config:
+      'model_provider = "packy"\nmodel = "gpt-5"\n\n[model_providers.packy]\nname = "packy"\nbase_url = "https://packy/v1"\nwire_api = "responses"\nquery_params = { "api-version" = "1" }\n',
+  }
+  // It used to read back as an empty endpoint, and saving that emptied the row.
+  expect(parseSettingsConfig("codex", JSON.stringify(stored)).baseUrl).toBe("https://packy/v1")
+
+  const out = JSON.parse(edit("codex", stored, { model: "gpt-5" }))
+  const config = parse(out.config) as {
+    model_provider?: string
+    model?: string
+    model_providers?: Record<string, Record<string, unknown>>
+  }
+  expect(config.model_provider).toBe("packy")
+  expect(config.model).toBe("gpt-5")
+  expect(config.model_providers?.["packy"]).toMatchObject({
+    name: "packy",
+    base_url: "https://new",
+    wire_api: "responses",
+    query_params: { "api-version": "1" },
+    experimental_bearer_token: "sk-new",
+  })
+  expect(config.model_providers?.[CODEX_PROVIDER_KEY]).toBeUndefined()
+  expect(out.auth.OPENAI_API_KEY).toBe("sk-new")
+})
+
+it("keeps opencode's extra options and other models when the endpoint is edited", () => {
+  const out = JSON.parse(
+    edit(
+      "opencode",
+      {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Relay",
+        options: { baseURL: "https://old", apiKey: "sk-old", headers: { "X-Org": "1" } },
+        models: { "gpt-5": { name: "GPT-5" }, "gpt-5-mini": {} },
+      },
+      { model: "gpt-5" }
+    )
+  )
+  expect(out.options).toEqual({
+    baseURL: "https://new",
+    apiKey: "sk-new",
+    headers: { "X-Org": "1" },
+  })
+  expect(out.models).toEqual({ "gpt-5": { name: "GPT-5" }, "gpt-5-mini": {} })
+})
+
+it("an edit clearing endpoint and token still yields the official-login shape", () => {
+  expect(
+    JSON.parse(edit("opencode", { npm: "x", options: {} }, { baseUrl: "", token: "" }))
+  ).toEqual({})
+  const codex = JSON.parse(
+    edit(
+      "codex",
+      {
+        auth: { OPENAI_API_KEY: "sk" },
+        config: 'model_provider = "custom"\n[model_providers.custom]\nbase_url = "https://b"\n',
+      },
+      { baseUrl: "", token: "" }
+    )
+  )
+  const config = parse(codex.config) as Record<string, unknown>
+  expect(config["model_provider"]).toBeUndefined()
+  expect(config["model_providers"]).toBeUndefined()
+  expect(codex.auth).toEqual({})
+})
+
+it("a hand-written raw config still wins over the stored one", () => {
+  expect(edit("claude", { env: { A: "1" } }, { rawSettingsConfig: '{"env":{"B":"2"}}' })).toBe(
+    '{"env":{"B":"2"}}'
+  )
+})

@@ -16,6 +16,7 @@ function handlers(): PaletteHandlers {
     quickConfig: jest.fn(),
     rescan: jest.fn(),
     review: jest.fn(),
+    showRun: jest.fn(),
     onboarding: jest.fn(),
     updates: jest.fn(),
   }

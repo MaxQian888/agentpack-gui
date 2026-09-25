@@ -29,14 +29,31 @@ import {
   socksUnsupported,
 } from "@/lib/agentpack/network/proxy"
 import { PROXY_TEST_URLS, type ProxyCandidate } from "@/lib/agentpack/network/discovery"
-import { PROXY_TARGETS, type ProxyMode, type ProxyTarget } from "@/lib/agentpack/types"
+import {
+  PROXY_TARGETS,
+  type ProxyMode,
+  type ProxyTarget,
+  type StepReport,
+} from "@/lib/agentpack/types"
 import { proxyCheck, setProcessProxy, type ProxyCheckResult } from "@/lib/tauri/commands"
 import { saveSettings } from "@/lib/tauri/settings"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
+import { useMounted } from "@/hooks/use-mounted"
+import { DesktopOnlyNote } from "../../desktop-only-note"
 import { useRunnerCtx } from "../../run/runner-context"
 
 const MODES: ProxyMode[] = ["off", "system", "manual"]
+
+/**
+ * Whether a run actually put its change in place. Empty means the review panel
+ * was closed without applying; a cancelled run leaves `skipped` rows; an
+ * `error` means at least one surface still holds the old value. None of those
+ * is a proxy that was applied (or cleared), so the caller must not go on to
+ * repoint agentpack's own traffic or save the setting as if it had been.
+ */
+const ranInFull = (reports: readonly StepReport[]) =>
+  reports.length > 0 && reports.every((r) => r.status === "done" || r.status === "warning")
 
 /**
  * The proxy control panel: mode, per-scheme addresses, credentials, enterprise
@@ -59,9 +76,14 @@ export function ProxyCard({
   const proxy = useAppStore((s) => s.plan.network.proxy) ?? DEFAULT_PROXY
   const setProxy = useAppStore((s) => s.setProxy)
   const setSettings = useAppStore((s) => s.setSettings)
+  // What was last applied and saved, as opposed to what the form holds now.
+  const savedProxy = useAppStore((s) => s.settings.proxy)
   const paths = useAppStore((s) => s.paths)
   const effectiveOS = useAppStore((s) => s.effectiveOS)
   const { run } = useRunnerCtx()
+  // isTauri() is false in the pre-rendered HTML, so the note waits for mount.
+  const mounted = useMounted()
+  const desktop = isTauri()
   const [testUrl, setTestUrl] = useState(PROXY_TEST_URLS[0].url)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<ProxyCheckResult | null>(null)
@@ -90,9 +112,7 @@ export function ProxyCard({
       return
     }
     const reports = await run(proxyApplySteps(proxy, paths, effectiveOS(), t))
-    // Empty means the user closed the review panel without applying.
-    if (reports.length === 0) return
-    if (reports.some((r) => r.status === "error")) return
+    if (!ranInFull(reports)) return
     // Make it real for agentpack itself (skill downloads, the MCP registry, every
     // spawned CLI) and keep it across restarts.
     await setProcessProxy({
@@ -106,9 +126,14 @@ export function ProxyCard({
 
   const clear = async () => {
     if (!paths) return
-    const targets = proxy.targets.length ? proxy.targets : PROXY_TARGETS
+    // Where the form points now plus where the saved proxy was written: a
+    // target unticked since the last apply still holds that proxy.
+    const named = [...new Set([...proxy.targets, ...(savedProxy?.targets ?? [])])]
+    const targets = named.length ? named : PROXY_TARGETS
     const reports = await run(proxyClearSteps(targets, paths, effectiveOS(), t))
-    if (reports.length === 0) return
+    // A clear that failed somewhere leaves that proxy in place, so the saved
+    // setting (and Clear with it) stays until one actually finishes.
+    if (!ranInFull(reports)) return
     setProxy({ mode: "off" })
     await setProcessProxy({})
     setSettings(await saveSettings({ proxy: null }))
@@ -161,6 +186,8 @@ export function ProxyCard({
         </div>
       </div>
 
+      {!desktop && mounted ? <DesktopOnlyNote>{p.notTauri}</DesktopOnlyNote> : null}
+
       <ToggleGroup
         type="single"
         variant="outline"
@@ -174,6 +201,17 @@ export function ProxyCard({
         ))}
       </ToggleGroup>
       <p className="-mt-2 text-xs text-muted-foreground">{p.modeHint[proxy.mode]}</p>
+
+      {/* Off writes nothing and removes nothing, so a proxy applied earlier is
+          still on disk — and Clear is the only way to take it back out. */}
+      {proxy.mode === "off" && savedProxy ? (
+        <div className="flex flex-col items-start gap-2">
+          <p className="text-xs text-muted-foreground">{p.stillApplied}</p>
+          <Button variant="outline" onClick={() => void clear()} disabled={!desktop}>
+            {p.clear}
+          </Button>
+        </div>
+      ) : null}
 
       {proxy.mode !== "off" ? (
         <>
@@ -201,15 +239,21 @@ export function ProxyCard({
             )}
           </div>
 
+          {/* A hairline panel with a warn dot, not a tinted one: status colour
+              is a mark, never a background (design.md § 3). */}
           {socksUnsupported(proxy) ? (
-            <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-              {p.socksWarning}
+            <p className="flex items-start gap-2 rounded-md border px-3 py-2 text-xs">
+              <span
+                aria-hidden="true"
+                className="mt-1 size-1.5 shrink-0 rounded-[var(--hm-radius-dot)] bg-[var(--hm-warn)]"
+              />
+              <span>{p.socksWarning}</span>
             </p>
           ) : null}
 
           <Collapsible>
             <CollapsibleTrigger className="group flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground">
-              <ChevronDown className="size-4 transition-transform group-data-[state=open]:rotate-180" />
+              <ChevronDown className="size-4 transition-transform duration-(--hm-dur-fast) ease-(--hm-ease-out) group-data-[state=open]:rotate-180" />
               {p.advanced}
             </CollapsibleTrigger>
             <CollapsibleContent className="mt-3 grid gap-4 sm:grid-cols-2">
@@ -281,10 +325,10 @@ export function ProxyCard({
           </fieldset>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button onClick={() => void apply()} disabled={!isTauri()}>
+            <Button onClick={() => void apply()} disabled={!desktop}>
               {p.apply}
             </Button>
-            <Button variant="outline" onClick={() => void clear()} disabled={!isTauri()}>
+            <Button variant="outline" onClick={() => void clear()} disabled={!desktop}>
               {p.clear}
             </Button>
           </div>
@@ -308,7 +352,7 @@ export function ProxyCard({
                 variant="outline"
                 size="sm"
                 onClick={() => void runTest()}
-                disabled={testing || !isTauri()}
+                disabled={testing || !desktop}
               >
                 {testing ? p.testing : p.testRun}
               </Button>
@@ -320,7 +364,7 @@ export function ProxyCard({
               <p
                 className={cn(
                   "text-sm",
-                  testResult.ok ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"
+                  testResult.ok ? "text-[var(--hm-ok)]" : "text-[var(--hm-danger)]"
                 )}
               >
                 {testResult.ok

@@ -57,4 +57,11 @@ export interface ProviderForm {
    * can't express what they went to the raw tab for.
    */
   rawSettingsConfig?: string
+  /**
+   * The row's stored `settings_config`, when editing one. The fields above are
+   * merged into it rather than replacing it, so every key the form does not
+   * model — extra env vars, permissions, whatever the raw tab added — survives
+   * an edit of the four it does.
+   */
+  baseSettingsConfig?: string
 }

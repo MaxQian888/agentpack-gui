@@ -93,6 +93,7 @@
   --hm-dur-fast: 120ms; /* state change on a control */
   --hm-dur-base: 180ms; /* panel fade, tab swap */
   --hm-dur-slow: 260ms; /* the tray sliding in */
+  --hm-rise: 6px; /* how far a panel travels on entry — design.md § 6 caps it at 8px */
 
   /* ---- Colour · light -------------------------------------------------- */
   /* Cool engineered near-white, never #fff. Cool charcoal ink, never #000. */

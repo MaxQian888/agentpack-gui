@@ -29,9 +29,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type { ConfigFileDef } from "@/lib/agentpack/config-editor/files"
 import type { ConfigDoc } from "@/lib/agentpack/config-editor/schema"
 import { specFromClaudeRecord } from "@/lib/agentpack/merge/mcp"
-import { BACKUP_SUFFIX } from "@/lib/agentpack/plan"
+import { runApplied } from "@/lib/agentpack/report"
 import { useT } from "@/lib/i18n/provider"
-import { pathExists, readTextFile, writeTextFile } from "@/lib/tauri/commands"
+import { readTextFile } from "@/lib/tauri/commands"
+import { useRunnerCtx } from "../run/runner-context"
 import { CodeEditor } from "./code-editor"
 import { ConfigFormFields } from "./config-form"
 
@@ -99,6 +100,12 @@ interface Props {
   path: string
   /** Whether the file exists — decides Edit vs Create wording and initial text. */
   exists: boolean
+  /**
+   * The presence probe hasn't answered yet. The trigger waits rather than
+   * guessing: offering Create for a file that is there would open it seeded
+   * with `{}` instead of its contents.
+   */
+  probing?: boolean
   /** Called after a successful save so the caller can re-scan. */
   onSaved: () => void
   /** Navigates to the MCP section (the `~/.claude.json` inventory's escape). */
@@ -112,13 +119,24 @@ interface Props {
  * the user only *reads* round-trips byte-for-byte — which is why Save stays
  * disabled until something actually changed. Only a form edit re-serializes the
  * parsed doc (and for TOML, that is where comments are lost).
+ *
+ * Saving stages a `mergeFile` step and goes through the review panel like every
+ * other write (design.md § 1): the runner takes the `.agentpack.bak` on first
+ * touch, the preview names the file without writing it, and the run lands in
+ * the activity log.
  */
-export function ConfigFileEditor({ def, path, exists, onSaved, onOpenMcp }: Props) {
+export function ConfigFileEditor({ def, path, exists, probing, onSaved, onOpenMcp }: Props) {
   const t = useT().configFiles
+  const { run } = useRunnerCtx()
   const [open, setOpen] = useState(false)
   const [raw, setRaw] = useState("")
-  // The on-disk text as of load: both the dirty baseline and the drift baseline.
+  // What the editor opened with — the dirty baseline. For a missing file that
+  // is the seeded `{}`, which is not what the disk holds.
   const [loaded, setLoaded] = useState("")
+  // What the disk actually held at load — the drift baseline. Kept apart from
+  // `loaded` because a missing file reads as "" while the editor shows `{}`, and
+  // comparing the two turned every Create into a false "changed on disk".
+  const [disk, setDisk] = useState("")
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [conflict, setConflict] = useState<string | null>(null)
@@ -139,6 +157,7 @@ export function ConfigFileEditor({ def, path, exists, onSaved, onOpenMcp }: Prop
       const seeded = text.trim() ? text : def.format.serialize({})
       setRaw(seeded)
       setLoaded(seeded)
+      setDisk(text)
     } catch {
       toast.error(t.loadFailed)
       setOpen(false)
@@ -147,20 +166,42 @@ export function ConfigFileEditor({ def, path, exists, onSaved, onOpenMcp }: Prop
     }
   }
 
+  /**
+   * Stage the write against `baseline`, the disk text the user decided over.
+   * The runner re-reads right before writing and refuses if the file moved
+   * again while the review panel was open — the same guard as `save`, held
+   * until the moment it matters.
+   */
   const write = async (baseline: string) => {
     setSaving(true)
     try {
-      // Snapshot the ORIGINAL before agentpack's first write, and only when no
-      // snapshot exists yet — mirroring the runner's mergeFile rule, so a second
-      // save can't overwrite the true original with already-edited content.
-      const backup = `${path}${BACKUP_SUFFIX}`
-      if (baseline.trim() && !(await pathExists(backup))) {
-        await writeTextFile(backup, baseline)
+      const content = raw.endsWith("\n") ? raw : `${raw}\n`
+      const reports = await run(
+        [
+          {
+            kind: "mergeFile",
+            id: `config-file-${def.id}`,
+            label: t.stepLabel(path),
+            path,
+            merge: (existing) => {
+              if (existing !== baseline) throw new Error(t.conflictBody)
+              return content
+            },
+            writtenNote: t.saved(fileName),
+          },
+        ],
+        { activity: { title: t.saved(fileName), source: "section" } }
+      )
+      // Walked away from the panel, or stopped it: nothing was written, and the
+      // edits are still here to try again with.
+      if (!runApplied(reports)) {
+        if (reports.some((r) => r.status === "error")) toast.error(t.saveFailed)
+        return
       }
-      await writeTextFile(path, raw.endsWith("\n") ? raw : `${raw}\n`)
       setLoaded(raw)
+      setDisk(content)
       setConflict(null)
-      toast.success(t.saved(fileName))
+      // Silent: the review panel the save just went through says "All set".
       setOpen(false)
       onSaved()
     } catch {
@@ -185,7 +226,7 @@ export function ConfigFileEditor({ def, path, exists, onSaved, onOpenMcp }: Prop
       toast.error(t.loadFailed)
       return
     }
-    if (onDisk !== loaded) {
+    if (onDisk !== disk) {
       setConflict(onDisk)
       return
     }
@@ -205,9 +246,9 @@ export function ConfigFileEditor({ def, path, exists, onSaved, onOpenMcp }: Prop
     <>
       <Dialog open={open} onOpenChange={requestClose}>
         <DialogTrigger asChild>
-          <Button variant="outline" size="sm" className="gap-1">
+          <Button variant="outline" size="sm" className="gap-1" disabled={probing}>
             <Pencil className="size-3.5" />
-            {exists ? t.edit : t.create}
+            {probing ? t.checking : exists ? t.edit : t.create}
           </Button>
         </DialogTrigger>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">

@@ -320,3 +320,46 @@
     background: transparent;
   }
 }
+
+/*
+ * The two entrances design.md § 6 allows, and nothing else.
+ *
+ * `backwards` rather than `both`: once the entrance is over, the element keeps
+ * no transform. A lingering `translateY(0)` would still make it a containing
+ * block for anything `position: fixed` inside it and a new stacking context —
+ * a permanent side effect of a 180ms flourish. Both animations are ordinary CSS
+ * animations, so the reduced-motion rules above collapse them like everything
+ * else.
+ */
+@keyframes hm-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--hm-rise));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes hm-tray-in {
+  from {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* A destination arriving: once per navigation, restarted by the shell. */
+@utility hm-enter {
+  animation: hm-enter var(--hm-dur-base) var(--hm-ease-out) backwards;
+}
+
+/* The change tray appearing, on mount. It leaves instantly — a summary that
+   lingers after the selection is cleared would state a count that is gone. */
+@utility hm-tray-in {
+  animation: hm-tray-in var(--hm-dur-slow) var(--hm-ease-out) backwards;
+}

@@ -27,7 +27,9 @@ test("completes setup and stages the chosen terminal bundle", async ({ page }) =
   await expect(page.locator("#cli-claude-desktop")).not.toBeChecked()
 })
 
-test("starts the integrated tour and returns home when it is dismissed", async ({ page }) => {
+test("starts the integrated tour and returns to the waiting wizard when it is dismissed", async ({
+  page,
+}) => {
   await page.getByRole("button", { name: "Open the guide" }).click()
   await page.getByRole("button", { name: "Take a tour →" }).click()
 
@@ -41,6 +43,10 @@ test("starts the integrated tour and returns home when it is dismissed", async (
 
   await page.keyboard.press("Escape")
   await expect(tour).toBeHidden()
+  // The tour was a detour from the wizard, not a decision to skip it: ending
+  // it brings the wizard back, over the overview it navigated home to.
+  await expect(page.getByRole("dialog", { name: "Welcome to agentpack" })).toBeVisible()
+  await page.keyboard.press("Escape")
   await expect(page.getByRole("heading", { name: "Environment dashboard" })).toBeVisible()
 })
 

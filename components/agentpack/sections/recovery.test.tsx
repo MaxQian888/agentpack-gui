@@ -15,6 +15,19 @@ jest.mock("@/lib/tauri/commands", () => ({
 jest.mock("sonner", () => ({
   toast: { success: jest.fn(), error: jest.fn(), message: jest.fn() },
 }))
+// The real runner, unless a test swaps `run` for one returning a stopped run —
+// a cancel before a single step starts can't be produced through the panel.
+const mockRunOverride: { fn: null | ((steps: unknown[]) => Promise<unknown[]>) } = { fn: null }
+jest.mock("../run/runner-context", () => {
+  const actual = jest.requireActual("../run/runner-context")
+  return {
+    ...actual,
+    useRunnerCtx: () => {
+      const ctx = actual.useRunnerCtx()
+      return mockRunOverride.fn ? { ...ctx, run: mockRunOverride.fn } : ctx
+    },
+  }
+})
 
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -31,6 +44,7 @@ import {
   writeTextFile,
 } from "@/lib/tauri/commands"
 import { toast } from "sonner"
+import { OWN_WRITE_GRACE_MS } from "@/lib/agentpack/recovery"
 import { RecoverySection } from "./recovery"
 import { RunnerHarness } from "../run/__testing__/harness"
 import type { DashboardScan } from "./dashboard"
@@ -40,9 +54,24 @@ const HOUR = 3_600_000
 const NOON = 1_700_000_000_000
 
 const PATHS = {
+  home: "/h",
   claudeSettings: "/h/.claude/settings.json",
   codexConfig: "/h/.codex/config.toml",
+  opencodeConfig: "/h/.config/opencode/opencode.json",
 } as const
+
+const BAK = ".agentpack.bak"
+
+/**
+ * A `fileStat` where only the named files have an `.agentpack.bak`, taken at
+ * `takenAt`, and every live file was last written at `liveAt`.
+ */
+const statWith = (withBackup: string[], takenAt: number, liveAt: number) => async (path: string) =>
+  path.endsWith(BAK)
+    ? withBackup.includes(path.slice(0, -BAK.length))
+      ? { exists: true, bytes: 1, modifiedMs: takenAt }
+      : { exists: false, bytes: 0, modifiedMs: 0 }
+    : { exists: true, bytes: 1, modifiedMs: liveAt }
 
 const scanWith = (over: Partial<DashboardScan> = {}): DashboardScan =>
   ({
@@ -63,6 +92,7 @@ const scanWith = (over: Partial<DashboardScan> = {}): DashboardScan =>
 
 beforeEach(() => {
   tauri.value = true
+  mockRunOverride.fn = null
   jest.clearAllMocks()
   useAppStore.setState({ paths: PATHS as never })
   ;(backupList as jest.Mock).mockResolvedValue([])
@@ -117,7 +147,9 @@ it("folds all four sources into one list, newest first", async () => {
   ;(cleanupQuarantineList as jest.Mock).mockResolvedValue([
     { id: "batch", ts: NOON - 2 * HOUR, bytes: 9, items: 3, targetIds: ["codex-logs"] },
   ])
-  renderSection(scanWith({ claudeSettings: { status: "ok", hasBackup: true } }))
+  // A .bak the platform wouldn't date.
+  ;(fileStat as jest.Mock).mockImplementation(statWith([PATHS.claudeSettings], 0, 0))
+  renderSection()
 
   await waitFor(() => expect(rows()).toHaveLength(4))
   const kinds = [...rows()].map((row) => row.textContent ?? "")
@@ -133,7 +165,7 @@ it("warns when a restore would write over something newer", async () => {
   ;(backupList as jest.Mock).mockResolvedValue([
     { id: "snap", ts: NOON, reason: "before switch", files: [{ originalPath: "/h/db" }] },
   ])
-  ;(fileStat as jest.Mock).mockResolvedValue({ exists: true, bytes: 1, modifiedMs: NOON + HOUR })
+  ;(fileStat as jest.Mock).mockImplementation(statWith([], 0, NOON + HOUR))
   renderSection()
 
   expect(await screen.findByText(r.safety.stale)).toBeInTheDocument()
@@ -144,7 +176,7 @@ it("calls it safe when the live file is older than the backup", async () => {
   ;(backupList as jest.Mock).mockResolvedValue([
     { id: "snap", ts: NOON, reason: "before switch", files: [{ originalPath: "/h/db" }] },
   ])
-  ;(fileStat as jest.Mock).mockResolvedValue({ exists: true, bytes: 1, modifiedMs: NOON - HOUR })
+  ;(fileStat as jest.Mock).mockImplementation(statWith([], 0, NOON - HOUR))
   renderSection()
   expect(await screen.findByText(r.safety.safe)).toBeInTheDocument()
 })
@@ -154,7 +186,7 @@ it("says it can't tell rather than claiming there is nothing to lose", async () 
   ;(backupList as jest.Mock).mockResolvedValue([
     { id: "snap", ts: NOON, reason: "before switch", files: [{ originalPath: "/h/db" }] },
   ])
-  ;(fileStat as jest.Mock).mockResolvedValue({ exists: true, bytes: 1, modifiedMs: 0 })
+  ;(fileStat as jest.Mock).mockImplementation(statWith([], 0, 0))
   renderSection()
   expect(await screen.findByText(r.safety.unknown)).toBeInTheDocument()
 })
@@ -167,18 +199,63 @@ it("trusts a quarantine batch without measuring anything", async () => {
   ])
   renderSection()
   expect(await screen.findByText(r.safety.safe)).toBeInTheDocument()
-  expect(fileStat).not.toHaveBeenCalled()
+  // Only the `.agentpack.bak` probes ran — nothing measured the batch itself.
+  const statted = (fileStat as jest.Mock).mock.calls.map(([path]) => path as string)
+  expect(statted.every((path) => path.endsWith(BAK))).toBe(true)
 })
 
 it("dates a config backup from its own sibling, which is what makes a warning possible", async () => {
-  ;(fileStat as jest.Mock).mockImplementation(async (path: string) =>
-    path.endsWith(".agentpack.bak")
-      ? { exists: true, bytes: 1, modifiedMs: NOON }
-      : { exists: true, bytes: 1, modifiedMs: NOON + HOUR }
-  )
-  renderSection(scanWith({ claudeSettings: { status: "ok", hasBackup: true } }))
+  ;(fileStat as jest.Mock).mockImplementation(statWith([PATHS.claudeSettings], NOON, NOON + HOUR))
+  renderSection()
   // Dated from the .bak, then measured against the live file: stale, not "can't tell".
   expect(await screen.findByText(r.safety.stale)).toBeInTheDocument()
+})
+
+it("does not call the write a backup was taken for newer work", async () => {
+  // mergeFile leaves the .bak and then writes the live file a moment later.
+  // Read naively, every backup warned the instant it existed — and a warning
+  // that is always on gets clicked through.
+  ;(fileStat as jest.Mock).mockImplementation(statWith([PATHS.claudeSettings], NOON, NOON + 30))
+  renderSection()
+  expect(await screen.findByText(r.safety.safe)).toBeInTheDocument()
+  expect(screen.queryByText(r.safety.stale)).not.toBeInTheDocument()
+})
+
+it("still warns about an edit made after that", async () => {
+  ;(fileStat as jest.Mock).mockImplementation(
+    statWith([PATHS.claudeSettings], NOON, NOON + OWN_WRITE_GRACE_MS + 1)
+  )
+  renderSection()
+  expect(await screen.findByText(r.safety.stale)).toBeInTheDocument()
+})
+
+it("finds a backup beside any file the app edits, not only the two the scan reports", async () => {
+  // The scan says nothing about OpenCode's config or profiles.json; the stat does.
+  ;(fileStat as jest.Mock).mockImplementation(
+    statWith([PATHS.opencodeConfig, "/h/.agentpack/profiles.json"], NOON, NOON - HOUR)
+  )
+  renderSection(scanWith())
+  await waitFor(() => expect(rows()).toHaveLength(2))
+  const text = [...rows()].map((row) => row.textContent ?? "").join("\n")
+  // Each row names its file — two "Config backup" rows are otherwise identical.
+  expect(text).toContain(PATHS.opencodeConfig)
+  expect(text).toContain("/h/.agentpack/profiles.json")
+})
+
+it("looks again on Refresh instead of trusting the scan it was handed", async () => {
+  renderSection(scanWith({ claudeSettings: { status: "ok", hasBackup: true } }))
+  // The scan says there is a backup; the disk says there isn't one any more.
+  expect(await screen.findByText(r.empty)).toBeInTheDocument()
+  ;(fileStat as jest.Mock).mockImplementation(statWith([PATHS.codexConfig], NOON, NOON - HOUR))
+  await userEvent.click(screen.getByRole("button", { name: r.refresh }))
+  await waitFor(() => expect(rows()).toHaveLength(1))
+  expect(rows()[0].textContent).toContain(PATHS.codexConfig)
+})
+
+it("says it is still reading rather than showing bare dashes", async () => {
+  ;(backupList as jest.Mock).mockReturnValue(new Promise(() => {}))
+  renderSection()
+  expect(await screen.findByText(r.loadingNote)).toBeInTheDocument()
 })
 
 it("offers no restore point for a config that never had a backup", async () => {
@@ -210,7 +287,7 @@ it("re-reads every source on request", async () => {
 describe("restoring", () => {
   it("stages a snapshot restore through the review panel, like every other write", async () => {
     ;(backupList as jest.Mock).mockResolvedValue([SNAPSHOT])
-    ;(fileStat as jest.Mock).mockResolvedValue({ exists: true, bytes: 1, modifiedMs: NOON - HOUR })
+    ;(fileStat as jest.Mock).mockImplementation(statWith([], 0, NOON - HOUR))
     renderSection(scanWith(), { autoApply: true })
 
     await userEvent.click(await screen.findByRole("button", { name: r.restore }))
@@ -219,7 +296,7 @@ describe("restoring", () => {
 
   it("re-reads afterwards, because a restore moves the mtimes it was judged against", async () => {
     ;(backupList as jest.Mock).mockResolvedValue([SNAPSHOT])
-    ;(fileStat as jest.Mock).mockResolvedValue({ exists: true, bytes: 1, modifiedMs: NOON - HOUR })
+    ;(fileStat as jest.Mock).mockImplementation(statWith([], 0, NOON - HOUR))
     renderSection(scanWith(), { autoApply: true })
 
     await userEvent.click(await screen.findByRole("button", { name: r.restore }))
@@ -228,7 +305,7 @@ describe("restoring", () => {
 
   it("asks first when the restore would overwrite newer work", async () => {
     ;(backupList as jest.Mock).mockResolvedValue([SNAPSHOT])
-    ;(fileStat as jest.Mock).mockResolvedValue({ exists: true, bytes: 1, modifiedMs: NOON + HOUR })
+    ;(fileStat as jest.Mock).mockImplementation(statWith([], 0, NOON + HOUR))
     renderSection(scanWith(), { autoApply: true })
 
     await userEvent.click(await screen.findByRole("button", { name: r.restore }))
@@ -239,7 +316,7 @@ describe("restoring", () => {
 
   it("stages nothing when the confirmation is declined", async () => {
     ;(backupList as jest.Mock).mockResolvedValue([SNAPSHOT])
-    ;(fileStat as jest.Mock).mockResolvedValue({ exists: true, bytes: 1, modifiedMs: NOON + HOUR })
+    ;(fileStat as jest.Mock).mockImplementation(statWith([], 0, NOON + HOUR))
     renderSection(scanWith(), { autoApply: true })
 
     await userEvent.click(await screen.findByRole("button", { name: r.restore }))
@@ -249,7 +326,7 @@ describe("restoring", () => {
 
   it("goes ahead once the confirmation is given, and the panel still gates it", async () => {
     ;(backupList as jest.Mock).mockResolvedValue([SNAPSHOT])
-    ;(fileStat as jest.Mock).mockResolvedValue({ exists: true, bytes: 1, modifiedMs: NOON + HOUR })
+    ;(fileStat as jest.Mock).mockImplementation(statWith([], 0, NOON + HOUR))
     renderSection(scanWith(), { autoApply: true })
 
     await userEvent.click(await screen.findByRole("button", { name: r.restore }))
@@ -260,14 +337,8 @@ describe("restoring", () => {
   it("restores a config backup by putting its .bak sibling back", async () => {
     // The other panel-routed kind: `fileRestoreStep` takes the live path and
     // appends the suffix itself, which is why the point carries the live path.
-    ;(fileStat as jest.Mock).mockImplementation(async (path: string) =>
-      path.endsWith(".agentpack.bak")
-        ? { exists: true, bytes: 1, modifiedMs: NOON }
-        : { exists: true, bytes: 1, modifiedMs: NOON - HOUR }
-    )
-    renderSection(scanWith({ claudeSettings: { status: "ok", hasBackup: true } }), {
-      autoApply: true,
-    })
+    ;(fileStat as jest.Mock).mockImplementation(statWith([PATHS.claudeSettings], NOON, NOON - HOUR))
+    renderSection(scanWith(), { autoApply: true })
 
     await userEvent.click(await screen.findByRole("button", { name: r.restore }))
     await waitFor(() =>
@@ -278,7 +349,7 @@ describe("restoring", () => {
 
   it("says so and does not re-read when the restore itself failed", async () => {
     ;(backupList as jest.Mock).mockResolvedValue([SNAPSHOT])
-    ;(fileStat as jest.Mock).mockResolvedValue({ exists: true, bytes: 1, modifiedMs: NOON - HOUR })
+    ;(fileStat as jest.Mock).mockImplementation(statWith([], 0, NOON - HOUR))
     ;(backupRestore as jest.Mock).mockRejectedValue(new Error("EACCES"))
     renderSection(scanWith(), { autoApply: true })
 
@@ -288,10 +359,31 @@ describe("restoring", () => {
     expect(backupList).toHaveBeenCalledTimes(1)
   })
 
+  it("does not call a stopped restore restored", async () => {
+    // A cancel comes back as a `skipped` step, not as [] — and "Restored." for
+    // it was a success toast over a write that never happened.
+    mockRunOverride.fn = async (steps) =>
+      (steps as { id: string; label: string }[]).map((step) => ({
+        id: step.id,
+        label: step.label,
+        status: "skipped",
+        output: [],
+      }))
+    ;(backupList as jest.Mock).mockResolvedValue([SNAPSHOT])
+    ;(fileStat as jest.Mock).mockImplementation(statWith([], 0, NOON - HOUR))
+    renderSection()
+
+    await userEvent.click(await screen.findByRole("button", { name: r.restore }))
+    await waitFor(() => expect(toast.message).toHaveBeenCalledWith(r.restoreCancelled))
+    expect(toast.success).not.toHaveBeenCalled()
+    // Nothing moved, so the readings on screen are still true.
+    expect(backupList).toHaveBeenCalledTimes(1)
+  })
+
   it("does not ask twice for a restore that loses nothing", async () => {
     // Asking on every restore would teach people to click through both gates.
     ;(backupList as jest.Mock).mockResolvedValue([SNAPSHOT])
-    ;(fileStat as jest.Mock).mockResolvedValue({ exists: true, bytes: 1, modifiedMs: NOON - HOUR })
+    ;(fileStat as jest.Mock).mockImplementation(statWith([], 0, NOON - HOUR))
     renderSection(scanWith(), { autoApply: true })
 
     await userEvent.click(await screen.findByRole("button", { name: r.restore }))
@@ -318,7 +410,9 @@ describe("the two restores this page hands off", () => {
     renderSection(scanWith(), { onNavigate })
 
     await userEvent.click(await screen.findByRole("button", { name: r.restoreIn(en.menu.skills) }))
-    expect(onNavigate).toHaveBeenCalledWith("skills")
+    // Straight to the backups list, not to the skills page with the Backups
+    // button left to be found.
+    expect(onNavigate).toHaveBeenCalledWith("skills", { skills: "backups" })
     expect(screen.getByText(r.handOffSkill)).toBeInTheDocument()
   })
 

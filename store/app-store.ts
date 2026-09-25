@@ -164,6 +164,21 @@ interface State {
   /** Clear the selection (CLIs / skills / MCP), keeping network config + MCP keys. */
   resetPlan: () => void
   /**
+   * The tray's Clear: the selection *and* any network change that hasn't been
+   * applied yet. `resetPlan` keeps the network config on purpose — it is the
+   * user's environment — but a mirror picked a minute ago and never applied is a
+   * pick, and a Clear that leaves it counted is a Clear that doesn't work.
+   */
+  clearSelection: () => void
+  /**
+   * The npm mirror the last applied run wrote. With `settings.proxy` it is the
+   * baseline a network selection is measured against (`unappliedNetwork`); it is
+   * per session, like the plan it describes.
+   */
+  appliedNpmRegistry: string | undefined
+  /** Record that a run just wrote this network config to the machine. */
+  markNetworkApplied: (network: Plan["network"]) => void
+  /**
    * Re-point every selected skill / MCP server at the agent CLIs the plan now
    * installs. Called only by the quick-install dialog: that's the one surface
    * where the CLI list and the skill / MCP list are authored together, so a stale
@@ -325,6 +340,20 @@ export const useAppStore = create<State>((set, get) => ({
     }),
   loadPlan: (plan) => set({ plan }),
   resetPlan: () => set((s) => ({ plan: { ...emptyPlan(s.plan.os), ...keptOnReselect(s.plan) } })),
+  clearSelection: () =>
+    set((s) => ({
+      plan: {
+        ...emptyPlan(s.plan.os),
+        mcpKeys: s.plan.mcpKeys,
+        network: {
+          npmRegistry: s.appliedNpmRegistry,
+          proxy: s.settings.proxy ?? undefined,
+        },
+      },
+    })),
+  appliedNpmRegistry: undefined,
+  markNetworkApplied: (network) =>
+    set((s) => ({ appliedNpmRegistry: network.npmRegistry ?? s.appliedNpmRegistry })),
   syncTargetsToClis: () =>
     set((s) => ({
       plan: {

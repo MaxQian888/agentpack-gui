@@ -84,9 +84,24 @@ describe("buildExport", () => {
     expect(out.range.from).toBe(new Date(2026, 6, 10).toISOString())
     expect(out.granularity).toBe("day")
     expect(out.blocks).toHaveLength(1)
-    expect(out.blocks[0].tokens).toBe(2)
-    expect(out.blocks[0].active).toBe(false)
-    expect(out.tools[0].name).toBe("Read")
+    expect(out.blocks?.[0].tokens).toBe(2)
+    expect(out.blocks?.[0].active).toBe(false)
+    expect(out.tools?.[0].name).toBe("Read")
+  })
+
+  it("writes null, not empty lists, for series-backed fields it never measured", () => {
+    const out = buildExport({
+      generatedAt: day(12),
+      range: resolveRange("all"),
+      granularity: "day",
+      stats: computeUsageStats([]),
+      buckets: [],
+      blocks: null,
+      tools: null,
+    })
+    // `[]` would say "no windows, no tool calls" — a fact nothing checked.
+    expect(out.blocks).toBeNull()
+    expect(out.tools).toBeNull()
   })
 
   it("leaves an unbounded range's ends null rather than inventing dates", () => {

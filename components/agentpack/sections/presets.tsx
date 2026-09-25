@@ -15,12 +15,12 @@ import {
   PRESETS,
   skillTargetsFor,
 } from "@/lib/agentpack/presets"
-import { countSelections } from "@/lib/agentpack/plan"
 import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { CapabilityTile, CapabilityWorkbench } from "./capability-workbench"
 import { HelpTip } from "../help-tip"
+import { useTrayCount } from "../change-tray"
 import { KeyInput } from "./mcp/helpers"
 
 /** The bundle this page opens pointing at, and the one row that gets a marker. */
@@ -62,6 +62,9 @@ export function PresetsSection({ onReview }: { onReview?: () => void }) {
   const d = t.installDialog
   const ps = t.presetsScreen
   const plan = useAppStore((s) => s.plan)
+  // The tray's number, so this page and the tray below it never disagree about
+  // how much is about to be reviewed.
+  const trayCount = useTrayCount()
   const toggleCli = useAppStore((s) => s.toggleCli)
   const setSkill = useAppStore((s) => s.setSkill)
   const setMcp = useAppStore((s) => s.setMcp)
@@ -84,6 +87,12 @@ export function PresetsSection({ onReview }: { onReview?: () => void }) {
   // has since edited item by item. An empty plan matches no row: it isn't a
   // "Custom" choice the user has made yet.
   const activePreset = anyPicked ? matchPreset(plan) : null
+  // A hand-edited plan is what the Custom row stands for, so it states that —
+  // "Nothing pre-selected" beside a staged selection contradicts the summary.
+  const customCounts =
+    activePreset === "custom"
+      ? ps.presetCounts(selectedClis.size, selectedSkills.size, selectedMcps.size)
+      : ps.presetCountsCustom
 
   // Where skills / MCP servers land: the agent CLIs this selection sets up.
   const skillTargets = skillTargetsFor(plan.clis)
@@ -93,7 +102,11 @@ export function PresetsSection({ onReview }: { onReview?: () => void }) {
 
   const choosePreset = (id: string) => {
     if (id === "custom") {
-      resetPlan()
+      // Once the plan is the user's own picks, "Custom" is the row that names
+      // them — pressing it again opens the checklists to keep editing, and must
+      // never wipe the selection it is describing. Only leaving a bundle for
+      // Custom starts from the empty plan.
+      if (activePreset !== "custom") resetPlan()
       setTuning(true)
       return
     }
@@ -132,9 +145,7 @@ export function PresetsSection({ onReview }: { onReview?: () => void }) {
                   id={id}
                   title={id === "custom" ? d.custom : (t.presets[id]?.title ?? id)}
                   description={t.presets[id]?.description ?? ""}
-                  counts={
-                    id === "custom" ? ps.presetCountsCustom : presetCounts(id, ps.presetCounts)
-                  }
+                  counts={id === "custom" ? customCounts : presetCounts(id, ps.presetCounts)}
                   tag={id === DEFAULT_PRESET ? ps.startHereTag : undefined}
                   active={activePreset === id}
                   onPick={() => choosePreset(id)}
@@ -256,7 +267,7 @@ export function PresetsSection({ onReview }: { onReview?: () => void }) {
             <div className="mt-3">
               {anyPicked && onReview ? (
                 <Button variant="outline" size="sm" onClick={onReview}>
-                  {ps.reviewAction(countSelections(plan))}
+                  {ps.reviewAction(trayCount)}
                   <ArrowRight className="size-4" aria-hidden="true" />
                 </Button>
               ) : (
@@ -271,7 +282,7 @@ export function PresetsSection({ onReview }: { onReview?: () => void }) {
           {anyPicked ? (
             <dl className="flex flex-col gap-3 text-sm">
               <div className="font-mono text-[var(--hm-text-2xs)] tracking-[var(--hm-tracking-mono)] text-muted-foreground uppercase tabular-nums">
-                {ps.selectedCount(countSelections(plan))}
+                {ps.selectedCount(trayCount)}
               </div>
               <SummaryGroup title={d.clis} items={plan.clis.map(label.cli)} />
               <SummaryGroup title={d.skills} items={plan.skills.map((s) => label.skill(s.id))} />
@@ -347,9 +358,10 @@ function Step({
 /**
  * One preset, as a full-bleed ruled row: name, what it is for, and how big it
  * is. Still a toggle button rather than a radio — the row means "make the plan
- * be this", and pressing the one that is already active is a no-op, not a
- * second state. The description is wired up with `aria-describedby` so the
- * accessible name stays the preset's name.
+ * be this", and pressing the one that is already active leaves the plan as it
+ * is, not a second state (an active Custom just unfolds step 02). The
+ * description is wired up with `aria-describedby` so the accessible name stays
+ * the preset's name.
  */
 function PresetRow({
   id,
@@ -491,7 +503,7 @@ function CheckRow({
   return (
     <label
       htmlFor={id}
-      className="flex cursor-pointer items-center gap-2 rounded-[var(--hm-radius-control)] px-1.5 py-1.5 text-sm transition-colors duration-(--hm-dur-fast) hover:bg-muted"
+      className="flex cursor-pointer items-center gap-2 rounded-[var(--hm-radius-control)] px-1.5 py-1.5 text-sm transition-colors duration-(--hm-dur-fast) ease-(--hm-ease-out) hover:bg-muted"
     >
       <Checkbox id={id} checked={checked} onCheckedChange={onToggle} />
       <span className="min-w-0 flex-1 truncate">{label}</span>

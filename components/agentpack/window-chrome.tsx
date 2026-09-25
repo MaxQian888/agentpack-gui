@@ -92,12 +92,14 @@ export function WindowControls({ chrome }: { chrome: WindowChrome }) {
   if (chrome !== "custom") return null
 
   const btn =
-    "flex h-full w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+    "flex h-full w-11 items-center justify-center text-muted-foreground transition-colors duration-(--hm-dur-fast) ease-(--hm-ease-out) hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
 
   return (
-    // `-my-3` cancels the header's `py-3` so the buttons span its full height,
-    // the way native window controls do.
-    <div className="-my-3 flex self-stretch">
+    // `-my-2` cancels the header's `py-2` so the buttons span its full height,
+    // the way native window controls do. It has to match exactly: at `-my-3` the
+    // strip overhung the header by 4px and the close button's red hover bled
+    // across the rule below it.
+    <div className="-my-2 flex self-stretch">
       <button
         type="button"
         className={btn}

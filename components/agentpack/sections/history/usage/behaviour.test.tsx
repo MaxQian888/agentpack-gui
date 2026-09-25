@@ -123,6 +123,36 @@ describe("BehaviourPanel — expensive sessions", () => {
     })
     expect(screen.getByText(h.outlierBadge)).toBeInTheDocument()
     await user.click(screen.getByText("Runaway session"))
-    expect(onDrilldown).toHaveBeenCalledWith({ query: "Runaway session" })
+    // By identity: a title search found nothing when the row was a sub-agent.
+    expect(onDrilldown).toHaveBeenCalledWith({ session: { source: "opencode", path: "big" } })
+  })
+})
+
+describe("BehaviourPanel — before the series arrives", () => {
+  it("shows — with the reason rather than zeros it never measured", () => {
+    renderPanel({ series: null })
+    expect(screen.queryByText("0%")).not.toBeInTheDocument()
+    expect(screen.queryByText("$0.00")).not.toBeInTheDocument()
+    // Four tiles, each saying why it is blank.
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(4)
+    expect(screen.getAllByText(h.seriesLoading).length).toBeGreaterThanOrEqual(4)
+  })
+
+  it("says the series is unavailable, not still loading, once the fetch failed", () => {
+    const view = buildView({
+      sessions: [session({ updatedAt: day(10) })],
+      series: null,
+      seriesFailed: true,
+      range: ALL_TIME,
+      granularity: "day",
+      now: NOW,
+    })
+    render(
+      <I18nProvider>
+        <BehaviourPanel view={view} onDrilldown={jest.fn()} />
+      </I18nProvider>
+    )
+    expect(screen.queryByText(h.seriesLoading)).not.toBeInTheDocument()
+    expect(screen.getAllByText(h.seriesUnavailable).length).toBeGreaterThan(0)
   })
 })

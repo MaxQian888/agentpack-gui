@@ -2,6 +2,7 @@
 
 import { ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/ui/spinner"
 import { useT } from "@/lib/i18n/provider"
 import { countSelections } from "@/lib/agentpack/plan"
 import { useAppStore } from "@/store/app-store"
@@ -18,26 +19,75 @@ import { useAppStore } from "@/store/app-store"
  * Rendered only when something is selected. A permanently docked bar with
  * "0 selected" in it is furniture, and furniture stops being read.
  */
-export function ChangeTray({ onReview }: { onReview: () => void }) {
-  const t = useT()
+/**
+ * The tray's count: selections measured against what is already on the machine.
+ * Shared with the ⌘K palette, whose "Review N changes" must be the same number
+ * for the same button.
+ */
+export function useTrayCount(): number {
   const plan = useAppStore((s) => s.plan)
-  const resetPlan = useAppStore((s) => s.resetPlan)
-  const count = countSelections(plan)
+  const appliedProxy = useAppStore((s) => s.settings.proxy)
+  const appliedNpmRegistry = useAppStore((s) => s.appliedNpmRegistry)
+  return countSelections(plan, { proxy: appliedProxy, npmRegistry: appliedNpmRegistry })
+}
+
+export function ChangeTray({
+  onReview,
+  preparing = false,
+  running = false,
+  onShowRun,
+}: {
+  onReview: () => void
+  /** Review was clicked and the panel is being prepared (detection, scan). */
+  preparing?: boolean
+  /**
+   * A run is executing. The selection can't be reviewed until it ends, so the
+   * one action becomes the way back to the run instead of a button that would
+   * only be refused.
+   */
+  running?: boolean
+  onShowRun?: () => void
+}) {
+  const t = useT()
+  const clearSelection = useAppStore((s) => s.clearSelection)
+  // Measured against what is already on the machine: a proxy applied last week
+  // is not something the user picked, and counting it kept this tray open on
+  // every launch with a Clear button that couldn't clear it.
+  const count = useTrayCount()
   if (count === 0) return null
 
   return (
     <div
       role="region"
       aria-label={t.tray.label}
-      className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-t bg-[var(--hm-paper-2)] px-4 py-2.5 sm:px-6"
+      className="hm-tray-in flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-t bg-[var(--hm-paper-2)] px-4 py-2.5 sm:px-6"
     >
       <span className="text-sm font-medium tabular-nums">{t.tray.count(count)}</span>
-      <Button variant="ghost" size="sm" className="ml-auto" onClick={resetPlan}>
+      <Button variant="ghost" size="sm" className="ml-auto" onClick={clearSelection}>
         {t.tray.clear}
       </Button>
-      <Button size="sm" onClick={onReview} data-tour="tray">
-        {t.tray.review}
-        <ArrowRight className="size-4" />
+      <Button
+        size="sm"
+        onClick={running && onShowRun ? onShowRun : onReview}
+        disabled={preparing}
+        data-tour="tray"
+      >
+        {running && onShowRun ? (
+          <>
+            <Spinner aria-hidden className="size-4" />
+            {t.shell.showRun}
+          </>
+        ) : preparing ? (
+          <>
+            <Spinner aria-hidden className="size-4" />
+            {t.shell.preparing}
+          </>
+        ) : (
+          <>
+            {t.tray.review}
+            <ArrowRight className="size-4" />
+          </>
+        )}
       </Button>
     </div>
   )

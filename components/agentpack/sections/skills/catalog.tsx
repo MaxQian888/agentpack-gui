@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { cn } from "@/lib/utils"
 import { SKILLS } from "@/lib/agentpack/registry"
-import { skillInstallStep, skillRemoveStep } from "@/lib/agentpack/plan"
+import { skillBackupStep, skillInstallStep, skillRemoveStep } from "@/lib/agentpack/plan"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { SKILL_SOURCES } from "@/lib/skills/browse"
@@ -125,9 +125,15 @@ export function CatalogTab({
     refresh()
   }
 
+  // Backed up first, and removed only if the backup succeeded — the same pair
+  // the installed list runs. Backups says a delete keeps one; a bundled skill
+  // someone has edited in place is exactly the copy worth keeping.
   const uninstallNow = async (id: string, title: string, target: SkillSource) => {
     if (!paths) return
-    await run([skillRemoveStep(id, title, [target], [skillDestPath(paths, target, id)], t)])
+    const dest = skillDestPath(paths, target, id)
+    const backup = skillBackupStep(id, dest, t)
+    const remove = skillRemoveStep(id, title, [target], [dest], t)
+    await run([backup, { ...remove, dependsOn: [backup.id] }])
     refresh()
   }
 

@@ -1,5 +1,5 @@
 import type { HistorySource, SessionSummary, TokenUsage } from "./types"
-import { addUsage, dayKey, emptyUsage } from "./format"
+import { addUsage, dayKey, emptyUsage, type CostFigure } from "./format"
 import { estimateCost } from "./pricing"
 
 /**
@@ -28,6 +28,27 @@ export function sessionCost(s: SessionSummary): SessionCost {
   const est = estimateCost(s.source, s.model, s.usage)
   if (est != null) return { value: est, estimated: true, unpriced: false }
   return { value: 0, estimated: false, unpriced: true }
+}
+
+/** One transcript's cost in the shape `formatCostFigure` writes. */
+export function sessionCostFigure(s: SessionSummary): CostFigure {
+  const cost = sessionCost(s)
+  return {
+    value: cost.value,
+    estimated: cost.estimated,
+    unpriced: cost.unpriced ? 1 : 0,
+    transcripts: 1,
+  }
+}
+
+/**
+ * The key a transcript is grouped under in `byProject`. Exported so a drill-down
+ * from a project row filters on exactly the key the row was counted by — a
+ * substring search for "api" also matched "api-gateway" and every title that
+ * mentioned the word.
+ */
+export function projectKey(s: SessionSummary): string {
+  return s.projectName || "—"
 }
 
 /**
@@ -111,6 +132,10 @@ export interface ProjectStat {
   sessions: number
   total: number
   cost: number
+  /** Provenance of `cost`, for `formatCostFigure`. */
+  transcripts: number
+  unpriced: number
+  estimated: boolean
 }
 
 /** Session count + tokens bucketed by local hour of day (0–23) of session start. */
@@ -143,6 +168,8 @@ export interface UnpricedShare {
 
 export interface UsageStats {
   totals: Totals
+  /** Every transcript folded in, sub-agent runs included — cost's denominator. */
+  transcripts: number
   /** Sum of real, source-recorded costs (OpenCode). */
   actualCost: number
   /** Sum of costs we estimated from token counts (Claude Code / Codex). */
@@ -269,15 +296,26 @@ export function computeUsageStats(sessions: SessionSummary[]): UsageStats {
     d.output += s.usage.output
     d.cost += cost
 
-    const projKey = s.projectName || "—"
+    const projKey = projectKey(s)
     let p = byProject.get(projKey)
     if (!p) {
-      p = { project: projKey, sessions: 0, total: 0, cost: 0 }
+      p = {
+        project: projKey,
+        sessions: 0,
+        total: 0,
+        cost: 0,
+        transcripts: 0,
+        unpriced: 0,
+        estimated: false,
+      }
       byProject.set(projKey, p)
     }
     p.sessions += rootCount
     p.total += s.usage.total
     p.cost += cost
+    p.transcripts += 1
+    if (noRate) p.unpriced += 1
+    if (estimated) p.estimated = true
 
     // Bucket by the local hour the session was started (work-time pattern).
     const hour = new Date(s.startedAt).getHours()
@@ -294,6 +332,7 @@ export function computeUsageStats(sessions: SessionSummary[]): UsageStats {
 
   return {
     totals,
+    transcripts: sessions.length,
     actualCost,
     estimatedCost,
     unpriced,
@@ -304,6 +343,20 @@ export function computeUsageStats(sessions: SessionSummary[]): UsageStats {
     byDay: [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day)),
     byProject: [...byProject.values()].sort((a, b) => b.total - a.total),
     byHour,
+  }
+}
+
+/**
+ * A fold's cost in the shape `formatCostFigure` writes. `value` defaults to the
+ * total; pass another figure drawn from the same fold (the per-session average)
+ * and it carries the same provenance, because it is made of the same money.
+ */
+export function statsCostFigure(stats: UsageStats, value = stats.totals.cost): CostFigure {
+  return {
+    value,
+    estimated: stats.estimatedCost > 0,
+    unpriced: stats.unpriced.transcripts,
+    transcripts: stats.transcripts,
   }
 }
 

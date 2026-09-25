@@ -20,6 +20,9 @@ test("shows profile, backup, and config-file controls", async ({ page }) => {
 })
 
 test("gates profile and config filesystem writes to the desktop runtime", async ({ page }) => {
+  // A profile needs something in it: pick a bundle first.
+  await navTo(page, "presets")
+  await page.getByRole("button", { name: "Recommended", exact: true }).click()
   await navTo(page, "config")
 
   await page.getByPlaceholder("Profile name").fill("Browser profile")

@@ -152,13 +152,20 @@ export function retargetPlanOs(plan: Plan, os: OS): Plan {
 export interface ProfilesDiff {
   fresh: number
   updated: number
+  /**
+   * Local profiles the bundle doesn't carry — what "Replace" deletes. Merge
+   * keeps them, so a caller only states this for replace.
+   */
+  dropped: number
 }
 
 export function diffProfiles(local: Profile[], incoming: Profile[]): ProfilesDiff {
   const ids = new Set(local.map((p) => p.id))
+  const incomingIds = new Set(incoming.map((p) => p.id))
   return {
     fresh: incoming.filter((p) => !ids.has(p.id)).length,
     updated: incoming.filter((p) => ids.has(p.id)).length,
+    dropped: local.filter((p) => !incomingIds.has(p.id)).length,
   }
 }
 
@@ -232,4 +239,47 @@ export function diffSettings(local: AppSettings, incoming: Partial<AppSettings>)
     if (JSON.stringify(from) !== JSON.stringify(to)) out.push({ key, from, to })
   }
   return out
+}
+
+/**
+ * The settings half of `keepLocalSecrets`: a redacted bundle arrives with the
+ * proxy password and client-key passphrase blanked, and applying it as-is would
+ * wipe the ones this machine already had — exactly what the export dialog's
+ * "importing puts your own back" promises won't happen.
+ */
+export function keepLocalSettingsSecrets(
+  incoming: Partial<AppSettings>,
+  local: AppSettings
+): Partial<AppSettings> {
+  const proxy = incoming.proxy
+  if (!proxy) return incoming
+  return {
+    ...incoming,
+    proxy: {
+      ...proxy,
+      password: proxy.password || local.proxy?.password,
+      clientKeyPassphrase: proxy.clientKeyPassphrase || local.proxy?.clientKeyPassphrase,
+    },
+  }
+}
+
+/** A value as the review shows it: a proxy's secrets masked, everything else as JSON. */
+function settingValue(key: keyof AppSettings, value: unknown): string {
+  if (key !== "proxy" || !value || typeof value !== "object") return JSON.stringify(value) ?? "null"
+  const proxy = value as NonNullable<AppSettings["proxy"]>
+  return JSON.stringify({
+    ...proxy,
+    ...(proxy.password ? { password: "•••" } : {}),
+    ...(proxy.clientKeyPassphrase ? { clientKeyPassphrase: "•••" } : {}),
+  })
+}
+
+/**
+ * One changed setting as a single review line — `key: from → to`. This text
+ * lands in the import dialog and in the run log, so the proxy's credentials are
+ * masked rather than printed: `from` is this machine's own, and after
+ * `keepLocalSettingsSecrets` so is `to`.
+ */
+export function describeSettingsChange(change: SettingsChange): string {
+  return `${String(change.key)}: ${settingValue(change.key, change.from)} → ${settingValue(change.key, change.to)}`
 }

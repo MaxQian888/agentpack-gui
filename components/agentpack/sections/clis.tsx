@@ -17,6 +17,7 @@ import {
   upgradeCommandFor,
 } from "@/lib/agentpack/registry"
 import { cliInstallStep } from "@/lib/agentpack/plan"
+import { mcpTargetsFor } from "@/lib/agentpack/presets"
 import { extractSemver, isUpgradeAvailable, majorVersion } from "@/lib/agentpack/version"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
@@ -33,6 +34,7 @@ export function ClisSection({ onOpenRuntimes }: { onOpenRuntimes?: () => void } 
   const clis = useAppStore((s) => s.plan.clis)
   const cliMethods = useAppStore((s) => s.plan.cliMethods)
   const toggleCli = useAppStore((s) => s.toggleCli)
+  const syncTargetsToClis = useAppStore((s) => s.syncTargetsToClis)
   const setCliMethod = useAppStore((s) => s.setCliMethod)
   const detections = useAppStore((s) => s.detections)
   const latestVersions = useAppStore((s) => s.latestVersions)
@@ -71,6 +73,17 @@ export function ClisSection({ onOpenRuntimes }: { onOpenRuntimes?: () => void } 
     const npmPath = !!tool.npmPackage && cliManagers[tool.id] !== "native"
     if (!npmPath || floor === undefined || nodeMajor === undefined) return undefined
     return nodeMajor < floor ? floor : undefined
+  }
+
+  // Same rule as Quick setup's checklist: unticking an agent here must re-point
+  // the staged skills and MCP servers, or the plan still writes into the config
+  // of a CLI the user just dropped. Only when the agent set actually moved —
+  // ticking a companion tool changes no target, and re-syncing then would
+  // overwrite a per-server choice made in the MCP section for nothing.
+  const toggleCliAndRetarget = (id: (typeof CLI_TOOLS)[number]["id"]) => {
+    const before = mcpTargetsFor(clis).join()
+    toggleCli(id)
+    if (mcpTargetsFor(useAppStore.getState().plan.clis).join() !== before) syncTargetsToClis()
   }
 
   const upgradeNow = (tool: (typeof CLI_TOOLS)[number]) => {
@@ -141,7 +154,7 @@ export function ClisSection({ onOpenRuntimes }: { onOpenRuntimes?: () => void } 
                         <Checkbox
                           id={`cli-${tool.id}`}
                           checked={checked}
-                          onCheckedChange={() => toggleCli(tool.id)}
+                          onCheckedChange={() => toggleCliAndRetarget(tool.id)}
                         />
                         <label
                           htmlFor={`cli-${tool.id}`}

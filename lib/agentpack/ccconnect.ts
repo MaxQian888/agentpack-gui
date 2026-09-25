@@ -132,6 +132,45 @@ export function countProjects(toml: string): number {
   return projectCount(parseConfigDoc(toml))
 }
 
+/**
+ * The values `defaultConfigToml` fills in for the user to replace, by key. One
+ * table for both the writer and `configPlaceholders`, so the check can't drift
+ * from what the starter config actually says.
+ */
+export const CC_CONNECT_PLACEHOLDERS = {
+  work_dir: "/path/to/your/project",
+  app_id: "your-feishu-app-id",
+  app_secret: "your-feishu-app-secret",
+} as const
+
+/**
+ * Keys under `[[projects]]` still holding the starter config's placeholders.
+ *
+ * A project naming `/path/to/your/project` passes cc-connect's validation, so
+ * `projectCount` alone called the starter config "configured" — a checklist
+ * tick for a project that points at no folder and a chat app with no
+ * credentials. The service can still start on it (that is how the dashboard
+ * comes up to fix it from), but the project is not set up yet.
+ */
+export function configPlaceholders(toml: string): string[] {
+  const doc = parseConfigDoc(toml)
+  const found = new Set<string>()
+  const placeholders = CC_CONNECT_PLACEHOLDERS as Record<string, string>
+  const walk = (node: unknown) => {
+    if (Array.isArray(node)) {
+      node.forEach(walk)
+      return
+    }
+    if (!node || typeof node !== "object") return
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (typeof value === "string" && placeholders[key] === value) found.add(key)
+      else walk(value)
+    }
+  }
+  walk(doc?.projects)
+  return Object.keys(CC_CONNECT_PLACEHOLDERS).filter((key) => found.has(key))
+}
+
 export interface CcConnectSummary {
   projectCount: number
   platformCount: number
@@ -507,7 +546,7 @@ export function defaultConfigToml(): string {
     'type = "claudecode"',
     "",
     "[projects.agent.options]",
-    'work_dir = "/path/to/your/project"',
+    `work_dir = "${CC_CONNECT_PLACEHOLDERS.work_dir}"`,
     "",
     "# Feishu / Lark needs no public IP. For DingTalk, Telegram, Slack, Discord,",
     "# LINE or WeChat Work see the upstream config.example.toml.",
@@ -515,8 +554,8 @@ export function defaultConfigToml(): string {
     'type = "feishu"',
     "",
     "[projects.platforms.options]",
-    'app_id = "your-feishu-app-id"',
-    'app_secret = "your-feishu-app-secret"',
+    `app_id = "${CC_CONNECT_PLACEHOLDERS.app_id}"`,
+    `app_secret = "${CC_CONNECT_PLACEHOLDERS.app_secret}"`,
     "",
   ].join("\n")
 }

@@ -56,6 +56,9 @@ next-env.d.ts
 
 # scratch space for local verification artifacts
 /tmp/
+/artifacts/
+/output/
+/weekly-report-*.md
 
 # Playwright
 /test-results/

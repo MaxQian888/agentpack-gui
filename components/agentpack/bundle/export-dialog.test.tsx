@@ -12,6 +12,8 @@ jest.mock("@/lib/tauri/clipboard", () => ({ copyText: jest.fn(async () => true) 
 
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { toast } from "sonner"
+import { isTauri } from "@/lib/tauri"
 import type { Provider } from "@/lib/agentpack/ccswitch/types"
 import type { Plan, Paths } from "@/lib/agentpack/types"
 import { en } from "@/lib/i18n/en"
@@ -59,6 +61,9 @@ const PROVIDERS: Provider[] = [
 
 beforeEach(() => {
   jest.clearAllMocks()
+  ;(isTauri as jest.Mock).mockReturnValue(true)
+  ;(copyText as jest.Mock).mockResolvedValue(true)
+  ;(writeTextFile as jest.Mock).mockResolvedValue(undefined)
   ;(pickSavePath as jest.Mock).mockResolvedValue("/tmp/b.json")
   ;(providerLoad as jest.Mock).mockResolvedValue(PROVIDERS)
   ;(readTextFile as jest.Mock).mockImplementation(async (p: string) =>
@@ -150,4 +155,63 @@ it("refuses an export with nothing selected", async () => {
   await userEvent.click(screen.getByRole("button", { name: b.saveFile }))
   await waitFor(() => expect(pickSavePath).not.toHaveBeenCalled())
   expect(writeTextFile).not.toHaveBeenCalled()
+})
+
+describe("when something goes wrong", () => {
+  it("says the save failed, and why, instead of an unhandled rejection", async () => {
+    ;(writeTextFile as jest.Mock).mockRejectedValue(new Error("EACCES: permission denied"))
+    await openDialog()
+    await userEvent.click(await screen.findByRole("button", { name: b.saveFile }))
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(b.exportFailed("EACCES: permission denied"))
+    )
+    expect(toast.success).not.toHaveBeenCalled()
+  })
+
+  it("says the clipboard refused rather than going quiet", async () => {
+    ;(copyText as jest.Mock).mockResolvedValue(false)
+    await openDialog()
+    await userEvent.click(await screen.findByRole("button", { name: b.copyToClipboard }))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(b.copyFailed))
+  })
+
+  it("refuses to export an empty provider list it only got because the read failed", async () => {
+    // A backup that silently carries no providers is found out on the other
+    // machine, after this one is gone.
+    ;(providerLoad as jest.Mock).mockRejectedValue(new Error("database is locked"))
+    await openDialog()
+    await userEvent.click(await screen.findByRole("button", { name: b.saveFile }))
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        b.exportFailed(b.providersUnreadable("database is locked"))
+      )
+    )
+    expect(pickSavePath).not.toHaveBeenCalled()
+    expect(writeTextFile).not.toHaveBeenCalled()
+  })
+})
+
+describe("web mode", () => {
+  it("says what needs the desktop app instead of offering a Save that does nothing", async () => {
+    ;(isTauri as jest.Mock).mockReturnValue(false)
+    await openDialog()
+    expect(await screen.findByText(b.exportWebNote)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: b.saveFile })).toBeDisabled()
+    // The parts it can't read are shown unticked and disabled, not ticked and
+    // then silently left out of the copy.
+    expect(screen.getByLabelText(b.partProviders)).toBeDisabled()
+    expect(screen.getByLabelText(b.partProviders)).not.toBeChecked()
+    expect(screen.getByLabelText(b.partFiles)).toBeDisabled()
+  })
+
+  it("still copies what this window holds", async () => {
+    ;(isTauri as jest.Mock).mockReturnValue(false)
+    await openDialog()
+    await userEvent.click(await screen.findByRole("button", { name: b.copyToClipboard }))
+    await waitFor(() => expect(copyText).toHaveBeenCalled())
+    const bundle = JSON.parse((copyText as jest.Mock).mock.calls.at(-1)![0] as string)
+    expect(bundle.plan.clis).toEqual(["claude-code"])
+    expect(bundle).not.toHaveProperty("providers")
+    expect(bundle).not.toHaveProperty("files")
+  })
 })

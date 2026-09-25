@@ -22,8 +22,29 @@ export interface CustomFormValue {
 
 /** `ref` = the value names a host env var to reference (envRefs) rather than a literal (env). */
 type EnvRow = { key: string; value: string; ref: boolean }
+type HeaderRow = { key: string; value: string }
 
-const BEARER = "Bearer "
+const BEARER = /^Bearer\s+/i
+const isAuthorization = (name: string) => name.trim().toLowerCase() === "authorization"
+
+/**
+ * Split a remote spec's headers into the bearer token the form edits on its own
+ * and every other header, kept as rows.
+ *
+ * The form used to read `Authorization` alone, minus a literal "Bearer " — so
+ * editing a server dropped every other header it had, and a `Basic …` value
+ * came back as the token and was saved as `Bearer Basic …`. Only a bearer value
+ * is a token; anything else stays a header, verbatim.
+ */
+function splitHeaders(headers: Record<string, string>): { token: string; rows: HeaderRow[] } {
+  let token = ""
+  const rows: HeaderRow[] = []
+  for (const [key, value] of Object.entries(headers)) {
+    if (!token && isAuthorization(key) && BEARER.test(value)) token = value.replace(BEARER, "")
+    else rows.push({ key, value })
+  }
+  return { token, rows }
+}
 
 function argsToText(args: string[]): string {
   return args.join("\n")
@@ -68,6 +89,7 @@ export function CustomServerForm({
   mode,
   initial,
   takenIds,
+  disabledTargets,
   submitting,
   onSubmit,
   onCancel,
@@ -76,6 +98,11 @@ export function CustomServerForm({
   initial?: CustomFormValue
   /** Ids already configured (add mode rejects a collision). */
   takenIds: Set<string>
+  /**
+   * Targets this machine can't write, each with the reason shown on its
+   * checkbox — Claude when neither Claude Code nor the desktop app is installed.
+   */
+  disabledTargets?: Partial<Record<McpTarget, string>>
   submitting?: boolean
   onSubmit: (value: CustomFormValue) => void
   onCancel?: () => void
@@ -94,13 +121,17 @@ export function CustomServerForm({
     )
   )
   const [url, setUrl] = useState(init && init.transport !== "stdio" ? init.url : "")
-  const [token, setToken] = useState(
-    init && init.transport !== "stdio" ? (init.headers.Authorization ?? "").replace(BEARER, "") : ""
+  const [initHeaders] = useState(() =>
+    splitHeaders(init && init.transport !== "stdio" ? init.headers : {})
   )
+  const [token, setToken] = useState(initHeaders.token)
+  const [headerRows, setHeaderRows] = useState<HeaderRow[]>(initHeaders.rows)
   const [tokenEnvVar, setTokenEnvVar] = useState(
     init && init.transport !== "stdio" ? (init.bearerTokenEnvVar ?? "") : ""
   )
-  const [targets, setTargets] = useState<Set<McpTarget>>(new Set(initial?.targets ?? ["claude"]))
+  const [targets, setTargets] = useState<Set<McpTarget>>(
+    new Set((initial?.targets ?? ["claude"]).filter((tg) => !disabledTargets?.[tg]))
+  )
   const [error, setError] = useState<string | null>(null)
 
   const toggleTarget = (t: McpTarget) =>
@@ -125,7 +156,8 @@ export function CustomServerForm({
   const buildSpec = (): McpSpec => {
     if (transport !== "stdio") {
       const headers: Record<string, string> = {}
-      if (token.trim()) headers.Authorization = `${BEARER}${token.trim()}`
+      for (const row of headerRows) if (row.key.trim()) headers[row.key.trim()] = row.value
+      if (token.trim()) headers.Authorization = `Bearer ${token.trim()}`
       const remote = {
         url: url.trim(),
         headers,
@@ -146,15 +178,27 @@ export function CustomServerForm({
   }
 
   const submit = () => {
+    // Only what can actually be written: a target that became unavailable after
+    // it was ticked (a re-detect, a switch to SSE) is not a target.
+    const chosen = [...targets].filter(
+      (tg) => !disabledTargets?.[tg] && !(transport === "sse" && tg === "codex")
+    )
     if (idError) return setError(idError)
     if (transport === "stdio" && !command.trim()) return setError(m.errCommandRequired)
     if (transport !== "stdio" && !url.trim()) return setError(m.errUrlRequired)
-    if (targets.size === 0) return setError(m.errTargetRequired)
-    if (transport !== "stdio" && token.trim() && targets.has("codex") && !tokenEnvVar.trim()) {
+    if (chosen.length === 0) return setError(m.errTargetRequired)
+    if (transport !== "stdio" && token.trim() && chosen.includes("codex") && !tokenEnvVar.trim()) {
       return setError(m.errCodexTokenEnv)
     }
+    if (
+      transport !== "stdio" &&
+      token.trim() &&
+      headerRows.some((row) => isAuthorization(row.key))
+    ) {
+      return setError(m.errAuthorizationTwice)
+    }
     setError(null)
-    onSubmit({ id: id.trim(), spec: buildSpec(), targets: [...targets] })
+    onSubmit({ id: id.trim(), spec: buildSpec(), targets: chosen })
   }
 
   return (
@@ -189,7 +233,10 @@ export function CustomServerForm({
                   })
               }}
               className={cn(
-                "rounded-full border px-3 py-1 text-xs transition-colors",
+                // A control, so the control radius — design.md § 5 keeps pills
+                // for status dots and count bubbles.
+                "rounded-md border px-3 py-1 text-xs",
+                "transition-colors duration-(--hm-dur-fast) ease-(--hm-ease-out)",
                 transport === tr
                   ? "border-primary bg-primary/10 font-medium"
                   : "text-muted-foreground hover:bg-accent/40"
@@ -260,7 +307,8 @@ export function CustomServerForm({
                       )
                     }
                     className={cn(
-                      "rounded-md border px-2 text-xs transition-colors",
+                      "rounded-md border px-2 text-xs",
+                      "transition-colors duration-(--hm-dur-fast) ease-(--hm-ease-out)",
                       row.ref
                         ? "border-primary bg-primary/10 font-medium"
                         : "text-muted-foreground hover:bg-accent/40"
@@ -273,6 +321,7 @@ export function CustomServerForm({
                     variant="ghost"
                     size="icon"
                     className="size-9"
+                    aria-label={m.removeRow}
                     onClick={() => setEnvRows((rows) => rows.filter((_, j) => j !== i))}
                   >
                     <X className="size-4" />
@@ -326,6 +375,59 @@ export function CustomServerForm({
               <p className="text-xs text-muted-foreground">{m.fieldTokenEnvVarHint}</p>
             </div>
           </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>{m.fieldExtraHeaders}</Label>
+            <div className="flex flex-col gap-2">
+              {headerRows.map((row, i) => (
+                <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                  <Input
+                    value={row.key}
+                    aria-label={`${m.fieldExtraHeaders} ${i + 1}`}
+                    onChange={(e) =>
+                      setHeaderRows((rows) =>
+                        rows.map((r, j) => (j === i ? { ...r, key: e.target.value } : r))
+                      )
+                    }
+                    placeholder={m.headerNamePlaceholder}
+                    className="font-mono text-xs"
+                  />
+                  <Input
+                    value={row.value}
+                    type="password"
+                    aria-label={`${row.key || m.fieldExtraHeaders} ${m.envValuePlaceholder}`}
+                    onChange={(e) =>
+                      setHeaderRows((rows) =>
+                        rows.map((r, j) => (j === i ? { ...r, value: e.target.value } : r))
+                      )
+                    }
+                    placeholder={m.envValuePlaceholder}
+                    className="font-mono text-xs"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-9"
+                    aria-label={m.removeRow}
+                    onClick={() => setHeaderRows((rows) => rows.filter((_, j) => j !== i))}
+                  >
+                    <X className="size-4" />
+                  </Button>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-fit gap-1"
+                onClick={() => setHeaderRows((rows) => [...rows, { key: "", value: "" }])}
+              >
+                <Plus className="size-3.5" />
+                {m.addHeader}
+              </Button>
+              <p className="text-xs text-muted-foreground">{m.fieldExtraHeadersHint}</p>
+            </div>
+          </div>
         </>
       )}
 
@@ -334,22 +436,25 @@ export function CustomServerForm({
         <div className="flex flex-wrap items-center gap-4 text-sm">
           {MCP_TARGETS.map((target) => {
             // Codex has no standalone SSE transport — gate it out of an sse spec.
-            const disabled = transport === "sse" && target === "codex"
+            const reason =
+              disabledTargets?.[target] ??
+              (transport === "sse" && target === "codex" ? m.capCodexNoSse : undefined)
+            const disabled = !!reason
             return (
               <label
                 key={target}
-                title={disabled ? m.capCodexNoSse : undefined}
+                title={reason}
                 className={cn(
                   "flex items-center gap-2",
                   disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
                 )}
               >
                 <Checkbox
-                  checked={targets.has(target)}
+                  checked={targets.has(target) && !disabled}
                   disabled={disabled}
                   onCheckedChange={() => toggleTarget(target)}
                 />
-                <TargetDot target={target} on={targets.has(target)} />
+                <TargetDot target={target} on={targets.has(target) && !disabled} />
                 {m.targets[target]}
               </label>
             )

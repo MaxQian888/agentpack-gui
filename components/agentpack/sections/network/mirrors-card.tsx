@@ -28,6 +28,9 @@ const measure = (ranked: readonly { preset: { id: string }; result: CheckResult 
  * One-click preset chips. Each carries its measured latency, because "which
  * mirror should I pick" is unanswerable from a list of names — and a chip for a
  * mirror this machine can't reach is worse than useless.
+ *
+ * Without `onPick` the chips are read-only readouts, like Homebrew's: a button
+ * that looks pickable and does nothing is a control lying about what it is.
  */
 function Presets({
   presets,
@@ -38,7 +41,7 @@ function Presets({
   presets: readonly MirrorPreset[]
   value: string | null | undefined
   measurements?: Measurements
-  onPick: (url: string | null) => void
+  onPick?: (url: string | null) => void
 }) {
   const t = useT()
   const selected = matchPreset(presets, value)
@@ -47,6 +50,20 @@ function Presets({
       {presets.map((preset) => {
         const result = measurements?.get(preset.id)
         const unreachable = !!measurements && result !== undefined && !result?.ok
+        const latency =
+          result?.ok && result.latencyMs !== undefined ? (
+            <span className="tabular-nums text-muted-foreground">{result.latencyMs}ms</span>
+          ) : unreachable ? (
+            <span className="text-muted-foreground">{t.network.probe.unreachable}</span>
+          ) : null
+        if (!onPick) {
+          return (
+            <ReadOnlyChip key={preset.id} dimmed={unreachable}>
+              {preset.label}
+              {latency}
+            </ReadOnlyChip>
+          )
+        }
         return (
           <Button
             key={preset.id}
@@ -57,15 +74,25 @@ function Presets({
             onClick={() => onPick(preset.url)}
           >
             {preset.label}
-            {result?.ok && result.latencyMs !== undefined ? (
-              <span className="tabular-nums text-muted-foreground">{result.latencyMs}ms</span>
-            ) : unreachable ? (
-              <span className="text-muted-foreground">{t.network.probe.unreachable}</span>
-            ) : null}
+            {latency}
           </Button>
         )
       })}
     </div>
+  )
+}
+
+/** A mirror chip that only reports — the shape of a chip, none of a button's. */
+function ReadOnlyChip({ dimmed, children }: { dimmed: boolean; children: React.ReactNode }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs",
+        dimmed && "opacity-50"
+      )}
+    >
+      {children}
+    </span>
   )
 }
 
@@ -139,12 +166,7 @@ export function MirrorsCard() {
       {/* Read-only: these are applied as env vars during a retry, never written. */}
       <div className="grid gap-2">
         <Label>{m.pypiLabel}</Label>
-        <Presets
-          presets={PYPI_INDEX_PRESETS}
-          value={null}
-          measurements={pypiMeasurements}
-          onPick={() => {}}
-        />
+        <Presets presets={PYPI_INDEX_PRESETS} value={null} measurements={pypiMeasurements} />
         <p className="text-xs text-muted-foreground">{m.autoHint}</p>
       </div>
 
@@ -167,20 +189,14 @@ function BrewPresets({ ranked }: { ranked: readonly RankedBrew[] | undefined }) 
         const result = byId?.get(preset.id)
         const unreachable = !!byId && result !== undefined && !result?.ok
         return (
-          <span
-            key={preset.id}
-            className={cn(
-              "inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs",
-              unreachable && "opacity-50"
-            )}
-          >
+          <ReadOnlyChip key={preset.id} dimmed={unreachable}>
             {preset.label}
             {result?.ok && result.latencyMs !== undefined ? (
               <span className="tabular-nums text-muted-foreground">{result.latencyMs}ms</span>
             ) : unreachable ? (
               <span className="text-muted-foreground">{t.network.probe.unreachable}</span>
             ) : null}
-          </span>
+          </ReadOnlyChip>
         )
       })}
     </div>

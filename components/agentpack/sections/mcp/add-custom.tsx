@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-import { mcpAddSpecStep } from "@/lib/agentpack/plan"
+import { mcpAddSpecStep, type ClaudeMcpRoute } from "@/lib/agentpack/plan"
 import { useRunnerCtx } from "../../run/runner-context"
 import type { DashboardScan } from "../dashboard"
 import { existingIds } from "./helpers"
@@ -16,9 +16,12 @@ import { ImportDialog } from "./import-dialog"
 export function AddCustomTab({
   scan,
   refresh,
+  route,
 }: {
   scan: DashboardScan | null
   refresh: () => void
+  /** How Claude's config is reached (`claudeMcpRoute`), decided by the section. */
+  route: ClaudeMcpRoute
 }) {
   const t = useT()
   const m = t.mcp
@@ -28,7 +31,7 @@ export function AddCustomTab({
 
   const addServer = async ({ id, spec, targets }: CustomFormValue) => {
     if (!paths) return
-    await run(mcpAddSpecStep(id, spec, targets, paths, t))
+    await run(mcpAddSpecStep(id, spec, targets, paths, t, route))
     refresh()
   }
 
@@ -58,11 +61,18 @@ export function AddCustomTab({
           key={scan ? "ready" : "loading"}
           mode="add"
           takenIds={existingIds(scan)}
+          disabledTargets={route === "none" ? { claude: m.claudeMissing } : undefined}
           onSubmit={(v) => void addServer(v)}
         />
       </Card>
 
-      <ImportDialog open={importing} onOpenChange={setImporting} scan={scan} refresh={refresh} />
+      <ImportDialog
+        open={importing}
+        onOpenChange={setImporting}
+        scan={scan}
+        refresh={refresh}
+        route={route}
+      />
     </div>
   )
 }

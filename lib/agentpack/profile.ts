@@ -50,6 +50,29 @@ export function serializeProfiles(store: ProfileStore): string {
 }
 
 /**
+ * Whether a profiles.json text is something other than a profile store — as
+ * opposed to absent or empty, which is simply "no profiles yet".
+ *
+ * `parseProfiles` degrades both to an empty list so the section always renders.
+ * That is right for reading and wrong for writing: the next save would serialize
+ * the empty list over a file that held profiles the parser couldn't see. A
+ * caller checks this before it lets anything write the file back.
+ */
+export function profilesUnreadable(json: string): boolean {
+  if (!json.trim()) return false
+  try {
+    const data: unknown = JSON.parse(json)
+    return (
+      !data ||
+      typeof data !== "object" ||
+      !Array.isArray((data as Record<string, unknown>)["profiles"])
+    )
+  } catch {
+    return true
+  }
+}
+
+/**
  * Parse a profiles.json text. Defensive via {@link readStoreRecords}: invalid /
  * empty / wrong-shape input degrades to an empty store rather than throwing, so
  * a corrupt file never blocks the UI. Only entries with an id, name and plan

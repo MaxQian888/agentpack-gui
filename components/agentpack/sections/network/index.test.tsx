@@ -31,7 +31,7 @@ jest.mock("@/lib/agentpack/network/scan", () => {
   return { ...actual, scanNetwork: jest.fn(actual.scanNetwork) }
 })
 
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { act, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
@@ -94,6 +94,10 @@ beforeEach(() => {
   useAppStore.setState({ paths, panelOpen: false })
   useAppStore.getState().setNetworkProbe(null)
   useAppStore.getState().setNetworkProbing(false)
+  // The applied-and-saved proxy is separate from the form: start with none.
+  useAppStore.getState().setSettings({ proxy: null })
+  // clearAllMocks keeps implementations, and one test makes this write fail.
+  ;(writeTextFile as jest.Mock).mockResolvedValue(undefined)
 })
 
 function renderSection() {
@@ -132,6 +136,30 @@ it("keeps a failed network measurement visible in the summary", async () => {
   const summary = screen.getByRole("region", { name: en.network.summaryLabel })
   expect(await within(summary).findByText(en.network.scanFailed)).toBeInTheDocument()
   expect(within(summary).getByText(en.network.scanError("offline"))).toBeInTheDocument()
+  // …and the discovery list doesn't turn the failure into "no proxy here".
+  expect(screen.getByText(en.network.discovery.failed)).toBeInTheDocument()
+  expect(screen.queryByText(en.network.discovery.empty)).not.toBeInTheDocument()
+})
+
+it("says nothing has been measured yet rather than that there is no proxy", () => {
+  renderSection()
+  expect(screen.getByText(en.network.discovery.unmeasured)).toBeInTheDocument()
+  expect(screen.queryByText(en.network.discovery.empty)).not.toBeInTheDocument()
+})
+
+it("drops a manual re-test once a new scan replaces the reading it corrected", async () => {
+  seedProbe(["http://127.0.0.1:7890"])
+  ;(proxyCheck as jest.Mock).mockResolvedValueOnce({ ok: false, reason: "timeout" })
+  renderSection()
+  const row = (await screen.findByText("http://127.0.0.1:7890")).closest("li")!
+  await userEvent.click(within(row).getByRole("button", { name: en.network.discovery.test }))
+  const failed = en.network.proxy.testFail(en.network.proxy.reason.timeout)
+  expect(await within(row).findByText(failed)).toBeInTheDocument()
+
+  act(() => seedProbe(["http://127.0.0.1:7890"]))
+  const fresh = (await screen.findByText("http://127.0.0.1:7890")).closest("li")!
+  expect(within(fresh).queryByText(failed)).not.toBeInTheDocument()
+  expect(within(fresh).getByText(en.network.proxy.testOk(200, 12))).toBeInTheDocument()
 })
 
 it("reports when the startup scan found nothing", async () => {
@@ -310,6 +338,81 @@ it("tests connectivity through the configured proxy", async () => {
   await waitFor(() => expect(proxyCheck).toHaveBeenCalled())
   expect((proxyCheck as jest.Mock).mock.calls[0][0]).toBe("http://127.0.0.1:7890")
   expect(await screen.findByText(en.network.proxy.testOk(200, 12))).toBeInTheDocument()
+})
+
+it("clearing that fails somewhere keeps the saved proxy and agentpack's traffic as they were", async () => {
+  useAppStore.getState().setProxy({ mode: "manual", httpUrl: "http://127.0.0.1:7890" })
+  // The settings.json write is refused, so Claude Code still has the proxy.
+  ;(writeTextFile as jest.Mock).mockRejectedValue(new Error("EACCES: permission denied"))
+  render(
+    <I18nProvider>
+      <RunnerHarness panel>
+        <NetworkSection />
+      </RunnerHarness>
+    </I18nProvider>
+  )
+  await userEvent.click(screen.getByRole("button", { name: en.network.proxy.clear }))
+  await userEvent.click(await screen.findByRole("button", { name: en.review.apply }))
+
+  // The run finished with an error — Retry is the panel's way of saying so.
+  await screen.findByRole("button", { name: en.shell.retry })
+  await act(async () => {})
+  expect(useAppStore.getState().plan.network.proxy!.mode).toBe("manual")
+  expect(setProcessProxy).not.toHaveBeenCalled()
+  expect(saveSettings).not.toHaveBeenCalled()
+})
+
+it("a discarded apply leaves agentpack's traffic and the saved setting alone", async () => {
+  render(
+    <I18nProvider>
+      <RunnerHarness panel>
+        <NetworkSection />
+      </RunnerHarness>
+    </I18nProvider>
+  )
+  await userEvent.click(screen.getByRole("radio", { name: en.network.proxy.mode.manual }))
+  await userEvent.type(screen.getByLabelText(en.network.proxy.httpLabel), "127.0.0.1:7890")
+  await userEvent.click(screen.getByRole("button", { name: en.network.proxy.apply }))
+  await userEvent.click(await screen.findByRole("button", { name: en.review.discard }))
+
+  await waitFor(() => expect(useAppStore.getState().panelOpen).toBe(false))
+  await act(async () => {})
+  expect(setProcessProxy).not.toHaveBeenCalled()
+  expect(saveSettings).not.toHaveBeenCalled()
+})
+
+it("keeps Clear reachable in Off while a proxy applied earlier is still saved", async () => {
+  // Off writes nothing and removes nothing, so without this the saved proxy
+  // could only be cleared by switching back to a mode that re-applies it.
+  useAppStore.getState().setSettings({
+    proxy: { mode: "manual", httpUrl: "http://127.0.0.1:7890", targets: ["claude"] },
+  })
+  renderSection()
+  expect(screen.getByRole("radio", { name: en.network.proxy.mode.off })).toBeChecked()
+  expect(screen.getByText(en.network.proxy.stillApplied)).toBeInTheDocument()
+
+  await userEvent.click(screen.getByRole("button", { name: en.network.proxy.clear }))
+  await waitFor(() => expect(saveSettings).toHaveBeenCalledWith({ proxy: null }))
+  expect(setProcessProxy).toHaveBeenCalledWith({})
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: en.network.proxy.clear })).not.toBeInTheDocument()
+  )
+})
+
+it("shows the PyPI mirrors as measured readouts, not as buttons that do nothing", async () => {
+  seedProbe([], {
+    pypi: [
+      {
+        preset: { id: "tsinghua", label: "TUNA", url: "https://x", probeUrl: "x" },
+        result: { ok: true, status: 200, latencyMs: 40, reason: "ok" },
+      },
+    ],
+  })
+  renderSection()
+  const mirrors = screen.getByRole("region", { name: en.network.mirrorsPanel })
+  expect(within(mirrors).getByText("40ms")).toBeInTheDocument()
+  expect(within(mirrors).queryByRole("button", { name: /TUNA/ })).not.toBeInTheDocument()
+  expect(within(mirrors).queryByRole("button", { name: /pypi\.org/ })).not.toBeInTheDocument()
 })
 
 it("mirror presets fill the registry and persist the GitHub prefix immediately", async () => {

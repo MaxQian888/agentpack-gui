@@ -2,6 +2,7 @@
 
 import { ArrowDown, ArrowUp, Minus } from "lucide-react"
 import { Card } from "@/components/ui/card"
+import { useT } from "@/lib/i18n/provider"
 import { cn } from "@/lib/utils"
 
 /**
@@ -93,4 +94,13 @@ export function EmptyPanel({ message }: { message: string }) {
       {message}
     </div>
   )
+}
+
+/**
+ * A series-backed panel before its data: still loading, or — once the fetch has
+ * failed — unavailable. "Loading…" on a fetch that already failed never ends.
+ */
+export function SeriesPending({ failed }: { failed: boolean }) {
+  const t = useT().history
+  return <EmptyPanel message={failed ? t.seriesUnavailable : t.seriesLoading} />
 }

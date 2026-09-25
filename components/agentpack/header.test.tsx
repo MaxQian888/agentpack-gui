@@ -90,6 +90,26 @@ describe("controls", () => {
 })
 
 // The header doubles as the title bar once the window frame is gone.
+describe("a run behind a closed review panel", () => {
+  it("says it is running, and brings the panel back", async () => {
+    const onShowRun = jest.fn()
+    renderHeader({ run: { done: 2, total: 5 }, onShowRun })
+    // The panel can be closed mid-run; without this nothing on screen said so.
+    await userEvent.click(screen.getByRole("button", { name: en.shell.runningBadge(2, 5) }))
+    expect(onShowRun).toHaveBeenCalled()
+  })
+
+  it("draws nothing when no run is in the background", () => {
+    renderHeader({ run: null, onShowRun: jest.fn() })
+    expect(screen.queryByText(/Running/)).not.toBeInTheDocument()
+  })
+
+  it("doesn't repeat a workspace's name as its own section", () => {
+    renderHeader({ workspace: "account", section: "my-account" })
+    expect(screen.getAllByText(en.workspaces.account)).toHaveLength(1)
+  })
+})
+
 describe("frameless window", () => {
   it("stays a plain header in web mode — no drag region, no window buttons", async () => {
     renderHeader()

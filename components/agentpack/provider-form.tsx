@@ -55,6 +55,9 @@ export function ProviderForm({
   // form edit, and the fields above remain the source of truth.
   const [raw, setRaw] = useState<string | null>(initial?.rawSettingsConfig ?? null)
   const [rawValid, setRawValid] = useState(true)
+  // The row's stored config, which the fields merge into. Only while the app is
+  // still the one it was stored for: a claude `env` is meaningless to codex.
+  const base = app === initial?.app ? initial?.baseSettingsConfig : undefined
 
   const formFields = (): ProviderFormData => ({
     name,
@@ -65,7 +68,15 @@ export function ProviderForm({
     model: model || undefined,
     notes: notes || undefined,
     websiteUrl: website || undefined,
+    baseSettingsConfig: base,
   })
+
+  /**
+   * A connection-test result describes the endpoint and token it was run
+   * against. Kept across an edit of either, it vouches for values nobody has
+   * tested — so any change to what the probe sends clears it.
+   */
+  const resetProbe = () => setProbe(null)
 
   /**
    * Any form-field edit drops a hand-written config: the two surfaces follow a
@@ -77,8 +88,9 @@ export function ProviderForm({
     setRawValid(true)
   }
 
-  // Opening the raw tab seeds it from what the form currently describes, so the
-  // user edits a real config rather than a blank box.
+  // Opening the raw tab seeds it from what the form currently describes — the
+  // stored config with the fields merged in — so the user edits the real row
+  // rather than a four-field reconstruction of it.
   const openRaw = () => {
     if (raw !== null) return
     try {
@@ -100,6 +112,7 @@ export function ProviderForm({
     }
     setRawValid(true)
     const back = parseSettingsConfig(app, text)
+    resetProbe()
     setBaseUrl(back.baseUrl)
     setToken(back.token)
     setAuthKind(back.claudeAuthKind)
@@ -162,6 +175,7 @@ export function ProviderForm({
               value={app}
               onValueChange={(v) => {
                 clearRaw()
+                resetProbe()
                 setApp(v as ProviderApp)
               }}
             >
@@ -191,6 +205,7 @@ export function ProviderForm({
                   value={baseUrl}
                   onChange={(e) => {
                     clearRaw()
+                    resetProbe()
                     setBaseUrl(e.target.value)
                   }}
                 />
@@ -208,6 +223,7 @@ export function ProviderForm({
                     // exactly like a wrong key.
                     onChange={(e) => {
                       clearRaw()
+                      resetProbe()
                       setToken(e.target.value.trim())
                     }}
                   />
@@ -253,6 +269,7 @@ export function ProviderForm({
                     value={authKind}
                     onValueChange={(v) => {
                       clearRaw()
+                      resetProbe()
                       setAuthKind(v as typeof authKind)
                     }}
                   >

@@ -33,12 +33,16 @@ export interface HealthProbes {
 }
 
 /**
- * Resolve an http spec's URL to a `{ host, port }` to probe, defaulting the port
- * from the scheme (443 for https, 80 otherwise). Returns `null` for a non-http
- * spec or an unparseable / hostless URL.
+ * Resolve a remote spec's URL to a `{ host, port }` to probe, defaulting the port
+ * from the scheme (443 for https, 80 otherwise). Returns `null` for a stdio spec
+ * or an unparseable / hostless URL.
+ *
+ * SSE is a remote transport too — same URL, same host to reach. Accepting only
+ * `http` here failed every SSE server with "Invalid server URL", a verdict about
+ * the URL that was really a verdict about the transport.
  */
 export function httpTarget(spec: McpSpec): { host: string; port: number } | null {
-  if (spec.transport !== "http") return null
+  if (spec.transport === "stdio") return null
   let url: URL
   try {
     url = new URL(spec.url)
@@ -54,7 +58,8 @@ export function httpTarget(spec: McpSpec): { host: string; port: number } | null
 /**
  * Check one resolved spec's health using the injected probes. stdio → the command
  * must resolve on PATH; http → the endpoint must be TCP-reachable (latency
- * recorded). Never throws — a probe rejection is treated as a failure.
+ * recorded; sse is probed the same way). Never throws — a probe rejection is
+ * treated as a failure.
  */
 export async function checkSpecHealth(spec: McpSpec, probes: HealthProbes): Promise<McpHealth> {
   if (spec.transport === "stdio") {

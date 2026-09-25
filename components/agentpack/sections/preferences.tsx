@@ -108,21 +108,27 @@ export function PreferencesSection() {
   }
 
   /**
-   * Back to the shipped defaults — for this page only. It deliberately does not
-   * touch the proxy, the mirrors, saved profiles or anything installed: a reset
-   * that quietly undid a network route the user needed to reach npm would be a
-   * far more expensive surprise than a theme they can flip back.
+   * Back to the shipped defaults — for this page only, which includes the
+   * global hotkey: it is released, not merely switched off in settings, or the
+   * reset would leave a system-wide key claimed behind a switch reading off. It
+   * deliberately does not touch the proxy, the mirrors, saved profiles or
+   * anything installed: a reset that quietly undid a network route the user
+   * needed to reach npm would be a far more expensive surprise than a theme
+   * they can flip back.
    */
-  const restoreDefaults = () => {
+  const restoreDefaults = async () => {
     setTheme("system")
     setLang(detectBrowserLang())
     setOsOverride(null)
+    if (settings.summonShortcut) await unregisterSummonShortcut(settings.summonShortcut)
     persist({
       uiScale: DEFAULT_SETTINGS.uiScale,
       reduceMotion: DEFAULT_SETTINGS.reduceMotion,
       startupSection: DEFAULT_SETTINGS.startupSection,
       autoCheckUpdates: DEFAULT_SETTINGS.autoCheckUpdates,
       quickStartDismissed: DEFAULT_SETTINGS.quickStartDismissed,
+      summonShortcut: DEFAULT_SETTINGS.summonShortcut,
+      osOverride: DEFAULT_SETTINGS.osOverride,
     })
     toast.success(prefs.defaultsDone)
   }
@@ -323,9 +329,13 @@ export function PreferencesSection() {
                   id="pref-os"
                   size="sm"
                   value={osOverride ?? "auto"}
-                  onChange={(e) =>
-                    setOsOverride(e.target.value === "auto" ? null : (e.target.value as OS))
-                  }
+                  onChange={(e) => {
+                    // Persisted like the rest of the page, so "the desktop app
+                    // remembers them" is true of this one too.
+                    const os = e.target.value === "auto" ? null : (e.target.value as OS)
+                    setOsOverride(os)
+                    persist({ osOverride: os })
+                  }}
                 >
                   <NativeSelectOption value="auto">{prefs.osAuto}</NativeSelectOption>
                   {OS_OPTIONS.map((os) => (
@@ -352,7 +362,7 @@ export function PreferencesSection() {
             </div>
           </CapabilityTile>
           <CapabilityTile title={prefs.defaultsTitle} description={prefs.defaultsHint}>
-            <Button variant="outline" size="sm" onClick={restoreDefaults}>
+            <Button variant="outline" size="sm" onClick={() => void restoreDefaults()}>
               {prefs.defaultsAction}
             </Button>
           </CapabilityTile>

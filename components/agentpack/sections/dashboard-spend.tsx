@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils"
 import { isTauri } from "@/lib/tauri"
 import { useMounted } from "@/hooks/use-mounted"
 import { useT } from "@/lib/i18n/provider"
-import type { ListResult, ScanProgress } from "@/lib/history/types"
+import { WHOLE_SCAN, type ListResult, type ScanProgress } from "@/lib/history/types"
 import { computeSpend } from "@/lib/history/spend"
 import { formatCost, formatNumber, formatTokens } from "@/lib/history/format"
 import { formatDelta } from "@/lib/history/report"
@@ -25,6 +25,8 @@ export interface HistoryFeed {
   data: ListResult | null
   /** Streamed while gigabytes of JSONL are parsed; null when idle. */
   progress: ScanProgress | null
+  /** Read the history again — offered when the last read failed. */
+  retry?: () => void
 }
 
 /**
@@ -43,9 +45,12 @@ export interface HistoryFeed {
 export function SpendCard({
   history,
   onNavigate,
+  onOpenUsage,
 }: {
   history: HistoryFeed
   onNavigate: (key: SectionKey) => void
+  /** Open History on its Usage tab — where the link says it goes. */
+  onOpenUsage?: () => void
 }) {
   const s = useT().dashboard.spend
   // `isTauri()` is false in the pre-rendered HTML but true in the desktop
@@ -62,6 +67,22 @@ export function SpendCard({
       return <DesktopOnlyNote>{s.notTauri}</DesktopOnlyNote>
     }
     if (!spend) return <ScanningBody label={s.scanning} progress={history.progress} />
+    const failure = history.data?.errors.find((e) => e.source === WHOLE_SCAN)
+    if (failure) {
+      return (
+        <div className="flex flex-col items-start gap-2">
+          <p className="text-sm text-[var(--hm-danger)] [overflow-wrap:anywhere]">
+            {s.failed(failure.message)}
+          </p>
+          {history.retry ? (
+            <Button size="sm" variant="outline" onClick={history.retry}>
+              {s.retry}
+            </Button>
+          ) : null}
+        </div>
+      )
+    }
+    const unread = history.data?.errors.length ?? 0
     if (!spend.hasActivity) {
       return (
         <div className="flex flex-col items-start gap-2">
@@ -122,6 +143,7 @@ export function SpendCard({
           {spend.unpricedTranscripts > 0 ? (
             <span>{s.unpriced(spend.unpricedTranscripts)}</span>
           ) : null}
+          {unread > 0 ? <span className="text-[var(--hm-warn)]">{s.partial(unread)}</span> : null}
         </div>
       </div>
     )
@@ -142,7 +164,7 @@ export function SpendCard({
       <Button
         variant="link"
         size="sm"
-        onClick={() => onNavigate("history")}
+        onClick={onOpenUsage ?? (() => onNavigate("history"))}
         className="h-auto self-start p-0 text-sm text-[var(--hm-accent)]"
       >
         {s.details}

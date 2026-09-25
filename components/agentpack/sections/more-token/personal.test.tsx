@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { act, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { en } from "@/lib/i18n/en"
@@ -8,10 +8,12 @@ import {
   credentialState,
   cancelPersonalOAuth,
   downloadCsv,
+  forgetCredential,
   listInstances,
   loginPersonalInstance,
   managementRequest,
   pairInstance,
+  saveInstance,
   startPersonalOAuth,
 } from "@/lib/more-token/client"
 import type { ManagementOperation, MoreTokenInstance, PersonalView } from "@/lib/more-token/types"
@@ -58,9 +60,37 @@ function response<T>(data: T) {
 
 function mockOperation(operation: ManagementOperation) {
   switch (operation.kind) {
+    case "personalSessions":
+      return response([
+        {
+          id: 9,
+          public_id: "session-current",
+          user_id: 2,
+          client_id: "agentpack-personal-desktop",
+          client_label: "This desktop",
+          scopes: "",
+          expires_at: 2_000_000_000,
+          last_used_at: 1_700_000_900,
+          revoked_at: 0,
+          created_at: 1_700_000_000,
+        },
+        {
+          id: 10,
+          public_id: "session-other",
+          user_id: 2,
+          client_id: "desktop-other",
+          client_label: "Other desktop",
+          scopes: "",
+          expires_at: 2_000_000_000,
+          last_used_at: 1_700_000_900,
+          revoked_at: 0,
+          created_at: 1_700_000_000,
+        },
+      ])
     case "personalCapabilities":
       return response({
         personal_api_version: "1.0",
+        current_session_id: 9,
         role: "user",
         scopes: ["personal:account:read", "personal:balance:read"],
         features: {
@@ -234,17 +264,21 @@ function mockOperation(operation: ManagementOperation) {
   }
 }
 
-function renderSection(view: PersonalView) {
+function renderSection(view: PersonalView, props: { onOpenSecurity?: () => void } = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
-  return render(
+  const tree = () => (
     <QueryClientProvider client={client}>
       <I18nProvider>
-        <PersonalMoreTokenSection view={view} />
+        <PersonalMoreTokenSection view={view} {...props} />
       </I18nProvider>
     </QueryClientProvider>
   )
+  const result = render(tree())
+  // Same props, new elements: the parent re-renders exactly as it does on any
+  // unrelated state change in the shell.
+  return { ...result, client, rerenderParent: () => result.rerender(tree()) }
 }
 
 beforeEach(() => {
@@ -441,4 +475,122 @@ it("shows extended ratio and ownership metadata in model details", async () => {
   expect(dialog).toHaveTextContent("Billing mode: tiered-ratio")
   expect(dialog).toHaveTextContent("Cache write ratio: 1.25×")
   expect(dialog).toHaveTextContent("Audio output ratio: 2.5×")
+})
+
+it("keeps waiting for browser approval across parent re-renders and cancels on request", async () => {
+  ;(credentialState as jest.Mock).mockResolvedValue({ connected: false, persistent: false })
+  ;(startPersonalOAuth as jest.Mock).mockResolvedValue({
+    handle: "safe-rust-handle",
+    authorizationUrl: "http://127.0.0.1:3001/profile?desktop_authorization=ABCDE-FGHIJ",
+    expiresAt: 1_800_000_000,
+    intervalSeconds: 60,
+  })
+  const view = renderSection("my-account")
+  const buttons = await screen.findAllByRole("button", { name: en.personal.browserSignIn })
+  await userEvent.click(buttons.at(-1)!)
+  expect(
+    await screen.findByRole("button", { name: en.personal.restartBrowserSignIn })
+  ).toBeInTheDocument()
+
+  await act(() => view.client.invalidateQueries({ queryKey: ["more-token", "instances"] }))
+  view.rerenderParent()
+  expect(cancelPersonalOAuth).not.toHaveBeenCalled()
+  expect(screen.getByRole("button", { name: en.personal.waitingForBrowser })).toBeDisabled()
+
+  await userEvent.click(screen.getByRole("button", { name: en.management.cancel }))
+  expect(cancelPersonalOAuth).toHaveBeenCalledWith(personalInstance.id, "safe-rust-handle")
+  expect(screen.getAllByRole("button", { name: en.personal.browserSignIn }).at(-1)).toBeEnabled()
+  view.unmount()
+})
+
+it("edits a personal connection in place and keeps it personal", async () => {
+  ;(saveInstance as jest.Mock).mockImplementation(async (draft) => ({
+    ...personalInstance,
+    name: draft.name,
+  }))
+  renderSection("my-account")
+  await screen.findByDisplayValue("Atlas User")
+  await userEvent.click(screen.getByRole("button", { name: en.management.editInstance }))
+  const dialog = await screen.findByRole("dialog")
+  expect(within(dialog).getByLabelText(en.management.instanceId)).toHaveValue(personalInstance.id)
+  expect(
+    within(dialog).getByRole("button", { name: en.management.removeInstance })
+  ).toBeInTheDocument()
+  const name = within(dialog).getByLabelText(en.management.instanceName)
+  await userEvent.clear(name)
+  await userEvent.type(name, "Renamed")
+  await userEvent.click(within(dialog).getByRole("button", { name: en.management.save }))
+
+  await waitFor(() => expect(saveInstance).toHaveBeenCalledTimes(1))
+  expect((saveInstance as jest.Mock).mock.calls[0][0]).toMatchObject({
+    id: personalInstance.id,
+    name: "Renamed",
+    package: "personal",
+    displayCurrency: null,
+  })
+})
+
+it("drops the signed-out user's cached profile when the credential is forgotten", async () => {
+  ;(forgetCredential as jest.Mock).mockResolvedValue({
+    remoteRevoked: true,
+    localDeleted: true,
+    remoteError: null,
+  })
+  const view = renderSection("my-account")
+  await screen.findByDisplayValue("Atlas User")
+  expect(
+    view.client.getQueryData(["more-token", personalInstance.id, "personal-overview"])
+  ).toBeTruthy()
+  ;(credentialState as jest.Mock).mockResolvedValue({ connected: false, persistent: false })
+
+  await userEvent.click(screen.getByRole("button", { name: en.management.disconnect }))
+
+  expect(await screen.findByRole("button", { name: en.personal.browserOption })).toBeInTheDocument()
+  expect(forgetCredential).toHaveBeenCalledWith(personalInstance.id)
+  expect(
+    view.client.getQueryData(["more-token", personalInstance.id, "personal-overview"])
+  ).toBeUndefined()
+  expect(screen.queryByDisplayValue("Atlas User")).not.toBeInTheDocument()
+})
+
+it("keeps the usage filters on screen when a filtered request fails", async () => {
+  renderSection("my-usage")
+  await screen.findByText("req-personal-1")
+  ;(managementRequest as jest.Mock).mockImplementation(
+    (_instanceId: string, operation: ManagementOperation) =>
+      operation.kind === "personalUsage" && operation.status === "error"
+        ? Promise.reject(new Error("status filter rejected"))
+        : mockOperation(operation)
+  )
+  await userEvent.selectOptions(screen.getByLabelText("Usage status"), "error")
+
+  expect(await screen.findByText("status filter rejected")).toBeInTheDocument()
+  expect(screen.getByLabelText("Usage status")).toHaveValue("error")
+  await userEvent.selectOptions(screen.getByLabelText("Usage status"), "billable")
+  expect(await screen.findByText("req-personal-1")).toBeInTheDocument()
+})
+
+it("does not offer to revoke the session this desktop is using", async () => {
+  renderSection("my-security")
+  expect(await screen.findByText("Other desktop")).toBeInTheDocument()
+  const [current, other] = screen.getAllByRole("button", { name: en.personal.revokeSession })
+  expect(current).toBeDisabled()
+  expect(other).toBeEnabled()
+  expect(screen.getByText(en.personal.currentSessionHint)).toBeInTheDocument()
+})
+
+it("offers the way to Security when the server requires a password change", async () => {
+  ;(managementRequest as jest.Mock).mockImplementation(
+    (_instanceId: string, operation: ManagementOperation) =>
+      operation.kind === "personalCapabilities"
+        ? mockOperation(operation).then((result) => ({
+            ...result,
+            data: { ...(result.data as object), must_change_password: true },
+          }))
+        : mockOperation(operation)
+  )
+  const onOpenSecurity = jest.fn()
+  renderSection("my-account", { onOpenSecurity })
+  await userEvent.click(await screen.findByRole("button", { name: en.personal.openSecurity }))
+  expect(onOpenSecurity).toHaveBeenCalled()
 })

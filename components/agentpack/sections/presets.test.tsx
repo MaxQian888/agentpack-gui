@@ -60,6 +60,25 @@ describe("presets", () => {
     expect(chip(en.installDialog.custom)).toHaveAttribute("aria-pressed", "true")
   })
 
+  it("names a hand-edited plan on Custom, and pressing it keeps the picks", async () => {
+    // Once the user has fine-tuned, Custom is the row describing their own
+    // selection — it must say what that is, and pressing it must not erase it.
+    useAppStore.getState().applyPreset("minimal")
+    useAppStore.getState().toggleCli("codex")
+    renderSection()
+
+    const custom = chip(en.installDialog.custom)
+    expect(custom).toHaveAttribute("aria-pressed", "true")
+    expect(screen.getByText(en.presetsScreen.presetCounts(2, 0, 1))).toBeInTheDocument()
+    expect(screen.queryByText(en.presetsScreen.presetCountsCustom)).not.toBeInTheDocument()
+
+    await userEvent.click(custom)
+    expect(useAppStore.getState().plan.clis).toEqual(["claude-code", "codex"])
+    expect(useAppStore.getState().plan.mcps.map((m) => m.id)).toEqual(["memory"])
+    // It opens the checklists instead, which is what someone pressing it wants.
+    expect(screen.getByRole("tab", { name: en.installDialog.clis })).toBeInTheDocument()
+  })
+
   it("marks nothing at all when the plan is empty", () => {
     renderSection()
     for (const el of screen.getAllByRole("button")) {

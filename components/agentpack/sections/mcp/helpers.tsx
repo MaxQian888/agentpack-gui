@@ -202,7 +202,7 @@ export function CopyButton({ value, ariaLabel }: { value: string; ariaLabel?: st
       onClick={() => void copy()}
       title={done ? t.copied : t.copy}
       aria-label={ariaLabel ?? t.copy}
-      className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
+      className="shrink-0 text-muted-foreground transition-colors duration-(--hm-dur-fast) ease-(--hm-ease-out) hover:text-foreground"
     >
       {done ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
     </button>

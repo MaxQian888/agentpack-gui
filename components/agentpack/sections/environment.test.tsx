@@ -52,7 +52,7 @@ it("offers an install action for a missing runtime and opens the run panel", asy
     paths: { os: "mac" } as never,
   })
   renderEnv()
-  const installBtn = screen.getAllByRole("button", { name: /install now/i })[0]
+  const installBtn = screen.getAllByRole("button", { name: en.shell.installNow })[0]
   await userEvent.click(installBtn)
   expect(useAppStore.getState().panelOpen).toBe(true)
 })

@@ -1,6 +1,7 @@
 import {
   buildPiPackageSteps,
   buildPiResourceToggleStep,
+  clearedResourceFilters,
   buildPiResourcePathToggleStep,
   piSettingsHash,
   piResourcePathEnabled,
@@ -272,5 +273,39 @@ describe("setPackageResourceEnabled", () => {
       autoload: false,
       skills: ["-skills/search/SKILL.md"],
     })
+  })
+})
+
+describe("clearedResourceFilters", () => {
+  const settings = JSON.stringify({
+    packages: [{ source: "npm:pi-demo", skills: ["skills/a/**", "-skills/a/old.md"] }],
+  })
+
+  it("counts the file filters a whole-kind toggle drops", () => {
+    // On deletes the array and off empties it, so either way both entries go.
+    expect(clearedResourceFilters(settings, "npm:pi-demo", "skills", true)).toBe(2)
+    expect(clearedResourceFilters(settings, "npm:pi-demo", "skills", false)).toBe(2)
+    expect(clearedResourceFilters(settings, "npm:pi-demo", "themes", false)).toBe(0)
+    expect(clearedResourceFilters(settings, "npm:other", "skills", false)).toBe(0)
+    expect(clearedResourceFilters("{ not json", "npm:pi-demo", "skills", false)).toBe(0)
+  })
+
+  it("names the loss in the step label instead of dropping them unannounced", () => {
+    const labelled = {
+      ...copy,
+      resourceAction: (enabled: boolean, kind: string, source: string, cleared = 0) =>
+        `${enabled ? "enable" : "disable"} ${kind} ${source}${cleared ? ` (clears ${cleared})` : ""}`,
+    }
+    const step = buildPiResourceToggleStep(
+      "/home/me/.pi/agent/settings.json",
+      settings,
+      "npm:pi-demo",
+      "skills",
+      false,
+      labelled
+    )
+    expect(step.label).toBe("disable skills npm:pi-demo (clears 2)")
+    if (step.kind !== "mergeFile") throw new Error("expected merge step")
+    expect(step.writtenNote).toBe(step.label)
   })
 })

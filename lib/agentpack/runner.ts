@@ -7,6 +7,7 @@ import { classifyFailure, remediesFor, type RecoveryContext } from "./network/re
 import { pickReleaseAsset } from "./release"
 import type { Command, CommandStep, Paths, StepDescriptor, StepRecovery, StepReport } from "./types"
 import * as api from "@/lib/tauri/commands"
+import { writeSettings } from "@/lib/tauri/settings"
 
 export interface RunOptions {
   dryRun: boolean
@@ -484,12 +485,24 @@ async function execute(step: StepDescriptor, ctx: ExecContext): Promise<StepReco
       for (const d of dests) log(m.coreOutput.write(d))
       return
     }
+    case "skillRestore": {
+      const dests = await api.restoreSkillBackup(step.backupId, step.targets)
+      for (const d of dests) log(m.coreOutput.restore(step.backupId, d))
+      return
+    }
     case "snapshot": {
       const entry = step.backend
         ? await api.backupSnapshot(step.reason, step.backend)
         : await api.backupSnapshot(step.reason)
       log(m.coreOutput.snapshot(entry.id))
       ctx.setArtifact(entry.id)
+      return
+    }
+    case "ccInitDb": {
+      // A no-op when the file already exists — agentpack never migrates
+      // someone else's database, it only creates a missing one.
+      await api.ccInitDb()
+      log(m.coreOutput.write(step.path))
       return
     }
     case "cleanup": {
@@ -522,6 +535,11 @@ async function execute(step: StepDescriptor, ctx: ExecContext): Promise<StepReco
       // overwrite live config at all.
       log(m.coreOutput.restorePoint(result.safetySnapshotId))
       ctx.setArtifact(result.safetySnapshotId)
+      return
+    }
+    case "appSettings": {
+      for (const line of step.lines) log(line)
+      await writeSettings(step.patch)
       return
     }
     case "ccProvider": {

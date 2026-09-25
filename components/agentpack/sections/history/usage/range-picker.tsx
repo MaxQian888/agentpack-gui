@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useId, useState } from "react"
 import { CalendarDays, Download } from "lucide-react"
 import type { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
@@ -25,7 +25,10 @@ const PRESETS = ["today", "7d", "30d", "90d", "month", "all"] as const
  *
  * Granularity is offered but disabled for `today`, where a single day can only
  * ever be one bucket — showing a live control that changes nothing is worse
- * than showing a disabled one.
+ * than showing a disabled one. The caller passes the granularity actually in
+ * force (Daily, for today), so the disabled control never claims "Weekly", and
+ * the reason sits beside it rather than in a tooltip a disabled control can't
+ * raise.
  *
  * The pills are the same chip as the source chips on the Sessions tab
  * (`scopeChipClass`), not a second pill dialect — the two tabs sit one click
@@ -48,6 +51,8 @@ export function RangePicker({
   const t = useT().history
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState<DateRange | undefined>()
+  const dayOnlyId = useId()
+  const dayOnly = range.preset === "today"
 
   return (
     <>
@@ -111,9 +116,14 @@ export function RangePicker({
       <Select
         value={granularity}
         onValueChange={(v) => onGranularityChange(v as Granularity)}
-        disabled={range.preset === "today"}
+        disabled={dayOnly}
       >
-        <SelectTrigger size="sm" className="w-28" aria-label={t.granularityLabel}>
+        <SelectTrigger
+          size="sm"
+          className="w-28"
+          aria-label={t.granularityLabel}
+          aria-describedby={dayOnly ? dayOnlyId : undefined}
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -122,6 +132,11 @@ export function RangePicker({
           <SelectItem value="month">{t.granularity.month}</SelectItem>
         </SelectContent>
       </Select>
+      {dayOnly ? (
+        <span id={dayOnlyId} className="text-xs text-muted-foreground">
+          {t.granularityDayOnly}
+        </span>
+      ) : null}
     </>
   )
 }

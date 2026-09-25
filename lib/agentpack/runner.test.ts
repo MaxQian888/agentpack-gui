@@ -1,6 +1,8 @@
 jest.mock("@/lib/tauri/commands")
+jest.mock("@/lib/tauri/settings", () => ({ writeSettings: jest.fn(async () => ({})) }))
 
 import * as api from "@/lib/tauri/commands"
+import { writeSettings } from "@/lib/tauri/settings"
 import { runSteps } from "./runner"
 import type { Command, Paths, StepDescriptor } from "./types"
 
@@ -668,6 +670,27 @@ it("skillCreate writes the new skill into each target", async () => {
   expect(reports[0].status).toBe("done")
 })
 
+it("skillRestore puts a backup back only when the run applies it", async () => {
+  ;(api.restoreSkillBackup as jest.Mock).mockResolvedValue(["/h/.claude/skills/web"])
+  const step: StepDescriptor = {
+    kind: "skillRestore",
+    id: "r",
+    label: "r",
+    backupId: "web-1",
+    dirName: "web",
+    targets: ["claude"],
+    dests: ["/h/.claude/skills/web"],
+  }
+  // A preview reaches nothing — the restore replaces a whole directory.
+  await runSteps([step], { dryRun: true, paths })
+  expect(api.restoreSkillBackup).not.toHaveBeenCalled()
+
+  const reports = await runSteps([step], { dryRun: false, paths })
+  expect(api.restoreSkillBackup).toHaveBeenCalledWith("web-1", ["claude"])
+  expect(reports[0].status).toBe("done")
+  expect(reports[0].output).toContain("restore web-1 -> /h/.claude/skills/web")
+})
+
 describe("network auto-recovery", () => {
   const recovery = {
     proxyUrl: "http://127.0.0.1:7890",
@@ -1169,5 +1192,31 @@ describe("cleanup", () => {
     // The closing line has to say the space is not free yet, or quarantine's
     // first impression is a promise it doesn't keep.
     expect(log).toContain("recoverable until you empty the recycle area")
+  })
+})
+
+describe("appSettings", () => {
+  const step: StepDescriptor = {
+    kind: "appSettings",
+    id: "settings",
+    label: "Save 1 app setting",
+    patch: { ghMirrorPrefix: "https://m/" },
+    lines: ['ghMirrorPrefix: null → "https://m/"'],
+  }
+
+  it("previews the change it was handed without writing it", async () => {
+    const [report] = await runSteps([step], { dryRun: true, paths })
+    expect(report.output).toContain('ghMirrorPrefix: null → "https://m/"')
+    expect(writeSettings).not.toHaveBeenCalled()
+  })
+
+  it("writes the patch — and fails when the store refuses, instead of reporting done", async () => {
+    const [ok] = await runSteps([step], { dryRun: false, paths })
+    expect(ok.status).toBe("done")
+    expect(writeSettings).toHaveBeenCalledWith({ ghMirrorPrefix: "https://m/" })
+
+    ;(writeSettings as jest.Mock).mockRejectedValueOnce(new Error("disk full"))
+    const [failed] = await runSteps([step], { dryRun: false, paths })
+    expect(failed.status).toBe("error")
   })
 })

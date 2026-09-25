@@ -22,6 +22,14 @@ export function buildSettingsConfig(form: ProviderForm): string {
   // (`query_params`, custom headers, per-model overrides…), so when it was used
   // it wins wholesale — re-deriving would silently drop whatever was added.
   if (form.rawSettingsConfig) return form.rawSettingsConfig
+  // Editing an existing row: the same reasoning, one level down. Rebuilding
+  // from four fields dropped every other key the row carried, and when the row
+  // was current the stripped config was then pushed live.
+  const base = parseObject(form.baseSettingsConfig)
+  if (base && Object.keys(base).length > 0) {
+    const merged = mergeSettingsConfig(form, base)
+    if (merged !== null) return merged
+  }
   if (form.app === "claude") {
     const env: Record<string, string> = {}
     const authVar = form.claudeAuthKind === "api_key" ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN"
@@ -69,6 +77,131 @@ export function buildSettingsConfig(form: ProviderForm): string {
     auth: form.token ? { OPENAI_API_KEY: form.token } : {},
     config: stringify(config),
   })
+}
+
+type Obj = Record<string, unknown>
+
+const isObj = (value: unknown): value is Obj =>
+  !!value && typeof value === "object" && !Array.isArray(value)
+
+function parseObject(text: string | undefined): Obj | null {
+  if (!text) return null
+  try {
+    const value: unknown = JSON.parse(text)
+    return isObj(value) ? value : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Write one field the form models, or drop it when the form left it empty —
+ * the same "clearing a field removes the key" rule the fresh builder follows.
+ * Assigning an existing key keeps its position, so an unchanged field leaves
+ * the stored object byte-for-byte in the same order.
+ */
+function put(target: Obj, key: string, value: string | undefined) {
+  if (value) target[key] = value
+  else delete target[key]
+}
+
+/**
+ * The `[model_providers.*]` table a codex config actually selects.
+ *
+ * cc-switch names the table after the provider (`model_provider = "packy"`), so
+ * reading only `custom` showed such a row's endpoint as empty — and saving that
+ * empty form then removed the relay from the row.
+ */
+function codexProviderKey(config: Obj): string {
+  const selected = config["model_provider"]
+  const tables = config["model_providers"]
+  return typeof selected === "string" && isObj(tables) && isObj(tables[selected])
+    ? selected
+    : CODEX_PROVIDER_KEY
+}
+
+/**
+ * Merge the form's fields into a stored `settings_config`. Only the keys the
+ * form models are touched; everything else rides through. `null` when the
+ * stored shape can't be merged into (a codex config whose TOML won't parse), in
+ * which case the caller builds from the fields as it always did.
+ */
+function mergeSettingsConfig(form: ProviderForm, base: Obj): string | null {
+  if (form.app === "claude") {
+    const env: Obj = { ...(isObj(base["env"]) ? base["env"] : {}) }
+    const authVar = form.claudeAuthKind === "api_key" ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN"
+    // An api_key ↔ auth_token switch must not leave both behind.
+    delete env[authVar === "ANTHROPIC_API_KEY" ? "ANTHROPIC_AUTH_TOKEN" : "ANTHROPIC_API_KEY"]
+    put(env, authVar, form.token)
+    put(env, "ANTHROPIC_BASE_URL", form.baseUrl)
+    put(env, "ANTHROPIC_MODEL", form.model)
+    return JSON.stringify({ ...base, env })
+  }
+
+  if (form.app === "opencode") {
+    // No endpoint and no token is the official-login row, which must stay
+    // "override nothing" — see `official.ts`.
+    if (!form.baseUrl && !form.token) return JSON.stringify({})
+    const out: Obj = { ...base }
+    if (typeof out["npm"] !== "string") out["npm"] = OPENCODE_NPM
+    out["name"] = form.name
+    const options: Obj = { ...(isObj(base["options"]) ? base["options"] : {}) }
+    put(options, "baseURL", form.baseUrl)
+    put(options, "apiKey", form.token)
+    if (Object.keys(options).length) out["options"] = options
+    else delete out["options"]
+    // The form carries one model: the map's first key, which is the one the
+    // live sync selects. Only that key moves; the rest of the map stays.
+    const models = isObj(base["models"]) ? base["models"] : {}
+    const [first, ...rest] = Object.keys(models)
+    if ((form.model || undefined) !== first) {
+      const next: Obj = {}
+      if (form.model) next[form.model] = models[form.model] ?? {}
+      for (const key of rest) if (key !== form.model) next[key] = models[key]
+      if (Object.keys(next).length) out["models"] = next
+      else delete out["models"]
+    }
+    return JSON.stringify(out)
+  }
+
+  // codex
+  const text = typeof base["config"] === "string" ? base["config"] : ""
+  let config: Obj
+  try {
+    const parsed: unknown = text.trim() ? parse(text) : {}
+    config = isObj(parsed) ? { ...parsed } : {}
+  } catch {
+    return null
+  }
+  const key = codexProviderKey(config)
+  const tables: Obj = { ...(isObj(config["model_providers"]) ? config["model_providers"] : {}) }
+  if (form.baseUrl) {
+    const table: Obj = { ...(isObj(tables[key]) ? tables[key] : {}) }
+    if (typeof table["name"] !== "string" || key === CODEX_PROVIDER_KEY) table["name"] = form.name
+    table["base_url"] = form.baseUrl
+    if (table["wire_api"] === undefined) table["wire_api"] = "responses"
+    // As in the fresh build: the bearer token is what agentpack applies, and it
+    // authenticates the relay on its own.
+    if (form.token) {
+      table["experimental_bearer_token"] = form.token
+      table["requires_openai_auth"] = false
+    } else {
+      delete table["experimental_bearer_token"]
+    }
+    tables[key] = table
+    config["model_provider"] = key
+  } else {
+    // No endpoint is the official login: the relay table and its selector go,
+    // any other table the user declared stays.
+    delete tables[key]
+    if (config["model_provider"] === key) delete config["model_provider"]
+  }
+  if (Object.keys(tables).length) config["model_providers"] = tables
+  else delete config["model_providers"]
+  put(config, "model", form.model)
+  const auth: Obj = { ...(isObj(base["auth"]) ? base["auth"] : {}) }
+  put(auth, "OPENAI_API_KEY", form.token)
+  return JSON.stringify({ ...base, auth, config: stringify(config) })
 }
 
 /**
@@ -134,7 +267,7 @@ export function parseSettingsConfig(
           { base_url?: unknown; experimental_bearer_token?: unknown }
         >
       }
-      const managed = config.model_providers?.[CODEX_PROVIDER_KEY]
+      const managed = config.model_providers?.[codexProviderKey(config as Obj)]
       if (typeof managed?.base_url === "string") out.baseUrl = managed.base_url
       // Prefer the token agentpack actually applies; `auth.OPENAI_API_KEY` above
       // is the cc-switch-compatible copy and only fills in for rows written by

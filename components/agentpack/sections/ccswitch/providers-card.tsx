@@ -77,6 +77,8 @@ export function ProvidersCard({
   loading,
   unmanaged,
   editingBlocked,
+  addBlockedReason,
+  unavailable,
   tauri,
   hasCurrent,
   filters,
@@ -97,6 +99,10 @@ export function ProvidersCard({
   loading: boolean
   unmanaged: readonly UnmanagedProvider[]
   editingBlocked: boolean
+  /** Why no row can be added yet (no database, or one too old to write). */
+  addBlockedReason?: string
+  /** Why there is no list at all, when `providers` is null after a scan. */
+  unavailable?: string
   tauri: boolean
   hasCurrent: boolean
   filters: ProviderFilters
@@ -171,13 +177,16 @@ export function ProvidersCard({
                 <AlertDialogTitle>{c.exportProviders}</AlertDialogTitle>
                 <AlertDialogDescription>{c.exportTokensAsk}</AlertDialogDescription>
               </AlertDialogHeader>
+              {/* One primary, and it is the file that is safe to share. The
+                  one carrying tokens is a credential file and must not look
+                  like the default. */}
               <AlertDialogFooter>
                 <AlertDialogCancel>{t.shell.cancel}</AlertDialogCancel>
+                <AlertDialogAction variant="outline" onClick={() => onExport(true)}>
+                  {c.exportWithTokens}
+                </AlertDialogAction>
                 <AlertDialogAction onClick={() => onExport(false)}>
                   {c.exportWithoutTokens}
-                </AlertDialogAction>
-                <AlertDialogAction onClick={() => onExport(true)}>
-                  {c.exportWithTokens}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
@@ -186,7 +195,8 @@ export function ProvidersCard({
             variant="ghost"
             size="sm"
             className="text-muted-foreground"
-            disabled={editingBlocked || !tauri}
+            disabled={editingBlocked || !tauri || !!addBlockedReason}
+            aria-describedby={addBlockedReason ? "ccswitch-add-blocked" : undefined}
             onClick={onImport}
           >
             {c.importProviders}
@@ -202,13 +212,23 @@ export function ProvidersCard({
           <Button
             size="sm"
             className="gap-1"
-            disabled={editingBlocked || !tauri}
+            disabled={editingBlocked || !tauri || !!addBlockedReason}
+            aria-describedby={addBlockedReason ? "ccswitch-add-blocked" : undefined}
             onClick={() => onAdd()}
           >
             <Plus className="size-4" />
             {c.addProvider}
           </Button>
         </div>
+        {/* A disabled Add says why, where the button is. */}
+        {addBlockedReason && tauri ? (
+          <p
+            id="ccswitch-add-blocked"
+            className="min-w-0 basis-full text-xs leading-relaxed text-muted-foreground"
+          >
+            {addBlockedReason}
+          </p>
+        ) : null}
       </div>
 
       {/* Everything that blocks or complicates editing, stated once, above the
@@ -369,8 +389,14 @@ export function ProvidersCard({
             {/* In web mode the section already carries one desktop-only note at
                 the top of this column; a second one here is the same sentence
                 twice in one eyeful. */}
+            {/* No list is not the same as an empty one: it is a database too old
+                to read, or a read that failed, and the sentence says which.
+                (It used to say "database not found" for both, on the native
+                store too, which has no database at all.) */}
             {providers || isTauri() ? (
-              <p className="text-sm font-medium">{providers ? c.empty : c.noDb}</p>
+              <p className="text-sm font-medium">
+                {providers ? c.empty : (unavailable ?? c.loadFailed)}
+              </p>
             ) : null}
             {providers ? (
               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{c.emptyHint}</p>
@@ -386,8 +412,14 @@ export function ProvidersCard({
 
       {/* The consequence of the verb above, stated once at the foot of the list
           it applies to — not repeated per row. */}
-      <p className="min-w-0 border-t px-4 py-2.5 text-xs leading-relaxed text-muted-foreground">
+      <p
+        id="ccswitch-list-note"
+        className="min-w-0 border-t px-4 py-2.5 text-xs leading-relaxed text-muted-foreground"
+      >
         {hasCurrent ? c.setCurrentNote : c.syncNoCurrent}
+        {/* The reason the current row's Delete is disabled, said once here
+            rather than hidden in a tooltip a disabled button never shows. */}
+        {hasCurrent ? ` ${c.deleteCurrentBlocked}` : null}
       </p>
     </section>
   )
@@ -476,6 +508,7 @@ function ProviderRow({
               size="sm"
               className="text-muted-foreground hover:text-[var(--hm-danger)]"
               disabled={provider.is_current || editingBlocked}
+              aria-describedby={provider.is_current ? "ccswitch-list-note" : undefined}
             >
               {c.rowActionDelete}
             </Button>

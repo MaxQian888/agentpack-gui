@@ -14,7 +14,7 @@ test("shows the environment workbench and the browser scan boundary", async ({ p
   for (const heading of [
     "Spend this month",
     "Recent activity",
-    "CLIs & runtimes",
+    "CLIs & environment",
     "MCP servers",
     "Installed skills",
     "cc-switch providers",

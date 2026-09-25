@@ -4,6 +4,7 @@ import { useState } from "react"
 import { RefreshCw } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { isTauri } from "@/lib/tauri"
+import { useMounted } from "@/hooks/use-mounted"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -26,26 +27,45 @@ import { useT } from "@/lib/i18n/provider"
 export function DiscoveryCard({
   probe,
   scanning,
+  failed = false,
   onScan,
   onUse,
 }: {
   probe: NetworkProbeResult | null
   scanning: boolean
+  /** The last scan threw, which is why `probe` is null — not "nothing found". */
+  failed?: boolean
   onScan: () => void
   onUse: (candidate: ProxyCandidate) => void
 }) {
   const t = useT()
   const d = t.network.discovery
-  const tauri = isTauri()
-  const [rechecks, setRechecks] = useState<Record<string, ProxyCheckResult | "pending">>({})
+  // Gated on mount: isTauri() is false in the pre-rendered HTML, so reading it
+  // during the first render would hydration-mismatch in the desktop build.
+  const mounted = useMounted()
+  const tauri = mounted && isTauri()
+  // Re-tests are corrections to one scan's reading, so they are kept against
+  // the probe they were taken on: a new scan supersedes them, and a row must
+  // not keep a "Failed" from before the network changed under a fresh result.
+  const [rechecked, setRechecked] = useState<{
+    probe: NetworkProbeResult | null
+    byId: Record<string, ProxyCheckResult | "pending">
+  }>({ probe, byId: {} })
+  const rechecks = rechecked.probe === probe ? rechecked.byId : {}
 
   const test = async (c: ProxyCandidate) => {
-    setRechecks((prev) => ({ ...prev, [c.id]: "pending" }))
+    const against = probe
+    setRechecked((prev) => ({
+      probe: against,
+      byId: { ...(prev.probe === against ? prev.byId : {}), [c.id]: "pending" },
+    }))
     const outcome = await proxyCheck(c.url, PROXY_TEST_URLS[0].url).catch(() => ({
       ok: false,
       reason: "failed",
     }))
-    setRechecks((prev) => ({ ...prev, [c.id]: outcome }))
+    setRechecked((prev) =>
+      prev.probe === against ? { probe: against, byId: { ...prev.byId, [c.id]: outcome } } : prev
+    )
   }
 
   const candidates = probe?.proxies ?? []
@@ -71,13 +91,17 @@ export function DiscoveryCard({
         </Button>
       </div>
 
-      {!tauri ? (
+      {mounted && !tauri ? (
         <p className="text-sm text-muted-foreground">{t.network.desktopOnly}</p>
       ) : scanning && !probe ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Spinner className="size-4" />
           {d.scanning}
         </div>
+      ) : !probe ? (
+        // No reading is not an empty reading: "no proxy found" here would state
+        // as fact the one thing nothing has looked at.
+        <p className="text-sm text-muted-foreground">{failed ? d.failed : d.unmeasured}</p>
       ) : candidates.length === 0 ? (
         <p className="text-sm text-muted-foreground">{d.empty}</p>
       ) : (
@@ -98,7 +122,7 @@ export function DiscoveryCard({
                   <span
                     className={cn(
                       "text-xs",
-                      check.ok ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"
+                      check.ok ? "text-[var(--hm-ok)]" : "text-[var(--hm-danger)]"
                     )}
                   >
                     {check.ok
@@ -117,7 +141,9 @@ export function DiscoveryCard({
                   >
                     {check === "pending" ? d.scanning : d.test}
                   </Button>
-                  <Button size="sm" onClick={() => onUse(c)}>
+                  {/* Outlined: Apply proxy is this section's one primary, and a
+                      filled button per row would put several beside it. */}
+                  <Button variant="outline" size="sm" onClick={() => onUse(c)}>
                     {d.use}
                   </Button>
                 </div>

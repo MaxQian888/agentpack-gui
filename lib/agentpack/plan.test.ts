@@ -776,6 +776,17 @@ describe("menu-action builders", () => {
     )
   })
 
+  it("mcpEditStep follows the Claude route: a file merge on desktop-only, nothing with none", () => {
+    const spec: McpSpec = { transport: "stdio", command: "npx", args: ["-y", "pkg"], env: {} }
+    // No `claude` binary to run: the merge overwrites in place, so the edit is the add.
+    const file = mcpEditStep("mine", spec, ["claude"], paths, en, "file")
+    expect(file.map((s) => [s.id, s.kind])).toEqual([["mcp-add-claude-mine", "mergeFile"]])
+    expect(file[0].kind === "mergeFile" && file[0].path).toBe(paths.claudeConfig)
+    // No route at all: nothing for Claude, and the other targets still edit.
+    const none = mcpEditStep("mine", spec, ["claude", "codex"], paths, en, "none")
+    expect(none.map((s) => s.id)).toEqual(["mcp-add-codex-mine"])
+  })
+
   it("mcpRemoveStep emits an opencode delete-merge for the opencode target", () => {
     const step = mcpRemoveStep("context7", ["opencode"], paths).find(
       (s) => s.id === "mcp-remove-opencode-context7"

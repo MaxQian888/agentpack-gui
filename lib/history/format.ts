@@ -47,6 +47,48 @@ export function formatCost(n: number | null | undefined): string {
   return `$${n.toFixed(2)}`
 }
 
+/** A cost and how much of it is actually known — what `formatCostFigure` reads. */
+export interface CostFigure {
+  value: number
+  /** Some of it was priced by us from token counts rather than recorded. */
+  estimated: boolean
+  /** Transcripts in it whose model has no known rate, so `value` leaves them out. */
+  unpriced: number
+  /** Transcripts it covers, priced or not. */
+  transcripts: number
+}
+
+/**
+ * The one way the history section writes a cost it aggregated, so a figure
+ * carries its provenance on its face wherever it appears:
+ *
+ * - `—` when nothing in it could be priced — `$0.00` would claim a measured zero;
+ * - `≥$X` when some of it had no rate, so `$X` is a lower bound;
+ * - `~$X` when any of it was estimated from token counts;
+ * - `$X` when every cent was recorded by the source.
+ */
+export function formatCostFigure(c: CostFigure): string {
+  if (c.transcripts > 0 && c.unpriced >= c.transcripts) return "—"
+  const figure = formatCost(c.value)
+  if (c.unpriced > 0) return `≥${figure}`
+  return c.estimated ? `~${figure}` : figure
+}
+
+/**
+ * A dollar amount the user typed. `""` is "not set" (`null`); `undefined` means
+ * the text isn't a non-negative number, so the caller keeps what it had rather
+ * than quietly saving nothing. A leading `$` and thousands separators are
+ * accepted, because that is how people write "$1,000" when asked for dollars.
+ */
+export function parseUsd(text: string): number | null | undefined {
+  if (text.trim() === "") return null
+  const cleaned = text.trim().replace(/^\$/, "").replace(/,/g, "").trim()
+  // `Number("")` is 0, so a lone "$" would otherwise save as a real $0.
+  if (cleaned === "") return undefined
+  const n = Number(cleaned)
+  return Number.isFinite(n) && n >= 0 ? n : undefined
+}
+
 /**
  * Wall-clock duration in milliseconds, rendered at the coarsest unit that still
  * carries information ("45s", "12m", "3h 20m"). Returns "—" for null/zero, so a

@@ -25,7 +25,12 @@ beforeEach(() => {
 function renderCompletion(reports: StepReport[] = done, dryRun = false, cancelled = false) {
   return render(
     <I18nProvider>
-      <Completion reports={reports} dryRun={dryRun} cancelled={cancelled} />
+      <Completion
+        reports={reports}
+        plan={useAppStore.getState().plan}
+        dryRun={dryRun}
+        cancelled={cancelled}
+      />
     </I18nProvider>
   )
 }
@@ -259,5 +264,20 @@ describe("what to do about a failure", () => {
   it("draws no reading at all for a run that worked", () => {
     renderCompletion(done)
     expect(screen.queryByRole("region", { name: en.failure.heading })).not.toBeInTheDocument()
+  })
+})
+
+describe("a run that wasn't built from the plan", () => {
+  it("offers no app and asks for nothing, whatever is sitting in the tray", () => {
+    // An MCP add or a restore: the tray still holds a preset with Claude Desktop
+    // and a key-gated server, but this run installed neither.
+    useAppStore.getState().setClis(["claude-desktop"])
+    render(
+      <I18nProvider>
+        <Completion reports={done} plan={null} dryRun={false} />
+      </I18nProvider>
+    )
+    expect(screen.queryByRole("button", { name: /Open Claude Desktop/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(en.completion.todoTitle)).not.toBeInTheDocument()
   })
 })

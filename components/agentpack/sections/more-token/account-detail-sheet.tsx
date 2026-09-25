@@ -2,7 +2,9 @@
 
 import { useState } from "react"
 import { useMutation } from "@tanstack/react-query"
+import { AlertTriangle } from "lucide-react"
 import { toast } from "sonner"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,11 +16,14 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useT } from "@/lib/i18n/provider"
-import { managementRequest, ManagementApiError, operationId } from "@/lib/more-token/client"
+import { managementRequest, operationId } from "@/lib/more-token/client"
 import { quotaAmountWithRaw } from "@/lib/more-token/quota"
+import { isStepUpCancelled } from "@/lib/more-token/step-up"
 import { AccountActionsMenu } from "./account-actions-menu"
-import { authorizeManagementPreview } from "@/lib/more-token/step-up"
+import { errorText } from "./errors"
+import { useStepUp } from "./use-step-up"
 import type {
   Account,
   AccountAction,
@@ -33,11 +38,6 @@ function requestData<T>(instanceId: string, operation: ManagementOperation) {
   return managementRequest<T>(instanceId, operation).then((response) => response.data)
 }
 
-function errorText(error: unknown): string {
-  if (error instanceof ManagementApiError) return `${error.code}: ${error.message}`
-  return error instanceof Error ? error.message : String(error)
-}
-
 function formatTime(value: number): string {
   if (!value) return "—"
   return new Intl.DateTimeFormat(undefined, {
@@ -47,7 +47,10 @@ function formatTime(value: number): string {
 }
 
 export function AccountDetailSheet({
+  open,
   account,
+  error = null,
+  onRetry,
   quotaDisplay,
   instance,
   capabilities,
@@ -57,7 +60,16 @@ export function AccountDetailSheet({
   onViewChildren,
   onOpenChange,
 }: {
+  /**
+   * Whether the sheet is showing. It opens on the click, not on the reply: the
+   * detail is a round trip, and a row that does nothing until it lands reads as
+   * a dead click. Defaults to "an account is loaded".
+   */
+  open?: boolean
   account: AccountDetail | null
+  /** The detail request's failure, shown in place of the body with `onRetry`. */
+  error?: unknown
+  onRetry?: () => void
   quotaDisplay: QuotaDisplaySetting
   instance: MoreTokenInstance
   capabilities: ManagementCapabilities
@@ -72,6 +84,7 @@ export function AccountDetailSheet({
   const lifecycleLabel = (state: AccountDetail["lifecycle_state"]) =>
     state === "closing" ? m.closing : state === "archived" ? m.archived : m.active
   const [invitationReason, setInvitationReason] = useState("")
+  const stepUp = useStepUp(instance.id)
   const invitation = useMutation({
     mutationFn: async (action: "resend" | "revoke") => {
       if (!account) throw new Error("ACCOUNT_NOT_SELECTED")
@@ -84,7 +97,7 @@ export function AccountDetailSheet({
         kind: "actionPreview",
         body: { action: `invitation_${action}`, payload: draft },
       })
-      await authorizeManagementPreview(instance.id, preview.preview_token)
+      await stepUp.authorize(preview.preview_token)
       const body = {
         operation_id: draft.operation_id,
         reason: draft.reason,
@@ -101,11 +114,13 @@ export function AccountDetailSheet({
       setInvitationReason("")
       onDone()
     },
-    onError: (error) => toast.error(errorText(error)),
+    onError: (error) => {
+      if (!isStepUpCancelled(error)) toast.error(errorText(error))
+    },
   })
 
   return (
-    <Sheet open={account !== null} onOpenChange={onOpenChange}>
+    <Sheet open={open ?? account !== null} onOpenChange={onOpenChange}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
         <SheetHeader>
           <div className="flex min-w-0 items-start justify-between gap-3 pr-8">
@@ -137,7 +152,7 @@ export function AccountDetailSheet({
         {account ? (
           <div className="space-y-4 px-4">
             <dl className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-3 text-sm">
-              <dt className="text-muted-foreground">ID</dt>
+              <dt className="text-muted-foreground">{m.accountId}</dt>
               <dd className="tabular-nums">{account.id}</dd>
               <dt className="text-muted-foreground">{m.balance}</dt>
               <dd className="tabular-nums">{quotaAmountWithRaw(account.quota, quotaDisplay)}</dd>
@@ -284,7 +299,9 @@ export function AccountDetailSheet({
                     disabled={!invitationReason.trim() || invitation.isPending || instance.readOnly}
                     onClick={() => invitation.mutate("resend")}
                   >
-                    {m.resendInvitation}
+                    {stepUp.waiting && invitation.variables === "resend"
+                      ? m.waitingForBrowser
+                      : m.resendInvitation}
                   </Button>
                   <Button
                     size="sm"
@@ -292,13 +309,41 @@ export function AccountDetailSheet({
                     disabled={!invitationReason.trim() || invitation.isPending || instance.readOnly}
                     onClick={() => invitation.mutate("revoke")}
                   >
-                    {m.revokeInvitation}
+                    {stepUp.waiting && invitation.variables === "revoke"
+                      ? m.waitingForBrowser
+                      : m.revokeInvitation}
                   </Button>
+                  {stepUp.waiting ? (
+                    <Button size="sm" variant="ghost" onClick={stepUp.cancel}>
+                      {m.cancelApproval}
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             ) : null}
           </div>
-        ) : null}
+        ) : error ? (
+          <div className="px-4">
+            <Alert variant="destructive">
+              <AlertTriangle className="size-4" />
+              <AlertTitle>{m.unavailable}</AlertTitle>
+              <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+                <span className="[overflow-wrap:anywhere]">{errorText(error)}</span>
+                {onRetry ? (
+                  <Button variant="outline" size="sm" onClick={onRetry}>
+                    {m.retry}
+                  </Button>
+                ) : null}
+              </AlertDescription>
+            </Alert>
+          </div>
+        ) : (
+          <div className="space-y-3 px-4" aria-busy="true">
+            <Skeleton className="h-40" />
+            <Skeleton className="h-24" />
+            <Skeleton className="h-24" />
+          </div>
+        )}
       </SheetContent>
     </Sheet>
   )

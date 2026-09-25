@@ -40,10 +40,11 @@ jest.mock("@/lib/tauri/commands", () => ({
   })),
 }))
 
-import { act, render, screen, waitFor, within } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { RunnerHarness } from "../../run/__testing__/harness"
+import { useRunnerCtx } from "../../run/runner-context"
 import { useAppStore } from "@/store/app-store"
 import { toast } from "sonner"
 import {
@@ -128,8 +129,33 @@ function renderCc() {
     <I18nProvider>
       <RunnerHarness autoApply>
         <CcSwitchSection />
+        <RetryProbe />
       </RunnerHarness>
     </I18nProvider>
+  )
+}
+
+/** The real review panel, driven by hand — for the tests whose subject is the gate. */
+function renderCcWithPanel() {
+  return render(
+    <I18nProvider>
+      <RunnerHarness panel>
+        <CcSwitchSection />
+      </RunnerHarness>
+    </I18nProvider>
+  )
+}
+
+/**
+ * The review panel's Retry, reachable while a dialog is open. (The panel's own
+ * button sits under the re-opened form's modal layer.)
+ */
+function RetryProbe() {
+  const { retry } = useRunnerCtx()
+  return (
+    <button type="button" onClick={() => void retry()}>
+      test-retry
+    </button>
   )
 }
 
@@ -233,10 +259,32 @@ it("installs cc-switch via the runner when not detected", async () => {
   await waitFor(() => expect(runCommand).toHaveBeenCalled())
 })
 
-it("applies the visible-apps selection", async () => {
+it("applies the visible-apps selection once something changed", async () => {
   renderCc()
-  await userEvent.click(screen.getByRole("button", { name: en.shell.apply }))
+  const apply = screen.getByRole("button", { name: en.shell.apply })
+  // The file's own contents written back to it is a review of nothing.
+  expect(apply).toBeDisabled()
+  expect(screen.getByText(en.ccswitch.visibleUnchanged)).toBeInTheDocument()
+  const gemini = await screen.findByLabelText(en.ccswitch.appLabels.gemini)
+  await waitFor(() => expect(gemini).toBeChecked())
+  await userEvent.click(gemini)
+  await userEvent.click(apply)
   await waitFor(() => expect(writeTextFile).toHaveBeenCalledWith(CC_SETTINGS, expect.any(String)))
+})
+
+it("keeps unapplied visible-app toggles through a rescan", async () => {
+  renderCc()
+  const gemini = await screen.findByLabelText(en.ccswitch.appLabels.gemini)
+  await waitFor(() => expect(gemini).toBeChecked())
+  await userEvent.click(gemini)
+  // Every run triggers one; it used to put the file's values back over the edit.
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.refresh }))
+  await waitFor(() => expect(loginStatus).toHaveBeenCalledTimes(2))
+  await act(async () => {
+    await Promise.resolve()
+  })
+  expect(gemini).not.toBeChecked()
+  expect(screen.getByRole("button", { name: en.shell.apply })).toBeEnabled()
 })
 
 it("toggles a visible-app switch", async () => {
@@ -271,6 +319,140 @@ it("re-opens the form with the attempted values when a write fails", async () =>
   // pre-filled with exactly what they typed so they can fix and retry.
   await waitFor(() => expect(screen.getByLabelText(en.ccswitch.fieldName)).toHaveValue("Relay"))
   expect(screen.getByLabelText(en.ccswitch.fieldBaseUrl)).toHaveValue("https://r")
+})
+
+it("re-opens the form with what was typed when the review is walked away from", async () => {
+  renderCcWithPanel()
+  await screen.findByText("Mine")
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.addProvider }))
+  await userEvent.type(screen.getByLabelText(en.ccswitch.fieldName), "Relay")
+  await userEvent.type(screen.getByLabelText(en.ccswitch.fieldToken), "sk-pasted")
+  await userEvent.click(screen.getByRole("button", { name: en.shell.save }))
+  await userEvent.click(await screen.findByRole("button", { name: en.review.discard }))
+  // Nothing was written — and nothing typed, the pasted token included, is lost.
+  await waitFor(() => expect(screen.getByLabelText(en.ccswitch.fieldName)).toHaveValue("Relay"))
+  expect(screen.getByLabelText(en.ccswitch.fieldToken)).toHaveValue("sk-pasted")
+  expect(ccWriteProvider).not.toHaveBeenCalled()
+})
+
+it("closes a re-opened add form once a retry in the review panel lands it", async () => {
+  ;(ccWriteProvider as jest.Mock).mockRejectedValueOnce("cc-switch is running")
+  renderCc()
+  await screen.findByText("Mine")
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.addProvider }))
+  await userEvent.type(screen.getByLabelText(en.ccswitch.fieldName), "Relay")
+  await userEvent.click(screen.getByRole("button", { name: en.shell.save }))
+  await waitFor(() => expect(screen.getByLabelText(en.ccswitch.fieldName)).toHaveValue("Relay"))
+
+  // The retry lands the add; the reload after it finds the new row.
+  ;(ccLoadProviders as jest.Mock).mockResolvedValue([
+    { id: "1", app_type: "claude", name: "Mine", settings_config: "{}", is_current: false },
+    { id: "2", app_type: "claude", name: "Relay", settings_config: "{}", is_current: true },
+  ])
+  fireEvent.click(screen.getByRole("button", { name: "test-retry", hidden: true }))
+
+  // Left open, the form was a second add of the same row one Save away.
+  await waitFor(() =>
+    expect(screen.queryByLabelText(en.ccswitch.fieldName)).not.toBeInTheDocument()
+  )
+  expect(ccWriteProvider).toHaveBeenCalledTimes(2)
+  expect(await screen.findByText("Relay")).toBeInTheDocument()
+})
+
+it("keeps the keys the form doesn't model when a provider is edited", async () => {
+  const stored = {
+    env: {
+      ANTHROPIC_AUTH_TOKEN: "old",
+      ANTHROPIC_BASE_URL: "https://relay",
+      CLAUDE_CODE_MAX_OUTPUT_TOKENS: "64000",
+    },
+    permissions: { allow: ["Bash"] },
+  }
+  ;(ccLoadProviders as jest.Mock).mockResolvedValue([
+    {
+      id: "1",
+      app_type: "claude",
+      name: "Mine",
+      settings_config: JSON.stringify(stored),
+      is_current: true,
+    },
+  ])
+  renderCc()
+  await screen.findByText("Mine")
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.rowActionEdit }))
+  const token = screen.getByLabelText(en.ccswitch.fieldToken)
+  await userEvent.clear(token)
+  await userEvent.type(token, "new")
+  await userEvent.click(screen.getByRole("button", { name: en.shell.save }))
+
+  await waitFor(() =>
+    expect(ccWriteProvider).toHaveBeenCalledWith(expect.objectContaining({ op: "update" }))
+  )
+  const req = (ccWriteProvider as jest.Mock).mock.calls[0][0]
+  expect(JSON.parse(req.settingsConfig)).toEqual({
+    env: { ...stored.env, ANTHROPIC_AUTH_TOKEN: "new" },
+    permissions: { allow: ["Bash"] },
+  })
+  // It is the current row, so what goes live is the whole env, not four keys.
+  await waitFor(() =>
+    expect(writeTextFile).toHaveBeenCalledWith(
+      "/h/.claude/settings.json",
+      expect.stringContaining("CLAUDE_CODE_MAX_OUTPUT_TOKENS")
+    )
+  )
+})
+
+it("says a profile is already active instead of offering an Apply that does nothing", async () => {
+  ;(ccLoadProviders as jest.Mock).mockResolvedValue([
+    { id: "a", app_type: "claude", name: "Gateway", settings_config: "{}", is_current: true },
+  ])
+  ;(readTextFile as jest.Mock).mockImplementation(async (path: string) =>
+    path.endsWith("accounts.json")
+      ? JSON.stringify({
+          version: 2,
+          profiles: [{ id: "p1", name: "Work", backend: "ccswitch", picks: { claude: "a" } }],
+        })
+      : "{}"
+  )
+  renderCc()
+  const row = (await screen.findByText("Work")).closest("tr")!
+  expect(within(row).getByText(en.ccswitch.accountActive)).toBeInTheDocument()
+  expect(within(row).getByRole("button", { name: en.ccswitch.accountApply })).toBeDisabled()
+})
+
+it("says so when an import brings nothing new", async () => {
+  ;(openDialog as jest.Mock).mockResolvedValue("/tmp/bundle.json")
+  ;(readTextFile as jest.Mock).mockImplementation(async (path: string) =>
+    path === "/tmp/bundle.json"
+      ? JSON.stringify({
+          version: 1,
+          providers: [{ app: "claude", name: "Mine", settingsConfig: "{}" }],
+        })
+      : "{}"
+  )
+  renderCc()
+  await screen.findByText("Mine")
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.importProviders }))
+  const dialog = await screen.findByRole("alertdialog")
+  await userEvent.click(within(dialog).getByRole("button", { name: en.ccswitch.importFreshOnly }))
+  expect(toast.message).toHaveBeenCalledWith(en.ccswitch.importNothingNew)
+  expect(ccWriteProvider).not.toHaveBeenCalled()
+})
+
+it("names an import file it couldn't read instead of rejecting unhandled", async () => {
+  ;(openDialog as jest.Mock).mockResolvedValue("/tmp/bundle.json")
+  ;(readTextFile as jest.Mock).mockImplementation(async (path: string) => {
+    if (path === "/tmp/bundle.json") throw "permission denied"
+    return "{}"
+  })
+  renderCc()
+  await screen.findByText("Mine")
+  await userEvent.click(screen.getByRole("button", { name: en.ccswitch.importProviders }))
+  await waitFor(() =>
+    expect(toast.error).toHaveBeenCalledWith(
+      en.ccswitch.importReadFailed("/tmp/bundle.json", "permission denied")
+    )
+  )
 })
 
 it("opens the edit form for an existing provider", async () => {
@@ -378,7 +560,7 @@ it("falls back to the no-db message when the list is empty", async () => {
   expect(await screen.findByText(en.ccswitch.empty)).toBeInTheDocument()
 })
 
-it("reviews database initialization before creating it", async () => {
+it("reviews database initialization as a real step before creating it", async () => {
   ;(detectCli as jest.Mock).mockResolvedValue({ installed: false })
   ;(ccSchemaStatus as jest.Mock)
     .mockResolvedValueOnce({ exists: false, userVersion: 0, missingColumns: [] })
@@ -393,6 +575,18 @@ it("reviews database initialization before creating it", async () => {
   expect(await screen.findByText(en.ccswitch.dbReady)).toBeInTheDocument()
 })
 
+it("reports a failed database creation from the step that ran it", async () => {
+  ;(ccSchemaStatus as jest.Mock).mockResolvedValue({
+    exists: false,
+    userVersion: 0,
+    missingColumns: [],
+  })
+  ;(ccInitDb as jest.Mock).mockRejectedValueOnce("permission denied: ~/.cc-switch")
+  renderCc()
+  await userEvent.click(await screen.findByRole("button", { name: en.ccswitch.initDb }))
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith(en.ccswitch.initFailed))
+})
+
 it("points an out-of-date DB at cc-switch instead of touching its schema", async () => {
   // Migrating someone else's database is cc-switch's job; agentpack names the
   // missing columns and stops.
@@ -401,9 +595,86 @@ it("points an out-of-date DB at cc-switch instead of touching its schema", async
     userVersion: 3,
     missingColumns: ["website_url"],
   })
+  // What the backend really does with such a database: `cc_load_providers`
+  // asserts the columns it SELECTs and refuses.
+  ;(ccLoadProviders as jest.Mock).mockRejectedValue(
+    "this cc-switch database predates the columns agentpack needs."
+  )
+  ;(loginStatus as jest.Mock).mockResolvedValueOnce({
+    claude: { signedIn: true, mode: "oauth", plan: "max", expiresAt: null, source: "Keychain" },
+    codex: { signedIn: false, mode: null, plan: null, expiresAt: null, source: "not signed in" },
+    opencode: { signedIn: false, mode: null, plan: null, expiresAt: null, source: "not signed in" },
+  })
   renderCc()
   expect(await screen.findByText(en.ccswitch.schemaStale("website_url"))).toBeInTheDocument()
+  // Asked anyway, it would only produce the same verdict as a raw error.
+  expect(ccLoadProviders).not.toHaveBeenCalled()
   expect(ccInitDb).not.toHaveBeenCalled()
+  // The rest of the page still reads — it used to share one Promise.all with
+  // the provider read and never arrive.
+  expect(await screen.findByText(/max/)).toBeInTheDocument()
+  expect(screen.getByText(en.ccswitch.notDetected)).toBeInTheDocument()
+  // The list says why it is empty, and adding waits for the migration.
+  expect(screen.getByText(en.ccswitch.listOutdated)).toBeInTheDocument()
+  expect(screen.queryByText(en.ccswitch.noDb)).not.toBeInTheDocument()
+  expect(screen.getByRole("button", { name: en.ccswitch.addProvider })).toBeDisabled()
+  expect(screen.getAllByText(en.ccswitch.addNeedsMigration).length).toBeGreaterThan(0)
+})
+
+it("launches cc-switch for the migration and re-reads the schema after", async () => {
+  ;(ccSchemaStatus as jest.Mock).mockResolvedValue({
+    exists: true,
+    userVersion: 3,
+    missingColumns: ["website_url"],
+  })
+  renderCc()
+  const launch = await screen.findByRole("button", { name: en.ccswitch.launchCcSwitch })
+  ;(ccSchemaStatus as jest.Mock).mockResolvedValue({
+    exists: true,
+    userVersion: 5,
+    missingColumns: [],
+  })
+  ;(ccSwitchRunning as jest.Mock).mockResolvedValue(true)
+  await userEvent.click(launch)
+  expect(launchCcSwitch).toHaveBeenCalled()
+  expect(await screen.findByText(en.ccswitch.dbReady)).toBeInTheDocument()
+  expect(toast.error).not.toHaveBeenCalledWith(en.ccswitch.initFailed)
+})
+
+it("still reads the schema, logins and backups when the provider read fails", async () => {
+  ;(ccLoadProviders as jest.Mock).mockRejectedValueOnce(new Error("db locked"))
+  ;(backupList as jest.Mock).mockResolvedValueOnce([
+    { id: "snapshot-9", ts: 1700000000000, reason: "provider write", files: [] },
+  ])
+  renderCc()
+  await waitFor(() => expect(toast.error).toHaveBeenCalledWith(en.ccswitch.loadFailed))
+  expect(await screen.findByText("provider write")).toBeInTheDocument()
+  expect(screen.getByText(en.ccswitch.dbReady)).toBeInTheDocument()
+  // No list is not "database not found": the database is right there.
+  expect(screen.queryByText(en.ccswitch.noDb)).not.toBeInTheDocument()
+  expect(
+    within(screen.getByRole("region", { name: en.ccswitch.providersTitle })).getByText(
+      en.ccswitch.loadFailed
+    )
+  ).toBeInTheDocument()
+})
+
+it("keeps adding a provider waiting until the database exists", async () => {
+  ;(ccSchemaStatus as jest.Mock).mockResolvedValue({
+    exists: false,
+    userVersion: 0,
+    missingColumns: [],
+  })
+  ;(ccLoadProviders as jest.Mock).mockResolvedValue([])
+  renderCc()
+  await screen.findByRole("button", { name: en.ccswitch.initDb })
+  const providerStep = screen.getByText(en.ccswitch.stepProviderTitle).closest("li")!
+  expect(providerStep.dataset.status).toBe("waiting")
+  // Add and every quick-add preset would open a form whose save could only
+  // fail with a raw error from the backend.
+  expect(screen.getByRole("button", { name: en.ccswitch.addProvider })).toBeDisabled()
+  expect(screen.getByRole("button", { name: RECOMMENDED_PROVIDERS[0].label })).toBeDisabled()
+  expect(screen.getAllByText(en.ccswitch.addNeedsDb).length).toBeGreaterThan(0)
 })
 
 it("reflects the visible-apps selection read from disk", async () => {
@@ -775,7 +1046,8 @@ it("renders the backup history and restores an entry through the review panel", 
   const dialog = await screen.findByRole("alertdialog")
   await userEvent.click(within(dialog).getByRole("button", { name: en.ccswitch.restore }))
   await waitFor(() => expect(backupRestore).toHaveBeenCalledWith("snapshot-9"))
-  await waitFor(() => expect(toast.success).toHaveBeenCalledWith(en.ccswitch.restored))
+  // Success is the panel's "All set", not a second toast.
+  expect(toast.success).not.toHaveBeenCalled()
   // The step log names the restore point the restore itself created — the undo
   // is undoable, and the user is told so rather than having to trust it.
 })

@@ -1,8 +1,10 @@
 // `run` now resolves with the reports of the run the user APPLIED, and with []
 // when they dismissed the review panel instead. The default stands in for
-// "reviewed and applied"; the dismissal case gets its own test below.
-const applied = [{ id: "s", label: "s", status: "done", output: [] }]
-const run = jest.fn<Promise<unknown[]>, [StepDescriptor[]]>(async () => applied)
+// "reviewed and applied": every staged step comes back done. The dismissal and
+// the stopped run get their own tests below.
+const applyAll = async (staged: StepDescriptor[]) =>
+  staged.map((step) => ({ id: step.id, label: step.label, status: "done", output: [] }))
+const run = jest.fn<Promise<unknown[]>, [StepDescriptor[], unknown?]>(applyAll)
 jest.mock("../run/runner-context", () => ({ useRunnerCtx: () => ({ run }) }))
 jest.mock("sonner", () => ({
   toast: { success: jest.fn(), error: jest.fn(), message: jest.fn() },
@@ -13,6 +15,11 @@ jest.mock("@/lib/tauri/commands", () => ({
   writeTextFile: jest.fn(async () => undefined),
   providerLoad: jest.fn(async () => []),
   isProcessRunning: jest.fn(async () => false),
+  setProcessProxy: jest.fn(async () => undefined),
+}))
+jest.mock("@/lib/tauri/shortcut", () => ({
+  registerSummonShortcut: jest.fn(async () => true),
+  unregisterSummonShortcut: jest.fn(async () => undefined),
 }))
 jest.mock("@/lib/tauri/dialog", () => ({ pickFile: jest.fn(async () => null) }))
 jest.mock("@/lib/tauri/clipboard", () => ({ readTextFromClipboard: jest.fn(async () => null) }))
@@ -31,10 +38,18 @@ import { BACKUP_SUFFIX } from "@/lib/agentpack/plan"
 import type { Plan, Paths, StepDescriptor } from "@/lib/agentpack/types"
 import { en } from "@/lib/i18n/en"
 import { I18nProvider } from "@/lib/i18n/provider"
+import { isTauri } from "@/lib/tauri"
 import { readTextFromClipboard } from "@/lib/tauri/clipboard"
-import { isProcessRunning, providerLoad, readTextFile, writeTextFile } from "@/lib/tauri/commands"
+import {
+  isProcessRunning,
+  providerLoad,
+  readTextFile,
+  setProcessProxy,
+  writeTextFile,
+} from "@/lib/tauri/commands"
 import { pickFile } from "@/lib/tauri/dialog"
 import { DEFAULT_SETTINGS, saveSettings } from "@/lib/tauri/settings"
+import { registerSummonShortcut } from "@/lib/tauri/shortcut"
 import { useAppStore } from "@/store/app-store"
 import { ImportBundleDialog } from "./import-dialog"
 
@@ -76,7 +91,8 @@ function bundleText(over: Partial<Parameters<typeof buildBundle>[0]> = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks()
-  run.mockResolvedValue([])
+  ;(isTauri as jest.Mock).mockReturnValue(true)
+  ;(readTextFile as jest.Mock).mockResolvedValue("")
   ;(isProcessRunning as jest.Mock).mockResolvedValue(false)
   useAppStore.setState({
     plan: LOCAL,
@@ -84,7 +100,7 @@ beforeEach(() => {
     profiles: [],
     settings: { ...DEFAULT_SETTINGS, providerBackend: "native" },
   })
-  run.mockResolvedValue(applied)
+  run.mockImplementation(applyAll)
 })
 
 async function openWith(text: string) {
@@ -182,7 +198,7 @@ it("disables Import once nothing is selected", async () => {
   expect(run).not.toHaveBeenCalled()
 })
 
-it("writes nothing to the store when a step failed", async () => {
+it("keeps the selection when a step failed", async () => {
   run.mockResolvedValue([{ id: "x", label: "x", status: "error", output: [] }])
   await openWith(bundleText())
   await screen.findByText(b.partPlan)
@@ -191,31 +207,88 @@ it("writes nothing to the store when a step failed", async () => {
   expect(useAppStore.getState().plan.clis).toEqual(["claude-code"])
 })
 
-it("leaves the store alone when the review panel is dismissed without applying", async () => {
+it("says the import was cancelled, and stays open, when the review panel is dismissed", async () => {
   // The store writes below (plan, profiles, settings) are ours, not the
-  // runner's — so a run that never happened must not move them either.
+  // runner's — so a run that never happened must not move them either. And
+  // it was not a preview: the user walked away from the changes.
   run.mockResolvedValueOnce([])
   await openWith(bundleText({ profiles: [{ id: "p", name: "P", createdAt: 0, plan: INCOMING }] }))
   await screen.findByText(b.partPlan)
   await clickImport()
-  await waitFor(() => expect(toast.message).toHaveBeenCalledWith(b.dryRunSkipped))
+  await waitFor(() => expect(toast.message).toHaveBeenCalledWith(b.importDiscarded))
   expect(run).toHaveBeenCalled()
   expect(useAppStore.getState().plan.clis).toEqual(["claude-code"])
   expect(useAppStore.getState().profiles).toEqual([])
   expect(writeTextFile).not.toHaveBeenCalled()
+  // Same choices still on screen, so changing one and trying again is one click.
+  expect(screen.getByRole("textbox", { name: b.importTitle })).toBeInTheDocument()
 })
 
-it("writes profiles, keeping a sidecar backup of what was there first", async () => {
+it("does not call a stopped run imported", async () => {
+  // A cancel comes back as `skipped` steps, not as [] and not as an error —
+  // and "Backup imported." for it was a success toast over a write that never
+  // happened.
+  run.mockImplementationOnce(async (staged: StepDescriptor[]) =>
+    staged.map((step, i) => ({
+      id: step.id,
+      label: step.label,
+      status: i === 0 ? "done" : "skipped",
+      output: [],
+    }))
+  )
+  await openWith(bundleText({ files: { codexConfig: 'model = "gpt-5"\n' } }))
+  await screen.findByText(b.partFiles)
+  await clickImport()
+  await waitFor(() => expect(toast.message).toHaveBeenCalledWith(b.importStopped))
+  expect(toast.success).not.toHaveBeenCalledWith(b.importDone)
+  expect(useAppStore.getState().plan.clis).toEqual(["claude-code"])
+})
+
+it("stages profiles as reviewed writes, keeping a sidecar of what was there first", async () => {
   const profile = { id: "p1", name: "Work", createdAt: 0, plan: INCOMING }
   ;(readTextFile as jest.Mock).mockResolvedValue('{"version":1,"profiles":[]}')
   await openWith(bundleText({ profiles: [profile] }))
   await screen.findByText(b.partProfiles)
   await clickImport()
   await waitFor(() => expect(useAppStore.getState().profiles).toHaveLength(1))
-  const calls = (writeTextFile as jest.Mock).mock.calls
-  expect(calls[0][0]).toBe(`/h/.agentpack/profiles.json${BACKUP_SUFFIX}`)
-  expect(calls[1][0]).toBe("/h/.agentpack/profiles.json")
-  expect(calls[1][1]).toContain("Work")
+  // Nothing is written by the dialog itself: both writes are steps the panel lists.
+  expect(writeTextFile).not.toHaveBeenCalled()
+  const keep = steps().find((s) => s.id === "import-profiles-keep")
+  const write = steps().find((s) => s.id === "import-profiles")
+  expect(keep).toMatchObject({
+    kind: "fileRestore",
+    backupPath: "/h/.agentpack/profiles.json",
+    path: `/h/.agentpack/profiles.json${BACKUP_SUFFIX}`,
+  })
+  expect(write).toMatchObject({ kind: "mergeFile", path: "/h/.agentpack/profiles.json" })
+  // The list is never replaced without the copy that undoes it.
+  expect(write!.dependsOn).toEqual(["import-profiles-keep"])
+  if (write?.kind !== "mergeFile") throw new Error("expected a file write")
+  expect(write.merge("")).toContain("Work")
+  // Keep before write, or the copy would be of the imported list.
+  expect(steps().indexOf(keep!)).toBeLessThan(steps().indexOf(write))
+})
+
+it("skips the sidecar when there is no profile list on disk yet", async () => {
+  ;(readTextFile as jest.Mock).mockResolvedValue("")
+  await openWith(bundleText({ profiles: [{ id: "p1", name: "W", createdAt: 0, plan: INCOMING }] }))
+  await screen.findByText(b.partProfiles)
+  await clickImport()
+  await waitFor(() => expect(run).toHaveBeenCalled())
+  expect(steps().some((s) => s.id === "import-profiles-keep")).toBe(false)
+  expect(steps().find((s) => s.id === "import-profiles")?.dependsOn).toBeUndefined()
+})
+
+it("says how many local profiles Replace would delete", async () => {
+  useAppStore.setState({
+    profiles: [{ id: "mine", name: "Mine", createdAt: 0, plan: LOCAL }],
+  })
+  await openWith(bundleText({ profiles: [{ id: "p1", name: "W", createdAt: 0, plan: INCOMING }] }))
+  await screen.findByText(b.partProfiles)
+  expect(screen.queryByText(b.profilesDropped(1))).not.toBeInTheDocument()
+  // The plan card has a Replace of its own, and comes first.
+  await userEvent.click(screen.getAllByRole("button", { name: b.profilesReplace }).at(-1)!)
+  expect(screen.getByText(b.profilesDropped(1))).toBeInTheDocument()
 })
 
 it("skips profiles entirely in skip mode", async () => {
@@ -227,13 +300,54 @@ it("skips profiles entirely in skip mode", async () => {
   expect(useAppStore.getState().profiles).toEqual([])
 })
 
-it("applies app settings and persists them", async () => {
+it("stages app settings as a reviewed write, then applies them", async () => {
   await openWith(bundleText({ settings: { ...DEFAULT_SETTINGS, ghMirrorPrefix: "https://m/" } }))
   // Anchored: the pasted bundle sits in a textarea and also contains this key.
   expect(await screen.findByText(/^ghMirrorPrefix:/)).toBeInTheDocument()
   await clickImport()
-  await waitFor(() => expect(saveSettings).toHaveBeenCalled())
-  expect(useAppStore.getState().settings.ghMirrorPrefix).toBe("https://m/")
+  await waitFor(() => expect(useAppStore.getState().settings.ghMirrorPrefix).toBe("https://m/"))
+  const step = steps().find((s) => s.kind === "appSettings")
+  expect(step).toMatchObject({ patch: expect.objectContaining({ ghMirrorPrefix: "https://m/" }) })
+  expect(step?.kind === "appSettings" && step.lines).toEqual([
+    'ghMirrorPrefix: null → "https://m/"',
+  ])
+  // The runner writes them; the dialog no longer does it behind the panel.
+  expect(saveSettings).not.toHaveBeenCalled()
+})
+
+it("keeps this machine's proxy password when the backup blanked it, and says nothing of it", async () => {
+  const proxy = { mode: "manual" as const, httpUrl: "http://p:1", targets: ["npm" as const] }
+  useAppStore.setState({
+    settings: {
+      ...DEFAULT_SETTINGS,
+      providerBackend: "native",
+      proxy: { ...proxy, password: "local-pw" },
+    },
+  })
+  const incoming = { ...DEFAULT_SETTINGS, proxy: { ...proxy, httpUrl: "http://q:2" } }
+  await openWith(bundleText({ settings: incoming }))
+  expect(await screen.findByText(/^proxy:/)).toBeInTheDocument()
+  expect(screen.queryByText(/local-pw/)).not.toBeInTheDocument()
+  await clickImport()
+  await waitFor(() => expect(useAppStore.getState().settings.proxy?.httpUrl).toBe("http://q:2"))
+  expect(useAppStore.getState().settings.proxy?.password).toBe("local-pw")
+  // Applied to agentpack's own traffic now, not at the next launch.
+  expect(setProcessProxy).toHaveBeenCalledWith(
+    expect.objectContaining({ http: expect.any(String) })
+  )
+  const step = steps().find((s) => s.kind === "appSettings")
+  expect(JSON.stringify(step?.kind === "appSettings" && step.lines)).not.toContain("local-pw")
+})
+
+it("claims an imported hotkey now rather than at the next launch", async () => {
+  await openWith(
+    bundleText({ settings: { ...DEFAULT_SETTINGS, summonShortcut: "CommandOrControl+Shift+A" } })
+  )
+  expect(await screen.findByText(/^summonShortcut:/)).toBeInTheDocument()
+  await clickImport()
+  await waitFor(() =>
+    expect(registerSummonShortcut).toHaveBeenCalledWith("CommandOrControl+Shift+A")
+  )
 })
 
 /** A provider-only bundle with one new entry and one clashing with the DB. */
@@ -376,6 +490,45 @@ it("disables provider import while cc-switch holds the database", async () => {
   await openWith(bundleText({ providers: [] }))
   expect(await screen.findByText(b.ccSwitchRunning)).toBeInTheDocument()
   expect(screen.getByLabelText(b.partProviders)).toBeDisabled()
+})
+
+it("stages no provider write while cc-switch holds the database", async () => {
+  // Drawn unticked and disabled, but the step builder used to read the raw
+  // choice — so the provider steps were staged anyway and failed, in front of
+  // every step after them.
+  useAppStore.setState((state) => ({
+    settings: { ...state.settings, providerBackend: "ccswitch" },
+  }))
+  ;(isProcessRunning as jest.Mock).mockResolvedValue(true)
+  const withPlan = JSON.parse(PROVIDER_BUNDLE)
+  withPlan.plan = JSON.parse(bundleText()).plan
+  await openWith(JSON.stringify(withPlan))
+  expect(await screen.findByText(b.ccSwitchRunning)).toBeInTheDocument()
+  await clickImport()
+  await waitFor(() => expect(run).toHaveBeenCalled())
+  expect(steps().filter((s) => s.kind === "ccProvider")).toHaveLength(0)
+})
+
+it("does not offer Import for a providers-only backup while cc-switch holds the database", async () => {
+  useAppStore.setState((state) => ({
+    settings: { ...state.settings, providerBackend: "ccswitch" },
+  }))
+  ;(isProcessRunning as jest.Mock).mockResolvedValue(true)
+  await openWith(PROVIDER_BUNDLE)
+  expect(await screen.findByText(b.ccSwitchRunning)).toBeInTheDocument()
+  const buttons = screen.getAllByRole("button", { name: b.importOpen })
+  expect(buttons[buttons.length - 1]).toBeDisabled()
+})
+
+it("says web mode can read a backup but not import one", async () => {
+  ;(isTauri as jest.Mock).mockReturnValue(false)
+  await openWith(bundleText())
+  expect(await screen.findByText(b.importWebNote)).toBeInTheDocument()
+  expect(screen.getByRole("button", { name: b.chooseFile })).toBeDisabled()
+  const buttons = screen.getAllByRole("button", { name: b.importOpen })
+  expect(buttons[buttons.length - 1]).toBeDisabled()
+  // Reading still works: the preview is there.
+  expect(screen.getByText(b.partPlan)).toBeInTheDocument()
 })
 
 describe("what the file deliberately didn't carry", () => {

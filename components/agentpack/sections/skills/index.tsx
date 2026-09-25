@@ -6,12 +6,13 @@ import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { isTauri } from "@/lib/tauri"
+import { useMounted } from "@/hooks/use-mounted"
 import { useT } from "@/lib/i18n/provider"
 import { groupSkills } from "@/lib/skills/browse"
-import { isManaged } from "@/lib/skills/updates"
+import { isManaged, rowUpdateTargets } from "@/lib/skills/updates"
 import type { SkillsScanResult } from "@/lib/skills/types"
 import { HelpTip } from "../../help-tip"
-import { InstalledSkillsTab } from "./installed"
+import { InstalledSkillsTab, type SkillUpdates } from "./installed"
 import { CatalogTab } from "./catalog"
 import { AddSkillsTab } from "./add"
 import { DesktopOnlyNote } from "../../desktop-only-note"
@@ -30,22 +31,52 @@ export interface SkillsSectionProps {
   scan: SkillsScanResult | null
   loading: boolean
   refresh: () => void
+  /**
+   * Why the last scan produced nothing at all, when it threw. Without it a
+   * failed `skills_scan` reads as "no skills anywhere" — a claim about the disk
+   * the app never checked.
+   */
+  error?: string | null
+  /** Arrive with the backups dialog open (Recovery's hand-off for a skill backup). */
+  landing?: "backups" | null
 }
 
-export function SkillsSection({ scan, loading, refresh }: SkillsSectionProps) {
+export function SkillsSection({
+  scan,
+  loading,
+  refresh,
+  error,
+  landing = null,
+}: SkillsSectionProps) {
   const t = useT()
   const sb = t.skillsBrowser
-  const tauri = isTauri()
+  // Gated on mount: isTauri() is false in the pre-rendered HTML, so reading it
+  // on the first render hydration-mismatches in the desktop build. Until then
+  // the spinner stands in — not the desktop-only note, which would flash there.
+  const mounted = useMounted()
+  const tauri = mounted && isTauri()
   /* One view at a time in the primary column, chosen from the aside — not the
      installed list plus whatever else you opened underneath it. */
   const [view, setView] = useState<"installed" | "catalog" | "add">("installed")
-  const [updateCount, setUpdateCount] = useState(0)
+  // Consumed once: the installed tab remounts whenever it is chosen again, and
+  // a hand-off from Recovery should not reopen the backups every time.
+  const [landingBackups, setLandingBackups] = useState(landing === "backups")
+  const show = (next: "installed" | "catalog" | "add") => {
+    setLandingBackups(false)
+    setView(next)
+  }
+  // Lives here, not in the installed tab: that tab unmounts whenever another
+  // view is chosen, and the answer it held was a network check per skill.
+  const [updates, setUpdates] = useState<SkillUpdates>(null)
 
   const stats = useMemo(() => {
     if (!scan) return null
     const rows = groupSkills(scan.skills)
-    return { total: rows.length, managed: rows.filter(isManaged).length }
-  }, [scan])
+    const pending = updates
+      ? rows.filter((r) => rowUpdateTargets(r, updates).length > 0).length
+      : null
+    return { total: rows.length, managed: rows.filter(isManaged).length, updates: pending }
+  }, [scan, updates])
 
   const notTauri = <DesktopOnlyNote>{sb.notTauri}</DesktopOnlyNote>
   const spinner = (
@@ -55,8 +86,21 @@ export function SkillsSection({ scan, loading, refresh }: SkillsSectionProps) {
     </div>
   )
 
-  const primary = !tauri ? (
+  const failed = (
+    <div className="flex flex-col items-start gap-3 p-6 text-sm">
+      <p className="text-destructive">{sb.scanFailed(error ?? "")}</p>
+      <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
+        {sb.retry}
+      </Button>
+    </div>
+  )
+
+  const primary = !mounted ? (
+    spinner
+  ) : !tauri ? (
     notTauri
+  ) : error && !loading ? (
+    failed
   ) : scan === null ? (
     spinner
   ) : (
@@ -71,8 +115,10 @@ export function SkillsSection({ scan, loading, refresh }: SkillsSectionProps) {
         <InstalledSkillsTab
           scan={scan}
           refresh={refresh}
-          onUpdateCountChange={setUpdateCount}
-          onBrowseCatalog={() => setView("catalog")}
+          updates={updates}
+          onUpdatesChange={setUpdates}
+          onBrowseCatalog={() => show("catalog")}
+          openBackups={landingBackups}
         />
       ) : view === "catalog" ? (
         <CatalogTab scan={scan} refresh={refresh} />
@@ -112,11 +158,18 @@ export function SkillsSection({ scan, loading, refresh }: SkillsSectionProps) {
             facts={[
               { label: sb.statTotal, value: stats.total },
               { label: sb.statManaged, value: stats.managed },
-              { label: sb.statUpdates, value: updateCount },
+              /* Nothing managed means nothing can be out of date — a measured
+                 zero. Otherwise it is unknown until someone checks, and a zero
+                 there would claim everything is current. */
+              {
+                label: sb.statUpdates,
+                value: stats.managed === 0 ? 0 : (stats.updates ?? "—"),
+              },
               ...(scan && scan.errors.length > 0
                 ? [{ label: sb.statScanIssues, value: scan.errors.length }]
                 : []),
             ]}
+            notes={[stats.managed > 0 && stats.updates === null ? sb.statUpdatesPending : null]}
           />
         ) : undefined
       }
@@ -131,21 +184,21 @@ export function SkillsSection({ scan, loading, refresh }: SkillsSectionProps) {
                 title: sb.tabInstalled,
                 description: sb.installedActionHint,
                 active: view === "installed",
-                onSelect: () => setView("installed"),
+                onSelect: () => show("installed"),
               },
               {
                 id: "skills-catalog",
                 title: sb.tabCatalog,
                 description: sb.catalogActionHint,
                 active: view === "catalog",
-                onSelect: () => setView("catalog"),
+                onSelect: () => show("catalog"),
               },
               {
                 id: "skills-add",
                 title: sb.tabAdd,
                 description: sb.addActionHint,
                 active: view === "add",
-                onSelect: () => setView("add"),
+                onSelect: () => show("add"),
               },
             ]}
           />

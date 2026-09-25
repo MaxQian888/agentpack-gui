@@ -21,11 +21,13 @@ import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Textarea } from "@/components/ui/textarea"
 import {
+  describeSettingsChange,
   diffFiles,
   diffPlan,
   diffProfiles,
   diffSettings,
   keepLocalSecrets,
+  keepLocalSettingsSecrets,
   mergePlan,
   mergeProfiles,
   retargetPlanOs,
@@ -43,18 +45,37 @@ import {
   providerImportStep,
   snapshotStep,
 } from "@/lib/agentpack/plan"
-import { profilesPath, serializeProfiles, PROFILE_VERSION } from "@/lib/agentpack/profile"
+import {
+  profilesPath,
+  serializeProfiles,
+  PROFILE_VERSION,
+  type Profile,
+} from "@/lib/agentpack/profile"
 import { pendingCredentials } from "@/lib/agentpack/migrate"
-import type { StepDescriptor } from "@/lib/agentpack/types"
+import { effectiveProxy } from "@/lib/agentpack/network/proxy"
+import { runApplied } from "@/lib/agentpack/report"
+import type { StepDescriptor, StepReport } from "@/lib/agentpack/types"
+import { useMounted } from "@/hooks/use-mounted"
 import { useT } from "@/lib/i18n/provider"
 import { isTauri } from "@/lib/tauri"
 import { readTextFromClipboard } from "@/lib/tauri/clipboard"
-import { isProcessRunning, providerLoad, readTextFile, writeTextFile } from "@/lib/tauri/commands"
+import { isProcessRunning, providerLoad, readTextFile, setProcessProxy } from "@/lib/tauri/commands"
 import { pickFile } from "@/lib/tauri/dialog"
-import { saveSettings } from "@/lib/tauri/settings"
+import { saveSettings, type AppSettings } from "@/lib/tauri/settings"
+import { registerSummonShortcut, unregisterSummonShortcut } from "@/lib/tauri/shortcut"
 import { useAppStore } from "@/store/app-store"
+import { DesktopOnlyNote } from "../desktop-only-note"
 import { useRunnerCtx } from "../run/runner-context"
 import { readBundleFiles } from "./files"
+
+/** Step ids the dialog reads back out of the reports to keep the store in step with the disk. */
+const PROFILES_KEEP_STEP = "import-profiles-keep"
+const PROFILES_STEP = "import-profiles"
+const SETTINGS_STEP = "import-settings"
+
+/** Whether one step of a run actually happened. */
+const landed = (reports: readonly StepReport[], id: string) =>
+  reports.some((r) => r.id === id && (r.status === "done" || r.status === "warning"))
 
 /** One toggleable group in the preview. */
 function PartCard({
@@ -128,6 +149,11 @@ export function ImportBundleDialog({ onImported }: { onImported?: () => void }) 
   const loadPlan = useAppStore((s) => s.loadPlan)
   const setProfiles = useAppStore((s) => s.setProfiles)
   const setSettings = useAppStore((s) => s.setSettings)
+
+  const mounted = useMounted()
+  // Web mode can read a pasted backup but has nothing to write it to — say so
+  // rather than leaving Choose file and Import as buttons that do nothing.
+  const webOnly = mounted && !isTauri()
 
   const [open, setOpen] = useState(false)
   const [text, setText] = useState("")
@@ -203,7 +229,12 @@ export function ImportBundleDialog({ onImported }: { onImported?: () => void }) 
     () => (bundle?.files ? diffFiles(bundle.files, localFiles) : []),
     [bundle, localFiles]
   )
-  const settingsChanges = bundle?.settings ? diffSettings(settings, bundle.settings) : []
+  // The proxy credentials a redacted bundle blanked are put back before the diff,
+  // so "your own go back where a blank arrives" is what the preview shows too.
+  const incomingSettings = bundle?.settings
+    ? keepLocalSettingsSecrets(bundle.settings, settings)
+    : null
+  const settingsChanges = incomingSettings ? diffSettings(settings, incomingSettings) : []
 
   // Files default to on, except one whose local copy can't be parsed — there we
   // couldn't preserve the machine's credentials, so importing it is opt-in.
@@ -216,23 +247,59 @@ export function ImportBundleDialog({ onImported }: { onImported?: () => void }) 
   }
   const fileChecked = (d: FileDiff) => fileOverride[d.key] ?? !d.localUnreadable
   const selectedFiles = fileDiffs.filter(fileChecked)
+  // One answer per part, read by the checkbox, the Import button and the step
+  // builder alike. Providers drawn unticked-and-disabled while cc-switch holds
+  // the database used to be staged anyway, and failed in front of everything
+  // after them.
+  const importProviders = !!bundle?.providers && want.providers && !ccRunning
+  const importProfiles = !!bundle?.profiles && want.profiles && profilesMode !== "skip"
+  const importSettings = want.settings && settingsChanges.length > 0
   const anySelected =
     (bundle?.plan && want.plan) ||
-    (bundle?.profiles && want.profiles && profilesMode !== "skip") ||
-    (bundle?.providers && want.providers) ||
+    importProfiles ||
+    importProviders ||
     selectedFiles.length > 0 ||
-    (bundle?.settings && want.settings)
+    importSettings
 
   const { run } = useRunnerCtx()
 
+  /**
+   * The two imported settings that act outside React. Everything else in
+   * `AppSettings` is read from the store as it renders, so `setSettings` is
+   * enough; these were only ever applied at startup, which left an import that
+   * looked finished while the hotkey and agentpack's own proxy behaved as before.
+   */
+  const applySettingsLive = async (before: AppSettings, next: Partial<AppSettings>) => {
+    if ("summonShortcut" in next && next.summonShortcut !== before.summonShortcut) {
+      if (before.summonShortcut) await unregisterSummonShortcut(before.summonShortcut)
+      const accel = next.summonShortcut
+      if (accel && !(await registerSummonShortcut(accel))) {
+        // The startup rule: a switch left on for a hotkey another app owns is
+        // worse than an honest "off".
+        setSettings({ summonShortcut: null })
+        void saveSettings({ summonShortcut: null })
+        toast.error(t.preferences.hotkeyTaken(accel))
+      }
+    }
+    if ("proxy" in next && JSON.stringify(next.proxy) !== JSON.stringify(before.proxy)) {
+      const eff = effectiveProxy(next.proxy ?? undefined)
+      await setProcessProxy({
+        http: eff.http,
+        https: eff.https,
+        all: eff.all,
+        noProxy: eff.noProxy,
+      }).catch(() => {})
+    }
+  }
+
   const doImport = async () => {
-    if (!bundle || !paths) return
+    if (!bundle || !paths || !isTauri()) return
     setBusy(true)
     try {
       // A snapshot always goes first: everything after this point overwrites a
       // file or a DB row the user didn't author.
       const steps: StepDescriptor[] = [snapshotStep("import", t, targetBackend)]
-      if (bundle.providers && want.providers && providerPlan) {
+      if (importProviders && providerPlan) {
         for (const entry of providerPlan.fresh)
           steps.push(providerImportStep(entry, undefined, t, targetBackend))
         if (overwriteProviders) {
@@ -244,36 +311,74 @@ export function ImportBundleDialog({ onImported }: { onImported?: () => void }) 
         steps.push(bundleFileStep(d.key, paths[d.key], bundle.files![d.key]!, t))
       }
 
-      const reports = await run(steps)
-      // A failed write means the machine is in a state we didn't intend; don't
-      // compound it by moving the in-memory store somewhere else too.
-      if (reports.some((r) => r.status === "error")) return
-      // No reports at all means the user closed the review panel without
-      // applying — the store writes below are ours, and must not land for a
-      // run that never happened.
+      // Profiles and settings are writes too, so they are steps: listed in the
+      // panel, gated by it, and left alone by a run that is discarded or stopped.
+      // What gets written is what the preview above was computed from.
+      let mergedProfiles: Profile[] | null = null
+      if (importProfiles) {
+        mergedProfiles = mergeProfiles(profiles, bundle.profiles!, profilesMode)
+        const path = profilesPath(paths.home)
+        // backup.rs doesn't cover profiles.json, so keep a sidecar of what is
+        // there immediately before this import — the one way back from a
+        // Replace. A plain copy, which is exactly what a file restore does.
+        const before = await readTextFile(path).catch(() => "")
+        const keep = before.trim().length > 0
+        if (keep) {
+          steps.push({
+            kind: "fileRestore",
+            id: PROFILES_KEEP_STEP,
+            label: b.stepProfilesKeep(path),
+            path: `${path}${BACKUP_SUFFIX}`,
+            backupPath: path,
+          })
+        }
+        const serialized = serializeProfiles({ version: PROFILE_VERSION, profiles: mergedProfiles })
+        steps.push({
+          kind: "mergeFile",
+          id: PROFILES_STEP,
+          label: b.stepProfilesWrite(path),
+          path,
+          merge: () => serialized,
+          writtenNote: b.profilesWritten(mergedProfiles.length),
+          // Never replace the list without the copy that undoes it.
+          ...(keep ? { dependsOn: [PROFILES_KEEP_STEP] } : {}),
+        })
+      }
+      if (importSettings && incomingSettings) {
+        steps.push({
+          kind: "appSettings",
+          id: SETTINGS_STEP,
+          label: b.stepSettings(settingsChanges.length),
+          patch: incomingSettings,
+          lines: settingsChanges.map(describeSettingsChange),
+        })
+      }
+
+      const reports = await run(steps, { activity: { title: b.importTitle, source: "section" } })
+      // Walked away from the review panel: nothing ran. The dialog stays open
+      // with the same choices, so changing one and trying again is one click.
       if (reports.length === 0) {
-        toast.message(b.dryRunSkipped)
-        setOpen(false)
+        toast.message(b.importDiscarded)
+        return
+      }
+      // Whatever did reach the disk, the store has to agree with — otherwise the
+      // next profile save writes the old list straight back over the new one.
+      if (mergedProfiles && landed(reports, PROFILES_STEP)) setProfiles(mergedProfiles)
+      if (incomingSettings && landed(reports, SETTINGS_STEP)) {
+        setSettings(incomingSettings)
+        await applySettingsLive(settings, incomingSettings)
+      }
+      // A failed or stopped run leaves the machine somewhere we didn't intend;
+      // don't compound it by moving the selection somewhere else too. A failure
+      // is explained in the panel; a stop has nothing on screen saying so.
+      if (!runApplied(reports)) {
+        if (!reports.some((r) => r.status === "error")) toast.message(b.importStopped)
         return
       }
 
       if (bundle.plan && want.plan) {
         const next = planMode === "merge" ? mergePlan(plan, bundle.plan) : bundle.plan
         loadPlan(keepLocalSecrets(retargetPlanOs(next, effectiveOS()), plan))
-      }
-      if (bundle.profiles && want.profiles && profilesMode !== "skip") {
-        const merged = mergeProfiles(profiles, bundle.profiles, profilesMode)
-        // backup.rs doesn't cover profiles.json, so keep a sidecar of what was
-        // there immediately before this import.
-        const path = profilesPath(paths.home)
-        const before = await readTextFile(path).catch(() => "")
-        if (before.trim()) await writeTextFile(`${path}${BACKUP_SUFFIX}`, before)
-        setProfiles(merged)
-        await writeTextFile(path, serializeProfiles({ version: PROFILE_VERSION, profiles: merged }))
-      }
-      if (bundle.settings && want.settings) {
-        setSettings(bundle.settings)
-        await saveSettings(bundle.settings)
       }
       toast.success(b.importDone)
       setOpen(false)
@@ -298,10 +403,13 @@ export function ImportBundleDialog({ onImported }: { onImported?: () => void }) 
           <DialogDescription>{b.importHint}</DialogDescription>
         </DialogHeader>
 
+        {webOnly ? <DesktopOnlyNote>{b.importWebNote}</DesktopOnlyNote> : null}
+
         <div className="flex gap-2">
           <Button
             size="sm"
             variant="outline"
+            disabled={webOnly}
             onClick={async () => {
               const path = await pickFile([{ name: "json", extensions: ["json"] }])
               if (path) setText(await readTextFile(path).catch(() => ""))
@@ -403,6 +511,11 @@ export function ImportBundleDialog({ onImported }: { onImported?: () => void }) 
                       ]}
                     />
                   </div>
+                  {want.profiles && profilesMode === "replace" && profilesDiff.dropped > 0 ? (
+                    <p className="text-xs text-destructive">
+                      {b.profilesDropped(profilesDiff.dropped)}
+                    </p>
+                  ) : null}
                 </PartCard>
               ) : null}
 
@@ -410,7 +523,7 @@ export function ImportBundleDialog({ onImported }: { onImported?: () => void }) 
                 <PartCard
                   id="imp-providers"
                   label={b.partProviders}
-                  checked={want.providers && !ccRunning}
+                  checked={importProviders}
                   disabled={ccRunning}
                   onToggle={(v) => setWant((w) => ({ ...w, providers: v }))}
                 >
@@ -500,8 +613,11 @@ export function ImportBundleDialog({ onImported }: { onImported?: () => void }) 
                   onToggle={(v) => setWant((w) => ({ ...w, settings: v }))}
                 >
                   {settingsChanges.map((c) => (
-                    <p key={String(c.key)} className="font-mono text-xs text-muted-foreground">
-                      {`${String(c.key)}: ${JSON.stringify(c.from)} → ${JSON.stringify(c.to)}`}
+                    <p
+                      key={String(c.key)}
+                      className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]"
+                    >
+                      {describeSettingsChange(c)}
                     </p>
                   ))}
                 </PartCard>
@@ -514,7 +630,7 @@ export function ImportBundleDialog({ onImported }: { onImported?: () => void }) 
           <Button variant="outline" onClick={() => setOpen(false)}>
             {t.configFiles.cancel}
           </Button>
-          <Button disabled={busy || !anySelected} onClick={() => void doImport()}>
+          <Button disabled={busy || !anySelected || webOnly} onClick={() => void doImport()}>
             {b.importOpen}
           </Button>
         </DialogFooter>

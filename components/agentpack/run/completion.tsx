@@ -5,14 +5,13 @@ import { CheckCircle2, ChevronRight, Circle, ExternalLink, TriangleAlert } from 
 import { Button } from "@/components/ui/button"
 import { pendingKeyEnvs, summarize } from "@/lib/agentpack/report"
 import { groupFailures } from "@/lib/agentpack/failure"
-import type { SectionKey } from "@/lib/agentpack/workspaces"
+import type { NavigateIntent, SectionKey } from "@/lib/agentpack/workspaces"
 import { FailureNotes } from "./failure-notes"
 import { findCli } from "@/lib/agentpack/registry"
 import { launchApp } from "@/lib/tauri/commands"
 import { copyText } from "@/lib/tauri/clipboard"
-import type { StepReport } from "@/lib/agentpack/types"
+import type { Plan, StepReport } from "@/lib/agentpack/types"
 import { useT } from "@/lib/i18n/provider"
-import { useAppStore } from "@/store/app-store"
 import { cn } from "@/lib/utils"
 
 /**
@@ -32,24 +31,34 @@ import { cn } from "@/lib/utils"
  */
 export function Completion({
   reports,
+  plan = null,
   dryRun,
   cancelled = false,
   onNavigate,
 }: {
   reports: StepReport[]
+  /**
+   * The plan this run was built from — the runner's snapshot, never the live
+   * plan. The live one is cleared the moment a run succeeds, which took the
+   * "Open Claude" button and the API-key to-dos with it on exactly the runs that
+   * earned them; and a run that wasn't built from a plan (an MCP add, a restore)
+   * has no app to open and no keys to ask for, whatever is sitting in the tray.
+   */
+  plan?: Plan | null
   dryRun: boolean
   /** The user stopped the run, as opposed to steps being skipped by a failure. */
   cancelled?: boolean
   /**
    * Follow a failure to the page that fixes it. Absent where there is nowhere
    * to go, in which case the reading is still shown and its button is not.
+   * `intent` says where on that page — the key to-do lands on the catalog's
+   * "needs a key" list, not on the installed list, which has no key field.
    */
-  onNavigate?: (section: SectionKey) => void
+  onNavigate?: (section: SectionKey, intent?: NavigateIntent) => void
 }) {
   const t = useT()
   const s = t.summary
   const c = t.completion
-  const plan = useAppStore((s) => s.plan)
   const [opening, setOpening] = useState(false)
   const [openError, setOpenError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -81,34 +90,39 @@ export function Completion({
   // Which app the one big button opens. Claude first when both were installed:
   // it's the one the wizard leads with and the one most setups centre on.
   const app = (["claude-desktop", "codex-app"] as const).find(
-    (id) => plan.clis.includes(id) && installed("cli", id)
+    (id) => plan?.clis.includes(id) && installed("cli", id)
   )
   const appTool = app ? findCli(app) : undefined
   // Only offered when there's no app to open — otherwise it competes with the
   // primary action instead of supporting it.
   const cliCommand =
-    !app && plan.clis.includes("claude-code") && installed("cli", "claude-code")
+    !app && plan?.clis.includes("claude-code") && installed("cli", "claude-code")
       ? "claude"
       : undefined
 
-  const todos: string[] = []
-  if (!dryRun) {
+  // A to-do can carry the page that does it: a key is typed into the MCP
+  // section, and a to-do that names a page without a way to it is a scavenger
+  // hunt at the end of an install.
+  const todos: { text: string; to?: SectionKey; intent?: NavigateIntent }[] = []
+  const push = (text: string, to?: SectionKey, intent?: NavigateIntent) =>
+    todos.push({ text, to, intent })
+  if (!dryRun && plan) {
     // An MCP server without its key installs cleanly and then never works, so
     // this is the difference between a green run and a working one.
     for (const { id, env } of pendingKeyEnvs(plan)) {
-      if (installed("mcp", id)) todos.push(c.todoKey(env))
+      if (installed("mcp", id)) push(c.todoKey(env), "mcp", { mcp: "needsKey" })
     }
     if (plan.clis.includes("claude-desktop") && installed("cli", "claude-desktop")) {
-      todos.push(c.todoSignIn)
+      push(c.todoSignIn)
       // Local sessions shell out to git; on Windows it isn't there by default.
-      if (plan.os === "win") todos.push(c.todoWindowsGit)
+      if (plan.os === "win") push(c.todoWindowsGit)
     }
     if (
       plan.clis.includes("cc-switch") &&
       plan.clis.includes("claude-desktop") &&
       installed("cli", "cc-switch")
     ) {
-      todos.push(c.todoCcSwitchGateway)
+      push(c.todoCcSwitchGateway)
     }
   }
 
@@ -222,9 +236,21 @@ export function Completion({
             {c.todoTitle}
           </div>
           {todos.map((todo) => (
-            <div key={todo} className="flex items-start gap-2 text-sm">
+            <div key={todo.text} className="flex items-start gap-2 text-sm">
               <Circle className="mt-1 size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-              <span>{todo}</span>
+              <div className="flex min-w-0 flex-col items-start gap-1">
+                <span>{todo.text}</span>
+                {todo.to && onNavigate ? (
+                  <Button
+                    variant="link"
+                    size="sm"
+                    className="h-auto p-0"
+                    onClick={() => onNavigate(todo.to!, todo.intent)}
+                  >
+                    {c.todoOpenMcp}
+                  </Button>
+                ) : null}
+              </div>
             </div>
           ))}
         </div>
@@ -234,7 +260,7 @@ export function Completion({
       <details className="group">
         <summary className="flex cursor-pointer list-none items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
           <ChevronRight
-            className={cn("size-3 transition-transform group-open:rotate-90")}
+            className="size-3 transition-transform duration-(--hm-dur-fast) ease-(--hm-ease-out) group-open:rotate-90"
             aria-hidden="true"
           />
           {c.details}

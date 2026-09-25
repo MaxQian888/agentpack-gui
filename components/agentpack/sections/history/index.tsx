@@ -9,9 +9,14 @@ import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { isTauri } from "@/lib/tauri"
 import { useT } from "@/lib/i18n/provider"
-import type { ListResult, ScanProgress, UsageSeriesResult } from "@/lib/history/types"
-import { computeUsageStats } from "@/lib/history/stats"
-import { formatCost, formatTokens } from "@/lib/history/format"
+import {
+  WHOLE_SCAN,
+  type ListResult,
+  type ScanProgress,
+  type UsageSeriesResult,
+} from "@/lib/history/types"
+import { computeUsageStats, statsCostFigure } from "@/lib/history/stats"
+import { formatCostFigure, formatTokens } from "@/lib/history/format"
 import { SessionBrowser, type BrowserFocus } from "./session-browser"
 import { UsageDashboard, type UsageDrilldown } from "./usage"
 import { DesktopOnlyNote } from "../../desktop-only-note"
@@ -53,6 +58,8 @@ export interface HistorySectionProps {
   progress: ScanProgress | null
   series: SeriesFeed
   refresh: () => void
+  /** Which tab to open on — the overview's "Open usage dashboard" asks for Usage. */
+  initialTab?: "sessions" | "usage"
 }
 
 export function HistorySection({
@@ -61,19 +68,37 @@ export function HistorySection({
   progress,
   series,
   refresh,
+  initialTab = "sessions",
 }: HistorySectionProps) {
   const t = useT()
   const h = t.history
   const tauri = isTauri()
-  const [tab, setTab] = useState("sessions")
+  const [tab, setTab] = useState<string>(initialTab)
+  // The usage panel mounts on first visit — that is what asks for the series —
+  // and then stays mounted, hidden, like the session list does. Unmounting on
+  // every switch threw away the period, grouping and sub-tab on one side and
+  // the search, filters and scroll depth on the other.
+  const [usageVisited, setUsageVisited] = useState(initialTab === "usage")
   const [focus, setFocus] = useState<BrowserFocus | undefined>()
 
-  // A drill-down from a chart: switch to the session list and hand it the
-  // filter. The nonce is what makes clicking the same bar twice work.
+  const selectTab = (next: string) => {
+    setTab(next)
+    if (next === "usage") setUsageVisited(true)
+  }
+
+  // A drill-down from a chart or table. The nonce is what makes clicking the
+  // same bar twice work. A filter drill switches to the session list; a single
+  // session opens its transcript where the user already is — the dialog floats
+  // over either tab, and closing it should land back on the row they clicked.
   const drilldown = (next: UsageDrilldown) => {
     setFocus({ ...next, nonce: Date.now() })
-    setTab("sessions")
+    if (!next.session) setTab("sessions")
   }
+
+  // Anything scanning at all: the startup read, a Rescan, or the series. A
+  // second scan started over any of them would race it for the same caches.
+  const busy = tauri && (loading || result === null || series.loading)
+  const failure = result?.errors.find((e) => e.source === WHOLE_SCAN)
 
   return (
     <SectionShell
@@ -87,10 +112,22 @@ export function HistorySection({
           size="sm"
           className="shrink-0 gap-2"
           onClick={refresh}
-          disabled={loading || !tauri}
+          disabled={busy || !tauri}
         >
-          <RefreshCw className={cn("size-4", loading && "animate-spin")} />
-          {h.refresh}
+          <RefreshCw className={cn("size-4", busy && "animate-spin")} />
+          {/* Both labels share one grid cell, so the button is as wide as the
+              longer one and swapping them never shifts the header. */}
+          <span className="grid">
+            <span aria-hidden={busy} className={cn("col-start-1 row-start-1", busy && "invisible")}>
+              {h.refresh}
+            </span>
+            <span
+              aria-hidden={!busy}
+              className={cn("col-start-1 row-start-1", !busy && "invisible")}
+            >
+              {h.refreshing}
+            </span>
+          </span>
         </Button>
       }
     >
@@ -98,15 +135,26 @@ export function HistorySection({
         <DesktopOnlyNote>{h.notTauri}</DesktopOnlyNote>
       ) : result === null ? (
         <ScanStatus progress={progress} />
+      ) : failure ? (
+        // Nothing was read, so there is nothing to summarise or list: a zeroed
+        // band and "No sessions found" would state as fact what the failure
+        // means nobody checked.
+        <>
+          <p role="alert" className="text-sm text-destructive">
+            {h.scanFailed(failure.message)}
+          </p>
+          {loading ? <RescanStatus progress={progress} /> : null}
+        </>
       ) : (
         <>
           <HistorySummary result={result} />
+          {loading ? <RescanStatus progress={progress} /> : null}
           {result.errors.map((e) => (
             <p key={e.source} className="text-xs text-destructive">
               {h.scanError(h.sources[e.source] ?? e.source, e.message)}
             </p>
           ))}
-          <Tabs value={tab} onValueChange={setTab} className="gap-0">
+          <Tabs value={tab} onValueChange={selectTab} className="gap-0">
             <TabsList aria-label={h.viewLabel}>
               <TabsTrigger value="sessions">{h.tabSessions}</TabsTrigger>
               <TabsTrigger value="usage">{h.tabUsage}</TabsTrigger>
@@ -117,16 +165,27 @@ export function HistorySection({
             <p className="mt-2 text-sm text-muted-foreground">
               {tab === "sessions" ? h.tabSessionsHint : h.tabUsageHint}
             </p>
-            <TabsContent value="sessions" className="mt-4">
+            {/* `forceMount` alone would show both panels: Radix only derives
+                `hidden` from presence, so it is set explicitly. */}
+            <TabsContent value="sessions" className="mt-4" forceMount hidden={tab !== "sessions"}>
               <SessionBrowser sessions={result.sessions} focus={focus} />
             </TabsContent>
-            <TabsContent value="usage" className="mt-4">
+            <TabsContent
+              value="usage"
+              className="mt-4"
+              forceMount={usageVisited || undefined}
+              hidden={tab !== "usage"}
+            >
               <UsageDashboard
                 sessions={result.sessions}
                 series={series.data?.sessions ?? null}
-                seriesLoading={series.loading}
+                seriesErrors={series.data?.errors ?? []}
+                // A Rescan drops the series with the summaries; asking again
+                // before it finishes would read the files it is re-reading.
+                seriesLoading={series.loading || loading}
                 requestSeries={series.request}
                 onDrilldown={drilldown}
+                active={tab === "usage"}
               />
             </TabsContent>
           </Tabs>
@@ -147,26 +206,51 @@ export function HistorySection({
  */
 function HistorySummary({ result }: { result: ListResult }) {
   const h = useT().history
-  const facts = useMemo(() => {
+  const { facts, unpriced } = useMemo(() => {
     const stats = computeUsageStats(result.sessions)
     const lastActive = result.sessions.reduce((max, s) => Math.max(max, s.updatedAt), 0)
-    const estimated = stats.estimatedCost > 0
-    return [
-      { label: h.statAllSessions, value: stats.totals.sessions },
-      { label: h.statAllTokens, value: formatTokens(stats.totals.usage.total) },
-      {
-        label: h.statAllSpend,
-        value: `${estimated ? "~" : ""}${formatCost(stats.totals.cost)}`,
-      },
-      {
-        label: h.statLastActive,
-        value: lastActive > 0 ? new Date(lastActive).toLocaleDateString() : h.statLastActiveNever,
-      },
-      { label: h.statSources, value: stats.bySource.length },
-    ]
+    return {
+      facts: [
+        { label: h.statAllSessions, value: stats.totals.sessions },
+        { label: h.statAllTokens, value: formatTokens(stats.totals.usage.total) },
+        { label: h.statAllSpend, value: formatCostFigure(statsCostFigure(stats)) },
+        {
+          label: h.statLastActive,
+          value: lastActive > 0 ? new Date(lastActive).toLocaleDateString() : h.statLastActiveNever,
+        },
+        { label: h.statSources, value: stats.bySource.length },
+      ],
+      unpriced: stats.unpriced.transcripts,
+    }
   }, [result, h])
 
-  return <SectionStatus label={h.summaryLabel} facts={facts} notes={[h.summaryNote]} />
+  return (
+    <SectionStatus
+      label={h.summaryLabel}
+      facts={facts}
+      // A `≥` or `—` on the spend figure is only half an answer without the reason.
+      notes={[h.summaryNote, unpriced > 0 ? h.unpricedExcluded(unpriced) : null]}
+    />
+  )
+}
+
+/**
+ * A Rescan over a list that is already on screen: the old list stays readable,
+ * and this line says the new one is on its way and how far it has got.
+ */
+function RescanStatus({ progress }: { progress: ScanProgress | null }) {
+  const h = useT().history
+  const pct =
+    progress && progress.total > 0 ? Math.min(100, (progress.done / progress.total) * 100) : null
+  return (
+    <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+      <span className="flex items-center gap-2">
+        <Spinner className="size-3.5" />
+        {progress && progress.total > 0 ? h.scanProgress(progress.done, progress.total) : h.loading}
+      </span>
+      {pct !== null ? <Progress value={pct} className="w-40" /> : null}
+    </div>
+  )
 }
 
 /**

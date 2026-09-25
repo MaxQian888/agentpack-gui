@@ -33,9 +33,15 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { useT } from "@/lib/i18n/provider"
-import { deleteSkillBackup, listSkillBackups, restoreSkillBackup } from "@/lib/tauri/commands"
+import type { Messages } from "@/lib/i18n/types"
+import { useAppStore } from "@/store/app-store"
+import { deleteSkillBackup, listSkillBackups } from "@/lib/tauri/commands"
+import type { Paths, SkillRestoreStep } from "@/lib/agentpack/types"
 import { SKILL_SOURCES } from "@/lib/skills/browse"
-import type { SkillBackup, SkillSource } from "@/lib/skills/types"
+import { skillDestPath } from "@/lib/skills/paths"
+import type { InstalledSkill, SkillBackup, SkillSource } from "@/lib/skills/types"
+import { useRunnerCtx } from "../../run/runner-context"
+import { useInstallGuard } from "./install-conflict-dialog"
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -43,19 +49,49 @@ function fmtBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`
 }
 
-/** Restorable skill backups (created automatically before each delete). */
+/** Put a backup back into each target root, as a step the review panel shows. */
+export function skillRestoreStep(
+  backup: Pick<SkillBackup, "id" | "name" | "dirName">,
+  targets: SkillSource[],
+  paths: Paths,
+  messages: Messages
+): SkillRestoreStep {
+  return {
+    kind: "skillRestore",
+    id: `skill-restore-${backup.id}`,
+    label: messages.skillsBrowser.restoreStep(backup.name, targets.join(", ")),
+    backupId: backup.id,
+    dirName: backup.dirName,
+    targets,
+    dests: targets.map((target) => skillDestPath(paths, target, backup.dirName)),
+  }
+}
+
+/**
+ * Restorable skill backups (created automatically before each delete).
+ *
+ * `backups` is the list, `null` while it loads, or `{ error }` when listing
+ * failed — which used to render as "No backups yet", i.e. told someone looking
+ * for a way back that there wasn't one.
+ */
 export function BackupsDialog({
   open,
   onOpenChange,
+  skills,
   refresh,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** What is installed now — a restore over any of it asks first. */
+  skills: InstalledSkill[]
   refresh: () => void
 }) {
   const t = useT()
   const sb = t.skillsBrowser
-  const [backups, setBackups] = useState<SkillBackup[] | null>(null)
+  const paths = useAppStore((s) => s.paths)
+  const { run } = useRunnerCtx()
+  const { guard, dialog: guardDialog } = useInstallGuard()
+  const [backups, setBackups] = useState<SkillBackup[] | { error: string } | null>(null)
   const [restoring, setRestoring] = useState<SkillBackup | null>(null)
   const [targets, setTargets] = useState<Set<SkillSource>>(new Set())
   const [toDelete, setToDelete] = useState<SkillBackup | null>(null)
@@ -64,7 +100,7 @@ export function BackupsDialog({
     setBackups(null)
     listSkillBackups()
       .then(setBackups)
-      .catch(() => setBackups([]))
+      .catch((e) => setBackups({ error: String(e) }))
   }
 
   // Load on open. The list-load setState lives in the async callback (not the
@@ -76,8 +112,8 @@ export function BackupsDialog({
       .then((b) => {
         if (!cancelled) setBackups(b)
       })
-      .catch(() => {
-        if (!cancelled) setBackups([])
+      .catch((e) => {
+        if (!cancelled) setBackups({ error: String(e) })
       })
     return () => {
       cancelled = true
@@ -91,17 +127,17 @@ export function BackupsDialog({
     setRestoring(b)
   }
 
+  // A restore replaces `<root>/<dirName>` wholesale, so it goes where every
+  // other overwrite goes: past the install guard, then through the review
+  // panel. It used to call the backend directly — the one skill write that did.
   const doRestore = async () => {
-    if (!restoring || targets.size === 0) return
+    if (!restoring || targets.size === 0 || !paths) return
     const b = restoring
     setRestoring(null)
-    try {
-      const dests = await restoreSkillBackup(b.id, [...targets])
-      toast.success(sb.restored(dests.length))
-      refresh()
-    } catch (e) {
-      toast.error(sb.backupActionFailed(String(e)))
-    }
+    const resolved = await guard([{ dirName: b.dirName, targets: [...targets] }], skills)
+    if (!resolved || resolved.length === 0) return
+    await run([skillRestoreStep(b, resolved[0].targets, paths, t)])
+    refresh()
   }
 
   const doDelete = async (b: SkillBackup) => {
@@ -136,6 +172,13 @@ export function BackupsDialog({
               <div className="flex items-center justify-center gap-2 p-10 text-sm text-muted-foreground">
                 <Spinner className="size-4" />
                 {sb.backupsLoading}
+              </div>
+            ) : "error" in backups ? (
+              <div className="flex flex-col items-start gap-3 p-4 text-sm">
+                <p className="text-destructive">{sb.backupsLoadFailed(backups.error)}</p>
+                <Button variant="outline" size="sm" onClick={reload}>
+                  {sb.retry}
+                </Button>
               </div>
             ) : backups.length === 0 ? (
               <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
@@ -233,6 +276,8 @@ export function BackupsDialog({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {guardDialog}
     </>
   )
 }

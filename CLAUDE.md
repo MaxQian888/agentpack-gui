@@ -163,6 +163,12 @@ the chips beside it. A section that draws its own header drifts: History did,
 and ended up the one page whose title sat at a different width from its
 neighbours with the tour anchor re-added by hand.
 
+⚠️ **`<main>` is one scroll container for every destination**, so the shell
+resets it to the top whenever `section` changes and replays the `hm-enter`
+entrance on the content wrapper — by restarting the CSS animation, not by
+keying the wrapper, because a key would remount the more-token views that share
+state across their tabs. Arriving mid-page on a new tab read as a missed click.
+
 ⚠️ **A `SectionNav` choice swaps the primary column; it does not append below
 it.** Skills and MCP both used the workbench's full-width `detail` band for
 this, and on a machine with twenty-odd skills that put the catalog a screen and
@@ -492,6 +498,28 @@ Also: the completion screen derives its next action and chores from `reports`,
 not from `plan` — with **no step at all** reading as success, because the dedup
 emits nothing for what's already installed.
 
+⚠️ The plan it reads is **`useRunner().runPlan`**, the snapshot `run()` took
+from `opts.plan` — never the live store plan. `reviewChanges` resets the live
+plan the moment a run succeeds, which used to take "Open Claude" and the API-key
+to-dos with it; and a run that wasn't built from a plan (an MCP add, a restore)
+gets `null`, so it is never briefed or finished on the strength of whatever
+happens to be sitting in the tray. `PreflightBrief` reads the same snapshot.
+
+⚠️ **One run at a time.** The panel can be closed mid-run and the page behind it
+stays live, so `run()` refuses (toast + reopen the panel) while steps are
+executing; the header shows `Running n/m` while the panel is closed.
+`applyPending` captures its awaiter _before_ the await. A caller deciding what a
+result means uses **`runApplied(reports)`** (`lib/agentpack/report.ts`) — `[]`
+is a walked-away review and `skipped` is a cancel, and neither may toast
+success, clear a form, or drop an "update available" flag.
+
+⚠️ The change tray counts network config **against what is already applied**
+(`unappliedNetwork`: `settings.proxy` plus the store's `appliedNpmRegistry`).
+Counted raw, a proxy restored at startup was a permanent "1 selected" that Clear
+couldn't clear and every review re-wrote. `reviewChanges` strips the applied part
+before `buildSteps` and records what a successful run applied; the tray's Clear
+is `clearSelection`, which also drops an unapplied mirror or proxy.
+
 ⚠️ The **activity log** (`~/.agentpack/activity.json`) records what ran, and its
 redaction is a deliberate line, not an oversight: title, source, timestamp,
 outcome, per-step status/duration and any restore point — never command output,
@@ -499,6 +527,57 @@ config bodies, env vars or API keys. `recordRun` copies fields explicitly rather
 than spreading `StepReport`, so the next field added there can't leak by
 default. Previews write no record at all. The ⌘K palette is bound by the same
 rule: it indexes destinations and app actions, never content.
+
+### Pi packages
+
+The **Pi** section (Capabilities → Pi) manages one Pi settings file at a time:
+the packages it loads, which of each package's resources are switched on, how
+Pi authenticates, and the extra folders the history scan reads.
+
+- `lib/pi/` — `types`, plus `management` (the pure half: official `pi` argv,
+  settings merges, `piResourcePathEnabled` for Pi's narrowing globs and exact
+  `+path`/`-path` overrides, `redactPiPackageSource` and
+  `isSafePiPackageSource`), backed by `src-tauri/src/pi_management.rs`.
+- `components/agentpack/pi-controller.ts` — shell-owned scans and mutations.
+  The section renders the controller and owns no fetching of its own.
+- `components/agentpack/sections/pi/` — `index` (the `CapabilityWorkbench`
+  frame plus the permission gate), `scope-bar`, `packages`, `browse`, `auth`,
+  `sessions`, `package-detail-dialog`, `helpers`.
+
+Five rules, each of which is why some part of the above looks the way it does:
+
+1. **A reading is stamped with the scope it was taken for.** `scopeKey` is
+   `global` or `project:<cwd>`, and a snapshot is shown only while its stamp
+   still matches. Without it, the moment after a scope change showed the
+   previous scope's answer under the new scope's heading, and picking Project
+   with no folder yet left the global packages on screen labelled Project.
+2. **Not-yet-looked is not empty.** `scanPending` is true until a reading for
+   the current scope has come back, error included. The list used to render
+   "no packages are configured in this scope" during the first scan, which
+   states as fact the one thing nothing had checked. A failed scan records a
+   null reading rather than nothing at all, so the spinner clears.
+3. **The source is judged before consent is asked for.**
+   `buildPiPackageSteps` has always refused a URL carrying credentials, but it
+   refused after the user approved "run this with my full permissions". The
+   install field now shares that predicate and disables itself first.
+4. **Facts are tags, exceptional state is a chip.** `sourceKind`, version,
+   `pinned` and `inherited` set as muted text beside the name. Only a package
+   whose folder is gone and one the project overrides draw a `RowChip`, which
+   is what keeps a chip meaningful when one appears. A disabled resource
+   toggle always carries its reason.
+5. **The common resource action is in the row, the rare one is in the dialog.**
+   Pressing a resource chip switches a whole kind. Per-file `+path`/`-path`
+   overrides live in the package's own dialog, which is also the only surface
+   with room to say that a declared glob cannot be switched at all.
+
+⚠️ `PiResourceState.enabled` hides three answers, not two: off, on in full, and
+on with Pi's globs narrowing it to a subset. `piResourcesOnFor` resolves them, and
+the chip reads `2/5` rather than claiming a kind is on when a `-path` override
+turned most of it off.
+
+⚠️ The controller is gated on `isTauri()` as well as on the detection. Web mode
+has no Rust behind it, so a scan there is not a degraded reading, it is an
+`invoke` that throws and an error toast on a page that says `DesktopOnlyNote`.
 
 ### Environment cleanup
 
@@ -572,9 +651,16 @@ split:
   `export` (CSV/JSON), `markdown` (safe tokenizer for the transcript renderer),
   `format`/`display` (formatting + source colors). All fully unit-tested.
 - `components/agentpack/sections/history/` — the UI: `index` (Sessions/Usage
-  tabs, prop-driven like `dashboard`; both scans are owned + lazily cached in
-  `app-shell`), `session-browser`, `transcript`, `markdown-view`, and `usage/`
-  (Overview / Cost & windows / How you work sub-tabs over one shared `view`).
+  tabs, prop-driven like `dashboard`; both scans live in `use-history-scans`,
+  called once from `app-shell` so they survive navigation), `session-browser`,
+  `transcript`, `markdown-view`, and `usage/` (Overview / Cost & windows / How
+  you work sub-tabs over one shared `view`).
+
+  ⚠️ `use-history-scans` stamps every scan with a generation and drops a result
+  from an older one, and it records a rejected scan as a `WHOLE_SCAN` error —
+  never as `{ sessions: [] }`, which every surface reading it (the spend card,
+  the session list, the dashboard) would state as "no history". Both tab panels
+  stay mounted once visited, so switching tabs keeps period, filters and scroll.
 
   The frame is the shared one: `SectionShell` + one `SectionStatus` band, and
   both toolbars are `FilterToolbar`s. Two rules the band depends on — its facts

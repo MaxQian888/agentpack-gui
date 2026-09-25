@@ -17,6 +17,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -26,6 +36,7 @@ import { openPath, revealPath } from "@/lib/tauri/system"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { skillEditStep, skillPermissionStep, skillVisibilityStep } from "@/lib/agentpack/plan"
+import { runApplied } from "@/lib/agentpack/report"
 import {
   parseClaudeSkillOverrides,
   parseOpencodeSkillPermissions,
@@ -141,17 +152,23 @@ export function SkillDetailDialog({
   // (an event, not an effect).
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState("")
+  // Esc or a click on the overlay with unsaved edits asks first: the draft is
+  // the only copy of that work, and closing used to drop it without a word.
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
+  const dirty = editing && draft !== skillMd
 
+  // The selects show what is on disk, so they move only once the write has
+  // actually happened — not when it was merely staged for review.
   const changeVisibility = async (value: ClaudeSkillVisibility) => {
     if (!row || !paths) return
-    setVisibility(value)
-    await run([skillVisibilityStep(row.name, value, paths, t)])
+    const reports = await run([skillVisibilityStep(row.name, value, paths, t)])
+    if (runApplied(reports)) setVisibility(value)
   }
 
   const changePermission = async (value: OpencodeSkillPermission) => {
     if (!row || !paths) return
-    setPermission(value)
-    await run([skillPermissionStep(row.name, value, paths, t)])
+    const reports = await run([skillPermissionStep(row.name, value, paths, t)])
+    if (runApplied(reports)) setPermission(value)
   }
 
   const startEdit = () => {
@@ -161,9 +178,12 @@ export function SkillDetailDialog({
 
   const saveEdit = async () => {
     if (!row || !entry) return
-    await run([skillEditStep(row.dirName, `${entry.path}/SKILL.md`, draft, t)])
-    setLocalEdit({ path: entry.path, md: draft })
-    setEditing(false)
+    const reports = await run([skillEditStep(row.dirName, `${entry.path}/SKILL.md`, draft, t)])
+    // Not written: stay in the editor with the draft intact.
+    if (runApplied(reports)) {
+      setLocalEdit({ path: entry.path, md: draft })
+      setEditing(false)
+    }
     refresh()
   }
 
@@ -182,6 +202,10 @@ export function SkillDetailDialog({
     <Dialog
       open={open}
       onOpenChange={(o) => {
+        if (!o && dirty) {
+          setConfirmDiscard(true)
+          return
+        }
         if (!o) setEditing(false)
         onOpenChange(o)
       }}
@@ -407,6 +431,27 @@ export function SkillDetailDialog({
             )
           ) : null}
         </div>
+
+        {/* Esc or the overlay with unsaved edits lands here, not on a closed dialog. */}
+        <AlertDialog open={confirmDiscard} onOpenChange={setConfirmDiscard}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{sb.editDiscardTitle}</AlertDialogTitle>
+              <AlertDialogDescription>{sb.editDiscardBody}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{sb.editKeep}</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  setEditing(false)
+                  onOpenChange(false)
+                }}
+              >
+                {sb.editDiscard}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   )

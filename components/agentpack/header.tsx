@@ -4,6 +4,7 @@ import { Download, Moon, Search, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
+import { Spinner } from "@/components/ui/spinner"
 import { useT } from "@/lib/i18n/provider"
 import { hasTabs, type SectionKey, type WorkspaceKey } from "@/lib/agentpack/workspaces"
 import { cn } from "@/lib/utils"
@@ -29,12 +30,20 @@ export function Header({
   onNavigate,
   onOpenCommand,
   onShowUpdates,
+  run,
+  onShowRun,
 }: {
   workspace: WorkspaceKey
   section: SectionKey
   onNavigate: (workspace: WorkspaceKey, section: SectionKey) => void
   onOpenCommand: () => void
   onShowUpdates?: () => void
+  /**
+   * A run executing behind a closed review panel. The panel may be closed
+   * mid-run — the steps keep going — and before this nothing on screen said so.
+   */
+  run?: { done: number; total: number } | null
+  onShowRun?: () => void
 }) {
   const t = useT()
   const { resolvedTheme, setTheme } = useTheme()
@@ -57,10 +66,12 @@ export function Header({
       <WorkspaceNavSheet active={workspace} onSelect={onNavigate} />
 
       {/* Current context. The section is named only when the workspace has more
-          than one — otherwise it would repeat the workspace back at itself. */}
+          than one, and only when it isn't the workspace's own name — otherwise
+          it repeats the workspace back at itself ("My account / My account"). */}
       <div className="flex min-w-0 items-baseline gap-1.5">
         <span className="truncate text-sm font-medium">{workspaceMeta(workspace).label(t)}</span>
-        {hasTabs(workspace) ? (
+        {hasTabs(workspace) &&
+        sectionMeta(section).label(t) !== workspaceMeta(workspace).label(t) ? (
           <>
             <span aria-hidden="true" className="text-muted-foreground/60">
               /
@@ -86,6 +97,19 @@ export function Header({
           <span className="hidden sm:inline">{t.palette.open}</span>
           <Kbd className="hidden md:inline-flex">⌘K</Kbd>
         </Button>
+
+        {run && onShowRun ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-2 font-normal tabular-nums"
+            title={t.shell.showRun}
+            onClick={onShowRun}
+          >
+            <Spinner aria-hidden className="size-4 text-[var(--hm-accent)]" />
+            {t.shell.runningBadge(run.done, run.total)}
+          </Button>
+        ) : null}
 
         {hasUpdate && onShowUpdates ? (
           <Button

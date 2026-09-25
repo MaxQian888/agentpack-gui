@@ -84,11 +84,11 @@ export const en = {
       },
       dashboard: {
         title: "Dashboard",
-        body: "See what's installed and configured at a glance, and remove anything you don't want.",
+        body: "See what's installed and configured at a glance, and what needs attention — each finding links to the page that fixes it.",
       },
       history: {
         title: "Chat history",
-        body: "Read back every past session across all three CLIs, and see exactly what your tokens cost.",
+        body: "Read back every past session across Claude Code, Codex, OpenCode and Pi, and see exactly what your tokens cost.",
       },
       "management-overview": {
         title: "Accounts & quota overview",
@@ -202,8 +202,8 @@ export const en = {
     title: "Quick start",
     intro: "New to agentpack? The guide sets up your AI coding tools in a few clicks.",
     stepPick: "Pick a bundle",
-    stepPreview: "Preview (optional)",
-    stepInstall: "Install in one click",
+    stepPreview: "Review the steps",
+    stepInstall: "Apply, with a way back",
     openGuide: "Open the guide",
     dismiss: "Don't show again",
     networkBlocked: "Your network can't reach the internet directly — set that up first →",
@@ -234,52 +234,189 @@ export const en = {
     alreadyInstalled: "already installed",
   },
 
+  /**
+   * Pi management. The section is a capability workbench like Skills and MCP:
+   * one scope control, one status band, four destinations in the aside. This
+   * vocabulary is grouped the way the screen is, so a copy change and the
+   * surface it lands on stay next to each other.
+   */
   pi: {
     title: "Pi management",
-    subtitle: "Manage Pi packages and provider authentication without exposing credentials.",
-    packages: "Packages",
-    authentication: "Authentication",
+    subtitle:
+      "Read the Pi settings a scope loads, turn a package's resources on or off, and check how Pi signs in.",
+
+    // Frame: the chrome shared with every other capability workspace.
+    refresh: "Rescan",
+    notTauri: "Pi management is only available in the desktop app.",
     notInstalled:
       "Pi is not installed. Install it from CLIs before managing packages or authentication.",
     installPi: "Open CLIs",
+    loading: "Reading Pi settings…",
+    summaryLabel: "Pi summary",
+    actionsLabel: "Pi management views",
+    detailPanel: "Pi management details",
+
+    // The four destinations in the aside.
+    tabPackages: "Packages",
+    tabBrowse: "Find packages",
+    tabAuth: "Authentication",
+    tabSessions: "Session folders",
+    packagesActionHint: "What this scope loads, and which resources of each package are on.",
+    browseActionHint: "Search npm, or install from a source you name.",
+    authActionHint: "Which providers Pi can reach, and how it signs in.",
+    sessionsActionHint: "Extra folders scanned for Pi transcripts.",
+
+    // The status band, which restates nothing the scope bar already says.
+    statScope: "Scope",
+    statPackages: "Packages",
+    statResources: "Resources on",
+    statTrust: "Trust",
+    statPending: "Waiting for the first read of your Pi settings",
+    statFailed: "The last read of these Pi settings failed",
+    statTarget: (path: string) => `Changes write to ${path}`,
+
+    // The scope bar: which settings file this whole page is about.
     scope: "Scope",
+    scopeLabel: "Settings scope",
     globalScope: "Global",
     projectScope: "Project",
     projectFolder: "Project folder",
     chooseFolder: "Choose folder…",
-    refresh: "Refresh",
+    projectNeeded: "Choose a project folder to read the Pi settings inside it.",
+    projectFolderMissing: (path: string) =>
+      `Folder not found: ${path}. Check the path, or use Choose folder…`,
+    installNeedsReading:
+      "Installs in Project scope wait until the project's Pi settings have been read. Rescan, or choose another folder.",
+    scanFailed: (reason: string) =>
+      `Couldn't read the Pi settings for this scope: ${reason}. Rescan to try again.`,
+    trust: "Project trust",
+    /** Pi's own trust vocabulary. An unknown state falls through verbatim. */
+    trustStates: {
+      trusted: "Trusted",
+      untrusted: "Untrusted",
+      ask: "Asks first",
+    } as Record<string, string>,
+    trustUnapproved:
+      "Pi has not recorded this project as trusted. Approving a change here passes --approve for that one command.",
+
+    // The packages inventory.
+    packagesListLabel: "Configured Pi packages",
+    kindFilter: "Filter by resource",
+    filterAll: "All",
+    searchPlaceholder: "Search packages…",
+    filtersLabel: "Filters",
+    filtersReset: "Clear filters",
+    sortLabel: "Sort by",
+    sortName: "Name",
+    sortResources: "Most resources",
+    showInherited: "Include inherited packages",
+    resourceHint:
+      "Press a resource to turn it on or off for that package. Open a package to narrow it to single files.",
+    noProjectChosen: "Nothing to list until a project folder is chosen.",
+    noPackages: "No Pi packages are configured in this scope.",
+    noMatches: "No packages match your filter.",
+    findPackages: "Find packages",
     updateAll: "Update all",
     allPackages: "all packages",
-    addSource: "npm, git, or local source",
+    actions: "Actions",
+    openPackage: (name: string) => `Open ${name}`,
     install: "Install",
     remove: "Remove",
     update: "Update",
-    packageActivity: "Manage Pi package",
-    packageAction: (action: string, source: string) =>
-      `${({ install: "Install", remove: "Remove", update: "Update", updateAll: "Update" } as Record<string, string>)[action] ?? action} ${source}`,
-    resourceAction: (enabled: boolean, kind: string, source: string) =>
-      `${enabled ? "Enable" : "Disable"} ${kind} from ${source}`,
     changePin: "Change version / ref",
-    browse: "Search npm packages",
-    search: "Search",
-    gallery: "Open official Package Gallery",
-    published: "Published",
-    noPackages: "No Pi packages are configured in this scope.",
-    noResults: "No verified pi-package results.",
+    changePinTitle: (name: string) => `Change the version or ref of ${name}`,
+    changePinHint: "Give the full source, including the version or git ref you want.",
+    changePinApply: "Stage the change",
+    pinned: "pinned",
     inherited: "inherited",
     overridden: "overridden",
+    installedState: "installed",
+    missing: "folder missing",
+    missingHint: "Pi lists this package but its folder is gone. Update or reinstall it.",
     overriddenResourceHint:
       "This global package is overridden in the project. Change the project package instead.",
-    pinned: "pinned",
-    installed: "installed",
-    missing: "missing",
-    trust: "Project trust",
-    communityWarning: "Community content — not reviewed by AgentPack.",
+    resourcesOff: "all resources off",
+
+    // The package detail dialog, where per-file overrides live.
+    detailTitle: (name: string) => `${name} resources`,
+    detailIntro: "Turn a whole resource kind on or off, or narrow it to single files.",
+    detailSource: "Source",
+    detailPath: "Installed at",
+    detailVersion: "Version",
+    detailNoPaths: "Pi declares no files for this resource.",
+    detailGlobOnly: "Pattern, not a file. Pi can only switch exact paths.",
+    detailKindOff: "This kind is off. Turn it on to switch single files.",
+    close: "Close",
+
+    // Find packages: install from a named source, or search npm.
+    addSourceTitle: "Install from a source",
+    addSource: "npm name, git: URL, or local path",
+    addSourceHint: "For example my-pi-package, git:github.com/owner/repo, or ./local/folder",
+    sourceUnsafe: "Remove the credentials or query string from this source before installing.",
+    browse: "Search npm",
+    search: "Search",
+    searching: "Searching npm…",
+    gallery: "Package gallery",
+    published: "Published",
+    resultsLabel: "npm search results",
+    noResults: "No verified pi-package results.",
+    searchPrompt: "Search npm for packages that declare Pi resources.",
+    alreadyInstalled: "already installed",
+    communityWarning: "Community content, not reviewed by AgentPack.",
+    communityBody:
+      "A Pi package runs with your full user permissions. Install only what you would run by hand.",
+
+    // Authentication.
+    authHint:
+      "Status checks use --no-refresh. Credentials and environment values never leave the Rust boundary.",
+    refreshAuth: "Refresh authentication",
+    providersLabel: "Pi providers",
+    provider: "Provider",
+    status: "Status",
+    authType: "Auth type",
+    source: "Source",
+    expires: "Expires",
+    expiresAt: (when: string) => `Expires ${when}`,
+    noProviders: "Pi reports no providers yet. Log in, then refresh.",
+    authReading: "Reading Pi authentication…",
+    authReadFailed: (reason: string) =>
+      `Couldn't read Pi's authentication status: ${reason}. Retry, or log in with Pi first.`,
+    retry: "Retry",
+    login: "Log in with Pi",
+    logout: "Log out with Pi",
+    interactiveHint: (command: string) =>
+      `A terminal will open Pi. Run ${command}, and authentication stays inside Pi's official flow.`,
+    copied: (command: string) => `${command} copied to the clipboard.`,
+    typeCommand: (command: string) => `Type ${command} in the Pi terminal.`,
+    launchFailed: (reason: string) =>
+      `Couldn't open a terminal for Pi: ${reason}. Run pi in a terminal yourself.`,
+    unknown: "Unknown",
+
+    // Session folders.
+    sessionFolders: "Additional session folders",
+    sessionFoldersHint: "Scanned before Pi's environment, settings, and default session folders.",
+    sessionFoldersLabel: "Additional Pi session folders",
+    addSessionFolder: "Add session folder…",
+    noSessionFolders: "No extra folders. Pi's own session folders are always scanned.",
+
+    // The permission gate every package command passes through.
     permissionTitle: "Allow this Pi package to run with your system permissions?",
     permissionBody: (source: string, path: string) =>
       `${source} can execute code with your full user permissions and access files, network, processes, and environment variables. Pi trust is not a sandbox. Target: ${path}`,
+    permissionScope: (scope: string) => `Scope: ${scope}`,
     cancel: "Cancel",
     approve: "Approve and review command",
+
+    // Step labels, activity titles and machine errors.
+    packageActivity: "Manage Pi package",
+    packageAction: (action: string, source: string) =>
+      `${({ install: "Install", remove: "Remove", update: "Update", updateAll: "Update" } as Record<string, string>)[action] ?? action} ${source}`,
+    resourceAction: (enabled: boolean, kind: string, source: string, cleared = 0) =>
+      `${enabled ? "Enable" : "Disable"} ${kind} from ${source}${
+        cleared > 0
+          ? ` — clears ${cleared === 1 ? "1 file filter" : `${cleared} file filters`} set on it`
+          : ""
+      }`,
     resourceChanged: "Settings changed outside AgentPack. Refresh before retrying.",
     errors: {
       PI_PACKAGE_SOURCE_UNSAFE:
@@ -291,23 +428,6 @@ export const en = {
       PI_RESOURCE_EXACT_PATH_REQUIRED: "Only exact resource paths can be enabled or disabled.",
       PI_SETTINGS_CHANGED: "Pi settings changed after review. Refresh before retrying.",
     } as Record<string, string>,
-    authHint:
-      "Status checks use --no-refresh. Credentials and environment values never leave the Rust boundary.",
-    refreshAuth: "Refresh authentication",
-    provider: "Provider",
-    status: "Status",
-    authType: "Auth type",
-    source: "Source",
-    expires: "Expires",
-    login: "Log in with Pi",
-    logout: "Log out with Pi",
-    interactiveHint: (command: string) =>
-      `A terminal will open Pi. Run ${command}; authentication stays inside Pi's official flow.`,
-    copied: (command: string) => `${command} copied to the clipboard.`,
-    unknown: "Unknown",
-    sessionFolders: "Additional session folders",
-    sessionFoldersHint: "Scanned before Pi's environment, settings, and default session folders.",
-    addSessionFolder: "Add session folder…",
     resources: {
       extensions: "Extensions",
       skills: "Skills",
@@ -351,6 +471,7 @@ export const en = {
     skills:
       "Skills are reusable instruction packs that teach the AI how to do specific engineering tasks well.",
     mcp: "MCP servers are plugins that extend the AI with new abilities — web access, memory, GitHub, and more.",
+    pi: "Pi packages bundle extensions, skills, prompts and themes into one install. A package runs with your own permissions, so the app asks before every one.",
     network:
       "Set up a proxy (detected automatically) and mirrors — everything the CLIs need on a restricted or slow network. API relay endpoints live under Accounts & relays.",
     ccswitch:
@@ -510,8 +631,11 @@ export const en = {
     selectedSummary: (size: string, files: number) => `${size} selected · ${files} file(s)`,
     nothingSelected: "Pick what to clear",
     clean: "Clean selected…",
-    quickClean: "Clear caches",
-    quickCleanHint: "Ticks only the safe, regenerated items — nothing you wrote.",
+    /** Selects, never cleans — the name says so, because Clean is a separate step. */
+    quickClean: "Select caches",
+    quickCleanHint:
+      "Adds only the safe, regenerated items to your selection — nothing you wrote. Nothing is removed until you review it.",
+    quickCleanNone: "No regenerated caches were found, so there is nothing safe to select at once.",
     selectAll: "Select all",
     clearSelection: "Clear",
     degraded: "Part of this couldn't be read, so the size is a minimum.",
@@ -718,6 +842,7 @@ export const en = {
       purge: "Empty",
       purgeAll: "Empty everything",
       purgeConfirmTitle: "Empty the recycle area?",
+      purgeBatchConfirmTitle: "Empty this batch?",
       purgeConfirmBody: (size: string) =>
         `${size} will be deleted permanently. This is the only copy — it cannot be undone.`,
       batch: (items: number, size: string) => `${items} item(s) · ${size}`,
@@ -747,6 +872,8 @@ export const en = {
     filterNotInstalled: "Not installed",
     filterNeedsKey: "Needs key",
     filterTarget: "Target",
+    /** Why the Target select is disabled — it narrows the two presence chips only. */
+    filterTargetHint: "Pick Installed or Not installed first — the target narrows those two.",
     filterAnyTarget: "Any target",
     filterTransport: "Transport",
     filterAnyTransport: "Any transport",
@@ -771,6 +898,8 @@ export const en = {
     registryEmpty: "No registry servers match.",
     registryError: "Couldn't reach the registry. Showing the featured catalog only.",
     registryLoadMore: "Load more",
+    registryRetry: "Retry",
+    registryMoreError: "Couldn't load more results from the registry.",
     registryAdd: "Add…",
     registryUnsupportedOci: "Container-only (Docker) — not installable here",
     registryAddTitle: (name: string) => `Add "${name}" from the registry`,
@@ -804,6 +933,12 @@ export const en = {
     catalogHint:
       "Each row lists the agents it can be added to. Click one to add the server there; click it again to remove it.",
     keyAdd: (envVar: string) => `Add API key (${envVar})`,
+    // A key typed here used to reach only the *next* add. For a server that is
+    // already installed — the case the completion screen's to-do sends people
+    // here for — this is the write that puts it into the agents' config.
+    keyApply: (n: number) => `Write key to ${n} installed agent${n === 1 ? "" : "s"}`,
+    keyApplyTitle: (server: string) => `Set the API key for ${server}`,
+    keyPending: "Used when you add this server to an agent.",
     installedActionHint: "The servers already configured across your agents.",
     catalogActionHint: "Browse the built-in catalog and add a server to any agent.",
     matrixActionHint: "Compare Claude Code, Codex, and OpenCode side by side.",
@@ -858,6 +993,12 @@ export const en = {
     fieldTokenHint: "Sent as an Authorization header to Claude / OpenCode.",
     fieldTokenEnvVar: "Token env var (Codex)",
     fieldTokenEnvVarHint: "Codex reads the token from this env var rather than storing it.",
+    fieldExtraHeaders: "Other headers",
+    fieldExtraHeadersHint:
+      "Sent with every request by Claude Code and OpenCode. Codex stores no headers.",
+    headerNamePlaceholder: "Header-Name",
+    addHeader: "Add header",
+    removeRow: "Remove row",
     envKeyPlaceholder: "NAME",
     envValuePlaceholder: "value",
     envRefPlaceholder: "HOST_VAR",
@@ -876,12 +1017,16 @@ export const en = {
     errUrlRequired: "Enter a server URL.",
     errTargetRequired: "Select at least one agent.",
     errCodexTokenEnv: "Codex needs a token env-var name when a bearer token is set.",
+    errAuthorizationTwice: "Set either the bearer token or an Authorization header, not both.",
     capCodexNoSse: "Codex only supports streamable-HTTP, not standalone SSE.",
     // Detail dialog
     detailConfigTitle: "Configuration by agent",
     detailNotConfigured: "Not configured on any agent yet.",
     detailPresence: "Configured on",
     detailRaw: "Raw config",
+    detailReading: "Reading config…",
+    detailUnreadable:
+      "Listed in this agent's config, but its entry couldn't be parsed — open the file to check it.",
     copy: "Copy",
     copied: "Copied",
     fieldHeaders: "Headers",
@@ -910,6 +1055,7 @@ export const en = {
     probeTimeout: "Timed out",
     probeSpawnFailed: "Couldn't start the server",
     probeHttp: (code: string) => `HTTP ${code}`,
+    probeFailed: (msg: string) => `Couldn't run the handshake: ${msg}`,
     exportShareable: "Export (shareable, secrets redacted)",
     // Import from paste
     importCardTitle: "Import from JSON or a command",
@@ -924,13 +1070,16 @@ export const en = {
     importButton: (n: number) => `Import ${n}`,
     importSelectTargets: "Import into",
     importCollision: "already configured — importing overwrites it",
-    importDone: (n: number) => `Imported ${n} server${n === 1 ? "" : "s"}.`,
+    /** An SSE server in the paste, with Codex ticked: Codex has no SSE transport. */
+    importSkipsCodex: "SSE · not written to Codex",
     // Overview matrix
     tabMatrix: "Overview",
     matrixHint: "Which servers are configured on which CLI. Click a cell to add or remove.",
     matrixServer: "Server",
     copyToTarget: (target: string) => `Copy to ${target}`,
-    copyDone: (target: string) => `Copied to ${target}.`,
+    copyReading: "Reading this server's config…",
+    copyNoSpec:
+      "Couldn't read this server's entry from any agent's config, so there is nothing to copy.",
   },
 
   mcpKeys: {
@@ -962,7 +1111,11 @@ export const en = {
       subtitle: "Looks in env vars, OS settings, npm/git config and the usual local ports.",
       scan: "Scan again",
       scanning: "Scanning…",
-      empty: "No proxy found on this machine. Enter one manually below if you have one.",
+      empty:
+        "No proxy found on this machine. If you have one, choose Manual under Proxy and enter it.",
+      /** No reading at all — distinct from `empty`, which is a scan that found nothing. */
+      unmeasured: "Not scanned yet, so nothing here is measured. Scan again to look for a proxy.",
+      failed: "The last scan didn't finish, so nothing here is measured. Scan again to retry.",
       use: "Use",
       test: "Test",
       pacNote: (url: string) =>
@@ -1030,6 +1183,11 @@ export const en = {
       apply: "Apply proxy",
       clear: "Clear proxy",
       needsUrl: "Enter a proxy address first.",
+      /** Off leaves an applied proxy in place, so Clear has to stay reachable. */
+      stillApplied:
+        "A proxy applied earlier is still saved, and Off leaves it wherever it was written. Clear proxy removes it.",
+      notTauri:
+        "Applying, clearing and testing a proxy need the desktop app — in the browser there is no machine to write to.",
       testTitle: "Connectivity test",
       testTargetLabel: "Test against",
       testRun: "Run test",
@@ -1098,6 +1256,15 @@ export const en = {
     apply: "Apply changes",
     applying: "Applying…",
     discard: "Discard",
+    /** Each step's state as a word — the icon beside it is colour and shape only. */
+    status: {
+      pending: "waiting",
+      running: "running",
+      done: "done",
+      error: "failed",
+      skipped: "skipped",
+      warning: "needs attention",
+    },
     installClis: "Install CLIs:",
     skills: "Skills:",
     mcpServers: "MCP servers:",
@@ -1147,7 +1314,8 @@ export const en = {
     copied: "Copied",
     todoTitle: "Still to do",
     todoKey: (env: string) =>
-      `Add your ${env} key in the Plugins section — the server is installed but can't run without it.`,
+      `Add your ${env} key under Capabilities → MCP servers — the server is installed but can't run without it.`,
+    todoOpenMcp: "Open MCP servers",
     todoSignIn: "Sign in to Claude when it opens. The Code tab needs a paid plan.",
     todoWindowsGit: "Install Git — Claude needs it to work with local folders on Windows.",
     todoCcSwitchGateway:
@@ -1598,6 +1766,9 @@ export const en = {
     notTauri: "Skill browsing needs the desktop app.",
     scanError: (source: string, message: string) => `Scan failed for ${source}: ${message}`,
     scanIssueCount: (count: number) => `${count} scan issue${count === 1 ? "" : "s"}`,
+    scanFailed: (msg: string) => `Couldn't scan the skills roots: ${msg}`,
+    emptyScanFailed: "No skills could be read — the scan failed for the roots listed above.",
+    retry: "Retry",
     searchPlaceholder: "Search skills…",
     filterAll: "All",
     /** The one button the status and sort selects fold into. */
@@ -1676,6 +1847,8 @@ export const en = {
     mirrorHint: "Optional proxy prefix (e.g. https://gh-proxy.com/) for blocked networks.",
     useNpx: "Install via skills CLI (npx)",
     npxHint: "Runs `npx skills add` — needs Node.js; creates symlinked installs.",
+    npxNoTarget:
+      "Pick Claude Code, Codex or OpenCode — without one, the skills CLI installs into every agent it finds.",
     addLocalTitle: "Import a local folder",
     addLocalHint: "Pick a folder that contains a SKILL.md.",
     pickFolder: "Choose folder…",
@@ -1690,6 +1863,8 @@ export const en = {
     statManaged: "Managed",
     statUpdates: "Updates",
     statScanIssues: "Scan issues",
+    /** Why Updates reads `—`: nothing has been checked yet. */
+    statUpdatesPending: "Updates are counted once Check updates has run.",
     summaryLabel: "Skills summary",
     actionsLabel: "Skill management views",
     installedPanel: "Installed skills",
@@ -1728,6 +1903,10 @@ export const en = {
     editSave: "Save",
     editCancel: "Cancel",
     editHint: "Editing the raw SKILL.md. Saving backs up the previous version.",
+    editDiscardTitle: "Discard your SKILL.md edits?",
+    editDiscardBody: "Closing now drops the changes you haven't saved.",
+    editKeep: "Keep editing",
+    editDiscard: "Discard edits",
 
     // --- Update / sync ---
     checkUpdates: "Check updates",
@@ -1735,9 +1914,8 @@ export const en = {
     updateAll: (n: number) => `Update all (${n})`,
     updateAvailable: "Update available",
     update: "Update",
-    updatesFound: (n: number) => `${n} update${n === 1 ? "" : "s"} available.`,
-    noUpdates: "All managed skills are up to date.",
     checkFailed: (msg: string) => `Update check failed: ${msg}`,
+    checkUpdatesNoneManaged: "Only skills installed from GitHub can be checked for updates.",
 
     // --- Backups ---
     backups: "Backups",
@@ -1751,12 +1929,13 @@ export const en = {
     backupSize: "Size",
     restore: "Restore",
     restoreInto: "Restore into",
-    restored: (n: number) => `Restored into ${n} target${n === 1 ? "" : "s"}.`,
     deleteBackup: "Delete",
     deleteBackupConfirm: (name: string) => `Delete backup of "${name}"?`,
     deleteBackupBody: "This permanently removes the backup.",
     backupDeleted: "Backup deleted.",
     backupActionFailed: (msg: string) => `Failed: ${msg}`,
+    backupsLoadFailed: (msg: string) => `Couldn't list backups: ${msg}`,
+    restoreStep: (name: string, targets: string) => `Restore skill ${name} into ${targets}`,
 
     // --- Create a skill ---
     createTitle: "Create a skill",
@@ -1787,8 +1966,8 @@ export const en = {
     batchDeleteScope: "Delete from…",
     deleteScopeAll: "All sources",
     batchDelete: "Delete",
-    batchCopyDone: (n: number) => `Copied ${n} skill${n === 1 ? "" : "s"}.`,
     batchNothingToCopy: "Every selected skill is already in those targets.",
+    batchNothingToDelete: (scope: string) => `None of the selected skills are in ${scope}.`,
     batchDeleteConfirmTitle: (n: number) => `Delete ${n} skill${n === 1 ? "" : "s"}?`,
     batchDeleteConfirmBody: (scope: string) =>
       `Each skill is backed up first, then removed from ${scope}.`,
@@ -2008,7 +2187,6 @@ export const en = {
     noBackups: "No backups yet.",
     restore: "Restore",
     restoreConfirm: "Restore this backup? Current DB and live configs are snapshotted first.",
-    restored: "Restored from backup.",
     backupFiles: (n: number) => `${n} file${n === 1 ? "" : "s"}`,
     formAddTitle: "Add provider",
     formEditTitle: "Edit provider",
@@ -2022,6 +2200,24 @@ export const en = {
     fieldModel: "Model (optional):",
     fieldNotes: "Notes (optional):",
     fieldWebsite: "Website (optional):",
+    addNeedsDb:
+      "Adding a provider needs the provider database. Initialize it in the checklist first.",
+    addNeedsMigration:
+      "This cc-switch database is too old to write to. Launch cc-switch once so it migrates, then Refresh.",
+    listOutdated:
+      "The provider list can't be read: this cc-switch database predates the columns agentpack needs. Launch cc-switch once so it migrates, then Refresh.",
+    deleteCurrentBlocked: "The current provider can't be deleted — make another one current first.",
+    visibleUnchanged: "Matches cc-switch's settings. Toggle an app to change it.",
+    accountActive: "Active — every app already points at this profile's providers.",
+    accountNothingToApply:
+      "Nothing to switch — the providers this profile names are deleted or already current.",
+    accountSaveNeedsCurrent:
+      "Make a provider current first — a profile records which provider each app points at.",
+    importNothingNew: "Nothing imported — every provider in that file already exists here.",
+    importReadFailed: (path: string, reason: string) =>
+      `Couldn't read ${path || "the import file"}: ${reason}. Choose the file again.`,
+    exportFailed: (path: string, reason: string) =>
+      `Couldn't write ${path}: ${reason}. Choose a folder you can write to, then export again.`,
   },
 
   /** cc-connect management screens (bridge local agents to chat platforms). */
@@ -2038,8 +2234,13 @@ export const en = {
     stepConfigDesc:
       "config.toml needs at least one [[projects]] entry naming a folder and a chat platform. Create config writes a filled-in starting point.",
     stepConfigDone: (n: number) => (n === 1 ? "1 project configured" : `${n} projects configured`),
+    stepConfigPlaceholders: (keys: string) =>
+      `The starter config still holds placeholders (${keys}). Replace them with your project folder and chat-app credentials — Edit config here, or the dashboard once the bridge runs.`,
     stepStartTitle: "Start the bridge",
     stepStartDesc: "Runs in the background and keeps your projects connected.",
+    // Start is disabled until there is a project; with no config file at all
+    // the "needs a project" alert has nothing to hang on, so the row says it.
+    stepStartNeedsConfig: "Waits for a project — create the config in the step above first.",
     stepOpenTitle: "Open the dashboard",
     summaryLabel: "cc-connect summary",
     actionsLabel: "cc-connect endpoints",
@@ -2234,7 +2435,10 @@ export const en = {
     instanceId: "Instance ID",
     customCa: "Custom CA PEM path",
     customCaHint:
-      "Optional. The certificate is imported by Rust; certificate verification is never skipped.",
+      "Optional — for a server behind a private certificate authority. The certificate is added to what this app trusts; verification is never skipped.",
+    // The dialog's own subtitle; the CA note used to stand in for it.
+    instanceDialogHint:
+      "Where this app reaches your more-token server. Signing in comes next, and the credential stays in the OS credential store.",
     readOnly: "Read-only instance",
     displayCurrency: "Display currency",
     save: "Save",
@@ -2461,6 +2665,43 @@ export const en = {
     atomic: "Atomic — all or none",
     bestEffort: "Best effort — resume failed items",
     submitBatch: "Start batch",
+    waitingForBrowser: "Waiting for browser approval…",
+    cancelApproval: "Cancel approval",
+    stepUpExpired:
+      "Browser approval expired before anyone confirmed it. Start the operation again.",
+    done: "Done",
+    batchItemCount: (count: number) => `${count} ${count === 1 ? "item" : "items"}`,
+    bulkReason: {
+      enable: "Bulk enable from agentpack",
+      disable: "Bulk disable from agentpack",
+      archive: "Bulk archive from agentpack",
+    },
+    bulkResult: (succeeded: number, failed: number) => `${succeeded} succeeded · ${failed} failed`,
+    batchArchiveTitle: (count: number) =>
+      `Archive ${count} ${count === 1 ? "account" : "accounts"}?`,
+    batchArchiveBody:
+      "They move to the Archived lifecycle state. Each one can be brought back with Restore from its actions menu. The server asks for browser approval before anything changes.",
+    reverseTitle: (id: number) => `Reverse transaction #${id}?`,
+    reverseBody: (amount: string, from: number, to: number) =>
+      `Moves ${amount} from #${from} back to #${to}. The reversal is recorded as a new ledger entry; the original stays in the immutable ledger.`,
+    reverseReason: (id: number) => `Reverse transaction #${id}`,
+    removeInstanceTitle: (name: string) => `Remove ${name}?`,
+    removeInstanceBody:
+      "Deletes this saved connection and its desktop credential. The server is asked to revoke the credential first; if it can't be reached you can still delete the local copy, and the server credential may stay active until it expires.",
+    removingInstance: "Removing…",
+    removeCustomCa: "Remove custom CA",
+    localOnlyCredentialTitle: "Delete only the local credential?",
+    deleteLocalCopy: "Delete local copy",
+    deleteRuleTitle: (name: string) => `Delete alert rule “${name}”?`,
+    deleteRuleBody:
+      "The rule stops evaluating immediately. This can't be undone — create the rule again to bring it back.",
+    accountId: "ID",
+    policyWriteDenied: "This connection has no policy write scope.",
+    transferScopeDenied: "This connection has no quota transfer scope.",
+    invitesDisabled: "Invitation email is disabled on this server.",
+    nothingToExport: "Nothing on this page to export.",
+    csvSaved: (path: string) => `Saved ${path}`,
+    csvSaveFailed: (reason: string) => `Couldn't save the CSV: ${reason}`,
   },
 
   personal: {
@@ -2608,6 +2849,14 @@ export const en = {
     closeReason: "Reason for closing",
     closeBlockedBalance:
       "Independent accounts must use or transfer their remaining balance before closing.",
+    restartBrowserSignIn: "Start over",
+    durationMs: (ms: string) => `${ms} ms`,
+    openSecurity: "Open Security",
+    currentSessionHint: "This is the desktop you're using. Use Forget credential to sign it out.",
+    noSessions: "No desktop sessions.",
+    passwordChangeDisabled:
+      "This server does not allow changing your password from the desktop app.",
+    accountCloseDisabled: "This server does not allow closing your account from the desktop app.",
   },
 
   /** GUI shell strings (header controls, dialogs) — GUI-only, not in the TUI. */
@@ -2767,8 +3016,9 @@ export const en = {
      */
     handOffSkill: "Restoring a skill needs you to say which agents it goes back into.",
     handOffQuarantine: "Restoring a batch needs you to see what is in it first.",
-    restored: "Restored.",
     restoreFailed: "The restore didn't finish — the run log has the detail.",
+    restoreCancelled: "Restore cancelled — nothing was written.",
+    loadingNote: "Reading the backup stores…",
     confirmTitle: "This would overwrite newer work",
     confirmBody: (when: string) =>
       `A file this restores over was changed after ${when}. Restoring puts it back to how it was then, and the later change is not kept anywhere.`,
@@ -2828,7 +3078,7 @@ export const en = {
     title: "Recent activity",
     empty: "Nothing yet. Runs you apply will be listed here.",
     notTauri: "Run the desktop app to keep a record of what changed.",
-    viewAll: "Open the run panel",
+    viewAll: "Open recovery points",
     steps: (n: number) => `${n} step${n === 1 ? "" : "s"}`,
     outcome: {
       done: "Applied",
@@ -2854,6 +3104,8 @@ export const en = {
     count: (n: number) => `${n} selected`,
     clear: "Clear selection",
     review: "Review changes",
+    /** What a run staged from the tray is called — in the panel and the activity log. */
+    runTitle: (n: number) => `Set up ${n} selected item${n === 1 ? "" : "s"}`,
   },
 
   shell: {
@@ -2883,8 +3135,10 @@ export const en = {
     update: "Update",
     reinstall: "Reinstall",
     downloadLatest: "Download latest",
-    installNow: "Install now",
-    uninstallNow: "Uninstall now",
+    // "…" rather than "now": these stage the change for the review panel, and a
+    // label that promised an immediate install described a gate as if it weren't one.
+    installNow: "Install…",
+    uninstallNow: "Uninstall…",
     installMethod: "Install method",
     apply: "Apply",
     /** The four SetupSteps states as words — the marker itself is only colour. */
@@ -2900,6 +3154,14 @@ export const en = {
     emptyPlan: "Your plan is empty. Select CLIs, skills, MCP servers or network options first.",
     nothingToDo: "Everything in your plan is already installed and up to date — nothing to do.",
     notInTauri: "Run the desktop app (pnpm tauri dev) to execute installs.",
+    // The review panel while a run is executing, and the header control that
+    // brings it back once it has been closed.
+    runBusy: "A run is still going. Let it finish, or cancel it, before staging another.",
+    runningDesc: "Applying the reviewed steps. Closing this panel doesn't stop them.",
+    finishedDesc: "What ran, step by step.",
+    runningBadge: (done: number, total: number) => `Running ${done}/${total}`,
+    showRun: "Show the run in progress",
+    preparing: "Preparing…",
     scanFailed:
       "Couldn't read what's already set up, so the install was not started — running blind would try to re-add things you already have. Try again in a moment.",
     // Shown after a network retry rescued a step. Nothing was written to get
@@ -2985,16 +3247,26 @@ export const en = {
       emptyAction: "Install a CLI",
       details: "Open usage dashboard →",
       notTauri: "Run the desktop app to read your session history.",
+      // A failed read is not a month with no spend, and a partial one is not
+      // the whole month.
+      failed: (message: string) => `Couldn't read your session history: ${message}`,
+      retry: "Read again",
+      partial: (n: number) =>
+        n === 1
+          ? "1 source couldn't be read — this is a partial total"
+          : `${n} sources couldn't be read — this is a partial total`,
     },
   },
 
   /** Chat-history reader + usage statistics across Claude Code, Codex, OpenCode. */
   history: {
     title: "Chat history",
-    subtitle: "Read past sessions and token usage across Claude Code, Codex and OpenCode.",
+    subtitle: "Read past sessions and token usage across Claude Code, Codex, OpenCode and Pi.",
     notTauri: "Run the desktop app to read your local chat history.",
     loading: "Reading your chat history…",
     refresh: "Rescan",
+    /** The Rescan button while any history scan runs — same width, label replaced. */
+    refreshing: "Scanning…",
     tabSessions: "Sessions",
     tabUsage: "Usage",
     searchPlaceholder: "Search sessions, projects, models…",
@@ -3007,6 +3279,12 @@ export const en = {
     emptyHint: "Once you chat with a CLI, its sessions show up here.",
     emptyFiltered: "No sessions match your filters.",
     scanError: (source: string, message: string) => `Couldn't read ${source}: ${message}`,
+    /** The scan command itself failed, so nothing was read — not an empty machine. */
+    scanFailed: (message: string) =>
+      `Couldn't read the chat history: ${message}. Rescan to try again.`,
+    seriesFailed: (message: string) =>
+      `Couldn't load per-message usage: ${message}. Rescan to try again.`,
+    seriesUnavailable: "Per-message usage couldn't be loaded — see the error above.",
 
     /**
      * The header band: what the scan found, before any filter is applied. Read
@@ -3038,11 +3316,13 @@ export const en = {
     listPanel: "Sessions",
     filtersLabel: "Sort & filter",
     filtersReset: "Reset",
-    clearDay: "Clear day filter",
+    /** A filter chip's accessible name, which keeps the chip's own text. */
+    clearFilter: (filter: string) => `Clear ${filter}`,
+    projectFilter: (project: string) => `Project: ${project}`,
+    periodFilter: (period: string) => `Period: ${period}`,
     /** Row meta, labelled rather than run together — a bare "1.2M" beside a
         bare "$3.40" tells a newcomer nothing about which is which. */
     rowTokens: (tokens: string) => `${tokens} tokens`,
-    rowCostEst: (cost: string) => `~${cost}`,
     listCount: (shown: number, total: number) =>
       shown === total ? `${total} sessions` : `${shown} of ${total} sessions`,
     /** Session sources — display names. */
@@ -3099,6 +3379,7 @@ export const en = {
       return agent ? `${label} · ${agent}` : label
     },
     loadFailed: "Couldn't load this transcript.",
+    retry: "Retry",
     transcriptEmpty: "This session has no renderable messages.",
     turns: (n: number) => `${n} turn${n === 1 ? "" : "s"}`,
     // Oversized payloads arrive truncated and are fetched on demand.
@@ -3125,7 +3406,6 @@ export const en = {
     statAvgCost: "Avg cost / session",
     costNote:
       "Cost is exact for OpenCode; for Claude Code and Codex it's estimated from current per-model pricing (2026-07). Rates change — treat estimates as approximate.",
-    estBadge: "est.",
     costEstimatedSub: (v: string) => `incl. ${v} estimated`,
     ratePerMillion: (input: string, output: string) => `${input} / ${output} per 1M`,
     chartByDay: "Tokens by day",
@@ -3179,9 +3459,13 @@ export const en = {
     applyRange: "Apply",
     granularityLabel: "Group by",
     granularity: { day: "Daily", week: "Weekly", month: "Monthly" } as Record<string, string>,
+    /** Why "Group by" is disabled for Today. */
+    granularityDayOnly: "A single day is one bucket.",
     rangeEmpty: "No sessions in this period.",
     dayFilter: (day: string) => `Day: ${day}`,
     clickToDrill: "Click a row to see the sessions behind it.",
+    clickDayToDrill: "Click a day to see the sessions behind it.",
+    clickToOpen: "Click a row to read its transcript.",
 
     // --- Usage sub-tabs ---
     tabOverview: "Overview",
@@ -3239,6 +3523,7 @@ export const en = {
     subscriptionLabel: "Monthly subscription spend (USD)",
     subscriptionSettingHint:
       "Optional. Only used to compare metered API pricing against what you actually pay — leave empty to hide that card.",
+    subscriptionInvalid: "Enter a number, like 200 or $1,000.",
     subscriptionTitle: "API-equivalent vs what you pay",
     subscriptionHint: "What this period's work would have cost at metered API rates.",
     subscriptionApi: "API equivalent",
@@ -3276,6 +3561,7 @@ export const en = {
     // --- Export ---
     exportCsv: "Export CSV",
     exportJson: "Export JSON",
+    exportFailed: (message: string) => `Couldn't write the export: ${message}`,
 
     // --- Shareable report ---
     // CSV and JSON are for spreadsheets and scripts; this is the one a person
@@ -3291,6 +3577,8 @@ export const en = {
       saveSvg: "Save SVG",
       saved: (path: string) => `Saved to ${path}`,
       renderFailed: "Couldn't render the image — save the SVG instead.",
+      copyFailed: "Couldn't write to the clipboard. Try again.",
+      saveFailed: (message: string) => `Couldn't save the file: ${message}`,
       cost: "Cost",
       tokens: "Tokens",
       sessions: "Sessions",
@@ -3344,6 +3632,9 @@ export const en = {
     skipVersion: "Skip this version",
     viewOnGitHub: "View on GitHub",
     checkFailed: "Update check failed. Please try again later.",
+    installFailed:
+      "The update didn't install. The reason is under Application updates — try Install & restart again.",
+    updateInstallFailed: "Install failed",
     lastChecked: (when: string) => `Last checked: ${when}`,
     never: "never",
     configFolders: "Config folders",
@@ -3431,7 +3722,7 @@ export const en = {
     none: "none",
     saveAs: "Save current as profile",
     namePlaceholder: "Profile name",
-    apply: "Apply",
+    apply: "Load into selection",
     rename: "Rename",
     renameLabel: (name: string) => `New name for ${name}`,
     renameCommit: "Save name",
@@ -3444,13 +3735,28 @@ export const en = {
     savedAt: (when: string) => `Saved ${when}`,
     machineComplete: "This machine already has everything in it.",
     machineMissing: (n: number) =>
-      `${n} of these ${n === 1 ? "is" : "are"} not on this machine yet — Apply installs just those.`,
+      `${n} of these ${n === 1 ? "is" : "are"} not on this machine yet — loading it and reviewing the changes installs just those.`,
     fileTitle: "Config file",
     fileHint: "The plan-only format the headless CLI reads.",
-    applied: (name: string) => `Applied profile "${name}"`,
+    applied: (name: string) =>
+      `Loaded "${name}" into the selection — nothing is installed until you review the changes.`,
     saved: (name: string) => `Saved profile "${name}"`,
     deleted: (name: string) => `Deleted profile "${name}"`,
     nameRequired: "Enter a profile name.",
+    // Saving an empty selection made a profile whose only effect, loaded
+    // later, was to clear whatever had been picked since.
+    emptySelection:
+      "Nothing is selected yet — pick CLIs, skills or MCP servers first, then save them here.",
+    deleteTitle: (name: string) => `Delete the profile "${name}"?`,
+    deleteBody: (path: string) => `It is removed from ${path}, and no copy is kept.`,
+    storeUnreadable: (path: string, reason: string) =>
+      `Couldn't read ${path}: ${reason}. Nothing is written to it until it can be read — fix the file, then read it again.`,
+    storeCorrupt: (path: string) =>
+      `${path} isn't a profile list agentpack can read, so it is left untouched and nothing is saved to it — fix or move the file, then read it again.`,
+    readAgain: "Read again",
+    writeFailed: (path: string, reason: string) =>
+      `Couldn't write ${path}: ${reason}. The profile list was left as it was.`,
+    configWriteFailed: (path: string, reason: string) => `Couldn't write ${path}: ${reason}.`,
   },
 
   bundle: {
@@ -3517,7 +3823,25 @@ export const en = {
     secretsPresent: "This backup carries working credentials.",
     skippedParts: (list: string) => `Could not read: ${list}`,
     importDone: "Backup imported.",
-    dryRunSkipped: "Preview mode — nothing was written.",
+    importDiscarded: "Import cancelled — nothing was written.",
+    importStopped:
+      "Import stopped before it finished — the review panel lists what ran, and your selection was left as it was.",
+    exportWebNote:
+      "Saving a file, and reading providers and config files, needs the desktop app. Copy carries the plan, profiles and settings this window holds.",
+    importWebNote:
+      "Importing writes to this machine, so it needs the desktop app. You can still paste a backup to read what it holds.",
+    exportFailed: (reason: string) =>
+      `Couldn't save the backup: ${reason}. Pick another location and try again.`,
+    copyFailed:
+      "Couldn't copy the backup — the system refused clipboard access. Try again, or save a file instead.",
+    providersUnreadable: (reason: string) =>
+      `Couldn't read the provider store: ${reason}. Untick Providers to export without them.`,
+    profilesDropped: (n: number) =>
+      `Replace deletes ${n} profile${n === 1 ? "" : "s"} saved on this machine that this backup doesn't have. A copy of the current list is kept beside it.`,
+    stepProfilesKeep: (path: string) => `Keep a copy of ${path} as it is now`,
+    stepProfilesWrite: (path: string) => `Write the imported profiles to ${path}`,
+    profilesWritten: (n: number) => `saved ${n} profile${n === 1 ? "" : "s"}`,
+    stepSettings: (n: number) => `Save ${n} app setting${n === 1 ? "" : "s"}`,
     importPlaceholder: "Paste the contents of a backup file here",
     tomlReformatHint: "TOML comments are not preserved in a redacted export.",
   },
@@ -3529,6 +3853,8 @@ export const en = {
     create: "Create",
     present: "present",
     missing: "missing",
+    checking: "checking…",
+    stepLabel: (path: string) => `Save ${path} from the editor`,
     notTauri: "Editing your config files needs the desktop app.",
     tabForm: "Form",
     tabRaw: "Text",
