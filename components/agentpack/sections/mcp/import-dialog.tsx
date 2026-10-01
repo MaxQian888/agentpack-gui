@@ -139,7 +139,9 @@ export function ImportDialog({
                     <span className="text-xs text-muted-foreground">{m.importSkipsCodex}</span>
                   ) : null}
                   {taken.has(s.id) ? (
-                    <span className="ml-auto text-xs text-amber-600">{m.importCollision}</span>
+                    <span className="ml-auto text-xs text-[var(--hm-warn)]">
+                      {m.importCollision}
+                    </span>
                   ) : null}
                 </div>
               ))}

@@ -5,6 +5,7 @@ import type { OS, ProxyConfig } from "@/lib/agentpack/types"
 import type { ProviderBackend } from "@/lib/agentpack/ccswitch/types"
 import type { SectionKey } from "@/lib/agentpack/workspaces"
 import { DEFAULT_UI_SCALE, type UiScale } from "@/lib/agentpack/appearance"
+import { DEFAULT_PROXY } from "@/lib/agentpack/network/proxy"
 
 /**
  * Where a half-finished first run got to. Written when the wizard is closed
@@ -155,10 +156,19 @@ export async function loadSettings(): Promise<AppSettings> {
     // where provider management always used CC Switch. Preserve that choice on
     // upgrade; a genuinely fresh install (no object) starts in native mode.
     const migratedBackend = saved && !("providerBackend" in saved) ? "ccswitch" : undefined
+    // A proxy saved without `targets` (an older release wrote none) is filled
+    // in the way `setProxy` fills it. Left raw, it never compared equal to the
+    // plan's copy — the tray read "1 selected" on every launch and each review
+    // rewrote the same proxy — and `hasTarget` would throw on the missing list.
+    const proxy =
+      saved?.proxy && !Array.isArray(saved.proxy.targets)
+        ? { ...saved.proxy, targets: [...DEFAULT_PROXY.targets] }
+        : undefined
     return {
       ...DEFAULT_SETTINGS,
       ...(migratedBackend ? { providerBackend: migratedBackend } : {}),
       ...(saved ?? {}),
+      ...(proxy ? { proxy } : {}),
     }
   } catch {
     return { ...DEFAULT_SETTINGS }

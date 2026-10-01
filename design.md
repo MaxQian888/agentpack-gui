@@ -168,15 +168,24 @@ things move:
 
 Both entrances live in `app/globals.css` as `hm-enter` (a destination arriving,
 replayed by the shell on every navigation, `--hm-rise` of travel) and
-`hm-tray-in`. Overlays are part of the same system: dialogs and the review
-panel enter on `--hm-ease-out` at `--hm-dur-base` / `--hm-dur-slow` and leave
-faster on `--hm-ease-in` — an exit is never slower than the entrance.
+`hm-tray-in`. "Panel entry" covers four more arrivals, all on the same beat:
+a `SectionView` swap (the class is restarted on a nav choice, never on first
+render, so it can't stack on the shell's), a `CollapsibleContent` or native
+`<details>` body opening (≤ 4px rise), and a `TabsContent` switch (opacity
+only — the strip already says where you went). Each leaves instantly.
+Overlays are part of the same system: dialogs and the review panel enter on
+`--hm-ease-out` at `--hm-dur-base` / `--hm-dur-slow` and leave faster on
+`--hm-ease-in` — an exit is never slower than the entrance.
 
 Anything that _moves_ animates `transform` and `opacity` only — never
 top/left/width/height, which is why the tour's spotlight jumps rather than
 glides. A control changing colour on hover or press may cross-fade at
 `--hm-dur-fast`; that is a state change, not motion, and it never uses
-`transition-all`. Use the three named easings; never the browser default
+`transition-all`. Tailwind's default transition timing is re-pointed at
+`--hm-dur-fast` / `--hm-ease-out` in `app/globals.css`, and the floating
+layers (popover, select, dropdown, tooltip) enter on `--hm-ease-out` and leave
+on `--hm-ease-in` — so a shadcn primitive never falls back to the browser's
+`ease`. Use the three named easings; never the browser default
 `ease`, never bounce or overshoot. The focus ring never animates.
 `prefers-reduced-motion: reduce` collapses all of it to ≈0ms globally
 (`app/globals.css`), and nothing that carries information is motion-only.

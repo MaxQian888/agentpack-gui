@@ -24,6 +24,10 @@ const Toaster = ({ ...props }: ToasterProps) => {
         error: <OctagonXIcon className="size-4" />,
         loading: <Loader2Icon className="size-4 animate-spin" />,
       }}
+      // Lifted by the change tray's height while it is docked (change-tray.tsx),
+      // so a toast never lands on the tray's Review button.
+      offset={{ bottom: "calc(var(--hm-space-lg) + var(--hm-tray-h, 0px))" }}
+      mobileOffset={{ bottom: "calc(var(--hm-space-md) + var(--hm-tray-h, 0px))" }}
       style={
         {
           "--normal-bg": "var(--popover)",

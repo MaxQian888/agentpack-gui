@@ -74,11 +74,10 @@ export function DiscoveryCard({
     rechecks[c.id] ?? probe?.proxies.find((p) => p.id === c.id)?.result ?? undefined
   return (
     <Card className="gap-3 p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="font-medium">{d.title}</h3>
-          <p className="text-sm text-muted-foreground">{d.subtitle}</p>
-        </div>
+      {/* Title and action share a row; the subtitle takes the card's full
+          width below them rather than a sliver beside the button. */}
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-0.5">
+        <h3 className="self-center font-medium">{d.title}</h3>
         <Button
           variant="outline"
           size="sm"
@@ -89,6 +88,7 @@ export function DiscoveryCard({
           <RefreshCw className={cn("size-4", scanning && "animate-spin")} />
           {scanning ? d.scanning : d.scan}
         </Button>
+        <p className="col-span-2 text-sm text-muted-foreground">{d.subtitle}</p>
       </div>
 
       {mounted && !tauri ? (

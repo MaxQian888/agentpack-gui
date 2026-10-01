@@ -330,7 +330,7 @@ export function CleanupSection() {
 
           {/* Controls that change what the numbers below mean, so they sit above them. */}
           <Card className="flex-row flex-wrap items-center gap-x-6 gap-y-3 p-4">
-            <div className="flex min-w-0 flex-1 flex-col items-stretch gap-1 sm:flex-none sm:flex-row sm:items-center sm:gap-2">
+            <div className="flex min-w-0 basis-full flex-col items-stretch gap-1 sm:basis-auto sm:flex-none sm:flex-row sm:items-center sm:gap-2">
               <Label htmlFor="cleanup-age" className="text-xs text-muted-foreground">
                 {t.cleanup.age.label}
               </Label>
@@ -357,7 +357,7 @@ export function CleanupSection() {
               </Select>
             </div>
 
-            <div className="flex min-w-0 flex-1 flex-col items-stretch gap-1 sm:flex-none sm:flex-row sm:items-center sm:gap-2">
+            <div className="flex min-w-0 basis-full flex-col items-stretch gap-1 sm:basis-auto sm:flex-none sm:flex-row sm:items-center sm:gap-2">
               <Label htmlFor="cleanup-mode" className="text-xs text-muted-foreground">
                 {t.cleanup.mode.label}
               </Label>
@@ -406,9 +406,11 @@ export function CleanupSection() {
                 const isUp = proc ? running[proc] : false
                 return (
                   <section key={app} className="flex min-w-0 flex-col gap-3 p-5">
-                    <div className="sticky top-0 z-10 -mt-1 flex items-center justify-between gap-3 bg-background py-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium">{t.cleanup.apps[app] ?? app}</span>
+                    <div className="sticky top-0 z-10 -mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 bg-background py-1">
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span className="whitespace-nowrap text-sm font-medium">
+                          {t.cleanup.apps[app] ?? app}
+                        </span>
                         <Badge variant="secondary" className="font-normal">
                           {t.cleanup.reclaimable(formatBytes(appBytes))}
                         </Badge>

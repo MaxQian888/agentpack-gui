@@ -623,15 +623,18 @@ function OverviewView({
           </AlertDescription>
         </Alert>
       ) : null}
-      <div className="overflow-hidden rounded-md border divide-y">
+      {/* Container-sized: the window-wide `lg` step put four columns into the
+          ~570px primary of a 1100px window and cut the instance's name to
+          "More To…". Narrower, the name takes its own row over the figures. */}
+      <div className="@container overflow-hidden rounded-md border divide-y">
         {overviewQueries.map((query, index) => {
           const item = instances[index]
           return (
             <div
               key={item.id}
-              className="grid gap-3 p-4 lg:grid-cols-[minmax(160px,0.8fr)_repeat(3,minmax(100px,0.55fr))] lg:items-center"
+              className="grid grid-cols-2 gap-3 p-4 @md:grid-cols-3 @2xl:grid-cols-[minmax(160px,0.8fr)_repeat(3,minmax(100px,0.55fr))] @2xl:items-center"
             >
-              <div className="flex min-w-0 items-center justify-between gap-3 lg:justify-start">
+              <div className="col-span-full flex min-w-0 items-center justify-between gap-3 @2xl:col-span-1 @2xl:justify-start">
                 <span className="truncate text-sm font-medium">{item.name}</span>
                 <Badge
                   variant={
@@ -642,7 +645,7 @@ function OverviewView({
                 </Badge>
               </div>
               {query.isError ? (
-                <p className="text-xs text-muted-foreground [overflow-wrap:anywhere] lg:col-span-3">
+                <p className="col-span-full text-xs text-muted-foreground [overflow-wrap:anywhere] @2xl:col-span-3">
                   {errorText(query.error)}
                 </p>
               ) : query.data ? (
@@ -652,13 +655,13 @@ function OverviewView({
                   <Metric label={m.openAlerts} value={number(query.data.open_alerts)} />
                 </>
               ) : (
-                <Skeleton className="h-12 lg:col-span-3" />
+                <Skeleton className="col-span-full h-12 @2xl:col-span-3" />
               )}
             </div>
           )
         })}
       </div>
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.6fr)]">
+      <div className="grid gap-4 @4xl:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.6fr)]">
         <section className="border-y py-5">
           <div>
             <h3 className="flex items-center gap-2 font-medium">
@@ -718,11 +721,35 @@ function OverviewView({
   )
 }
 
+/**
+ * One cell of the quota summary. A quota amount arrives as one string, "CNY
+ * 610.0462 · 305,023,119 quota"; the converted amount is what is read, so it is
+ * set large and the raw quota under it as its unit-level footnote.
+ */
+function SummaryCell({ label, value }: { label: string; value: string }) {
+  const [head, ...rest] = value.split(" · ")
+  return (
+    <div className="min-w-0 bg-background px-4 py-3">
+      <dt className="truncate text-xs text-muted-foreground">{label}</dt>
+      <dd className="mt-1 font-mono text-xl font-semibold tracking-tight tabular-nums [overflow-wrap:anywhere]">
+        {head}
+      </dd>
+      {rest.length > 0 ? (
+        <dd className="mt-0.5 font-mono text-xs text-muted-foreground tabular-nums [overflow-wrap:anywhere]">
+          {rest.join(" · ")}
+        </dd>
+      ) : null}
+    </div>
+  )
+}
+
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 text-lg font-semibold tabular-nums">{value}</p>
+    <div className="min-w-0">
+      <p className="truncate text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 font-mono text-lg font-semibold tabular-nums [overflow-wrap:anywhere]">
+        {value}
+      </p>
     </div>
   )
 }
@@ -2301,36 +2328,43 @@ function QuotaView({
       ) : summary.isLoading ? (
         <Skeleton className="h-20" aria-busy="true" />
       ) : (
-        <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border lg:grid-cols-4 [&>div]:bg-background">
-          <CapabilityMetric
-            label={m.totalQuota}
-            value={
-              summary.data
-                ? quotaAmountWithRaw(summary.data.available, capabilities.quota_display)
-                : "—"
-            }
-          />
-          <CapabilityMetric
-            label={m.usedQuota}
-            value={
-              summary.data ? quotaAmountWithRaw(summary.data.used, capabilities.quota_display) : "—"
-            }
-          />
-          <CapabilityMetric
-            label={m.accounts}
-            value={summary.data ? number(summary.data.accounts) : "—"}
-          />
-          <CapabilityMetric
-            label={m.quotaTotal}
-            value={
-              summary.data
-                ? quotaAmountWithRaw(summary.data.total, capabilities.quota_display)
-                : "—"
-            }
-          />
-        </dl>
+        // Sized by the panel (see SummaryCell): at a 1100px window the window-
+        // wide `lg` step set four composite amounts in ~140px cells each, and
+        // "CNY 610.0462 · 305,023,119 quota" broke across five lines.
+        <div className="@container">
+          <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border @2xl:grid-cols-4">
+            <SummaryCell
+              label={m.totalQuota}
+              value={
+                summary.data
+                  ? quotaAmountWithRaw(summary.data.available, capabilities.quota_display)
+                  : "—"
+              }
+            />
+            <SummaryCell
+              label={m.usedQuota}
+              value={
+                summary.data
+                  ? quotaAmountWithRaw(summary.data.used, capabilities.quota_display)
+                  : "—"
+              }
+            />
+            <SummaryCell
+              label={m.accounts}
+              value={summary.data ? number(summary.data.accounts) : "—"}
+            />
+            <SummaryCell
+              label={m.quotaTotal}
+              value={
+                summary.data
+                  ? quotaAmountWithRaw(summary.data.total, capabilities.quota_display)
+                  : "—"
+              }
+            />
+          </dl>
+        </div>
       )}
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(310px,0.75fr)]">
+      <div className="grid gap-4 @4xl:grid-cols-[minmax(0,1.25fr)_minmax(310px,0.75fr)]">
         <section className="min-w-0 overflow-hidden border-y">
           <div className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
             <h3 className="font-medium">{m.ledger}</h3>
@@ -3115,9 +3149,12 @@ function AnalyticsView({
       failed: m.csvSaveFailed,
     })
   }
+  // Column counts follow this panel, not the window. At a 1100px window the
+  // window-wide `lg` step packed six fields into ~550px: the dates read "09/01"
+  // and the status select "Succes".
   return (
-    <div className="space-y-5">
-      <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2 lg:grid-cols-6">
+    <div className="@container space-y-5">
+      <div className="grid gap-3 rounded-md border p-3 @sm:grid-cols-2 @3xl:grid-cols-3 @6xl:grid-cols-6">
         <FieldValue label={m.from}>
           {/* Local wall-clock both ways (see lib/more-token/datetime). A cleared
               segment reads as no value and is ignored, not turned into NaN. */}
@@ -3170,8 +3207,8 @@ function AnalyticsView({
       {analytics.isError ? (
         <ErrorPanel error={analytics.error} retry={() => void analytics.refetch()} />
       ) : null}
-      <div className="grid overflow-hidden rounded-lg border lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.65fr)]">
-        <section className="min-w-0 p-5 lg:border-r">
+      <div className="grid overflow-hidden rounded-lg border @3xl:grid-cols-[minmax(0,1.35fr)_minmax(0,0.65fr)]">
+        <section className="min-w-0 p-5 @3xl:border-r">
           <h3 className="font-medium">{m.serverBilling}</h3>
           <p className="mt-1 text-xs text-muted-foreground">
             {analytics.data?.definition ?? m.analyticsDefinition}
@@ -3203,7 +3240,7 @@ function AnalyticsView({
             />
           </div>
         </section>
-        <section className="border-t p-5 lg:border-t-0">
+        <section className="border-t p-5 @3xl:border-t-0">
           <h3 className="font-medium">{m.localEstimate}</h3>
           <p className="mt-1 text-xs text-muted-foreground">{m.localEstimateHint}</p>
           <div className="mt-5">
@@ -3339,7 +3376,7 @@ function AuditView({
     onError: (error) => toast.error(errorText(error)),
   })
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
+    <div className="grid gap-4 @4xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
       <section className="border-y py-5">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <h3 className="font-medium">{m.auditTimeline}</h3>

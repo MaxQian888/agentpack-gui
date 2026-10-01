@@ -261,7 +261,10 @@ export function RecoverySection({
   const readout = (value: string | number) => (timeline.measured ? String(value) : UNMEASURED)
 
   return (
+    // Wide like the three tabs beside it. At the reading measure its heading
+    // sat ~50px right of theirs, so switching tabs made the page jump sideways.
     <SectionShell
+      wide
       title={r.title}
       subtitle={r.subtitle}
       actions={

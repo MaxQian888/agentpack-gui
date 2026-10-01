@@ -3785,7 +3785,7 @@ export const en = {
     credentialProxy: (field: string) => `Proxy — ${field}`,
     credentialConfigField: (file: string, field: string) => `${file} — ${field}`,
     planSummary: (clis: number, skills: number, mcps: number) =>
-      `${clis} CLIs · ${skills} skills · ${mcps} MCP servers`,
+      `${clis} ${clis === 1 ? "CLI" : "CLIs"} · ${skills} ${skills === 1 ? "skill" : "skills"} · ${mcps} MCP ${mcps === 1 ? "server" : "servers"}`,
     countProfiles: (n: number) => `${n} saved`,
     countProviders: (n: number) => `${n} configured`,
     fileMissing: "not on this machine",

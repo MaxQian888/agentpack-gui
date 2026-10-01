@@ -32,15 +32,23 @@ export function SectionShell({
           : "max-w-[var(--hm-content-width)]"
       )}
     >
-      <div data-tour="section-heading" className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
-            {help}
-          </div>
-          {subtitle ? <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p> : null}
+      {/* The actions share the title's row only. Beside the whole block they
+          took their width out of the subtitle too, and on a phone that squeezed
+          a one-line sentence into a five-line column next to a Rescan button. */}
+      <div
+        data-tour="section-heading"
+        className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1"
+      >
+        <div className="flex min-w-0 items-center gap-2 self-center">
+          <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
+          {help}
         </div>
         {actions ? <div className="shrink-0">{actions}</div> : null}
+        {subtitle ? (
+          <p className="col-span-2 max-w-[var(--hm-measure)] text-sm text-pretty text-muted-foreground">
+            {subtitle}
+          </p>
+        ) : null}
       </div>
       {children}
     </div>

@@ -38,7 +38,17 @@ export function SectionView({
   useEffect(() => {
     if (opened.current === choice) return
     opened.current = choice
-    ref.current?.scrollIntoView({ block: "start" })
+    const el = ref.current
+    if (!el) return
+    el.scrollIntoView({ block: "start" })
+    // The swapped view arrives the way a destination does (`hm-enter`), so the
+    // switch reads as a switch rather than the column's text changing under
+    // the cursor. Only on a change: on first render the shell's own entrance
+    // is already playing, and two nested ones would double the rise. A CSS
+    // class rather than `el.animate()`, so the reduce-motion rules apply.
+    el.classList.remove("hm-enter")
+    void el.offsetWidth
+    el.classList.add("hm-enter")
   }, [choice])
 
   return (

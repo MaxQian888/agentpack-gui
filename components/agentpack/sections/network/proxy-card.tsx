@@ -159,7 +159,7 @@ export function ProxyCard({
     onChange: (v: string | undefined) => void,
     opts: { placeholder?: string; type?: string; hint?: string } = {}
   ) => (
-    <div className="grid gap-1.5">
+    <div className="grid content-start gap-1.5">
       <Label htmlFor={id}>{label}</Label>
       <Input
         id={id}

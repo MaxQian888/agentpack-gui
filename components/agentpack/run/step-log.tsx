@@ -32,17 +32,20 @@ function StatusIcon({ status }: { status: StepStatus }) {
 export function StepLog({ reports }: { reports: StepReport[] }) {
   const t = useT()
   return (
-    <ol className="flex flex-col gap-2">
+    // One ruled list, not a stack of boxed steps: nine identical cards in a
+    // column is the repeated-card pattern design.md § 5 rules out, and the gaps
+    // between them cost a third of the panel on a step list this long.
+    <ol className="divide-y overflow-hidden rounded-md border">
       {reports.map((r) => (
-        <li key={r.id} className="rounded-md border bg-card p-3">
-          <div className="flex items-center gap-2">
+        <li key={r.id} data-status={r.status} className="p-3">
+          <div className="flex min-w-0 items-start gap-2 [&>svg]:mt-0.5">
             <StatusIcon status={r.status} />
             {/* The icon is colour and shape only; this is the same fact as a
                 word, so a screen reader can tell which step failed. */}
             <span className="sr-only">{t.review.status[r.status]}: </span>
             <span
               className={cn(
-                "text-sm",
+                "min-w-0 text-sm [overflow-wrap:anywhere]",
                 r.status === "error" && "text-[var(--hm-danger)]",
                 r.status === "warning" && "text-[var(--hm-warn)]"
               )}

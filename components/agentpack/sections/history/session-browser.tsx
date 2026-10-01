@@ -272,7 +272,7 @@ function TranscriptDialog({
   return (
     <Dialog open={!!session} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
-        className="flex h-[85vh] max-w-4xl flex-col gap-0 overflow-hidden p-0"
+        className="flex h-[85vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl"
         // Opened by state rather than a `DialogTrigger`, so Radix had nothing to
         // hand focus back to and it fell to <body> — a keyboard user was sent
         // back to the top of the page after every transcript. Focus hasn't

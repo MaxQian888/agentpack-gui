@@ -543,7 +543,7 @@ export function DashboardSection({
                 )
               ) : (
                 <>
-                  <div className="flex flex-col gap-0.5 sm:grid sm:grid-cols-2 sm:gap-x-6">
+                  <div className="flex flex-col gap-0.5 @xl:grid @xl:grid-cols-2 @xl:gap-x-6">
                     {presentTools.slice(0, TOOLS_LIMIT).map((tool) => {
                       const det = detections[tool.id]
                       const latest = latestVersions[tool.id]
@@ -562,15 +562,22 @@ export function DashboardSection({
                             <StatusDot on />
                             <span className="truncate font-medium">{title}</span>
                           </span>
-                          <span className="flex shrink-0 items-center gap-2">
+                          {/* The upgrade is set as the version's own continuation,
+                              "2.0.14 → 2.1.3", rather than as a chip beside it: the
+                              chip cost ~110px of a 270px column and the tool's name
+                              paid for it ("Claude C…"). Assistive tech gets the
+                              sentence; the arrow is for the eye. */}
+                          <span className="flex shrink-0 items-baseline gap-1 font-mono text-[var(--hm-text-2xs)] text-muted-foreground tabular-nums">
+                            <span>{version ?? t.envcheck.installed}</span>
                             {hasUpdate ? (
-                              <Badge variant="secondary" className="font-normal">
-                                {d.updateAvailable(latest)}
-                              </Badge>
+                              <>
+                                <span aria-hidden="true">→</span>
+                                <span aria-hidden="true" className="text-[var(--hm-accent)]">
+                                  {latest}
+                                </span>
+                                <span className="sr-only">{d.updateAvailable(latest)}</span>
+                              </>
                             ) : null}
-                            <span className="font-mono text-[var(--hm-text-2xs)] text-muted-foreground">
-                              {version ?? t.envcheck.installed}
-                            </span>
                           </span>
                         </div>
                       )

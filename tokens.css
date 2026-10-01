@@ -55,8 +55,10 @@
   --hm-radius-dot: 999px; /* status dots and count bubbles ONLY */
 
   /* The task rail. Two widths, one step — narrow enough that a 900px window
-     still has a workspace, wide enough that labels never wrap. */
-  --hm-rail-width: 11.5rem;
+     still has a workspace, wide enough that labels never wrap. 11.5rem cut the
+     active "Accounts & quota" (set in 500, so wider than at rest) to
+     "Accounts & qu…" between 900 and 1200px. */
+  --hm-rail-width: 12rem;
   --hm-rail-width-wide: 13rem;
 
   /* The content column beside it. Three steps, not two: a reading measure for
@@ -67,6 +69,10 @@
   --hm-content-width: 48rem;
   --hm-content-width-wide: 72rem;
   --hm-content-width-max: 100rem;
+
+  /* The prose measure design.md § 4 caps running text at. A subtitle in a wide
+     workbench would otherwise run the full 72rem column at 2000px. */
+  --hm-measure: 72ch;
 
   /* How tall an inventory panel may grow before it scrolls inside itself. A
      list is the one surface whose length is the machine's, not the design's:

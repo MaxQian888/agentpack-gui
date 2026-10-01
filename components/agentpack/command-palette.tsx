@@ -144,9 +144,14 @@ export function CommandPalette({
           <CommandGroup heading={t.palette.groupGo}>
             {go.map((item) => (
               <CommandItem key={item.id} value={item.id} onSelect={() => runItem(item)}>
-                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                {/* The destination's name wins the row; its hint gives way.
+                    The other way round, a phone read "I." beside a full
+                    sentence of description. */}
+                <span className="max-w-full shrink-0 truncate">{item.label}</span>
                 {item.hint ? (
-                  <span className="shrink-0 text-xs text-muted-foreground">{item.hint}</span>
+                  <span className="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">
+                    {item.hint}
+                  </span>
                 ) : null}
               </CommandItem>
             ))}

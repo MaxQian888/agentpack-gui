@@ -210,7 +210,13 @@ export function ExecutionPanel({
                   </>
                 )}
               </Button>
-              <Button disabled={busy} onClick={() => void applyPending()}>
+              {/* On a phone the three don't share a row; the primary takes the
+                  last one whole rather than wrapping alone, flush right. */}
+              <Button
+                className="max-[420px]:w-full"
+                disabled={busy}
+                onClick={() => void applyPending()}
+              >
                 <Play className="size-4" />
                 {t.review.apply}
               </Button>

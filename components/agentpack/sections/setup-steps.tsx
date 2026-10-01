@@ -87,13 +87,17 @@ export function SetupSteps({
         ) : null}
       </div>
 
-      <ol className="min-w-0 divide-y border-t">
+      {/* Sized by the panel, not the window: in the 8-column primary of a
+          1100px window a row with two controls beside its text left the text a
+          240px column four lines deep. Below the container step the controls
+          sit under the text, aligned with it rather than with the marker. */}
+      <ol className="@container min-w-0 divide-y border-t">
         {steps.map((step, index) => (
           <li
             key={step.id}
             data-status={step.status}
             className={cn(
-              "flex min-w-0 flex-wrap items-start gap-x-3 gap-y-2 px-4 py-3",
+              "grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-2 px-4 py-3 @xl:grid-cols-[auto_minmax(0,1fr)_auto]",
               step.status === "current" && "bg-[var(--hm-accent-soft)]/40"
             )}
           >
@@ -107,7 +111,7 @@ export function SetupSteps({
               {step.status === "done" ? <Check className="size-3" /> : index + 1}
             </span>
 
-            <div className="min-w-0 flex-1 basis-48">
+            <div className="min-w-0">
               <div
                 className={cn(
                   "text-sm font-medium",
@@ -133,7 +137,7 @@ export function SetupSteps({
             </div>
 
             {step.action || step.secondaryAction ? (
-              <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+              <div className="col-start-2 flex min-w-0 flex-wrap items-center gap-1.5 @xl:col-start-3">
                 {step.action}
                 {step.secondaryAction}
               </div>

@@ -679,22 +679,32 @@ function PersonalPairPanel({
   )
 }
 
+// Columns follow the panel, not the window: at a 1100px window the primary
+// column is ~570px, where four columns truncated "32,877,394" to "32,877,3…".
+// Hairlines come from the 1px gap over the rule colour, so a cell that wraps
+// to a second row still gets its top rule.
 function MetricStrip({ items }: { items: Array<{ label: string; value: string; hint?: string }> }) {
   return (
-    <dl className="grid overflow-hidden rounded-md border sm:grid-cols-2 lg:grid-cols-4">
-      {items.map((item, index) => (
-        <div
-          key={item.label}
-          className={`min-w-0 p-4 ${index ? "border-t sm:border-l sm:border-t-0" : ""}`}
-        >
-          <dt className="text-xs text-muted-foreground">{item.label}</dt>
-          <dd className="mt-1 truncate text-xl font-semibold tabular-nums">{item.value}</dd>
-          {item.hint ? (
-            <dd className="mt-1 truncate text-xs text-muted-foreground">{item.hint}</dd>
-          ) : null}
-        </div>
-      ))}
-    </dl>
+    <div className="@container">
+      <dl className="grid gap-px overflow-hidden rounded-md border bg-border @xs:grid-cols-2 @2xl:grid-cols-4">
+        {items.map((item) => (
+          <div key={item.label} className="min-w-0 bg-background p-4">
+            <dt className="text-xs text-muted-foreground">{item.label}</dt>
+            <dd className="mt-1 font-mono text-xl font-semibold tracking-tight tabular-nums [overflow-wrap:anywhere]">
+              {/* A quota amount arrives as "CN¥22.51 · 11,254,946 quota", and
+                  its raw quota is already this cell's hint — so with a hint the
+                  big figure is the converted amount alone, not both twice. */}
+              {item.hint ? item.value.split(" · ")[0] : item.value}
+            </dd>
+            {item.hint ? (
+              <dd className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                {item.hint}
+              </dd>
+            ) : null}
+          </div>
+        ))}
+      </dl>
+    </div>
   )
 }
 
@@ -831,7 +841,7 @@ function PersonalAccountView({
         </dl>
       </section>
 
-      <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+      <div className="grid min-w-0 gap-4 @2xl:grid-cols-2">
         <section
           aria-label={m.balanceSummary}
           className="min-w-0 rounded-[var(--hm-radius-surface)] border p-4"
@@ -1203,9 +1213,12 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
   }
   return (
     <div className="space-y-5">
-      <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-end">
+      {/* The definition reads first, across the panel, and the filters follow
+          as one wrapping toolbar. Side by side, the sentence was squeezed into
+          a 180px column bottom-aligned against a 3×2 grid of selects. */}
+      <div className="flex flex-col gap-3">
         <p className="text-sm text-muted-foreground">{m.usageDefinition}</p>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 [&>select]:h-9 [&>select]:min-w-0 [&>select]:max-w-full">
           <select
             aria-label={m.usageRange}
             value={days}
@@ -1213,7 +1226,7 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
               setDays(Number(event.target.value))
               setPage(1)
             }}
-            className="h-11 rounded-md border bg-background px-3 text-sm"
+            className="rounded-md border bg-background px-3 text-sm"
           >
             <option value={7}>{m.usageDays(7)}</option>
             <option value={30}>{m.usageDays(30)}</option>
@@ -1226,7 +1239,7 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
               setGroup(event.target.value)
               setPage(1)
             }}
-            className="h-11 rounded-md border bg-background px-3 text-sm"
+            className="rounded-md border bg-background px-3 text-sm"
           >
             <option value="">{m.allGroups}</option>
             {withSelected(data?.filter_options?.groups, group).map((item) => (
@@ -1242,7 +1255,7 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
               setTokenName(event.target.value)
               setPage(1)
             }}
-            className="h-11 rounded-md border bg-background px-3 text-sm"
+            className="rounded-md border bg-background px-3 text-sm"
           >
             <option value="">{m.allApiKeys}</option>
             {withSelected(data?.filter_options?.token_names, tokenName).map((item) => (
@@ -1258,7 +1271,7 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
               setModel(event.target.value)
               setPage(1)
             }}
-            className="h-11 min-w-40 rounded-md border bg-background px-3 text-sm"
+            className="rounded-md border bg-background px-3 text-sm"
           >
             <option value="">{m.allModels}</option>
             {withSelected(
@@ -1277,7 +1290,7 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
               setStatus(event.target.value as typeof status)
               setPage(1)
             }}
-            className="h-11 rounded-md border bg-background px-3 text-sm"
+            className="rounded-md border bg-background px-3 text-sm"
           >
             <option value="billable">{m.statusBillable}</option>
             <option value="all">{m.statusAll}</option>
@@ -1287,7 +1300,7 @@ function PersonalUsageView({ instance }: { instance: MoreTokenInstance }) {
           </select>
           <Button
             variant="outline"
-            className="h-11"
+            className="sm:ml-auto"
             disabled={exportUsage.isPending || total === 0}
             title={total === 0 ? management.nothingToExport : undefined}
             onClick={() => exportUsage.mutate()}
@@ -1513,7 +1526,10 @@ function PersonalModelsView({ instance }: { instance: MoreTokenInstance }) {
   if (!catalog.data) return <PersonalLoading />
   return (
     <div className="space-y-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      {/* Heading over toolbar, not beside it: side by side in the primary
+          column the heading wrapped to four lines and the third control ran
+          past the panel's right edge. */}
+      <div className="flex flex-col gap-3">
         <div>
           <h3 className="flex items-center gap-2 font-medium">
             <Orbit className="size-4" />
@@ -1521,21 +1537,21 @@ function PersonalModelsView({ instance }: { instance: MoreTokenInstance }) {
           </h3>
           <p className="mt-1 text-sm text-muted-foreground">{m.modelMarketplaceHint}</p>
         </div>
-        <div className="grid w-full gap-2 sm:max-w-2xl sm:grid-cols-[minmax(12rem,1fr)_auto_auto]">
+        <div className="grid w-full gap-2 sm:grid-cols-[minmax(12rem,1fr)_auto_auto]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder={m.searchModels}
-              className="h-11 pl-9"
+              className="h-9 pl-9"
             />
           </div>
           <select
             aria-label={m.modelVendorFilter}
             value={vendor}
             onChange={(event) => setVendor(event.target.value)}
-            className="h-11 rounded-md border bg-background px-3 text-sm"
+            className="h-9 rounded-md border bg-background px-3 text-sm"
           >
             <option value="all">{m.allVendors}</option>
             {catalog.data.vendors.map((item) => (
@@ -1548,7 +1564,7 @@ function PersonalModelsView({ instance }: { instance: MoreTokenInstance }) {
             aria-label={m.billingTypeFilter}
             value={billing}
             onChange={(event) => setBilling(event.target.value as typeof billing)}
-            className="h-11 rounded-md border bg-background px-3 text-sm"
+            className="h-9 rounded-md border bg-background px-3 text-sm"
           >
             <option value="all">{m.allBillingTypes}</option>
             <option value="ratio">{m.ratioBilling}</option>

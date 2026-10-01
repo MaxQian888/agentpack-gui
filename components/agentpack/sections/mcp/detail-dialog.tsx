@@ -327,7 +327,7 @@ export function McpDetailDialog({
                           <span
                             className={cn(
                               "flex items-center gap-1.5 text-xs",
-                              h.status === "ok" ? "text-emerald-600" : "text-destructive"
+                              h.status === "ok" ? "text-[var(--hm-ok)]" : "text-destructive"
                             )}
                             title={spec ? healthDetail(spec, h) : undefined}
                           >
@@ -375,7 +375,7 @@ export function McpDetailDialog({
                           <span
                             className={cn(
                               "flex items-center gap-1.5",
-                              "ok" in d && d.ok ? "text-emerald-600" : "text-amber-600"
+                              "ok" in d && d.ok ? "text-[var(--hm-ok)]" : "text-[var(--hm-warn)]"
                             )}
                           >
                             {"ok" in d && d.ok ? (

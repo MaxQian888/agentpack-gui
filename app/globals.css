@@ -220,6 +220,12 @@
   --shadow-2xs: 0 0 #0000;
   --shadow-xs: 0 0 #0000;
   --shadow-sm: 0 0 #0000;
+  /* Every bare `transition-colors` / `transition-[…]` in the 56 ui/ components
+     falls back to these. Tailwind's own defaults are 150ms on the browser's
+     `ease`, which design.md § 6 rules out — so a hover in a shadcn primitive
+     and a hover in the rail now cross-fade on the same beat. */
+  --default-transition-duration: var(--hm-dur-fast);
+  --default-transition-timing-function: var(--hm-ease-out);
 }
 
 @layer base {
@@ -356,6 +362,16 @@
 /* A destination arriving: once per navigation, restarted by the shell. */
 @utility hm-enter {
   animation: hm-enter var(--hm-dur-base) var(--hm-ease-out) backwards;
+}
+
+/* A native <details> disclosing its body: the same entrance as a collapsible
+   (components/ui/collapsible.tsx). The body goes from display:none to shown,
+   which restarts the animation on every open and never on close. In the base
+   layer, so any element that sets its own animation utility keeps it. */
+@layer base {
+  details[open] > :not(summary) {
+    animation: hm-enter var(--hm-dur-base) var(--hm-ease-out) backwards;
+  }
 }
 
 /* The change tray appearing, on mount. It leaves instantly — a summary that

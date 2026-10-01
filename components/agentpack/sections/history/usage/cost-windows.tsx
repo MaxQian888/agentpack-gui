@@ -33,7 +33,7 @@ import { priceForModel } from "@/lib/history/pricing"
 import { statsCostFigure, UNKNOWN_MODEL } from "@/lib/history/stats"
 import { bucketLabel } from "@/lib/history/range"
 import { burnRate, projectBlock, type UsageBlock } from "@/lib/history/blocks"
-import { Stat, PanelTitle, EmptyPanel, SeriesPending } from "./stat"
+import { Stat, StatGrid, PanelTitle, EmptyPanel, SeriesPending } from "./stat"
 import { CostHeatmap } from "./cost-heatmap"
 import type { UsageView } from "./view"
 
@@ -275,7 +275,7 @@ function ActiveBlockCard({
   return (
     <Card className="gap-3 p-4">
       <PanelTitle title={t.activeBlockTitle} hint={t.activeBlockHint} />
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <StatGrid className="grid-cols-2 md:grid-cols-4">
         <Stat
           label={t.blockRemaining}
           value={formatDuration(Math.max(0, block.end - now))}
@@ -292,7 +292,7 @@ function ActiveBlockCard({
           value={projection ? formatTokens(projection.totalTokens) : "—"}
           sub={projection ? formatCost(projection.totalCost) : undefined}
         />
-      </div>
+      </StatGrid>
       {block.unpricedEntries > 0 ? (
         <p className="text-xs text-muted-foreground">{t.costLowerBound(block.unpricedEntries)}</p>
       ) : null}
@@ -330,11 +330,11 @@ function SubscriptionCard({ apiEquivalent, paid }: { apiEquivalent: CostFigure; 
   return (
     <Card className="gap-3 p-4">
       <PanelTitle title={t.subscriptionTitle} hint={t.subscriptionHint} />
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+      <StatGrid className="grid-cols-1 sm:grid-cols-3">
         <Stat label={t.subscriptionApi} value={figure} />
         <Stat label={t.subscriptionPaid} value={formatCost(paid)} />
         <Stat label={t.subscriptionRatio} value={ratio} />
-      </div>
+      </StatGrid>
     </Card>
   )
 }
