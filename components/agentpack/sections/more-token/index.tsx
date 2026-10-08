@@ -238,13 +238,16 @@ export function MoreTokenSection({ view, localUsage }: MoreTokenSectionProps) {
     enabled: credentialQuery.data?.connected === true,
     refetchInterval: 30_000,
   })
-  const delivered = useRef(new Set<number>())
+  // Ids are per server, so the delivered set is keyed by instance too: two
+  // instances can each hand out notification 1.
+  const delivered = useRef(new Set<string>())
 
   useEffect(() => {
     const items = notificationQuery.data ?? []
     for (const item of items) {
-      if (delivered.current.has(item.id)) continue
-      delivered.current.add(item.id)
+      const key = `${activeId}:${item.id}`
+      if (delivered.current.has(key)) continue
+      delivered.current.add(key)
       let message = m.pendingAlerts
       try {
         const parsed = JSON.parse(item.payload) as { message?: string }
