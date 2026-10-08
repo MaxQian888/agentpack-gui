@@ -3,6 +3,7 @@ import type { Provider } from "../ccswitch/types"
 import type { Profile } from "../profile"
 import type { Plan } from "../types"
 import type { AppSettings } from "@/lib/tauri/settings"
+import { en } from "@/lib/i18n/en"
 import { buildBundle, parseBundle, serializeBundle, type BundleSource } from "./format"
 
 const MCP_KEY = "mcp-live-key"
@@ -256,5 +257,126 @@ describe("v1 compatibility", () => {
     expect(parsed.ok).toBe(false)
     if (parsed.ok) return
     expect(parsed.error).toContain("solaris")
+  })
+})
+
+describe("edge cases on the way out", () => {
+  it("leaves out a setting this install never stored instead of writing undefined", () => {
+    const partial = { ghMirrorPrefix: "https://m/", proxy: null } as unknown as AppSettings
+    const bundle = buildBundle({ ...SOURCE, settings: partial }, { includeSecrets: false })
+    expect(bundle.settings).toEqual({ ghMirrorPrefix: "https://m/" })
+    expect(bundle.settings).not.toHaveProperty("proxy")
+  })
+
+  it("drops a ~/.claude.json that declares no MCP servers, with or without secrets", () => {
+    for (const includeSecrets of [true, false]) {
+      const bundle = buildBundle(
+        {
+          ...SOURCE,
+          files: { claudeConfig: JSON.stringify({ projects: { "/r": {} }, mcpServers: {} }) },
+        },
+        { includeSecrets }
+      )
+      expect(bundle.files).toEqual({})
+    }
+  })
+
+  it("narrows ~/.claude.json even when secrets are included", () => {
+    const bundle = buildBundle(
+      {
+        ...SOURCE,
+        files: {
+          claudeConfig: JSON.stringify({
+            mcpServers: { memory: { command: "npx", env: { KEY: "k" } } },
+            projects: { "/repo": { history: ["private prompt"] } },
+          }),
+        },
+      },
+      { includeSecrets: true }
+    )
+    expect(bundle.files!.claudeConfig).not.toContain("private prompt")
+    expect(JSON.parse(bundle.files!.claudeConfig!).mcpServers.memory.env).toEqual({ KEY: "k" })
+  })
+})
+
+describe("edge cases on the way in", () => {
+  const v2 = (over: Record<string, unknown>) =>
+    JSON.stringify({ version: 2, createdAt: 0, app: { version: "1", os: "mac" }, ...over })
+
+  it.each(["null", "5", '"a string"', "true"])("rejects %s as not a bundle", (text) => {
+    expect(parseBundle(text)).toEqual({ ok: false, error: en.errors.notABundle })
+  })
+
+  it("rejects a version that is not a number rather than reading it as a plan", () => {
+    expect(parseBundle(JSON.stringify({ version: "2", plan: PLAN }))).toEqual({
+      ok: false,
+      error: en.errors.notABundle,
+    })
+  })
+
+  it("defaults a missing or malformed header rather than trusting it", () => {
+    const parsed = parseBundle(
+      JSON.stringify({ version: 2, createdAt: "yesterday", app: { version: 3, os: "solaris" } })
+    )
+    expect(parsed.ok && parsed.bundle).toEqual({
+      version: 2,
+      createdAt: 0,
+      app: { version: "", os: "mac" },
+    })
+    const noApp = parseBundle(JSON.stringify({ version: 2 }))
+    expect(noApp.ok && noApp.bundle.app).toEqual({ version: "", os: "mac" })
+  })
+
+  it.each(["win", "linux"] as const)("keeps a %s origin", (os) => {
+    const parsed = parseBundle(v2({ app: { version: "1", os } }))
+    expect(parsed.ok && parsed.bundle.app.os).toBe(os)
+  })
+
+  it("only an explicit true marks a bundle as carrying secrets", () => {
+    const parsed = parseBundle(v2({ secrets: "yes" }))
+    expect(parsed.ok && parsed.bundle).not.toHaveProperty("secrets")
+  })
+
+  it("skips a files part that is not an object, and keeps only known string files", () => {
+    const broken = parseBundle(v2({ files: "oops", settings: { uiScale: 110 } }))
+    expect(broken.ok && broken.skipped).toEqual(["files"])
+    expect(broken.ok && broken.bundle.settings).toEqual({ uiScale: 110 })
+
+    const nulled = parseBundle(v2({ files: null }))
+    expect(nulled.ok && nulled.skipped).toEqual(["files"])
+
+    const mixed = parseBundle(
+      v2({ files: { codexConfig: 'model = "x"\n', claudeSettings: 42, "../etc/passwd": "x" } })
+    )
+    expect(mixed.ok && mixed.bundle.files).toEqual({ codexConfig: 'model = "x"\n' })
+  })
+
+  it("reads a non-object settings part as no settings at all", () => {
+    for (const settings of [null, "x", 3]) {
+      const parsed = parseBundle(v2({ settings }))
+      expect(parsed.ok && parsed.skipped).toEqual([])
+      expect(parsed.ok && parsed.bundle.settings).toEqual({})
+    }
+  })
+
+  it("drops a malformed skill-source list and malformed entries in a good one", () => {
+    const bad = parseBundle(v2({ settings: { skillRepoSources: "github.com/a/b" } }))
+    expect(bad.ok && bad.bundle.settings).toEqual({})
+
+    const mixed = parseBundle(
+      v2({
+        settings: {
+          skillRepoSources: [{ url: "https://github.com/a/b" }, null, "x", { url: 5 }, {}],
+        },
+      })
+    )
+    expect(mixed.ok && mixed.bundle.settings?.skillRepoSources).toEqual([
+      { url: "https://github.com/a/b" },
+    ])
+  })
+
+  it("drops an imported proxy that sanitizes to nothing", () => {
+    const parsed = parseBundle(v2({ settings: { proxy: null, providerBackend: "ccswitch" } }))
+    expect(parsed.ok && parsed.bundle.settings).toEqual({ providerBackend: "ccswitch" })
   })
 })

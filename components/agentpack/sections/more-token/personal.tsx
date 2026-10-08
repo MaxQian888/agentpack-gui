@@ -1732,7 +1732,7 @@ function PersonalModelsView({ instance }: { instance: MoreTokenInstance }) {
               <div className="grid gap-3 py-4 sm:grid-cols-[10rem_1fr]">
                 <span className="text-muted-foreground">{m.endpointDetails}</span>
                 <div className="space-y-2">
-                  {selectedModel.supported_endpoint_types.map((endpoint) => {
+                  {(selectedModel.supported_endpoint_types ?? []).map((endpoint) => {
                     const detail = catalog.data.supported_endpoint[endpoint]
                     return (
                       <div key={endpoint} className="flex flex-wrap items-center gap-2">
