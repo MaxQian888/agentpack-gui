@@ -1,6 +1,11 @@
 import {
   buildSteps,
+  bundleFileStep,
   claudeMcpRoute,
+  cleanupConfigStep,
+  countSelections,
+  runtimeInstallStep,
+  unappliedNetwork,
   buildVerifySteps,
   cliInstallStep,
   cliUninstallStep,
@@ -31,6 +36,8 @@ import {
   syncLiveConfigSteps,
 } from "./plan"
 import { en } from "@/lib/i18n/en"
+import type { Messages } from "@/lib/i18n/types"
+import { CLEANUP_CONFIG_TARGETS } from "./cleanup"
 import { findMcp } from "./registry"
 import { mergeCodexMcp, type McpSpec } from "./merge/mcp"
 import { DEFAULT_VISIBLE_APPS } from "./ccswitch/settings"
@@ -1178,4 +1185,238 @@ it("clears Windows user-scope variables with setx", () => {
   const ids = proxyClearSteps(["shell"], paths, "win").map((s) => s.id)
   expect(ids).toContain("proxy-clear-win-HTTPS_PROXY")
   expect(ids).toContain("proxy-clear-win-NODE_EXTRA_CA_CERTS")
+})
+
+// --- Coverage of the less-travelled paths ------------------------------------
+
+/**
+ * A catalog that knows none of the ids: a registry entry added without its i18n
+ * row, or an id from a newer bundle. Every label must still name the thing.
+ */
+const bare = {
+  ...en,
+  catalog: { ...en.catalog, cli: {}, runtime: {}, skills: {}, mcp: {} },
+  cleanup: { ...en.cleanup, targets: {} },
+} as unknown as Messages
+
+describe("labels fall back to the raw id when the catalog has no title", () => {
+  it("names runtimes, CLIs, skills and servers in a full plan", () => {
+    const p: Plan = {
+      ...plan,
+      network: {},
+      mcps: [
+        { id: "context7", targets: ["claude"] },
+        { id: "fetch", targets: ["codex"] },
+      ],
+    }
+    const steps = buildSteps(p, paths, bare)
+    const label = (id: string) => steps.find((s) => s.id === id)?.label
+    expect(label("runtime-node")).toBe(en.steps.installRuntime("Node.js"))
+    expect(label("runtime-uv")).toBe(en.steps.installRuntime("uv"))
+    expect(label("cli-claude-code")).toBe(en.steps.installCli("claude-code"))
+    expect(label("skill-rust")).toBe(en.steps.installSkill("rust", "claude"))
+    expect(label("mcp-claude-context7")).toBe(en.steps.addMcpClaude("context7"))
+    expect(label("mcp-codex-fetch")).toBe(en.steps.addMcpCodex("fetch"))
+  })
+
+  it("names the single-step builders by id", () => {
+    const cmd = { file: "x", args: [] }
+    expect(cliInstallStep("codex", cmd, false, bare).label).toBe(en.steps.installCli("codex"))
+    expect(runtimeInstallStep("bun", cmd, bare).label).toBe(en.steps.installRuntime("bun"))
+    expect(runtimeUpgradeStep("bun", cmd, bare).label).toBe(en.steps.updateRuntime("bun"))
+    expect(cliUninstallStep("codex", cmd, bare).label).toBe(en.steps.uninstallCli("codex"))
+    const hooks = CLEANUP_CONFIG_TARGETS.find((t) => t.id === "claude-hooks")!
+    expect(cleanupConfigStep(hooks, paths.claudeSettings, bare).label).toBe(
+      en.steps.cleanupConfig("claude-hooks")
+    )
+  })
+})
+
+describe("runtimeInstallStep / cliInstallStep elevation", () => {
+  it("only carries requiresElevation when it is true", () => {
+    const cmd = { file: "winget", args: ["install"] }
+    expect(runtimeInstallStep("node", cmd, en, true)).toMatchObject({
+      id: "runtime-install-node",
+      requiresElevation: true,
+    })
+    const plain = runtimeInstallStep("node", cmd)
+    expect(plain.kind === "command" && plain.requiresElevation).toBeUndefined()
+    expect(cliInstallStep("codex", cmd, true, en, true)).toMatchObject({
+      id: "cli-upgrade-codex",
+      requiresElevation: true,
+    })
+  })
+})
+
+it("an upgrade blocked by an old Node keeps its upgrade label", () => {
+  const step = buildSteps(
+    { ...plan, network: {}, skills: [], mcps: [] },
+    paths,
+    en,
+    new Set(["node", "claude-code"]),
+    {
+      versions: { node: "v20.11.0", "claude-code": "1.0.0" },
+      latest: { "claude-code": "2.0.0" },
+      managers: { "claude-code": "npm" },
+    }
+  ).find((s) => s.id === "cli-claude-code")!
+  expect(step).toMatchObject({ kind: "info", manual: true })
+  expect(step.label).toBe(en.steps.upgradeCli(en.catalog.cli["claude-code"].title))
+})
+
+describe("unappliedNetwork / countSelections", () => {
+  const proxy = (patch: Partial<ProxyConfig> = {}): ProxyConfig => ({
+    mode: "manual",
+    targets: ["claude", "npm"],
+    httpUrl: "http://127.0.0.1:7890",
+    ...patch,
+  })
+
+  it("returns the network unchanged when nothing has been applied yet", () => {
+    const network = { npmRegistry: "https://m", proxy: proxy() }
+    expect(unappliedNetwork(network, undefined)).toBe(network)
+  })
+
+  it("drops what is already applied and keeps what differs", () => {
+    expect(
+      unappliedNetwork(
+        { npmRegistry: "https://m", proxy: proxy() },
+        { npmRegistry: "https://m", proxy: proxy({ targets: ["npm", "claude"] }) }
+      )
+    ).toEqual({ npmRegistry: undefined, proxy: undefined })
+    const changed = unappliedNetwork(
+      { npmRegistry: "https://new", proxy: proxy({ httpUrl: "http://other:1" }) },
+      { npmRegistry: "https://m", proxy: proxy() }
+    )
+    expect(changed.npmRegistry).toBe("https://new")
+    expect(changed.proxy?.httpUrl).toBe("http://other:1")
+  })
+
+  it("counts a proxy switched on against an applied 'off' as a change, and off-vs-off as none", () => {
+    expect(unappliedNetwork({ proxy: proxy() }, { proxy: null }).proxy).toEqual(proxy())
+    expect(
+      unappliedNetwork({ proxy: proxy({ mode: "off" }) }, { proxy: proxy({ httpUrl: "" }) }).proxy
+    ).toBeUndefined()
+    expect(
+      unappliedNetwork({ proxy: null } as unknown as Plan["network"], { proxy: proxy() }).proxy
+    ).toBeNull()
+  })
+
+  it("treats a proxy with no targets list the same as an empty one", () => {
+    const noTargets = { ...proxy(), targets: undefined } as unknown as ProxyConfig
+    expect(
+      unappliedNetwork({ proxy: noTargets }, { proxy: proxy({ targets: [] }) }).proxy
+    ).toBeUndefined()
+  })
+
+  it("counts selections, not steps, and nothing for no plan", () => {
+    expect(countSelections(undefined)).toBe(0)
+    const p: Plan = { ...plan, network: { npmRegistry: "https://m", proxy: proxy() } }
+    // 1 CLI + 1 skill + 1 MCP + mirror + proxy
+    expect(countSelections(p)).toBe(5)
+    expect(countSelections(p, { npmRegistry: "https://m", proxy: proxy() })).toBe(3)
+  })
+})
+
+describe("proxy steps with unusual configs", () => {
+  it("labels a SOCKS-only proxy by its ALL_PROXY url", () => {
+    const [step] = proxyApplySteps(
+      { mode: "manual", targets: ["claude"], allUrl: "socks5://127.0.0.1:1080" },
+      paths,
+      "mac"
+    )
+    expect(step.label).toBe(en.steps.proxyClaude("socks5://127.0.0.1:1080"))
+  })
+
+  it("never hands a Windows user fish syntax, whatever the profile path says", () => {
+    const note = proxyApplySteps(
+      { mode: "manual", targets: ["claude"], httpUrl: "http://127.0.0.1:7890" },
+      { ...paths, shellProfile: "/h/.config/fish/config.fish" },
+      "win"
+    ).at(-1)!
+    if (note.kind !== "info") throw new Error("expected the closing note")
+    expect(note.lines.join("\n")).not.toContain("set -gx")
+    // The mac/linux note does follow the profile's dialect.
+    const fish = proxyApplySteps(
+      { mode: "manual", targets: ["claude"], httpUrl: "http://127.0.0.1:7890" },
+      { ...paths, shellProfile: "/h/.config/fish/config.fish" },
+      "mac"
+    ).at(-1)!
+    expect(fish.kind === "info" && fish.lines.join("\n")).toContain("set -gx")
+  })
+})
+
+describe("mergeFile closures on the remaining routes", () => {
+  const spec: McpSpec = { transport: "stdio", command: "npx", args: ["-y", "pkg"], env: {} }
+
+  it("buildSteps' opencode add merges into opencode.json, keeping other keys", () => {
+    const p: Plan = { ...plan, network: {}, mcps: [{ id: "context7", targets: ["opencode"] }] }
+    const step = buildSteps(p, paths).find((s) => s.id === "mcp-opencode-context7")!
+    if (step.kind !== "mergeFile") throw new Error("expected a mergeFile step")
+    const out = JSON.parse(step.merge('{"theme":"dark"}'))
+    expect(out.theme).toBe("dark")
+    expect(out.mcp.context7).toMatchObject({ type: "local" })
+  })
+
+  it("mcpAddSpecStep's file route writes the entry the CLI would have", () => {
+    const [step] = mcpAddSpecStep("demo", spec, ["claude"], paths, en, "file")
+    if (step.kind !== "mergeFile") throw new Error("expected a mergeFile step")
+    expect(JSON.parse(step.merge('{"numStartups":2}'))).toEqual({
+      numStartups: 2,
+      mcpServers: { demo: { type: "stdio", command: "npx", args: ["-y", "pkg"] } },
+    })
+  })
+
+  it("mcpRemoveStep's opencode merge deletes only that server", () => {
+    const [step] = mcpRemoveStep("demo", ["opencode"], paths)
+    if (step.kind !== "mergeFile") throw new Error("expected a mergeFile step")
+    const before = JSON.stringify({ mcp: { demo: {}, keep: {} } })
+    expect(JSON.parse(step.merge(before))).toEqual({ mcp: { keep: {} } })
+  })
+
+  it("disable/enable flip OpenCode's flag in place and enable flips Codex", () => {
+    const opencode = JSON.stringify({ mcp: { demo: { type: "local", command: ["npx"] } } })
+    const [off] = mcpDisableStep("demo", spec, ["opencode"], paths)
+    if (off.kind !== "mergeFile") throw new Error("expected a mergeFile step")
+    expect(JSON.parse(off.merge(opencode)).mcp.demo.enabled).toBe(false)
+
+    const on = mcpEnableStep("demo", spec, ["codex", "opencode"], paths)
+    expect(on.map((s) => s.id)).toEqual(["mcp-enable-codex-demo", "mcp-enable-opencode-demo"])
+    const [codex, oc] = on
+    if (codex.kind !== "mergeFile" || oc.kind !== "mergeFile") throw new Error("expected merges")
+    const disabled = mergeCodexMcp("", "demo", { command: "npx", args: [], enabled: false })
+    expect(codex.merge(disabled)).toMatch(/enabled\s*=\s*true/)
+    expect(JSON.parse(oc.merge(off.merge(opencode))).mcp.demo.enabled).toBe(true)
+  })
+
+  it("syncLiveConfigSteps' opencode merge writes the provider and keeps MCP servers", () => {
+    const provider: Provider = {
+      id: "p",
+      app_type: "opencode",
+      name: "Relay",
+      settings_config: JSON.stringify({
+        npm: "@ai-sdk/openai-compatible",
+        name: "Relay",
+        options: { baseURL: "https://r/v1", apiKey: "sk" },
+      }),
+      is_current: true,
+    }
+    const [step] = syncLiveConfigSteps(provider, paths)
+    if (step.kind !== "mergeFile") throw new Error("expected a mergeFile step")
+    const out = JSON.parse(step.merge(JSON.stringify({ mcp: { keep: { type: "local" } } })))
+    expect(out.mcp).toEqual({ keep: { type: "local" } })
+    expect(JSON.stringify(out.provider)).toContain("https://r/v1")
+  })
+
+  it("bundleFileStep refills a blanked secret from the file already on this machine", () => {
+    const incoming = JSON.stringify({ model: "opus", env: { ANTHROPIC_AUTH_TOKEN: "" } })
+    const local = JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: "sk-local" } })
+    const step = bundleFileStep("claudeSettings", paths.claudeSettings, incoming)
+    if (step.kind !== "mergeFile") throw new Error("expected a mergeFile step")
+    expect(step.id).toBe("bundle-file-claudeSettings")
+    const out = JSON.parse(step.merge(local))
+    expect(out).toEqual({ model: "opus", env: { ANTHROPIC_AUTH_TOKEN: "sk-local" } })
+    // Nothing on this machine yet: the bundle is written as it came.
+    expect(step.merge("")).toBe(incoming)
+  })
 })

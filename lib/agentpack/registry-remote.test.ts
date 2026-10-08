@@ -195,3 +195,165 @@ describe("mapRegistryResponse", () => {
     expect(candidates[0].version).toBe("2.0.0")
   })
 })
+
+describe("mapRegistryServer on loose registry data", () => {
+  it("flattens named and positional arguments and skips empty or null ones", () => {
+    const c = mapRegistryServer({
+      name: "io.example/args",
+      packages: [
+        {
+          registryType: "npm",
+          identifier: "args-mcp",
+          runtimeArguments: [
+            { type: "positional", value: "-y" },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            null as any,
+            { type: "named", name: "", value: "" },
+          ],
+          packageArguments: [
+            { type: "named", name: "--port", value: "8080" },
+            { type: "named", name: "--verbose" },
+          ],
+        },
+      ],
+    })
+    expect(c.spec).toEqual({
+      transport: "stdio",
+      command: "npx",
+      args: ["-y", "args-mcp", "--port", "8080", "--verbose"],
+      env: {},
+    })
+  })
+
+  it("ignores env vars with no usable name, and never inlines a secret's default", () => {
+    const c = mapRegistryServer({
+      name: "io.example/env",
+      packages: [
+        {
+          registryType: "npm",
+          identifier: "env-mcp",
+          environmentVariables: [
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            null as any,
+            { description: "no name" },
+            { name: "" },
+            { name: "API_KEY", isSecret: true, default: "sk-planted" },
+          ],
+        },
+      ],
+    })
+    expect(c.envInputs.map((i) => i.name)).toEqual(["API_KEY"])
+    expect(c.spec).toEqual({
+      transport: "stdio",
+      command: "npx",
+      args: ["env-mcp"],
+      env: {},
+      envRefs: { API_KEY: "API_KEY" },
+    })
+    expect(JSON.stringify(c.spec)).not.toContain("sk-planted")
+  })
+
+  it("pins a scoped npm package's version without mistaking the scope for one", () => {
+    const pinned = mapRegistryServer({
+      name: "io.example/scoped",
+      packages: [{ registryType: "npm", identifier: "@acme/mcp", version: "1.2.3" }],
+    })
+    expect((pinned.spec as { args: string[] }).args).toEqual(["@acme/mcp@1.2.3"])
+    const already = mapRegistryServer({
+      name: "io.example/scoped",
+      packages: [{ registryType: "npm", identifier: "@acme/mcp@2.0.0", version: "1.2.3" }],
+    })
+    expect((already.spec as { args: string[] }).args).toEqual(["@acme/mcp@2.0.0"])
+  })
+
+  it("honours a runtime hint over the registry type's default", () => {
+    const c = mapRegistryServer({
+      name: "io.example/hinted",
+      packages: [{ registryType: "pypi", identifier: "tool", runtimeHint: "pipx" }],
+    })
+    expect((c.spec as { command: string }).command).toBe("pipx")
+  })
+
+  it("skips packages with no type, no identifier, or an unknown runtime", () => {
+    const c = mapRegistryServer({
+      name: "io.example/skip",
+      packages: [
+        { identifier: "untyped" },
+        { registryType: "npm" },
+        { registryType: "nuget", identifier: "dotnet-tool" },
+      ],
+    })
+    expect(c.spec).toBeUndefined()
+    expect(c.unsupported).toBe("none")
+  })
+
+  it("carries non-secret remote headers and drops secret or malformed ones", () => {
+    const c = mapRegistryServer({
+      name: "io.example/remote",
+      remotes: [
+        {
+          type: "streamable-http",
+          url: "https://x/mcp",
+          headers: [
+            { name: "X-Org", value: "acme" },
+            { name: "Authorization", value: "Bearer sk-planted", isSecret: true },
+            { name: "X-Empty" },
+            { value: "orphan" },
+          ],
+        },
+      ],
+    })
+    expect(c.spec).toEqual({
+      transport: "http",
+      url: "https://x/mcp",
+      headers: { "X-Org": "acme" },
+    })
+  })
+
+  it("prefers streamable-http whichever order the remotes arrive in, and skips url-less ones", () => {
+    for (const remotes of [
+      [
+        { type: "streamable-http", url: "https://x/mcp" },
+        { type: "sse", url: "https://x/sse" },
+      ],
+      [
+        { type: "sse", url: "https://x/sse" },
+        { type: "sse", url: "https://x/sse2" },
+        { type: "streamable-http", url: "" },
+        { type: "streamable-http", url: "https://x/mcp" },
+      ],
+    ]) {
+      const c = mapRegistryServer({ name: "io.example/order", remotes })
+      expect(c.spec).toEqual({ transport: "http", url: "https://x/mcp", headers: {} })
+    }
+  })
+
+  it("titles a server by its name when the name has no usable last segment", () => {
+    expect(mapRegistryServer({ name: "io.example/" }).title).toBe("io.example/")
+    expect(mapRegistryServer({ name: "io.example/tool", title: "Tool" }).title).toBe("Tool")
+  })
+})
+
+describe("deriveRegistryId fallbacks", () => {
+  it("joins the namespace's last label with a generic tail it would otherwise drop", () => {
+    expect(deriveRegistryId("io.github.acme/server")).toBe("acme")
+    expect(deriveRegistryId("io.github.acme/mcp/extra")).toBe("mcp-extra")
+  })
+
+  it("falls back to the whole name, then to a fixed id, when every part is generic", () => {
+    expect(deriveRegistryId("mcp/server")).toBe("mcp-server")
+    expect(deriveRegistryId("!!!/???")).toBe("mcp-server")
+  })
+})
+
+describe("mapRegistryResponse defensiveness", () => {
+  it("drops rows whose server has no string name and treats an empty cursor as none", () => {
+    const { candidates, nextCursor } = mapRegistryResponse({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      servers: [null as any, { server: { name: 7 } } as any, { server: { name: "io.x/ok" } }],
+      metadata: { nextCursor: "" },
+    })
+    expect(candidates.map((c) => c.name)).toEqual(["io.x/ok"])
+    expect(nextCursor).toBeUndefined()
+  })
+})

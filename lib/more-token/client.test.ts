@@ -26,7 +26,21 @@ import {
   hasInjectedMoreTokenPort,
   setMoreTokenPortForTests,
 } from "./port"
+import type { MoreTokenPort } from "./port"
 import {
+  cancelManagementStepUp,
+  cancelPersonalOAuth,
+  credentialState,
+  forgetCredential,
+  loginPersonalInstance,
+  pairInstance,
+  pollManagementStepUp,
+  pollPersonalOAuth,
+  quotaLabel,
+  removeInstance,
+  saveInstance,
+  startManagementStepUp,
+  startPersonalOAuth,
   csvText,
   downloadCsv,
   escapeCsvCell,
@@ -368,4 +382,286 @@ it("preserves structured server errors", async () => {
       retryable: true,
     })
   )
+})
+
+describe("port-backed wrappers", () => {
+  function spyPort() {
+    const port = createMemoryMoreTokenPort({
+      saveInstance: jest.fn(async (draft) => ({ ...draft, caFingerprint: null })),
+      removeInstance: jest.fn(async () => undefined),
+      credentialState: jest.fn(async () => ({ connected: true, persistent: true })),
+      forgetCredential: jest.fn(async () => ({
+        remoteRevoked: true,
+        localDeleted: true,
+        remoteError: null,
+      })),
+      pair: jest.fn(async () => ({ tokenId: 7, expiresAt: 99, credentialPersistent: true })),
+      personalLogin: jest.fn(async () => ({
+        tokenId: 8,
+        expiresAt: 99,
+        credentialPersistent: false,
+      })),
+      personalOAuthStart: jest.fn(async () => ({
+        handle: "h",
+        authorizationUrl: "https://mt.example/authorize",
+        expiresAt: 99,
+        intervalSeconds: 2,
+      })),
+      personalOAuthPoll: jest.fn(async () => ({
+        status: "authorization_pending" as const,
+        credential: null,
+      })),
+      personalOAuthCancel: jest.fn(async () => undefined),
+      managementStepUpStart: jest.fn(async () => ({
+        handle: "s",
+        authorizationUrl: "https://mt.example/step-up",
+        expiresAt: 99,
+        intervalSeconds: 2,
+      })),
+      managementStepUpPoll: jest.fn(async () => ({ status: "authorized" as const })),
+      managementStepUpCancel: jest.fn(async () => undefined),
+    })
+    setMoreTokenPortForTests(port)
+    return port as { [K in keyof MoreTokenPort]: jest.Mock }
+  }
+
+  it("routes instance management through the active port", async () => {
+    const port = spyPort()
+    const draft = {
+      id: "i-1",
+      name: "Team",
+      baseUrl: "https://mt.example",
+      readOnly: false,
+      displayCurrency: null,
+      customCaPath: null,
+      clearCustomCa: false,
+      package: "management" as const,
+    }
+    await expect(saveInstance(draft)).resolves.toMatchObject({ id: "i-1", caFingerprint: null })
+    expect(port.saveInstance).toHaveBeenCalledWith(draft)
+
+    await removeInstance("i-1")
+    expect(port.removeInstance).toHaveBeenCalledWith("i-1")
+
+    await expect(credentialState("i-1")).resolves.toEqual({ connected: true, persistent: true })
+    expect(port.credentialState).toHaveBeenCalledWith("i-1")
+  })
+
+  it("forgets a credential remotely unless local-only is explicitly allowed", async () => {
+    const port = spyPort()
+    await expect(forgetCredential("i-1")).resolves.toMatchObject({ remoteRevoked: true })
+    expect(port.forgetCredential).toHaveBeenLastCalledWith("i-1", false)
+    await forgetCredential("i-1", true)
+    expect(port.forgetCredential).toHaveBeenLastCalledWith("i-1", true)
+  })
+
+  it("identifies the desktop client by default when pairing and logging in", async () => {
+    const port = spyPort()
+    await expect(pairInstance("i-1", "CODE")).resolves.toMatchObject({ tokenId: 7 })
+    expect(port.pair).toHaveBeenLastCalledWith("i-1", "CODE", "agentpack-desktop")
+    await pairInstance("i-1", "CODE", "custom")
+    expect(port.pair).toHaveBeenLastCalledWith("i-1", "CODE", "custom")
+
+    await expect(loginPersonalInstance("i-1", "alice", "pw", "123456")).resolves.toMatchObject({
+      tokenId: 8,
+    })
+    expect(port.personalLogin).toHaveBeenLastCalledWith(
+      "i-1",
+      "alice",
+      "pw",
+      "123456",
+      "agentpack-personal-desktop",
+      "AgentPack Desktop"
+    )
+    await loginPersonalInstance("i-1", "alice", "pw", null, "cid", "Label")
+    expect(port.personalLogin).toHaveBeenLastCalledWith("i-1", "alice", "pw", null, "cid", "Label")
+  })
+
+  it("drives the personal OAuth flow by handle", async () => {
+    const port = spyPort()
+    await expect(startPersonalOAuth("i-1")).resolves.toMatchObject({ handle: "h" })
+    expect(port.personalOAuthStart).toHaveBeenLastCalledWith(
+      "i-1",
+      "agentpack-personal-desktop",
+      "AgentPack Desktop"
+    )
+    await startPersonalOAuth("i-1", "cid", "Label")
+    expect(port.personalOAuthStart).toHaveBeenLastCalledWith("i-1", "cid", "Label")
+
+    await expect(pollPersonalOAuth("i-1", "h")).resolves.toEqual({
+      status: "authorization_pending",
+      credential: null,
+    })
+    expect(port.personalOAuthPoll).toHaveBeenCalledWith("i-1", "h")
+    await cancelPersonalOAuth("i-1", "h")
+    expect(port.personalOAuthCancel).toHaveBeenCalledWith("i-1", "h")
+  })
+
+  it("drives the management step-up flow by handle", async () => {
+    const port = spyPort()
+    await expect(startManagementStepUp("i-1", "preview")).resolves.toMatchObject({ handle: "s" })
+    expect(port.managementStepUpStart).toHaveBeenCalledWith("i-1", "preview")
+    await expect(pollManagementStepUp("i-1", "s")).resolves.toEqual({ status: "authorized" })
+    expect(port.managementStepUpPoll).toHaveBeenCalledWith("i-1", "s")
+    await cancelManagementStepUp("i-1", "s")
+    expect(port.managementStepUpCancel).toHaveBeenCalledWith("i-1", "s")
+  })
+})
+
+describe("managementRequest edge cases", () => {
+  it("refuses to send when the signal is already aborted", async () => {
+    ;(moreTokenRequest as jest.Mock).mockClear()
+    const controller = new AbortController()
+    controller.abort()
+    await expect(
+      managementRequest("primary", { kind: "capabilities" }, controller.signal)
+    ).rejects.toMatchObject({ name: "AbortError" })
+    expect(moreTokenRequest).not.toHaveBeenCalled()
+  })
+
+  it("drops a response that arrives after the caller cancelled", async () => {
+    const controller = new AbortController()
+    ;(moreTokenRequest as jest.Mock).mockImplementationOnce(async () => {
+      controller.abort()
+      return { status: 200, body: { success: true, data: {}, request_id: "r", server_time: 1 } }
+    })
+    await expect(
+      managementRequest("primary", { kind: "capabilities" }, controller.signal)
+    ).rejects.toMatchObject({ name: "AbortError" })
+  })
+
+  it("reports a body that is not an envelope at all as an invalid server response", async () => {
+    ;(moreTokenRequest as jest.Mock).mockResolvedValueOnce({ status: 502, body: "<html>" })
+    await expect(managementRequest("primary", { kind: "capabilities" })).rejects.toEqual(
+      expect.objectContaining<Partial<ManagementApiError>>({
+        code: "INVALID_SERVER_RESPONSE",
+        status: 502,
+        retryable: false,
+      })
+    )
+    ;(moreTokenRequest as jest.Mock).mockResolvedValueOnce({
+      status: 200,
+      body: {
+        success: false,
+        error: { code: "X", message: "m", request_id: "", retryable: false },
+      },
+    })
+    await expect(managementRequest("primary", { kind: "capabilities" })).rejects.toMatchObject({
+      code: "INVALID_SERVER_RESPONSE",
+      status: 200,
+    })
+  })
+})
+
+describe("operationId without Web Crypto", () => {
+  it("still produces a time-ordered UUIDv7-shaped id", () => {
+    const original = Object.getOwnPropertyDescriptor(globalThis, "crypto")
+    Object.defineProperty(globalThis, "crypto", { value: undefined, configurable: true })
+    try {
+      const id = operationId()
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7000-8000-[0-9a-f]{12}$/)
+      const millis = parseInt(id.replaceAll("-", "").slice(0, 12), 16)
+      expect(Math.abs(millis - Date.now())).toBeLessThan(5_000)
+    } finally {
+      if (original) Object.defineProperty(globalThis, "crypto", original)
+    }
+  })
+})
+
+describe("quota formatting", () => {
+  it("expresses raw quota in units of the configured quota-per-unit", () => {
+    expect(quotaLabel(750_000)).toBe("1.5")
+    expect(quotaLabel(1, 3)).toBe("0.33")
+    expect(quotaLabel(0)).toBe("0")
+  })
+
+  it("defaults a blank display currency to USD", () => {
+    const display = {
+      quota_per_unit: 500_000,
+      display_currency: "",
+      conversion_numerator: 1,
+      conversion_denominator: 1,
+      rate_valid_until: 0,
+      version: 1,
+    }
+    expect(quotaCurrencyLabel(500_000, display)).toBe("$1.00 · 500,000 quota")
+  })
+
+  it("falls back to a plain amount when the currency code is not one Intl knows", () => {
+    const display = {
+      quota_per_unit: 1_000,
+      display_currency: "NOT-A-CODE",
+      conversion_numerator: 1,
+      conversion_denominator: 1,
+      rate_valid_until: 0,
+      version: 1,
+    }
+    expect(quotaCurrencyLabel(2_500, display)).toBe("2.50 NOT-A-CODE · 2,500 quota")
+    expect(quotaCurrencyLabel(5, display)).toBe("0.0050 NOT-A-CODE · 5 quota")
+  })
+
+  it("refuses non-finite values and degenerate conversion settings", () => {
+    const display = {
+      quota_per_unit: 500_000,
+      display_currency: "USD",
+      conversion_numerator: 1,
+      conversion_denominator: 1,
+      rate_valid_until: 0,
+      version: 1,
+    }
+    expect(quotaDisplayAmount(Number.NaN, display)).toBeNull()
+    expect(quotaDisplayAmount(1, { ...display, quota_per_unit: 0 })).toBeNull()
+    expect(quotaDisplayAmount(1, { ...display, conversion_numerator: 0 })).toBeNull()
+    expect(quotaDisplayAmount(1, { ...display, conversion_denominator: 0 })).toBeNull()
+  })
+})
+
+describe("downloadCsv in web mode", () => {
+  it("downloads through a blob link and revokes the URL only after WebKit has read it", async () => {
+    jest.useFakeTimers()
+    const createObjectURL = jest.fn(() => "blob:ledger")
+    const revokeObjectURL = jest.fn()
+    Object.assign(URL, { createObjectURL, revokeObjectURL })
+    const click = jest.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {})
+    try {
+      await expect(downloadCsv("ledger.csv", [["id"], [1]])).resolves.toEqual({
+        kind: "downloaded",
+      })
+      expect(pickSavePath).not.toHaveBeenCalled()
+      expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob))
+      const anchor = click.mock.contexts[0] as HTMLAnchorElement
+      expect(anchor.download).toBe("ledger.csv")
+      expect(anchor.href).toBe("blob:ledger")
+      expect(anchor.isConnected).toBe(false)
+      expect(revokeObjectURL).not.toHaveBeenCalled()
+      jest.advanceTimersByTime(60_000)
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:ledger")
+    } finally {
+      click.mockRestore()
+      jest.useRealTimers()
+    }
+  })
+})
+
+describe("sameOriginServerUrl hardening", () => {
+  it("catches a backslash authority that slips past the leading-slash check", () => {
+    expect(() => sameOriginServerUrl("https://more-token.example", "/\\evil.example/path")).toThrow(
+      "SERVER_URL_NOT_ALLOWED"
+    )
+  })
+
+  it("refuses embedded credentials even on the same origin", () => {
+    expect(() =>
+      sameOriginServerUrl("https://more-token.example", "/\\user:pw@more-token.example/x")
+    ).toThrow("SERVER_URL_NOT_ALLOWED")
+    expect(() =>
+      sameOriginServerUrl("https://more-token.example", "/\\:pw@more-token.example/x")
+    ).toThrow("SERVER_URL_NOT_ALLOWED")
+  })
+
+  it("refuses a relative path", () => {
+    expect(() => sameOriginServerUrl("https://more-token.example", "console")).toThrow(
+      "SERVER_URL_NOT_ALLOWED"
+    )
+  })
 })

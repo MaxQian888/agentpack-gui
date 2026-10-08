@@ -1,6 +1,7 @@
 import {
   buildClaudeMcpCommand,
   buildClaudeMcpCommandFromSpec,
+  buildClaudeMcpEntryFromSpec,
   buildClaudeMcpRemoveCommand,
   buildCodexMcpEntry,
   buildCodexMcpEntryFromSpec,
@@ -8,14 +9,18 @@ import {
   buildOpencodeMcpEntryFromSpec,
   deleteCodexMcpEntry,
   deleteOpencodeMcpEntry,
+  mergeClaudeMcp,
   mergeCodexMcp,
   mergeOpencodeMcp,
   parseClaudeMcpEntry,
   parseCodexMcpEntry,
   parseOpencodeMcpEntry,
+  removeClaudeMcp,
   resolveCatalogSpec,
   setCodexMcpEnabled,
   setOpencodeMcpEnabled,
+  specFromClaudeRecord,
+  specFromOpencodeRecord,
   wrapStdioForOs,
   type McpSpec,
 } from "./mcp"
@@ -574,4 +579,214 @@ it("Windows setx commands mirror the env vars and clear the full key set", () =>
   ])
   expect(winProxyClearCommands().every((c) => c.args[1] === "")).toBe(true)
   expect(winProxyClearCommands().map((c) => c.args[0])).toContain("HTTPS_PROXY")
+})
+
+describe("Claude config written directly (desktop-only route)", () => {
+  it("writes an http entry with its inline headers", () => {
+    expect(
+      buildClaudeMcpEntryFromSpec({
+        transport: "http",
+        url: "https://x/mcp",
+        headers: { "X-Org": "acme" },
+      })
+    ).toEqual({ type: "http", url: "https://x/mcp", headers: { "X-Org": "acme" } })
+  })
+
+  it("references the bearer env var only when no Authorization header is inline", () => {
+    expect(
+      buildClaudeMcpEntryFromSpec({
+        transport: "sse",
+        url: "https://x/sse",
+        headers: {},
+        bearerTokenEnvVar: "X_KEY",
+      })
+    ).toEqual({ type: "sse", url: "https://x/sse", headers: { Authorization: "Bearer ${X_KEY}" } })
+    expect(
+      buildClaudeMcpEntryFromSpec({
+        transport: "http",
+        url: "https://x/mcp",
+        headers: { Authorization: "Bearer literal" },
+        bearerTokenEnvVar: "X_KEY",
+      })
+    ).toEqual({ type: "http", url: "https://x/mcp", headers: { Authorization: "Bearer literal" } })
+  })
+
+  it("omits an empty headers block for an http entry", () => {
+    expect(
+      buildClaudeMcpEntryFromSpec({ transport: "http", url: "https://x/mcp", headers: {} })
+    ).toEqual({ type: "http", url: "https://x/mcp" })
+  })
+
+  it("renders stdio env refs as ${VAR} and omits an empty env block", () => {
+    const withRefs: McpSpec = {
+      transport: "stdio",
+      command: "uvx",
+      args: ["tool"],
+      env: { MODE: "fast" },
+      envRefs: { API_KEY: "HOST_KEY" },
+    }
+    expect(buildClaudeMcpEntryFromSpec(withRefs)).toEqual({
+      type: "stdio",
+      command: "uvx",
+      args: ["tool"],
+      env: { MODE: "fast", API_KEY: "${HOST_KEY}" },
+    })
+    expect(
+      buildClaudeMcpEntryFromSpec({ transport: "stdio", command: "x", args: [], env: {} })
+    ).toEqual({ type: "stdio", command: "x", args: [] })
+  })
+
+  it("every entry it writes reads back as the spec it came from", () => {
+    const specs: McpSpec[] = [
+      { transport: "http", url: "https://x/mcp", headers: {}, bearerTokenEnvVar: "X_KEY" },
+      { transport: "sse", url: "https://x/sse", headers: { "X-Org": "a" } },
+      {
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "pkg"],
+        env: { A: "1" },
+        envRefs: { B: "B_HOST" },
+      },
+    ]
+    for (const spec of specs) {
+      const json = mergeClaudeMcp("", "srv", buildClaudeMcpEntryFromSpec(spec))
+      expect(parseClaudeMcpEntry(json, "srv")).toEqual(spec)
+    }
+  })
+
+  it("mergeClaudeMcp overwrites one id in place and keeps the rest of the file", () => {
+    const json = JSON.stringify({ numStartups: 3, mcpServers: { a: { command: "old" }, b: {} } })
+    expect(JSON.parse(mergeClaudeMcp(json, "a", { command: "new" }))).toEqual({
+      numStartups: 3,
+      mcpServers: { a: { command: "new" }, b: {} },
+    })
+    expect(parseClaudeMcpEntry(json, "missing")).toBeUndefined()
+    expect(parseClaudeMcpEntry('{"mcpServers":[]}', "a")).toBeUndefined()
+  })
+
+  it("removeClaudeMcp drops one server, and leaves other state or an empty file alone", () => {
+    const json = JSON.stringify({ numStartups: 3, mcpServers: { a: {}, b: {} } })
+    expect(JSON.parse(removeClaudeMcp(json, "a"))).toEqual({
+      numStartups: 3,
+      mcpServers: { b: {} },
+    })
+    expect(JSON.parse(removeClaudeMcp(json, "zzz"))).toEqual(JSON.parse(json))
+    expect(JSON.parse(removeClaudeMcp('{"numStartups":1}', "a"))).toEqual({ numStartups: 1 })
+    expect(removeClaudeMcp("   ", "a")).toBe("{}\n")
+  })
+})
+
+describe("opencode.json guards", () => {
+  it.each(["[]", "null", "3", '"str"'])(
+    "refuses to merge into %s rather than clobber it",
+    (text) => {
+      expect(() => mergeOpencodeMcp(text, "x", { type: "local", command: ["x"] })).toThrow(
+        /not a JSON object/
+      )
+    }
+  )
+
+  it("delete treats a non-object mcp value as nothing to remove and prunes it", () => {
+    expect(JSON.parse(deleteOpencodeMcpEntry('{"mcp":[1],"theme":"x"}', "a"))).toEqual({
+      theme: "x",
+    })
+  })
+
+  it("setOpencodeMcpEnabled is a no-op for an absent id or a missing mcp object", () => {
+    const text = '{"mcp":{"a":{"type":"local","command":["x"]}}}'
+    expect(setOpencodeMcpEnabled(text, "b", false)).toBe(text)
+    expect(setOpencodeMcpEnabled('{"theme":"x"}', "a", false)).toBe('{"theme":"x"}')
+    expect(setOpencodeMcpEnabled("", "a", false)).toBe("")
+  })
+})
+
+describe("reverse parsers on loose input", () => {
+  it("reads Codex env_vars written as strings or as { name } tables", () => {
+    const toml = [
+      "[mcp_servers.x]",
+      'command = "npx"',
+      'args = ["-y", "pkg", 3]',
+      'env_vars = ["A", { name = "B" }, { other = "C" }, 4]',
+      "",
+    ].join("\n")
+    expect(parseCodexMcpEntry(toml, "x")).toEqual({
+      transport: "stdio",
+      command: "npx",
+      args: ["-y", "pkg"],
+      env: {},
+      envRefs: { A: "A", B: "B" },
+    })
+  })
+
+  it("reads a Codex http entry with no bearer var, and rejects one with neither shape", () => {
+    expect(parseCodexMcpEntry('[mcp_servers.x]\nurl = "https://x"\n', "x")).toEqual({
+      transport: "http",
+      url: "https://x",
+      headers: {},
+      bearerTokenEnvVar: undefined,
+    })
+    expect(
+      parseCodexMcpEntry('[mcp_servers.x]\nurl = "https://x"\nbearer_token_env_var = 1\n', "x")
+    ).toMatchObject({ bearerTokenEnvVar: undefined })
+    expect(parseCodexMcpEntry("[mcp_servers.x]\nenabled = false\n", "x")).toBeUndefined()
+    expect(parseCodexMcpEntry("[[broken", "x")).toBeUndefined()
+  })
+
+  it("reads a Claude http entry declared by type alone, with an empty url", () => {
+    expect(specFromClaudeRecord({ type: "http" })).toEqual({
+      transport: "http",
+      url: "",
+      headers: {},
+    })
+    expect(specFromClaudeRecord({ args: ["x"] })).toBeUndefined()
+  })
+
+  it("reads an OpenCode remote entry, lifting a {env:VAR} bearer into a reference", () => {
+    expect(
+      specFromOpencodeRecord({
+        type: "remote",
+        url: "https://x/mcp",
+        headers: { Authorization: "Bearer {env:X_KEY}", "X-Org": "a", Bad: 1 },
+      })
+    ).toEqual({
+      transport: "http",
+      url: "https://x/mcp",
+      headers: { "X-Org": "a" },
+      bearerTokenEnvVar: "X_KEY",
+    })
+  })
+
+  it("keeps a literal OpenCode bearer token as a header, and infers remote from a url", () => {
+    expect(
+      specFromOpencodeRecord({ url: "https://x", headers: { Authorization: "Bearer sk-lit" } })
+    ).toEqual({ transport: "http", url: "https://x", headers: { Authorization: "Bearer sk-lit" } })
+    expect(specFromOpencodeRecord({ type: "remote" })).toEqual({
+      transport: "http",
+      url: "",
+      headers: {},
+    })
+  })
+
+  it("rejects an OpenCode local entry with no command, and splits env refs from literals", () => {
+    expect(specFromOpencodeRecord({ type: "local", command: [] })).toBeUndefined()
+    expect(specFromOpencodeRecord({ type: "local", command: "npx" })).toBeUndefined()
+    expect(
+      specFromOpencodeRecord({
+        type: "local",
+        command: ["uvx", "tool"],
+        environment: { KEY: "{env:HOST}", MODE: "fast" },
+      })
+    ).toEqual({
+      transport: "stdio",
+      command: "uvx",
+      args: ["tool"],
+      env: { MODE: "fast" },
+      envRefs: { KEY: "HOST" },
+    })
+  })
+
+  it("parseOpencodeMcpEntry returns undefined for malformed JSON or a missing entry", () => {
+    expect(parseOpencodeMcpEntry("{nope", "x")).toBeUndefined()
+    expect(parseOpencodeMcpEntry('{"mcp":{"x":"str"}}', "x")).toBeUndefined()
+  })
 })
