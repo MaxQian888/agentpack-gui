@@ -3,7 +3,9 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
+#[cfg(target_os = "macos")]
+use std::process::Stdio;
 use std::time::Duration;
 
 fn extra_session_dirs_path(home: &Path) -> PathBuf {
@@ -1416,6 +1418,7 @@ pub fn pi_auth_status(refresh: bool) -> Result<PiAuthReport, String> {
   })
 }
 
+#[cfg(target_os = "macos")]
 fn shell_quote(value: &str) -> String {
   format!("'{}'", value.replace('\'', "'\\''"))
 }
@@ -1468,7 +1471,7 @@ pub fn launch_pi_interactive(cwd: Option<String>) -> Result<(), String> {
         .spawn()
         .map_err(|e| e.to_string())?;
     }
-    return Ok(());
+    Ok(())
   }
   #[cfg(all(not(windows), not(target_os = "macos")))]
   {
