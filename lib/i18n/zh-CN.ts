@@ -2995,6 +2995,8 @@ export const zhCN = {
       empty: "还没有会话记录",
       emptyHint: "装一个 CLI 并开始对话，花销就会出现在这里。",
       emptyAction: "去安装 CLI",
+      monthEmpty: "本月暂无使用记录",
+      monthEmptyHint: "已找到历史会话，可在用量看板查看。",
       details: "打开用量看板 →",
       notTauri: "在桌面应用中运行才能读取会话历史。",
       failed: (message: string) => `无法读取会话历史：${message}`,

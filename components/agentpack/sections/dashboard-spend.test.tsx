@@ -58,6 +58,20 @@ function renderCard(history: HistoryFeed) {
 const scanned = (sessions: SessionSummary[]): ListResult => ({ sessions, errors: [] })
 
 describe("SpendCard states", () => {
+  it("shows a manual reread in progress even while an older result is retained", () => {
+    const history = {
+      data: { sessions: [], errors: [{ source: WHOLE_SCAN, message: "old failure" }] },
+      progress: { done: 3, total: 10 },
+      loading: true,
+      retry: jest.fn(),
+    }
+    renderCard(history)
+    expect(screen.getByText(s.scanning)).toBeInTheDocument()
+    expect(screen.getByRole("progressbar")).toBeInTheDocument()
+    expect(screen.queryByText(s.failed("old failure"))).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: s.retry })).not.toBeInTheDocument()
+  })
+
   it("shows the scan progress instead of a number while the scan runs", () => {
     renderCard({ data: null, progress: { done: 3, total: 10 } })
     expect(screen.getByText(s.scanning)).toBeInTheDocument()
@@ -111,6 +125,47 @@ describe("SpendCard states", () => {
 })
 
 describe("SpendCard honesty about the read", () => {
+  it("distinguishes older history from an unused CLI and offers a refresh", async () => {
+    const now = new Date()
+    const previousMonth = new Date(now.getFullYear(), now.getMonth(), 0).getTime()
+    const retry = jest.fn()
+    renderCard({
+      data: scanned([session({ startedAt: previousMonth, updatedAt: previousMonth })]),
+      progress: null,
+      retry,
+    })
+    expect(screen.getByText("No activity this month")).toBeInTheDocument()
+    expect(screen.queryByText(s.empty)).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: s.emptyAction })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: s.retry }))
+    expect(retry).toHaveBeenCalled()
+  })
+
+  it("does not treat an unreadable source as a machine with no history", () => {
+    renderCard({
+      data: { sessions: [], errors: [{ source: "opencode", message: "database is locked" }] },
+      progress: null,
+      retry: jest.fn(),
+    })
+    expect(screen.getByText(s.failed("database is locked"))).toBeInTheDocument()
+    expect(screen.queryByText(s.empty)).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: s.retry })).toBeInTheDocument()
+  })
+
+  it("keeps source errors visible when only older history was read", () => {
+    const now = new Date()
+    const previousMonth = new Date(now.getFullYear(), now.getMonth(), 0).getTime()
+    renderCard({
+      data: {
+        sessions: [session({ startedAt: previousMonth, updatedAt: previousMonth })],
+        errors: [{ source: "opencode", message: "unreadable" }],
+      },
+      progress: null,
+    })
+    expect(screen.getByText(s.partial(1))).toBeInTheDocument()
+    expect(screen.queryByText(s.empty)).not.toBeInTheDocument()
+  })
+
   it("says the read failed, with a way to read again, instead of 'no sessions yet'", async () => {
     const retry = jest.fn()
     renderCard({

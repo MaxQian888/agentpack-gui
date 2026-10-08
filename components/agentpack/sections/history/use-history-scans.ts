@@ -53,10 +53,20 @@ export function useHistoryScans(): HistoryScans {
   const [seriesLoading, setSeriesLoading] = useState(false)
 
   const generation = useRef(0)
+  const scanRequest = useRef(0)
+  const appliedSummaryRequest = useRef(0)
   // The generation whose series is loaded or in flight. A ref rather than
   // `seriesLoading`: two surfaces asking in the same commit would both read the
   // state before either update landed, and start two full scans.
   const seriesGeneration = useRef<number | null>(null)
+
+  // Startup and usage can overlap within one generation. Keep the summary
+  // from the newest request that returned one, including in one React batch.
+  const acceptSummary = useCallback((gen: number, request: number, next: ListResult) => {
+    if (gen !== generation.current || request < appliedSummaryRequest.current) return
+    appliedSummaryRequest.current = request
+    setResult(next)
+  }, [])
 
   const rescan = useCallback(async () => {
     if (!isTauri()) return
@@ -64,33 +74,43 @@ export function useHistoryScans(): HistoryScans {
     // session's `updatedAt`, so a session that grew on disk misses its stale
     // entry and refetches, while unchanged sessions stay warm.
     const gen = ++generation.current
+    const request = ++scanRequest.current
     setLoading(true)
+    setProgress(null)
     // Drop the series too: it was built from the same files, so keeping it
     // would leave the dashboard showing pre-rescan numbers. Whoever wants it
     // asks again; the new generation makes that request a real one.
     setSeries(null)
     setSeriesLoading(false)
     try {
-      const next = await historyListSessions(setProgress)
-      if (gen === generation.current) setResult(next)
+      const next = await historyListSessions((nextProgress) => {
+        if (gen === generation.current && request === scanRequest.current) setProgress(nextProgress)
+      })
+      acceptSummary(gen, request, next)
     } catch (error) {
-      if (gen === generation.current) setResult({ sessions: [], errors: [scanFailure(error)] })
+      acceptSummary(gen, request, { sessions: [], errors: [scanFailure(error)] })
     } finally {
       if (gen === generation.current) {
         setLoading(false)
-        setProgress(null)
+        if (request === scanRequest.current) setProgress(null)
       }
     }
-  }, [])
+  }, [acceptSummary])
 
   const loadSeries = useCallback(async () => {
     if (!isTauri() || seriesGeneration.current === generation.current) return
     const gen = generation.current
+    const request = ++scanRequest.current
     seriesGeneration.current = gen
     setSeriesLoading(true)
     try {
-      const next = await historyUsageSeries(setProgress)
-      if (gen === generation.current) setSeries(next)
+      const next = await historyUsageSeries((nextProgress) => {
+        if (gen === generation.current && request === scanRequest.current) setProgress(nextProgress)
+      })
+      if (gen === generation.current) {
+        setSeries(next)
+        if (next.summary) acceptSummary(gen, request, next.summary)
+      }
     } catch (error) {
       // Recorded, not retried: a non-null series stops the dashboard asking
       // again in a loop, and the error tells the user Rescan is the way back.
@@ -98,10 +118,10 @@ export function useHistoryScans(): HistoryScans {
     } finally {
       if (gen === generation.current) {
         setSeriesLoading(false)
-        setProgress(null)
+        if (request === scanRequest.current) setProgress(null)
       }
     }
-  }, [])
+  }, [acceptSummary])
 
   // Scan chat history once at startup — not gated on opening the History
   // section, because the dashboard's spend card is the first thing rendered and
@@ -113,22 +133,25 @@ export function useHistoryScans(): HistoryScans {
   useEffect(() => {
     if (!isTauri() || result !== null) return
     const gen = generation.current
+    const request = ++scanRequest.current
     let cancelled = false
     const current = () => !cancelled && gen === generation.current
-    historyListSessions(setProgress)
+    historyListSessions((nextProgress) => {
+      if (current() && request === scanRequest.current) setProgress(nextProgress)
+    })
       .then((next) => {
-        if (current()) setResult(next)
+        if (current()) acceptSummary(gen, request, next)
       })
       .catch((error: unknown) => {
-        if (current()) setResult({ sessions: [], errors: [scanFailure(error)] })
+        if (current()) acceptSummary(gen, request, { sessions: [], errors: [scanFailure(error)] })
       })
       .finally(() => {
-        if (current()) setProgress(null)
+        if (current() && request === scanRequest.current) setProgress(null)
       })
     return () => {
       cancelled = true
     }
-  }, [result])
+  }, [result, acceptSummary])
 
   return { result, loading, progress, series, seriesLoading, rescan, loadSeries }
 }

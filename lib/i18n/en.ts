@@ -3245,6 +3245,8 @@ export const en = {
       empty: "No sessions yet",
       emptyHint: "Install a CLI and start a chat — your spend shows up here.",
       emptyAction: "Install a CLI",
+      monthEmpty: "No activity this month",
+      monthEmptyHint: "Earlier sessions were found. Open the usage dashboard to view them.",
       details: "Open usage dashboard →",
       notTauri: "Run the desktop app to read your session history.",
       // A failed read is not a month with no spend, and a partial one is not
