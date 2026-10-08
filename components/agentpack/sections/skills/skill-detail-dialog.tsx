@@ -212,15 +212,18 @@ export function SkillDetailDialog({
     >
       <DialogContent className="flex h-[85vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
         <DialogHeader className="border-b px-6 py-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
+          {/* `pr-8` clears the dialog's close button, which sits absolutely
+              in this corner; the actions wrap under the title on a phone
+              rather than squeezing it to nothing. */}
+          <div className="flex flex-wrap items-start justify-between gap-3 pr-8">
+            <div className="min-w-0 flex-1 basis-60">
               <DialogTitle>{row?.name}</DialogTitle>
               <DialogDescription className="line-clamp-2">
                 {row?.description ?? row?.dirName}
               </DialogDescription>
             </div>
             {entry && isTauri() ? (
-              <div className="flex shrink-0 items-center gap-1">
+              <div className="flex flex-wrap items-center gap-1">
                 <Button
                   variant="ghost"
                   size="sm"

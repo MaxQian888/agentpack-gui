@@ -175,7 +175,7 @@ describe("OverviewPanel — cost figure", () => {
     // nothing; the headline is the figure that must not pretend.
     const tile = screen
       .getByText(h.statCost, { selector: "div" })
-      .closest<HTMLElement>("[data-slot=card]")!
+      .closest<HTMLElement>("[data-slot=stat]")!
     expect(within(tile).getByText("—")).toBeInTheDocument()
     expect(within(tile).getByText(h.unpricedExcluded(1))).toBeInTheDocument()
   })

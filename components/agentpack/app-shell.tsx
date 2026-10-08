@@ -746,6 +746,7 @@ function ShellBody() {
             onNavigate={goToSection}
             history={{
               data: historyResult,
+              loading: historyLoading,
               progress: historyProgress,
               retry: () => void loadHistory(),
             }}

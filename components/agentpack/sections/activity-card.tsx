@@ -80,9 +80,18 @@ export function ActivityCard({
                 />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm [overflow-wrap:anywhere]">{r.title}</p>
-                  <p className="mt-0.5 font-mono text-[var(--hm-text-2xs)] text-muted-foreground">
-                    {when(r.at, lang)} · {a.outcome[r.outcome]} · {a.steps(r.steps.length)} ·{" "}
-                    {restorable ? a.restorePoint : a.noUndo}
+                  {/* Only the timestamp is a machine value, so only it is mono
+                      (design.md § 4); set whole, the line wrapped mid-phrase in
+                      a 30%-wider face. Each fact is its own box and carries its
+                      separator *after* it, so a wrapped line never opens on an
+                      orphaned "·". */}
+                  <p className="mt-0.5 flex flex-wrap gap-x-1.5 text-xs text-muted-foreground [&>span:not(:last-child)]:after:ml-1.5 [&>span:not(:last-child)]:after:content-['·']">
+                    <span className="font-mono text-[var(--hm-text-2xs)] tabular-nums">
+                      {when(r.at, lang)}
+                    </span>
+                    <span>{a.outcome[r.outcome]}</span>
+                    <span>{a.steps(r.steps.length)}</span>
+                    <span>{restorable ? a.restorePoint : a.noUndo}</span>
                   </p>
                 </div>
               </li>

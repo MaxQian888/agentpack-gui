@@ -73,10 +73,16 @@ describe("formatCost", () => {
     expect(formatCost(undefined)).toBe("—")
     expect(formatCost(Infinity)).toBe("—")
   })
-  it("formats zero, sub-dollar (4dp) and dollar+ (2dp)", () => {
+  it("formats in cents, keeping 4dp only where cents would round to nothing", () => {
     expect(formatCost(0)).toBe("$0.00")
-    expect(formatCost(0.0123)).toBe("$0.0123")
+    expect(formatCost(0.0042)).toBe("$0.0042")
+    expect(formatCost(0.0123)).toBe("$0.01")
+    expect(formatCost(0.9143)).toBe("$0.91")
     expect(formatCost(3.4)).toBe("$3.40")
+  })
+  it("groups thousands like the counts beside it", () => {
+    expect(formatCost(1105.51)).toBe("$1,105.51")
+    expect(formatCost(1234567.891)).toBe("$1,234,567.89")
   })
 })
 

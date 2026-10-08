@@ -60,6 +60,25 @@ describe("loadSettings", () => {
     expect((await loadSettings()).skillRepoSources).toEqual(sources)
   })
 
+  it("fills in the targets of a proxy an older release saved without them", async () => {
+    // Raw, it never compared equal to the plan's (filled) copy: a permanent
+    // "1 selected" in the change tray that every review rewrote.
+    mockedLoad.mockResolvedValue(
+      storeMock({ proxy: { mode: "manual", http: "http://127.0.0.1:7890" } })
+    )
+    const { proxy } = await loadSettings()
+    expect(proxy).toEqual({
+      mode: "manual",
+      http: "http://127.0.0.1:7890",
+      targets: ["claude", "npm", "git"],
+    })
+  })
+
+  it("keeps a saved proxy's own targets", async () => {
+    mockedLoad.mockResolvedValue(storeMock({ proxy: { mode: "system", targets: ["git"] } }))
+    expect((await loadSettings()).proxy).toEqual({ mode: "system", targets: ["git"] })
+  })
+
   it("falls back to defaults when the store throws", async () => {
     mockedLoad.mockRejectedValue(new Error("no store"))
     expect(await loadSettings()).toEqual(DEFAULT_SETTINGS)

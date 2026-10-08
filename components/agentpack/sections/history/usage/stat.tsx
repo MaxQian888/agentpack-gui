@@ -1,7 +1,6 @@
 "use client"
 
 import { ArrowDown, ArrowUp, Minus } from "lucide-react"
-import { Card } from "@/components/ui/card"
 import { useT } from "@/lib/i18n/provider"
 import { cn } from "@/lib/utils"
 
@@ -27,7 +26,7 @@ export function Stat({
   tone?: "up-good" | "up-bad"
 }) {
   return (
-    <Card className="gap-1 p-4">
+    <div data-slot="stat" className="flex min-w-0 flex-col gap-1 bg-background p-4">
       <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </div>
@@ -46,7 +45,27 @@ export function Stat({
         {delta != null && Number.isFinite(delta) ? <Delta value={delta} tone={tone} /> : null}
       </div>
       {sub ? <div className="text-xs text-muted-foreground">{sub}</div> : null}
-    </Card>
+    </div>
+  )
+}
+
+/**
+ * The frame a row of `Stat`s sits in: one hairline panel divided by rules, not
+ * a row of identical cards (design.md § 5). The rules are the 1px gap showing
+ * the border colour through, so the grid must be filled — choose column counts
+ * that divide the number of stats, or an empty cell reads as a grey block.
+ */
+export function StatGrid({
+  className,
+  children,
+}: {
+  className?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className={cn("grid gap-px overflow-hidden rounded-lg border bg-border", className)}>
+      {children}
+    </div>
   )
 }
 
@@ -62,7 +81,7 @@ function Delta({ value, tone = "up-good" }: { value: number; tone?: "up-good" | 
         // `shrink-0`: the badge is already as small as it reads — squeezing it
         // is what let it spill out of the card instead of wrapping.
         "flex shrink-0 items-center gap-0.5 text-xs font-medium tabular-nums",
-        flat ? "text-muted-foreground" : good ? "text-emerald-600" : "text-amber-600"
+        flat ? "text-muted-foreground" : good ? "text-[var(--hm-ok)]" : "text-[var(--hm-warn)]"
       )}
     >
       <Icon className="size-3" />

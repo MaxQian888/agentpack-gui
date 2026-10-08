@@ -474,7 +474,7 @@ pub struct SessionTreeNode {
 
 /// A source that couldn't be scanned (missing directory is *not* an error — it's
 /// reported as simply absent, i.e. no sessions).
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceError {
   source: String,
@@ -493,6 +493,9 @@ pub struct ListResult {
 pub struct UsageSeriesResult {
   sessions: Vec<SessionSeries>,
   errors: Vec<SourceError>,
+  /// The summaries from this same scan, so the homepage cannot retain an older
+  /// startup snapshot after the usage dashboard has read fresh activity.
+  summary: ListResult,
 }
 
 mod util;
@@ -635,7 +638,11 @@ pub fn history_list_sessions(progress: Channel<ScanProgressEvent>) -> ListResult
 /// when the usage dashboard is opened.
 #[tauri::command(async)]
 pub fn history_usage_series(progress: Channel<ScanProgressEvent>) -> UsageSeriesResult {
-  let (_, mut errors, cache) = scan_all(progress);
+  let (summaries, mut errors, cache) = scan_all(progress);
+  let summary = ListResult {
+    sessions: summaries,
+    errors: errors.clone(),
+  };
   let mut sessions: Vec<SessionSeries> = cache
     .series
     .entries
@@ -649,7 +656,11 @@ pub fn history_usage_series(progress: Channel<ScanProgressEvent>) -> UsageSeries
       message: e,
     });
   }
-  UsageSeriesResult { sessions, errors }
+  UsageSeriesResult {
+    sessions,
+    errors,
+    summary,
+  }
 }
 
 /// Whether `new_cache` differs from `old` in its set of files or any file's

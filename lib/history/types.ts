@@ -231,4 +231,6 @@ export interface SessionSeries {
 export interface UsageSeriesResult {
   sessions: SessionSeries[]
   errors: SourceError[]
+  /** Same-scan summaries. Optional for compatibility with older desktop builds. */
+  summary?: ListResult
 }

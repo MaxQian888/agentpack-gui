@@ -102,6 +102,6 @@ it("keeps a newly selected tab visible in a narrow scroll strip", () => {
       />
     </I18nProvider>
   )
-  expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest", inline: "nearest" })
+  expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest", inline: "center" })
   scrollIntoView.mockRestore()
 })

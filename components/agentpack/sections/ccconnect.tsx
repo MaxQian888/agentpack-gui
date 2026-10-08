@@ -359,7 +359,7 @@ export function CcConnectSection() {
 
   if (!isTauri()) {
     return (
-      <SectionShell title={c.menuTitle} help={<HelpTip text={t.help.ccconnect} />}>
+      <SectionShell wide title={c.menuTitle} help={<HelpTip text={t.help.ccconnect} />}>
         <DesktopOnlyNote>{t.shell.notInTauri}</DesktopOnlyNote>
       </SectionShell>
     )

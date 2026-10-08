@@ -253,7 +253,9 @@ export function ProviderForm({
                   </Button>
                   {probe ? (
                     <span
-                      className={probe.ok ? "text-xs text-emerald-600" : "text-xs text-destructive"}
+                      className={
+                        probe.ok ? "text-xs text-[var(--hm-ok)]" : "text-xs text-destructive"
+                      }
                       role="status"
                     >
                       {probeMessage(probe)}

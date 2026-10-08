@@ -187,7 +187,9 @@ export function OnboardingDialog({
           {/* The step counter sits beside the title, not inside it: folding it
               into DialogTitle would append "1 / 4" to the dialog's accessible
               name on every step. */}
-          <div className="flex items-center justify-between gap-3">
+          {/* `pr-8` keeps the counter clear of the dialog's close button,
+              which is absolutely placed in the same top-right corner. */}
+          <div className="flex items-center justify-between gap-3 pr-8">
             <DialogTitle className="flex items-center gap-2">
               <Sparkles className="size-5 text-primary" aria-hidden="true" />
               {w.title}
@@ -536,7 +538,7 @@ function SummaryRow({
       {label}
       {installed ? (
         <span
-          className="size-1.5 shrink-0 rounded-full bg-emerald-500"
+          className="size-1.5 shrink-0 rounded-full bg-[var(--hm-ok)]"
           title={installedLabel}
           aria-label={installedLabel}
         />

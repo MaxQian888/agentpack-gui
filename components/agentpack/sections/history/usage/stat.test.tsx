@@ -45,21 +45,21 @@ describe("Stat", () => {
 
   it("colours growth green by default and amber where growth is bad", () => {
     const { unmount } = render(<Stat label="Tokens" value="1" delta={30} />)
-    expect(toneOf("30%")).toContain("text-emerald-600")
+    expect(toneOf("30%")).toContain("text-[var(--hm-ok)]")
     unmount()
 
     render(<Stat label="Cost" value="$1" delta={30} tone="up-bad" />)
-    expect(toneOf("30%")).toContain("text-amber-600")
+    expect(toneOf("30%")).toContain("text-[var(--hm-warn)]")
   })
 
   it("inverts the colour for a fall, per tone", () => {
     const { unmount } = render(<Stat label="Tokens" value="1" delta={-30} />)
-    expect(toneOf("30%")).toContain("text-amber-600")
+    expect(toneOf("30%")).toContain("text-[var(--hm-warn)]")
     unmount()
 
     // Cost falling is good news.
     render(<Stat label="Cost" value="$1" delta={-30} tone="up-bad" />)
-    expect(toneOf("30%")).toContain("text-emerald-600")
+    expect(toneOf("30%")).toContain("text-[var(--hm-ok)]")
   })
 })
 

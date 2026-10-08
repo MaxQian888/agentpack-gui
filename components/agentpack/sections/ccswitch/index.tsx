@@ -825,8 +825,11 @@ export function CcSwitchSection() {
             label={c.summaryLabel}
             facts={[
               { label: c.metricProviders, value: providers?.length ?? "—" },
-              { label: c.metricCurrent, value: currentProviderCount },
-              { label: c.metricAccounts, value: activeAccounts.length },
+              // A `0` beside the providers' `—` claimed a reading nothing took:
+              // "current" is a property of a provider list that isn't loaded,
+              // and the web build never reads the accounts file at all.
+              { label: c.metricCurrent, value: providers ? currentProviderCount : "—" },
+              { label: c.metricAccounts, value: tauri ? activeAccounts.length : "—" },
               {
                 label: c.metricCcSwitch,
                 value:

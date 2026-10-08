@@ -121,11 +121,14 @@ export function OnboardingNetworkStep({
           <div key={line.text} className="flex items-start gap-2 text-sm">
             {line.ok ? (
               <CheckCircle2
-                className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
+                className="mt-0.5 size-4 shrink-0 text-[var(--hm-ok)]"
                 aria-hidden="true"
               />
             ) : (
-              <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-500" aria-hidden="true" />
+              <TriangleAlert
+                className="mt-0.5 size-4 shrink-0 text-[var(--hm-warn)]"
+                aria-hidden="true"
+              />
             )}
             <span>
               {line.text}

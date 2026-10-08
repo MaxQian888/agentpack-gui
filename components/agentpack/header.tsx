@@ -70,16 +70,19 @@ export function Header({
           it repeats the workspace back at itself ("My account / My account"). */}
       <div className="flex min-w-0 items-baseline gap-1.5">
         <span className="truncate text-sm font-medium">{workspaceMeta(workspace).label(t)}</span>
+        {/* Below `sm` the tab strip directly underneath already names the
+            section, and the two truncated halves ("Install & re… / Quick
+            setup (pre…") said less than the workspace alone. */}
         {hasTabs(workspace) &&
         sectionMeta(section).label(t) !== workspaceMeta(workspace).label(t) ? (
-          <>
+          <span className="hidden min-w-0 items-baseline gap-1.5 sm:flex">
             <span aria-hidden="true" className="text-muted-foreground/60">
               /
             </span>
             <span className="truncate text-sm text-muted-foreground">
               {sectionMeta(section).label(t)}
             </span>
-          </>
+          </span>
         ) : null}
       </div>
 
@@ -94,7 +97,9 @@ export function Header({
           className="gap-2 text-muted-foreground font-normal"
         >
           <Search className="size-4" />
-          <span className="hidden sm:inline">{t.palette.open}</span>
+          {/* Visually hidden rather than display:none on a phone, so the
+              icon-only button still has a name. */}
+          <span className="sr-only sm:not-sr-only">{t.palette.open}</span>
           <Kbd className="hidden md:inline-flex">⌘K</Kbd>
         </Button>
 
@@ -107,7 +112,7 @@ export function Header({
             onClick={onShowRun}
           >
             <Spinner aria-hidden className="size-4 text-[var(--hm-accent)]" />
-            {t.shell.runningBadge(run.done, run.total)}
+            <span className="max-sm:sr-only">{t.shell.runningBadge(run.done, run.total)}</span>
           </Button>
         ) : null}
 

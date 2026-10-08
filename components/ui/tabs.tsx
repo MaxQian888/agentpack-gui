@@ -72,7 +72,13 @@ function TabsContent({ className, ...props }: React.ComponentProps<typeof TabsPr
   return (
     <TabsPrimitive.Content
       data-slot="tabs-content"
-      className={cn("flex-1 outline-none", className)}
+      // A panel swap fades in (design.md § 6, opacity only — the strip above
+      // already says where you went, so nothing needs to travel). The outgoing
+      // panel leaves at once.
+      className={cn(
+        "flex-1 outline-none data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:duration-(--hm-dur-base) data-[state=active]:ease-(--hm-ease-out)",
+        className
+      )}
       {...props}
     />
   )

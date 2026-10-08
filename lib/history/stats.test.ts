@@ -249,7 +249,7 @@ describe("computeUsageStats — unpriced models", () => {
     expect(st.estimatedCost).toBe(0)
     expect(st.totals.cost).toBeCloseTo(0.5)
     // …and the headline figure says it is a lower bound.
-    expect(formatCostFigure(statsCostFigure(st))).toBe("≥$0.5000")
+    expect(formatCostFigure(statsCostFigure(st))).toBe("≥$0.50")
   })
 
   it("writes — for a total when no transcript could be priced at all", () => {

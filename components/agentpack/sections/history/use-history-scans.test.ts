@@ -72,6 +72,15 @@ describe("useHistoryScans — a failed scan", () => {
 })
 
 describe("useHistoryScans — the series", () => {
+  it("refreshes homepage summaries from the scan that loaded the usage dashboard", async () => {
+    mockList.mockResolvedValue({ sessions: [], errors: [] })
+    mockSeries.mockResolvedValue({ ...SERIES, summary: list("today") })
+    const { result } = renderHook(() => useHistoryScans())
+    await waitFor(() => expect(result.current.result).toEqual({ sessions: [], errors: [] }))
+    await act(() => result.current.loadSeries())
+    expect(result.current.result).toEqual(list("today"))
+  })
+
   it("starts one fetch however many surfaces ask while it is in flight", async () => {
     mockList.mockResolvedValue(list("first"))
     const pending = deferred<UsageSeriesResult>()
@@ -105,6 +114,62 @@ describe("useHistoryScans — the series", () => {
 })
 
 describe("useHistoryScans — overlapping scans", () => {
+  it("still accepts startup summaries when an older backend returns no usage summary", async () => {
+    const startup = deferred<ListResult>()
+    mockList.mockReturnValueOnce(startup.promise)
+    mockSeries.mockResolvedValueOnce(SERIES)
+    const { result } = renderHook(() => useHistoryScans())
+    await act(() => result.current.loadSeries())
+    await act(async () => startup.resolve(list("startup")))
+    expect(result.current.result).toEqual(list("startup"))
+  })
+
+  it("ignores a stale startup failure after usage returned fresh summaries", async () => {
+    const startup = deferred<ListResult>()
+    mockList.mockReturnValueOnce(startup.promise)
+    mockSeries.mockResolvedValueOnce({ ...SERIES, summary: list("today") })
+    const { result } = renderHook(() => useHistoryScans())
+    await act(async () => {
+      const pending = result.current.loadSeries()
+      await pending
+      startup.reject(new Error("old failure"))
+    })
+    expect(result.current.result).toEqual(list("today"))
+  })
+
+  it("keeps progress from the active scan when an older scan reports or completes", async () => {
+    const startup = deferred<ListResult>()
+    const usage = deferred<UsageSeriesResult>()
+    mockList.mockReturnValueOnce(startup.promise)
+    mockSeries.mockReturnValueOnce(usage.promise)
+    const { result } = renderHook(() => useHistoryScans())
+    act(() => {
+      void result.current.loadSeries()
+      mockSeries.mock.calls[0][0]({ done: 4, total: 10 })
+      mockList.mock.calls[0][0]({ done: 1, total: 10 })
+    })
+    expect(result.current.progress).toEqual({ done: 4, total: 10 })
+    await act(async () => startup.resolve(list("startup")))
+    expect(result.current.progress).toEqual({ done: 4, total: 10 })
+    await act(async () => usage.resolve({ ...SERIES, summary: list("today") }))
+    expect(result.current.progress).toBeNull()
+  })
+
+  it("does not let startup overwrite fresher usage summaries in the same completion batch", async () => {
+    const startup = deferred<ListResult>()
+    const usage = deferred<UsageSeriesResult>()
+    mockList.mockReturnValueOnce(startup.promise)
+    mockSeries.mockReturnValueOnce(usage.promise)
+    const { result } = renderHook(() => useHistoryScans())
+    await act(async () => {
+      const pending = result.current.loadSeries()
+      usage.resolve({ ...SERIES, summary: list("today") })
+      startup.resolve({ sessions: [], errors: [] })
+      await pending
+    })
+    expect(result.current.result).toEqual(list("today"))
+  })
+
   it("drops a slow startup scan that lands after a Rescan", async () => {
     const startup = deferred<ListResult>()
     mockList.mockReturnValueOnce(startup.promise).mockResolvedValueOnce(list("rescan"))

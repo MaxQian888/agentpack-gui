@@ -23,9 +23,11 @@ import { DesktopOnlyNote } from "../desktop-only-note"
 export interface HistoryFeed {
   /** `null` while the scan is still running — that IS the loading signal. */
   data: ListResult | null
+  /** A manual reread is running; the previous result remains cached. */
+  loading?: boolean
   /** Streamed while gigabytes of JSONL are parsed; null when idle. */
   progress: ScanProgress | null
-  /** Read the history again — offered when the last read failed. */
+  /** Read the history again after a failed read or an empty month. */
   retry?: () => void
 }
 
@@ -38,9 +40,7 @@ export interface HistoryFeed {
  * usage dashboard uses is an order of magnitude larger and would put a stall in
  * front of the first screen.
  *
- * Three states that must stay distinct: still scanning, scanned-and-empty (a
- * brand-new user, who needs a way forward rather than a $0.00), and real
- * figures.
+ * An empty month, no history, and an unreadable source are different states.
  */
 export function SpendCard({
   history,
@@ -66,8 +66,13 @@ export function SpendCard({
     if (mounted && !isTauri()) {
       return <DesktopOnlyNote>{s.notTauri}</DesktopOnlyNote>
     }
-    if (!spend) return <ScanningBody label={s.scanning} progress={history.progress} />
-    const failure = history.data?.errors.find((e) => e.source === WHOLE_SCAN)
+    const data = history.data
+    if (history.loading || !spend || !data) {
+      return <ScanningBody label={s.scanning} progress={history.progress} />
+    }
+    const failure =
+      data.errors.find((e) => e.source === WHOLE_SCAN) ??
+      (data.sessions.length === 0 ? data.errors[0] : undefined)
     if (failure) {
       return (
         <div className="flex flex-col items-start gap-2">
@@ -82,8 +87,24 @@ export function SpendCard({
         </div>
       )
     }
-    const unread = history.data?.errors.length ?? 0
+    const unread = data.errors.length
     if (!spend.hasActivity) {
+      if (data.sessions.length > 0) {
+        return (
+          <div className="flex flex-col items-start gap-2">
+            <p className="text-sm font-medium">{s.monthEmpty}</p>
+            <p className="text-sm text-muted-foreground">{s.monthEmptyHint}</p>
+            {unread > 0 ? (
+              <p className="text-xs text-[var(--hm-warn)]">{s.partial(unread)}</p>
+            ) : null}
+            {history.retry ? (
+              <Button size="sm" variant="outline" onClick={history.retry}>
+                {s.retry}
+              </Button>
+            ) : null}
+          </div>
+        )
+      }
       return (
         <div className="flex flex-col items-start gap-2">
           <p className="text-sm font-medium">{s.empty}</p>
@@ -190,7 +211,9 @@ function ScanningBody({ label, progress }: { label: string; progress: ScanProgre
   return (
     <div className="flex flex-col gap-3">
       <Skeleton className="h-9 w-32" />
-      <p className="text-xs text-muted-foreground">{label}</p>
+      <p role="status" className="text-xs text-muted-foreground">
+        {label}
+      </p>
       {progress && progress.total > 0 ? (
         <Progress value={(progress.done / progress.total) * 100} className="h-1" />
       ) : null}

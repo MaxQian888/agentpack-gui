@@ -4,7 +4,7 @@ import { useId, useState } from "react"
 import { CalendarDays, Download } from "lucide-react"
 import type { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
-import { ButtonGroup, ButtonGroupText } from "@/components/ui/button-group"
+import { ButtonGroup } from "@/components/ui/button-group"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
@@ -160,12 +160,12 @@ export function ExportButtons({
 }) {
   const t = useT().history
   return (
+    // The group is named for assistive tech only. Drawn, the "Export" caption
+    // was a third box in the same outline as the two buttons, set in muted ink —
+    // it read as a disabled button sitting in front of two that work.
     <ButtonGroup aria-label={t.exportLabel}>
-      <ButtonGroupText className="h-8 gap-1.5 px-2.5 text-xs text-muted-foreground">
+      <Button variant="outline" size="sm" className="gap-1.5" onClick={onCsv} disabled={disabled}>
         <Download aria-hidden="true" className="size-3.5" />
-        {t.exportLabel}
-      </ButtonGroupText>
-      <Button variant="outline" size="sm" onClick={onCsv} disabled={disabled}>
         {t.exportCsv}
       </Button>
       <Button variant="outline" size="sm" onClick={onJson} disabled={disabled}>

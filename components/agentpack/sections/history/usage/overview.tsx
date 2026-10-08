@@ -30,7 +30,7 @@ import {
 import { CHART_SERIES, SOURCE_COLORS } from "@/lib/history/display"
 import { bucketLabel } from "@/lib/history/range"
 import { statsCostFigure } from "@/lib/history/stats"
-import { Stat, PanelTitle } from "./stat"
+import { Stat, StatGrid, PanelTitle } from "./stat"
 import { DrillButton } from "./drill-button"
 import type { UsageView } from "./view"
 import type { UsageDrilldown } from "./index"
@@ -79,7 +79,7 @@ export function OverviewPanel({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      <StatGrid className="grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
         <Stat
           label={t.statSessions}
           value={formatNumber(totals.sessions)}
@@ -106,7 +106,7 @@ export function OverviewPanel({
           delta={delta(totals.cost, (s) => s.totals.cost)}
           tone="up-bad"
         />
-      </div>
+      </StatGrid>
 
       {/* Cost provenance. One summed number would imply a precision we don't
           have: OpenCode records real dollars, Claude/Codex are priced from
@@ -136,7 +136,7 @@ export function OverviewPanel({
         </div>
       </Card>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <StatGrid className="grid-cols-2 md:grid-cols-4">
         <Stat
           label={t.statCache}
           value={formatTokens(totals.usage.cacheRead)}
@@ -155,17 +155,17 @@ export function OverviewPanel({
           label={t.statAvgCost}
           value={formatCostFigure(statsCostFigure(stats, averages.costPerSession))}
         />
-      </div>
+      </StatGrid>
 
       {totals.durationSessions > 0 ? (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <StatGrid className="grid-cols-2">
           <Stat
             label={t.statDuration}
             value={formatDuration(totals.durationMs)}
             sub={t.durationCoverage(totals.durationSessions, totals.sessions)}
           />
           <Stat label={t.statAvgDuration} value={formatDuration(averages.durationPerSession)} />
-        </div>
+        </StatGrid>
       ) : null}
 
       <Card className="gap-3 p-4">

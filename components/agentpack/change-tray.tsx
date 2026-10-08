@@ -1,6 +1,7 @@
 "use client"
 
 import { ArrowRight } from "lucide-react"
+import { useLayoutEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
 import { useT } from "@/lib/i18n/provider"
@@ -54,10 +55,32 @@ export function ChangeTray({
   // is not something the user picked, and counting it kept this tray open on
   // every launch with a Clear button that couldn't clear it.
   const count = useTrayCount()
-  if (count === 0) return null
+  const ref = useRef<HTMLDivElement>(null)
+  const shown = count > 0
+
+  // Toasts stack bottom-right — exactly where this tray's one primary button
+  // sits — so for four seconds after any toast, "Review changes" was under it.
+  // Publishing the tray's height lets the toaster (components/ui/sonner.tsx)
+  // stand on top of the tray instead of on top of its button.
+  useLayoutEffect(() => {
+    const el = ref.current
+    const root = document.documentElement
+    if (!shown || !el) return
+    const publish = () => root.style.setProperty("--hm-tray-h", `${el.offsetHeight}px`)
+    publish()
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(publish)
+    observer?.observe(el)
+    return () => {
+      observer?.disconnect()
+      root.style.removeProperty("--hm-tray-h")
+    }
+  }, [shown])
+
+  if (!shown) return null
 
   return (
     <div
+      ref={ref}
       role="region"
       aria-label={t.tray.label}
       className="hm-tray-in flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-t bg-[var(--hm-paper-2)] px-4 py-2.5 sm:px-6"
@@ -66,8 +89,12 @@ export function ChangeTray({
       <Button variant="ghost" size="sm" className="ml-auto" onClick={clearSelection}>
         {t.tray.clear}
       </Button>
+      {/* On a phone the three don't fit one row, and the primary used to wrap
+          alone onto the second, flush left under the count. It takes that row
+          whole instead, where a thumb finds it. */}
       <Button
         size="sm"
+        className="max-[420px]:w-full"
         onClick={running && onShowRun ? onShowRun : onReview}
         disabled={preparing}
         data-tour="tray"

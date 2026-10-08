@@ -27,7 +27,7 @@ import { bucketLabel } from "@/lib/history/range"
 import { isMcpTool, OTHER_MODELS } from "@/lib/history/series"
 import { sessionCostFigure, UNKNOWN_MODEL } from "@/lib/history/stats"
 import { costBucketLabel } from "@/lib/history/insights"
-import { Stat, PanelTitle, EmptyPanel, SeriesPending } from "./stat"
+import { Stat, StatGrid, PanelTitle, EmptyPanel, SeriesPending } from "./stat"
 import { DrillButton } from "./drill-button"
 import type { UsageView } from "./view"
 import type { UsageDrilldown } from "./index"
@@ -77,7 +77,7 @@ export function BehaviourPanel({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <StatGrid className="grid-cols-2 md:grid-cols-4">
         {seriesReady ? (
           <>
             <Stat label={t.statToolCalls} value={formatNumber(totalCalls)} />
@@ -111,7 +111,7 @@ export function BehaviourPanel({
             <Stat label={t.statCacheSaved} value="—" sub={pending} />
           </>
         )}
-      </div>
+      </StatGrid>
 
       <Card className="gap-3 p-4">
         <PanelTitle title={t.toolsTitle} hint={t.toolsHint} />
@@ -148,7 +148,7 @@ export function BehaviourPanel({
                     <div
                       className={cn(
                         "text-[11px] tabular-nums",
-                        errorRate > 0.2 ? "text-amber-600" : "text-muted-foreground"
+                        errorRate > 0.2 ? "text-[var(--hm-warn)]" : "text-muted-foreground"
                       )}
                     >
                       {t.toolErrors(formatNumber(tool.errors), (errorRate * 100).toFixed(1))}
@@ -292,7 +292,10 @@ export function BehaviourPanel({
                   <span className="flex items-center gap-2">
                     <DrillButton>{r.session.title}</DrillButton>
                     {r.outlier ? (
-                      <Badge variant="outline" className="shrink-0 text-[10px] text-amber-600">
+                      <Badge
+                        variant="outline"
+                        className="shrink-0 text-[10px] text-[var(--hm-warn)]"
+                      >
                         {t.outlierBadge}
                       </Badge>
                     ) : null}

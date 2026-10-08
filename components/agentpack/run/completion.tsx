@@ -164,15 +164,12 @@ export function Completion({
     <div className="flex flex-col gap-3 rounded-lg border bg-muted/40 p-4">
       <div className="flex items-start gap-2.5">
         {tone === "good" ? (
-          <CheckCircle2
-            className="mt-0.5 size-5 shrink-0 text-emerald-600 dark:text-emerald-400"
-            aria-hidden="true"
-          />
+          <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-[var(--hm-ok)]" aria-hidden="true" />
         ) : (
           <TriangleAlert
             className={cn(
               "mt-0.5 size-5 shrink-0",
-              tone === "bad" ? "text-destructive" : "text-amber-500"
+              tone === "bad" ? "text-destructive" : "text-[var(--hm-warn)]"
             )}
             aria-hidden="true"
           />
@@ -196,7 +193,7 @@ export function Completion({
           {warnings.map((r) => (
             <div key={r.id} className="flex items-start gap-2 text-sm">
               <TriangleAlert
-                className="mt-0.5 size-3.5 shrink-0 text-amber-500"
+                className="mt-0.5 size-3.5 shrink-0 text-[var(--hm-warn)]"
                 aria-hidden="true"
               />
               <span>{r.label}</span>

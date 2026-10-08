@@ -51,7 +51,7 @@ sha2 = "0.11"
 url = "2"
 glob = "0.3"
 rustls-pemfile = "2"
-webpki-roots = "0.26"
+webpki-roots = "1"
 # Management credentials are isolated from model keys and files. 3.6.3 has
 # MSRV 1.75, which stays below this crate's pinned Rust 1.77.2 toolchain.
 keyring = { version = "3.6.3", default-features = false, features = ["apple-native", "windows-native", "linux-native-sync-persistent", "crypto-rust"] }
@@ -75,4 +75,4 @@ libc = "0.2"
 # Read the live persisted PATH from the registry so tools installed mid-session
 # (Node via winget, claude via `npm i -g`) are found without an app restart.
 [target.'cfg(windows)'.dependencies]
-winreg = "0.55"
+winreg = "0.56"

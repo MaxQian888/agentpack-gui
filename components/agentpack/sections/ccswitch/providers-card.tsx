@@ -160,7 +160,7 @@ export function ProvidersCard({
             </span>
           ) : null}
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button

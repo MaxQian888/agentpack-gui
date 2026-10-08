@@ -37,14 +37,19 @@ export function formatNumber(n: number): string {
 }
 
 /**
- * USD cost. Small amounts keep 4 decimals ("$0.0123"), larger ones 2 ("$3.40").
+ * USD cost, in cents ("$0.91", "$3.40", "$1,105.51"), with thousands grouped
+ * like every other count in the section. Only an amount that cents would round
+ * to nothing keeps 4 decimals ("$0.0042") — "$0.00" would read as free. Every
+ * sub-dollar amount used to get 4, so a session list ran "$0.9143" beside
+ * "$5.75" and the decimal points stopped lining up.
  * Returns "—" for null (sources without cost data).
  */
 export function formatCost(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—"
   if (n === 0) return "$0.00"
-  if (n < 1) return `$${n.toFixed(4)}`
-  return `$${n.toFixed(2)}`
+  if (Math.abs(n) < 0.01) return `$${n.toFixed(4)}`
+  const [whole, cents] = n.toFixed(2).split(".")
+  return `$${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${cents}`
 }
 
 /** A cost and how much of it is actually known — what `formatCostFigure` reads. */

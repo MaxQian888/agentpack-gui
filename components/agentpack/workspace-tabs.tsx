@@ -31,8 +31,10 @@ export function WorkspaceTabs({
   const sections = sectionsOf(workspace)
   const refs = useRef(new Map<SectionKey, HTMLButtonElement>())
 
+  // Centred rather than "nearest": nearest parks the active tab flush against
+  // the strip's edge on a phone, which hides that there is anything beyond it.
   useEffect(() => {
-    refs.current.get(active)?.scrollIntoView({ block: "nearest", inline: "nearest" })
+    refs.current.get(active)?.scrollIntoView({ block: "nearest", inline: "center" })
   }, [active, workspace])
 
   const move = useCallback(
@@ -57,7 +59,16 @@ export function WorkspaceTabs({
     <div
       role="tablist"
       aria-label={workspaceMeta(workspace).label(t)}
-      className="flex min-w-0 gap-1 overflow-x-auto border-b px-4 [scrollbar-width:none] sm:px-6"
+      // The inline padding tracks the content column's own cap (SectionShell
+      // `wide`), so above ~1200px the first tab still lines up with the page
+      // title under it instead of staying pinned to the window's left edge.
+      className={cn(
+        "flex min-w-0 gap-1 overflow-x-auto border-b px-4 [scrollbar-width:none]",
+        // `min-[640px]` rather than `sm`: the two steps must both be arbitrary
+        // px variants, or Tailwind cannot order them and the 1600px step loses.
+        "min-[640px]:px-[max(1.5rem,calc((100%_-_var(--hm-content-width-wide))/2))]",
+        "min-[1600px]:px-[max(1.5rem,calc((100%_-_var(--hm-content-width-max))/2))]"
+      )}
       onKeyDown={(e) => {
         if (e.key === "ArrowRight") {
           e.preventDefault()

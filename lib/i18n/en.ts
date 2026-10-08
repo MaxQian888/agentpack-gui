@@ -3245,6 +3245,8 @@ export const en = {
       empty: "No sessions yet",
       emptyHint: "Install a CLI and start a chat — your spend shows up here.",
       emptyAction: "Install a CLI",
+      monthEmpty: "No activity this month",
+      monthEmptyHint: "Earlier sessions were found. Open the usage dashboard to view them.",
       details: "Open usage dashboard →",
       notTauri: "Run the desktop app to read your session history.",
       // A failed read is not a month with no spend, and a partial one is not
@@ -3785,7 +3787,7 @@ export const en = {
     credentialProxy: (field: string) => `Proxy — ${field}`,
     credentialConfigField: (file: string, field: string) => `${file} — ${field}`,
     planSummary: (clis: number, skills: number, mcps: number) =>
-      `${clis} CLIs · ${skills} skills · ${mcps} MCP servers`,
+      `${clis} ${clis === 1 ? "CLI" : "CLIs"} · ${skills} ${skills === 1 ? "skill" : "skills"} · ${mcps} MCP ${mcps === 1 ? "server" : "servers"}`,
     countProfiles: (n: number) => `${n} saved`,
     countProviders: (n: number) => `${n} configured`,
     fileMissing: "not on this machine",
