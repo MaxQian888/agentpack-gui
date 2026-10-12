@@ -1,6 +1,5 @@
 import { isTauri } from "@/lib/tauri"
 import type { RepoSource } from "@/lib/skills/types"
-import type { Surface } from "@/lib/agentpack/presets"
 import type { OS, ProxyConfig } from "@/lib/agentpack/types"
 import type { ProviderBackend } from "@/lib/agentpack/ccswitch/types"
 import type { SectionKey } from "@/lib/agentpack/workspaces"
@@ -9,14 +8,20 @@ import { DEFAULT_PROXY } from "@/lib/agentpack/network/proxy"
 
 /**
  * Where a half-finished first run got to. Written when the wizard is closed
- * *incidentally* (Esc, the overlay, following the tour link) so the next launch
- * resumes instead of restarting — the wizard's own state is component-local and
- * dies with the process.
+ * *incidentally* (Esc, the overlay) so the next launch resumes instead of
+ * restarting — the wizard's own state is component-local and dies with the
+ * process.
+ *
+ * Every field but `step` is optional, and all of them are read back through a
+ * narrowing function: this is plain JSON from an earlier version as often as
+ * not (one that asked for a bundle and a surface instead of an agent).
  */
 export interface OnboardingProgress {
   step: string
-  preset: string
-  surface: Surface
+  agent?: string
+  desktop?: boolean
+  /** Whether the proxy step's suggestion was kept. */
+  proxy?: boolean
 }
 
 // Persisted app settings, backed by `@tauri-apps/plugin-store` (a small JSON KV
@@ -36,14 +41,14 @@ export interface AppSettings {
   /**
    * Whether the first-run welcome wizard has been *deliberately* finished with.
    * False on a fresh install so the wizard greets a newcomer; set true only when
-   * they install or click "later". Closing the wizard any other way (Esc, the
-   * overlay, the tour link) leaves this false and records `onboardingProgress`
-   * instead — a mis-click is not consent to never be guided again. The About
-   * section can reopen the wizard regardless.
+   * they press Install now (whatever the run's outcome) or click "later".
+   * Closing the wizard any other way (Esc, the overlay) leaves this false and
+   * records `onboardingProgress` instead — a mis-click is not consent to never
+   * be guided again. Preferences and ⌘K can reopen the wizard regardless.
    */
   onboarded: boolean
   /**
-   * The step / bundle / surface a suspended wizard was on, or null when there's
+   * The step and answers a suspended wizard was on, or null when there's
    * nothing to resume. Cleared once `onboarded` goes true.
    */
   onboardingProgress: OnboardingProgress | null

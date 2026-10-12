@@ -3,50 +3,45 @@ import { NOT_IN_TAURI, navTo, openApp } from "../../helpers"
 
 test.beforeEach(async ({ page }) => openApp(page))
 
-test("completes setup and stages the chosen terminal bundle", async ({ page }) => {
-  await page.getByRole("button", { name: "Open the guide" }).click()
-  const wizard = page.getByRole("dialog", { name: "Welcome to agentpack" })
-
-  await wizard.getByRole("radio", { name: /In the terminal/ }).click()
-  await wizard.getByRole("button", { name: "Continue" }).click()
-  await wizard.getByRole("radio", { name: /Minimal/ }).click()
-  await wizard.getByRole("button", { name: "Continue" }).click()
-
-  await expect(wizard.getByText("Claude Code", { exact: true })).toBeVisible()
-  await expect(wizard.getByText("Claude Desktop", { exact: true })).toHaveCount(0)
-  await expect(wizard.getByText("Memory (official knowledge graph)", { exact: true })).toBeVisible()
-  await wizard.getByRole("checkbox", { name: "Rust engineering" }).check()
-  await wizard.getByRole("button", { name: "Review and install" }).click()
-
-  await expect(wizard).toBeHidden()
-  await expect(page.getByText(NOT_IN_TAURI).first()).toBeVisible()
-  await expect(page.getByRole("region", { name: "Pending selection" })).toContainText("3 selected")
-
-  await navTo(page, "clis")
-  await expect(page.locator("#cli-claude-code")).toBeChecked()
-  await expect(page.locator("#cli-claude-desktop")).not.toBeChecked()
-})
-
-test("starts the integrated tour and returns to the waiting wizard when it is dismissed", async ({
+test("asks one question, and leaves the picks in the tray where nothing can install", async ({
   page,
 }) => {
   await page.getByRole("button", { name: "Open the guide" }).click()
-  await page.getByRole("button", { name: "Take a tour →" }).click()
+  const wizard = page.getByRole("dialog", { name: "Welcome to agentpack" })
 
+  // One real question: which agent. No bundle, no skills, no API keys.
+  await wizard.getByRole("radio", { name: /^Codex/ }).click()
+  await expect(wizard.getByRole("textbox")).toHaveCount(0)
+  await wizard.getByRole("button", { name: "Continue" }).click()
+
+  // The review step is the gate; web mode has nothing to install with, and says so.
+  await expect(
+    wizard.getByText("Installing needs the desktop app. Your picks are waiting in the change tray.")
+  ).toBeVisible()
+  await wizard.getByRole("button", { name: "Done" }).click()
+
+  await expect(wizard).toBeHidden()
+  await expect(page.getByText(NOT_IN_TAURI).first()).toBeVisible()
+  // Codex plus the three servers that need no account.
+  await expect(page.getByRole("region", { name: "Pending selection" })).toContainText("4 selected")
+
+  await navTo(page, "clis")
+  await expect(page.locator("#cli-codex")).toBeChecked()
+  await expect(page.locator("#cli-claude-code")).not.toBeChecked()
+})
+
+test("offers no tour detour mid-setup; the tour lives in Preferences", async ({ page }) => {
+  await page.getByRole("button", { name: "Open the guide" }).click()
+  const wizard = page.getByRole("dialog", { name: "Welcome to agentpack" })
+  await expect(wizard.getByRole("button", { name: /Take a tour/ })).toHaveCount(0)
+  await page.keyboard.press("Escape")
+
+  await navTo(page, "preferences")
+  await page.getByRole("button", { name: "Take a tour" }).click()
   const tour = page.getByRole("dialog", { name: "Guided tour" })
   await expect(tour.getByText("Seven focused workspaces")).toBeVisible()
-  await tour.getByRole("button", { name: "Next" }).click()
-  await expect(tour.getByText("Dashboard", { exact: true })).toBeVisible()
-  await tour.getByRole("button", { name: "Next" }).click()
-  await expect(tour.getByText("Presets", { exact: true })).toBeVisible()
-  await expect(page.getByRole("heading", { name: "Choose a preset" })).toBeVisible()
-
   await page.keyboard.press("Escape")
   await expect(tour).toBeHidden()
-  // The tour was a detour from the wizard, not a decision to skip it: ending
-  // it brings the wizard back, over the overview it navigated home to.
-  await expect(page.getByRole("dialog", { name: "Welcome to agentpack" })).toBeVisible()
-  await page.keyboard.press("Escape")
   await expect(page.getByRole("heading", { name: "Environment dashboard" })).toBeVisible()
 })
 

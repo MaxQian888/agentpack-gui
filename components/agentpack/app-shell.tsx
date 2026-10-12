@@ -26,17 +26,12 @@ import {
   unappliedNetwork,
   type InstalledState,
 } from "@/lib/agentpack/plan"
+import type { Plan } from "@/lib/agentpack/types"
 import { effectiveProxy, isProxyActive } from "@/lib/agentpack/network/proxy"
 import { scanNetwork } from "@/lib/agentpack/network/scan"
 import { hostArch } from "@/lib/tauri/system"
-import {
-  CLI_TOOLS,
-  RUNTIMES,
-  runtimePkgManager,
-  runtimesForOS,
-  SKILLS,
-} from "@/lib/agentpack/registry"
-import { skillTargetsFor, type Surface } from "@/lib/agentpack/presets"
+import { CLI_TOOLS, RUNTIMES, runtimePkgManager, runtimesForOS } from "@/lib/agentpack/registry"
+import { networkAdoption, wizardSelection } from "@/lib/agentpack/onboarding"
 import {
   hasTabs,
   SECTION_KEYS,
@@ -73,7 +68,7 @@ import { PreferencesSection } from "./sections/preferences"
 import { MoreTokenSection } from "./sections/more-token"
 import { PersonalMoreTokenSection } from "./sections/more-token/personal"
 import { ConfigIO } from "./config-io"
-import { OnboardingDialog } from "./onboarding-dialog"
+import { OnboardingDialog, type StageOutcome, type WizardAnswer } from "./onboarding-dialog"
 import { GuidedTour } from "./guided-tour"
 import { RunnerProvider, useRunnerCtx } from "./run/runner-context"
 import { ExecutionPanel } from "./run/execution-panel"
@@ -95,9 +90,6 @@ function ShellBody() {
   const setProxy = useAppStore((s) => s.setProxy)
   const setNetworkProbe = useAppStore((s) => s.setNetworkProbe)
   const setNetworkProbing = useAppStore((s) => s.setNetworkProbing)
-  const applyPreset = useAppStore((s) => s.applyPreset)
-  const setMcpKey = useAppStore((s) => s.setMcpKey)
-  const setSkill = useAppStore((s) => s.setSkill)
   const onboardingOpen = useAppStore((s) => s.onboardingOpen)
   const setOnboardingOpen = useAppStore((s) => s.setOnboardingOpen)
   const setPanelOpen = useAppStore((s) => s.setPanelOpen)
@@ -449,7 +441,7 @@ function ShellBody() {
       // Measure the network right after the proxy is restored, so the probe runs
       // through whatever route the user already configured.
       void probeNetworkNow()
-      // Greet a first-time user; About can reopen the wizard later. Someone who
+      // Greet a first-time user; Preferences and ⌘K reopen the wizard later. Someone who
       // closed it mid-way still counts as first-time and resumes where they were.
       setRestoredProgress(settings.onboardingProgress)
       onboardingProgress.current = settings.onboardingProgress
@@ -552,123 +544,152 @@ function ShellBody() {
   // the wizard) is already reflected. Otherwise already-installed items get
   // re-emitted — a duplicate `claude mcp add` errors, and a redundant CLI/Node
   // install can re-trigger a UAC prompt.
-  const reviewChanges = useCallback(() => {
-    const paths = useAppStore.getState().paths
-    if (!paths) {
-      void run([], { plan: useAppStore.getState().plan })
-      return
-    }
-    if (preparingRef.current) return
-    if (runningRef.current) {
-      toast.message(t.shell.runBusy)
-      setPanelOpen(true)
-      return
-    }
-    preparingRef.current = true
-    setPreparing(true)
-    const ready = () => {
-      preparingRef.current = false
-      setPreparing(false)
-    }
-    void (async () => {
-      if (Object.keys(useAppStore.getState().detections).length === 0) {
-        await refreshDetections().catch(() => undefined)
+  //
+  // Resolves as soon as staging is decided — not when the run finishes — with
+  // what happened, so the first-run wizard can draw the review itself (`inline`)
+  // or say why there is nothing to review. What a finished run means for the
+  // plan is still handled here, after the user applies.
+  const stageReview = useCallback(
+    (opts: StageOptions = {}): Promise<StageOutcome> => {
+      const paths = useAppStore.getState().paths
+      if (!paths) {
+        void run([], { plan: useAppStore.getState().plan })
+        return Promise.resolve("unavailable")
       }
-      const scan = await scanEnvironment(
-        paths,
-        useAppStore.getState().settings.providerBackend
-      ).catch(() => null)
-      // Keep the dashboard in sync with the state this run deduped against (but
-      // don't clobber a good cached scan if this fresh one failed).
-      if (scan) rememberScan(scan)
-      // A scan that couldn't read its sources used to fall back to "nothing is
-      // installed", which turns the dedup off entirely: every MCP add and skill
-      // copy is re-emitted, and `claude mcp add` rejects a duplicate id, so a
-      // transient read error produced a screenful of red. Prefer the last good
-      // scan; with neither, refuse to run rather than guess — guessing wrong
-      // here is the loud, confusing case.
-      const effective = scan && !scan.degraded ? scan : lastGoodScan.current
-      if (!effective) {
-        ready()
-        toast.error(t.shell.scanFailed)
-        return
+      if (preparingRef.current) return Promise.resolve("busy")
+      if (runningRef.current) {
+        toast.message(t.shell.runBusy)
+        setPanelOpen(true)
+        return Promise.resolve("busy")
       }
-      const { plan, detections, latestVersions, cliManagers, settings, appliedNpmRegistry } =
-        useAppStore.getState()
-      const arch = await hostArch()
-        .catch(() => undefined)
-        .finally(ready)
-      const installedTools = new Set(
-        Object.entries(detections)
-          .filter(([, d]) => d.installed)
-          .map(([id]) => id)
+      preparingRef.current = true
+      setPreparing(true)
+      const ready = () => {
+        preparingRef.current = false
+        setPreparing(false)
+      }
+      return new Promise<StageOutcome>(
+        (staged) =>
+          void (async () => {
+            if (Object.keys(useAppStore.getState().detections).length === 0) {
+              await refreshDetections().catch(() => undefined)
+            }
+            const scan = await scanEnvironment(
+              paths,
+              useAppStore.getState().settings.providerBackend
+            ).catch(() => null)
+            // Keep the dashboard in sync with the state this run deduped against (but
+            // don't clobber a good cached scan if this fresh one failed).
+            if (scan) rememberScan(scan)
+            // A scan that couldn't read its sources used to fall back to "nothing is
+            // installed", which turns the dedup off entirely: every MCP add and skill
+            // copy is re-emitted, and `claude mcp add` rejects a duplicate id, so a
+            // transient read error produced a screenful of red. Prefer the last good
+            // scan; with neither, refuse to run rather than guess — guessing wrong
+            // here is the loud, confusing case.
+            const effective = scan && !scan.degraded ? scan : lastGoodScan.current
+            if (!effective) {
+              ready()
+              toast.error(t.shell.scanFailed)
+              staged("failed")
+              return
+            }
+            const { plan, detections, latestVersions, cliManagers, settings, appliedNpmRegistry } =
+              useAppStore.getState()
+            const arch = await hostArch()
+              .catch(() => undefined)
+              .finally(ready)
+            const installedTools = new Set(
+              Object.entries(detections)
+                .filter(([, d]) => d.installed)
+                .map(([id]) => id)
+            )
+            const installedState: InstalledState = {
+              versions: Object.fromEntries(
+                Object.entries(detections).map(([id, d]) => [id, d.version])
+              ),
+              latest: latestVersions,
+              managers: cliManagers,
+              claudeMcps: [...effective.claudeMcps.known, ...effective.claudeMcps.custom],
+              codexMcps: [...effective.codexMcps.known, ...effective.codexMcps.custom],
+              opencodeMcps: [...effective.opencodeMcps.known, ...effective.opencodeMcps.custom],
+              claudeSkills: [...effective.claudeSkills.known, ...effective.claudeSkills.custom],
+              codexSkills: [...effective.codexSkills.known, ...effective.codexSkills.custom],
+            }
+            // A proxy or mirror that is already on the machine isn't written again:
+            // it isn't something the user picked this time, and the review would list
+            // four config writes they never asked for.
+            const toRun = {
+              ...plan,
+              network: unappliedNetwork(plan.network, {
+                proxy: settings.proxy,
+                npmRegistry: appliedNpmRegistry,
+              }),
+            }
+            const steps = buildSteps(toRun, paths, t, installedTools, installedState, {
+              arch,
+              // The wizard stages a mirror it has not saved yet: it is saved only
+              // once the user applies, so walking away leaves settings untouched.
+              ghMirrorPrefix:
+                opts.ghMirrorPrefix !== undefined ? opts.ghMirrorPrefix : settings.ghMirrorPrefix,
+              // Only a real "looked and it isn't there": Homebrew is detected on
+              // macOS alone, and an unmeasured brew keeps its routes.
+              brewMissing: detections["homebrew"] ? !detections["homebrew"].installed : undefined,
+            })
+            // Inline, the caller says "already installed" in its own words; the
+            // toast `run` raises for an empty batch is for the tray's button.
+            if (steps.length === 0 && opts.inline) {
+              staged("empty")
+              return
+            }
+            const applied = run(steps, {
+              plan,
+              inline: opts.inline,
+              activity: {
+                title: t.tray.runTitle(countSelections(toRun)),
+                source: "quick-config",
+              },
+            })
+            // `run` stages synchronously before handing back its promise.
+            staged(steps.length > 0 ? "staged" : "empty")
+            const reports = await applied
+            // Clear the selection only once it has actually landed. An error or a
+            // skipped step means part of the plan is still outstanding, and wiping it
+            // would leave the user to rebuild by hand exactly when they are least
+            // inclined to. `resetPlan` keeps the network config and MCP keys either
+            // way — those are the machine's setup, not this batch's selection.
+            const settled = reports.length > 0
+            const incomplete = reports.some((r) => r.status === "error" || r.status === "skipped")
+            if (settled && !incomplete) {
+              const store = useAppStore.getState()
+              store.markNetworkApplied(toRun.network)
+              // A proxy applied from here is as applied as one applied from the
+              // Network page: persisted, and used for agentpack's own traffic.
+              const proxy = toRun.network.proxy
+              if (proxy && isProxyActive(proxy)) {
+                store.setSettings({ proxy })
+                void saveSettings({ proxy })
+                const eff = effectiveProxy(proxy)
+                void setProcessProxy({
+                  http: eff.http,
+                  https: eff.https,
+                  all: eff.all,
+                  noProxy: eff.noProxy,
+                })
+              }
+              store.resetPlan()
+            }
+          })()
       )
-      const installedState: InstalledState = {
-        versions: Object.fromEntries(Object.entries(detections).map(([id, d]) => [id, d.version])),
-        latest: latestVersions,
-        managers: cliManagers,
-        claudeMcps: [...effective.claudeMcps.known, ...effective.claudeMcps.custom],
-        codexMcps: [...effective.codexMcps.known, ...effective.codexMcps.custom],
-        opencodeMcps: [...effective.opencodeMcps.known, ...effective.opencodeMcps.custom],
-        claudeSkills: [...effective.claudeSkills.known, ...effective.claudeSkills.custom],
-        codexSkills: [...effective.codexSkills.known, ...effective.codexSkills.custom],
-      }
-      // A proxy or mirror that is already on the machine isn't written again:
-      // it isn't something the user picked this time, and the review would list
-      // four config writes they never asked for.
-      const toRun = {
-        ...plan,
-        network: unappliedNetwork(plan.network, {
-          proxy: settings.proxy,
-          npmRegistry: appliedNpmRegistry,
-        }),
-      }
-      const reports = await run(
-        buildSteps(toRun, paths, t, installedTools, installedState, {
-          arch,
-          ghMirrorPrefix: settings.ghMirrorPrefix,
-          // Only a real "looked and it isn't there": Homebrew is detected on
-          // macOS alone, and an unmeasured brew keeps its routes.
-          brewMissing: detections["homebrew"] ? !detections["homebrew"].installed : undefined,
-        }),
-        {
-          plan,
-          activity: { title: t.tray.runTitle(countSelections(toRun)), source: "quick-config" },
-        }
-      )
-      // Clear the selection only once it has actually landed. An error or a
-      // skipped step means part of the plan is still outstanding, and wiping it
-      // would leave the user to rebuild by hand exactly when they are least
-      // inclined to. `resetPlan` keeps the network config and MCP keys either
-      // way — those are the machine's setup, not this batch's selection.
-      const settled = reports.length > 0
-      const incomplete = reports.some((r) => r.status === "error" || r.status === "skipped")
-      if (settled && !incomplete) {
-        const store = useAppStore.getState()
-        store.markNetworkApplied(toRun.network)
-        // A proxy applied from here is as applied as one applied from the
-        // Network page: persisted, and used for agentpack's own traffic.
-        const proxy = toRun.network.proxy
-        if (proxy && isProxyActive(proxy)) {
-          store.setSettings({ proxy })
-          void saveSettings({ proxy })
-          const eff = effectiveProxy(proxy)
-          void setProcessProxy({
-            http: eff.http,
-            https: eff.https,
-            all: eff.all,
-            noProxy: eff.noProxy,
-          })
-        }
-        store.resetPlan()
-      }
-    })()
-  }, [run, refreshDetections, rememberScan, setPanelOpen, t])
+    },
+    [run, refreshDetections, rememberScan, setPanelOpen, t]
+  )
+  const reviewChanges = useCallback(() => void stageReview(), [stageReview])
 
-  // A wizard that was finished (Install or "Maybe later") starts over when it
-  // is opened again from Settings. It reads its progress only as initial state,
-  // so without a new key it reopened on its last screen — "Review and install" —
-  // as if the first three questions had been answered this time.
+  // A wizard that was finished (Install now or "Maybe later") starts over when
+  // it is opened again from Settings. It reads its progress only as initial
+  // state, so without a new key it reopened on its last screen — the review,
+  // or a finished run's result — as if it had been answered this time.
   const wizardFinished = useRef(false)
   const [wizardRun, setWizardRun] = useState(0)
   useLayoutEffect(() => {
@@ -678,8 +699,8 @@ function ShellBody() {
     setWizardRun((n) => n + 1)
   }, [onboardingOpen])
 
-  // First-run wizard: the newcomer said "not now" (or just installed), so record
-  // that they've been greeted and stop resuming. About can reopen it on demand.
+  // First-run wizard: the newcomer said "not now" (or there was nothing to
+  // install), so record that they've been greeted and stop resuming.
   const dismissOnboarding = useCallback(() => {
     wizardFinished.current = true
     setOnboardingOpen(false)
@@ -688,8 +709,8 @@ function ShellBody() {
     void saveSettings({ onboarded: true, onboardingProgress: null })
   }, [setOnboardingOpen, setSettings])
 
-  // First-run wizard closed incidentally — Esc, the overlay, or following the
-  // tour link. That is not the user declining to be onboarded, so `onboarded`
+  // First-run wizard closed incidentally — Esc or the overlay, before Install
+  // now. That is not the user declining to be onboarded, so `onboarded`
   // stays false and we save their place instead: next launch picks up where they
   // left off rather than greeting them from step 1 (or, as before, never again).
   const suspendOnboarding = useCallback(() => {
@@ -700,43 +721,56 @@ function ShellBody() {
     void saveSettings({ onboardingProgress: progress })
   }, [setOnboardingOpen, setSettings])
 
-  // Wizard "Install": finish onboarding, then run the chosen bundle. Keys and
-  // skills are applied AFTER applyPreset, not before — applyPreset rebuilds the
-  // plan from the bundle and would drop anything written ahead of it.
-  const installFromOnboarding = useCallback(
-    (presetId: string, surface: Surface, keys: Record<string, string>, skills: string[]) => {
-      dismissOnboarding()
-      applyPreset(presetId, surface)
-      for (const [id, key] of Object.entries(keys)) setMcpKey(id, key)
-      // Both directions: the bundle may have selected skills the user unticked.
-      const targets = skillTargetsFor(useAppStore.getState().plan.clis)
-      for (const s of SKILLS) setSkill(s.id, skills.includes(s.id) ? targets : [])
-      reviewChanges()
+  // The network config as it stood before the wizard first staged, so each
+  // re-stage (Back, then a different answer) starts from it rather than from
+  // whatever the previous answer adopted. Reset whenever the wizard opens.
+  const networkBeforeWizard = useRef<Plan["network"] | null>(null)
+  useEffect(() => {
+    if (onboardingOpen) networkBeforeWizard.current = null
+  }, [onboardingOpen])
+
+  // Wizard, last step: turn its answer into a review it draws itself. The
+  // network suggestions go into the plan like a pick from the Network page, so
+  // the review lists them as steps; nothing is written until Apply.
+  const stageFromOnboarding = useCallback(
+    (answer: WizardAnswer): Promise<StageOutcome> => {
+      const store = useAppStore.getState()
+      networkBeforeWizard.current ??= store.plan.network
+      const before = networkBeforeWizard.current
+      store.applySelection(wizardSelection(answer.agent, answer.desktop))
+      useAppStore.setState((s) => ({ plan: { ...s.plan, network: before } }))
+      const net = networkAdoption(store.networkProbe, answer)
+      if (net.proxy) store.setProxy(net.proxy)
+      if (net.npmRegistry) store.setNetwork({ npmRegistry: net.npmRegistry.url })
+      return stageReview({ inline: true, ghMirrorPrefix: net.ghMirrorPrefix?.url })
     },
-    [dismissOnboarding, applyPreset, setMcpKey, setSkill, reviewChanges]
+    [stageReview]
   )
 
-  // Wizard "Take a tour": suspend rather than dismiss — taking the tour is a
-  // detour, not a decision to skip setup, so the wizard is still waiting after.
-  const tourFromWizard = useRef(false)
-  const startTourFromOnboarding = useCallback(() => {
-    suspendOnboarding()
-    tourFromWizard.current = true
-    setTourActive(true)
-  }, [suspendOnboarding, setTourActive])
+  // Wizard Apply: from here the user has said yes, whatever the run's outcome.
+  // A failed optional server must not reopen the wizard on every launch — the
+  // Getting started checklist carries what is left. The GitHub mirror the run
+  // was built with is saved now, not when it was staged.
+  const appliedFromOnboarding = useCallback(
+    (ghMirrorPrefix?: string) => {
+      wizardFinished.current = true
+      onboardingProgress.current = null
+      const patch = {
+        onboarded: true,
+        onboardingProgress: null,
+        ...(ghMirrorPrefix ? { ghMirrorPrefix } : {}),
+      }
+      setSettings(patch)
+      void saveSettings(patch)
+    },
+    [setSettings]
+  )
 
-  // The tour drives section navigation itself; when it ends, return home — and
-  // to the wizard, if that is where it was started from. "Still waiting after"
-  // was the promise; ending on the dashboard left the user to find the wizard
-  // again in Settings.
+  // The tour drives section navigation itself; when it ends, return home.
   const endTour = useCallback(() => {
     setTourActive(false)
     navigate("overview", "dashboard")
-    if (tourFromWizard.current) {
-      tourFromWizard.current = false
-      setOnboardingOpen(true)
-    }
-  }, [setTourActive, navigate, setOnboardingOpen])
+  }, [setTourActive, navigate])
 
   const renderSection = () => {
     switch (section) {
@@ -928,14 +962,28 @@ function ShellBody() {
         onProgress={(p) => {
           onboardingProgress.current = p
         }}
-        onInstall={installFromOnboarding}
+        scan={dashboardScan}
+        onStage={stageFromOnboarding}
+        onApplied={appliedFromOnboarding}
         onLater={dismissOnboarding}
         onSuspend={suspendOnboarding}
-        onTour={startTourFromOnboarding}
+        onClose={() => setOnboardingOpen(false)}
+        onNavigate={(section, intent) => {
+          setOnboardingOpen(false)
+          goWithIntent(section, intent)
+        }}
       />
       {tourActive ? <GuidedTour onNavigate={goToSection} onClose={endTour} /> : null}
     </div>
   )
+}
+
+/** How a review is staged. Both fields are for the first-run wizard. */
+interface StageOptions {
+  /** Draw the review in the caller instead of opening the side panel. */
+  inline?: boolean
+  /** A GitHub mirror to build with, in place of the saved one. Null is direct. */
+  ghMirrorPrefix?: string | null
 }
 
 export function AppShell() {

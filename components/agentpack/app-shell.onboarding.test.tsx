@@ -1,9 +1,9 @@
 /**
  * First-run welcome wizard (Tauri mode). A newcomer with `onboarded: false`
- * gets greeted once; installing from the wizard applies the chosen preset, marks
- * them onboarded (persisted), and runs the same deduped one-click install as the
- * header. Here `memory` is already on Claude and `context7` is not, so the
- * reviewed plan keeps the latter and drops the former.
+ * gets greeted once; the wizard's answer is staged against a fresh scan — the
+ * same deduped review the tray's button builds — and drawn inside the wizard.
+ * Here `memory` is already on Claude and the other two core servers are not,
+ * so the review keeps those and drops `memory`.
  */
 jest.mock("@/lib/tauri", () => ({ isTauri: () => true }))
 jest.mock("@/lib/tauri/commands", () => ({
@@ -63,12 +63,29 @@ jest.mock("@/lib/tauri/settings", () => ({
     quickStartDismissed: false,
   },
 }))
+// Install now really executes; the executor is stubbed so nothing spawns.
+jest.mock("@/lib/agentpack/runner", () => ({
+  runSteps: jest.fn(
+    async (
+      steps: { id: string; label: string }[],
+      o: { onUpdate: (r: unknown, i: number) => void }
+    ) => {
+      const reports = steps.map((s) => ({ id: s.id, label: s.label, status: "done", output: [] }))
+      reports.forEach((r, i) => o.onUpdate(r, i))
+      return reports
+    }
+  ),
+}))
+jest.mock("@/lib/tauri/activity", () => ({
+  loadActivity: jest.fn(async () => []),
+  appendActivity: jest.fn(async () => []),
+}))
 jest.mock("@/lib/tauri/system", () => ({
   notify: jest.fn(async () => undefined),
   hostArch: jest.fn(async () => "x64"),
 }))
 
-import { render, screen, waitFor } from "@testing-library/react"
+import { act, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { I18nProvider } from "@/lib/i18n/provider"
 import { loadSettings, saveSettings } from "@/lib/tauri/settings"
@@ -78,6 +95,7 @@ import { en } from "@/lib/i18n/en"
 
 const mockedLoad = loadSettings as jest.Mock
 const mockedSave = saveSettings as jest.Mock
+const w = en.welcome
 
 beforeEach(() => {
   useAppStore.setState({
@@ -88,6 +106,7 @@ beforeEach(() => {
     latestVersions: {},
   })
   useAppStore.getState().resetPlan()
+  mockedSave.mockClear()
 })
 
 const renderShell = () =>
@@ -97,10 +116,20 @@ const renderShell = () =>
     </I18nProvider>
   )
 
-const claudeMcpLabel = (id: "memory" | "context7") =>
+const claudeMcpLabel = (id: "memory" | "sequential-thinking") =>
   en.steps.addMcpClaude(en.catalog.mcp[id].title)
 
-const wizardHeading = () => screen.queryByRole("heading", { name: en.welcome.title })
+const wizardHeading = () => screen.queryByRole("heading", { name: w.title })
+
+const settingsWith = (patch: object) => ({
+  autoCheckUpdates: false,
+  skippedVersion: null,
+  lastCheckAt: null,
+  onboarded: false,
+  onboardingProgress: null,
+  quickStartDismissed: true,
+  ...patch,
+})
 
 it("greets a first-time user with the welcome wizard", async () => {
   renderShell()
@@ -108,91 +137,58 @@ it("greets a first-time user with the welcome wizard", async () => {
 })
 
 it("stays quiet for a returning user who is already onboarded", async () => {
-  mockedLoad.mockResolvedValueOnce({
-    autoCheckUpdates: false,
-    skippedVersion: null,
-    lastCheckAt: null,
-    onboarded: true,
-    onboardingProgress: null,
-    quickStartDismissed: true,
-  })
+  mockedLoad.mockResolvedValueOnce(settingsWith({ onboarded: true }))
   renderShell()
   // Once the effect has applied the persisted settings, the wizard decision is made.
   await waitFor(() => expect(useAppStore.getState().settings.onboarded).toBe(true))
   expect(wizardHeading()).not.toBeInTheDocument()
 })
 
-it("installing the recommended bundle marks onboarded and runs a deduped plan", async () => {
+it("stages a deduped review inside the wizard, and records nothing yet", async () => {
   renderShell()
   await waitFor(() => expect(wizardHeading()).toBeInTheDocument())
+  await waitFor(() => expect(useAppStore.getState().paths).not.toBeNull())
 
-  // The wizard is three steps now — intro, network self-check, install.
-  await userEvent.click(screen.getByRole("button", { name: en.welcome.continue }))
-  await userEvent.click(screen.getByRole("button", { name: en.welcome.continue }))
-  await userEvent.click(screen.getByRole("button", { name: en.welcome.install }))
+  await userEvent.click(screen.getByRole("button", { name: w.continue }))
 
-  // Onboarded flag is persisted so the wizard won't nag next launch…
+  // The review is in the wizard: a missing core server is added, the one
+  // already on Claude is dropped, and Claude Code itself (installed, current)
+  // isn't touched.
+  expect(await screen.findByText(claudeMcpLabel("sequential-thinking"))).toBeInTheDocument()
+  expect(screen.queryByText(claudeMcpLabel("memory"))).not.toBeInTheDocument()
+  expect(useAppStore.getState().panelOpen).toBe(false)
+  // Staging is not consent.
+  expect(mockedSave).not.toHaveBeenCalledWith(expect.objectContaining({ onboarded: true }))
+})
+
+it("Install now marks onboarded, runs, and leaves the wizard on its result", async () => {
+  renderShell()
+  await waitFor(() => expect(wizardHeading()).toBeInTheDocument())
+  await waitFor(() => expect(useAppStore.getState().paths).not.toBeNull())
+  await userEvent.click(screen.getByRole("button", { name: w.continue }))
+  const install = await screen.findByRole("button", { name: w.installNow })
+  await waitFor(() => expect(install).toBeEnabled())
+  await userEvent.click(install)
+
   await waitFor(() =>
     expect(mockedSave).toHaveBeenCalledWith({ onboarded: true, onboardingProgress: null })
   )
-  // …the wizard closes…
+  expect(await screen.findByText(w.finishedIntro)).toBeInTheDocument()
+  await userEvent.click(screen.getByRole("button", { name: w.done }))
   await waitFor(() => expect(wizardHeading()).not.toBeInTheDocument())
-  // …and the reviewed plan reflects the chosen preset, deduped: context7 is added,
-  // the already-installed memory server is dropped.
-  await waitFor(() => expect(screen.getByText(claudeMcpLabel("context7"))).toBeInTheDocument())
-  expect(screen.queryByText(claudeMcpLabel("memory"))).not.toBeInTheDocument()
-})
-
-/**
- * The key has to be written AFTER applyPreset — applyPreset rebuilds the plan
- * from the bundle, so anything set ahead of it is thrown away.
- */
-it("carries an API key typed in the wizard into the plan that runs", async () => {
-  renderShell()
-  await waitFor(() => expect(wizardHeading()).toBeInTheDocument())
-
-  await userEvent.click(screen.getByRole("button", { name: en.welcome.continue }))
-  await userEvent.click(screen.getByRole("button", { name: en.welcome.continue }))
-  await userEvent.type(screen.getByLabelText("context7 CONTEXT7_API_KEY"), "ctx-key")
-  await userEvent.click(screen.getByRole("button", { name: en.welcome.install }))
-
-  await waitFor(() => expect(useAppStore.getState().plan.mcpKeys.context7).toBe("ctx-key"))
-})
-
-/**
- * Same ordering trap as the keys: applyPreset rebuilds the plan from the bundle,
- * so the skill selection has to be written after it — and in both directions,
- * because the user may have unticked one the bundle had chosen.
- */
-it("carries a skill ticked in the wizard into the plan that runs", async () => {
-  renderShell()
-  await waitFor(() => expect(wizardHeading()).toBeInTheDocument())
-
-  await userEvent.click(screen.getByRole("button", { name: en.welcome.continue }))
-  await userEvent.click(screen.getByRole("button", { name: en.welcome.continue }))
-  await userEvent.click(screen.getByLabelText(en.catalog.skills.rust.title))
-  await userEvent.click(screen.getByRole("button", { name: en.welcome.install }))
-
-  await waitFor(() => {
-    const skills = useAppStore.getState().plan.skills
-    expect(skills.map((s) => s.id)).toEqual(["rust"])
-    // Targeted at the agents this surface installs, not left empty.
-    expect(skills[0]!.targets.length).toBeGreaterThan(0)
-  })
 })
 
 it("Maybe later marks onboarded without running anything", async () => {
   renderShell()
   await waitFor(() => expect(wizardHeading()).toBeInTheDocument())
 
-  await userEvent.click(screen.getByRole("button", { name: en.welcome.later }))
+  await userEvent.click(screen.getByRole("button", { name: w.later }))
 
   await waitFor(() =>
     expect(mockedSave).toHaveBeenCalledWith({ onboarded: true, onboardingProgress: null })
   )
   await waitFor(() => expect(wizardHeading()).not.toBeInTheDocument())
-  // No install was triggered — the review panel never appears.
-  expect(screen.queryByText(claudeMcpLabel("context7"))).not.toBeInTheDocument()
+  expect(screen.queryByText(claudeMcpLabel("sequential-thinking"))).not.toBeInTheDocument()
 })
 
 /**
@@ -204,29 +200,64 @@ it("Escape saves the user's place and does NOT mark them onboarded", async () =>
   renderShell()
   await waitFor(() => expect(wizardHeading()).toBeInTheDocument())
 
-  await userEvent.click(screen.getByRole("button", { name: en.welcome.continue }))
+  await userEvent.click(screen.getByRole("radio", { name: new RegExp(`^${w.agentCodex}`) }))
   await userEvent.keyboard("{Escape}")
 
   await waitFor(() =>
     expect(mockedSave).toHaveBeenCalledWith({
-      onboardingProgress: { step: "bundle", preset: "recommended", surface: "gui" },
+      onboardingProgress: { step: "agent", agent: "codex", desktop: false, proxy: true },
     })
   )
   expect(mockedSave).not.toHaveBeenCalledWith(expect.objectContaining({ onboarded: true }))
 })
 
-it("resumes a suspended wizard on the step it was left on", async () => {
-  mockedLoad.mockResolvedValueOnce({
-    autoCheckUpdates: false,
-    skippedVersion: null,
-    lastCheckAt: null,
-    onboarded: false,
-    onboardingProgress: { step: "bundle", preset: "everything", surface: "cli" },
-    quickStartDismissed: true,
-  })
+it("resumes a suspended wizard with the answer it was left on", async () => {
+  mockedLoad.mockResolvedValueOnce(
+    settingsWith({ onboardingProgress: { step: "agent", agent: "both", desktop: true } })
+  )
   renderShell()
   await waitFor(() => expect(wizardHeading()).toBeInTheDocument())
-  // Straight to the bundle question, with the bundle they had already picked.
-  expect(screen.getByText(en.welcome.presetLabel)).toBeInTheDocument()
-  expect(screen.getByRole("radio", { name: /everything/i })).toBeChecked()
+  expect(screen.getByRole("radio", { name: new RegExp(`^${w.agentBoth}`) })).toBeChecked()
+})
+
+/**
+ * A faster mirror rides into the review as a step, and declining it restages
+ * from the network config as it was before the wizard — not from whatever the
+ * previous staging adopted.
+ */
+it("stages a suggested npm mirror as a step, and drops it again on request", async () => {
+  renderShell()
+  await waitFor(() => expect(wizardHeading()).toBeInTheDocument())
+  await waitFor(() => expect(useAppStore.getState().paths).not.toBeNull())
+  await waitFor(() => expect(useAppStore.getState().networkProbing).toBe(false))
+  act(() =>
+    useAppStore.getState().setNetworkProbe({
+      proxies: [],
+      bestProxy: null,
+      directOk: true,
+      npm: [
+        {
+          preset: { id: "npmmirror", label: "npmmirror", url: "https://m.example", probeUrl: "x" },
+          result: { ok: true, status: 200, latencyMs: 20, reason: "ok" },
+        },
+        {
+          preset: { id: "npmjs", label: "npmjs", url: null, probeUrl: "x" },
+          result: { ok: false, reason: "timeout" },
+        },
+      ],
+      gh: [],
+      pypi: [],
+      brew: [],
+      pacUrl: null,
+    })
+  )
+
+  await userEvent.click(screen.getByRole("button", { name: w.continue }))
+  const mirrorStep = en.steps.npmRegistry("https://m.example")
+  expect(await screen.findByText(mirrorStep)).toBeInTheDocument()
+
+  await userEvent.click(screen.getByRole("button", { name: w.mirrorDecline }))
+  await screen.findByText(claudeMcpLabel("sequential-thinking"))
+  expect(screen.queryByText(mirrorStep)).not.toBeInTheDocument()
+  expect(useAppStore.getState().plan.network.npmRegistry).toBeUndefined()
 })

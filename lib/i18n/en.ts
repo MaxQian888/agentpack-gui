@@ -17,55 +17,50 @@ export const en = {
 
   welcome: {
     title: "Welcome to agentpack",
-    // Subtitle of step 1, which asks window-or-terminal — so it must not promise
-    // a bundle picker that only appears on step 2.
+    // Step 1's subtitle. The promise in its second sentence is the review step:
+    // nothing runs until the exact steps have been on screen.
     intro:
-      "New here? agentpack installs and sets up your AI coding tools for you. First, how do you want to use them? Nothing is changed until you confirm.",
+      "agentpack installs a coding agent and sets it up for you. Nothing on this machine changes until you've seen the exact steps and said yes.",
     continue: "Continue",
-    // First-run wizard (GUI). Plain-language walkthrough of what gets set up.
-    whatTitle: "What it sets up for you",
-    whatClis: "AI coding assistants (Claude Code, Codex) you chat with in your terminal.",
-    whatMcp: "MCP servers — plugins that give the AI extra powers: web access, memory, GitHub…",
-    whatSkills: "Engineering skills — ready-made playbooks the AI follows for common tasks.",
-    whatCcswitch: "cc-switch — keep several API providers/keys and switch with one click.",
-    presetLabel: "Pick a starting bundle",
-    presetHint: "Not sure? Recommended is a good default. You can fine-tune everything later.",
-    previewLabel: "Preview first (dry-run)",
-    previewHint: "See exactly what would happen — without changing anything.",
     later: "Maybe later",
-    install: "Review and install",
     reopen: "Show welcome guide",
-    // Step 2/3 subtitles. The network step comes before installing on purpose:
-    // finding out the network is blocked beats watching six steps go red.
-    networkIntro: "A quick look at your network, so the install doesn't fail halfway.",
-    installIntro:
-      "Here's what you picked. Next you'll see the exact changes it needs, and nothing runs until you approve them there.",
-    // Final step: the list of what the chosen bundle installs, plus the keys the
-    // key-gated servers need — asked here because a server without its key
-    // installs cleanly and then never works.
-    summaryClis: "Assistants",
-    summarySkills: "Skills",
-    summaryMcp: "MCP servers",
-    summaryNothing: "This bundle installs nothing on its own.",
-    summaryInstalled: "already installed",
-    summaryWritesTo: (targets: string) => `Configured for: ${targets}`,
-    // Skills are opt-in per stack: bundling all six would hand a Rust developer
-    // an Android playbook, so the wizard asks instead of guessing.
-    skillsHint: "Optional — pick the ones matching what you build. You can add more later.",
-    keysTitle: "API keys",
-    keysHint: "Optional — you can add these later in the MCP section. Blank is fine.",
-    // Step 1 asks how they intend to use it, because that decides what
-    // "install Claude" means: the app, the terminal command, or both.
-    surfaceLabel: "How do you want to use it?",
-    surfaceHint: "You can add the other one later — nothing here is final.",
-    surfaceGui: "In a window",
-    surfaceGuiHint: "Installs the desktop apps. No terminal to open.",
-    surfaceCli: "In the terminal",
-    surfaceCliHint: "Installs the command-line versions you run by typing `claude`.",
-    surfaceBoth: "Both",
-    surfaceBothHint: "Set up the apps and the terminal commands together.",
     recommendedTag: "Recommended",
-    bundleIntro: "Now pick what to set up. You can change any of it afterwards.",
+    // Step 1: the one real question. Everything else the first run installs is
+    // derived from it.
+    agentLabel: "Which coding agent do you want?",
+    agentHint: "You can add the other one later.",
+    agentClaude: "Claude Code",
+    agentClaudeHint: "Anthropic's coding agent. Runs in your terminal as `claude`.",
+    agentCodex: "Codex",
+    agentCodexHint: "OpenAI's coding agent. Runs in your terminal as `codex`.",
+    agentBoth: "Both",
+    agentBothHint: "Claude Code and Codex side by side, sharing the same servers.",
+    desktopLabel: "Also install the desktop app",
+    desktopHint:
+      "Claude Desktop or the ChatGPT app. They read the same settings as the terminal agent.",
+    coreNote:
+      "Also sets up three servers that need no account: memory, step-by-step reasoning and web fetch.",
+    // Step 2, only on a network that needs a proxy.
+    networkIntro:
+      "Your network can't reach the agents' servers directly, but there's a proxy running on this machine.",
+    proxyAdopt: "Route installs through this proxy",
+    proxyAdoptHint: "Uncheck to keep the direct connection. You can change it later under Network.",
+    // Step 3 is the real review — the same staged steps and Apply as the side
+    // panel — so its button runs the install. "Install now" is honest here.
+    reviewIntro: "These are the exact changes. Nothing has run yet.",
+    preparing: "Working out what needs to change…",
+    nothingToDo: "Everything you picked is already on this machine.",
+    picksReady: "Your picks are ready.",
+    unavailable: "Installing needs the desktop app. Your picks are waiting in the change tray.",
+    stageFailed: "Couldn't read this machine's current setup, so nothing was staged.",
+    tryAgain: "Try again",
+    mirrorNote: (via: string) => `Downloads go through ${via}, the faster route from your network.`,
+    mirrorDecline: "Use the official sources",
+    installNow: "Install now",
+    installingIntro:
+      "Installing. You can close this window — the run carries on in the side panel.",
+    finishedIntro: "Here's how it went.",
+    done: "Done",
   },
 
   /** Guided product tour — a spotlight walkthrough that visits each part of the app. */
@@ -1227,20 +1222,10 @@ export const en = {
       running: "Checking your network…",
       recheck: "Check again",
       unreachable: "unreachable",
-      directOk: "Direct connection works — no proxy needed.",
       directBlocked:
         "Direct connection failed. agentpack will route installs through what it found.",
       proxyFound: (host: string, ms: number) => `Found a working proxy: ${host} (${ms}ms)`,
-      noProxyFound: "No working proxy found on this machine.",
-      fastestMirror: (kind: string, label: string) => `Fastest ${kind}: ${label}`,
-      // PyPI and Homebrew are env vars agentpack only injects into a failed
-      // step's retry, so Adopt cannot apply them. Say so beside them rather than
-      // listing four mirrors under a button that applies two.
-      retryOnly: "used automatically if an install fails",
-      adopt: "Use these settings",
-      adopted: "Applied.",
       skip: "Skip for now",
-      nothingToDo: "Your network looks fine — nothing to change.",
     },
   },
 
