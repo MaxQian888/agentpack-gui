@@ -402,27 +402,37 @@ export function SessionBrowser({
   // `rootOf` keeps that answer per transcript (keyed `source:path`), which is
   // how a drill-down to a sub-agent finds the card it lives under.
   const { roots, subagentsByParent, rootOf } = useMemo(() => {
-    const byId = new Map(sessions.map((s) => [s.id, s]))
+    // An id is not unique on disk: Claude Code copies a session into a
+    // worktree's project folder under the same id, `subagents/` and all. So a
+    // parent is looked up among every transcript with that id, preferring the
+    // one in the child's own folder, and everything downstream is keyed by
+    // path — the one thing two copies can't share.
+    const byId = new Map<string, SessionSummary[]>()
+    for (const s of sessions) byId.set(s.id, [...(byId.get(s.id) ?? []), s])
+    const parentOf = (child: SessionSummary) => {
+      const candidates = byId.get(child.parentId!) ?? []
+      return candidates.find((c) => child.path.startsWith(folderOf(c.path))) ?? candidates[0]
+    }
     const byParent = new Map<string, SessionSummary[]>()
     const rootByKey = new Map<string, SessionSummary>()
     const tops: SessionSummary[] = []
     for (const s of sessions) {
       let root = s
-      const seen = new Set([s.id])
+      const seen = new Set([sessionKey(s)])
       while (root.parentId) {
-        const parent = byId.get(root.parentId)
-        if (!parent || seen.has(parent.id)) break // orphan, or a cycle on disk
-        seen.add(parent.id)
+        const parent = parentOf(root)
+        if (!parent || seen.has(sessionKey(parent))) break // orphan, or a cycle on disk
+        seen.add(sessionKey(parent))
         root = parent
       }
-      rootByKey.set(`${s.source}:${s.path}`, root)
+      rootByKey.set(sessionKey(s), root)
       if (root === s) {
         tops.push(s)
         continue
       }
-      const group = byParent.get(root.id)
+      const group = byParent.get(sessionKey(root))
       if (group) group.push(s)
-      else byParent.set(root.id, [s])
+      else byParent.set(sessionKey(root), [s])
     }
     return { roots: tops, subagentsByParent: byParent, rootOf: rootByKey }
   }, [sessions])
@@ -440,11 +450,11 @@ export function SessionBrowser({
     if (focus.session) {
       // One transcript: open it, leaving the list as the user had it. A
       // sub-agent opens inside the session that spawned it, its chip selected.
-      const key = `${focus.session.source}:${focus.session.path}`
+      const key = sessionKey(focus.session)
       const root = rootOf.get(key)
       if (root) {
         setSelected(root)
-        setViewingPath(`${root.source}:${root.path}` === key ? null : focus.session.path)
+        setViewingPath(sessionKey(root) === key ? null : focus.session.path)
       }
     } else {
       setQuery("")
@@ -564,10 +574,10 @@ export function SessionBrowser({
                 button is always its item's last child, so `last:` there would
                 match every row. */}
             {filtered.slice(0, visible).map((s) => (
-              <div key={`${s.source}:${s.id}`} role="listitem" className="border-b last:border-b-0">
+              <div key={sessionKey(s)} role="listitem" className="border-b last:border-b-0">
                 <SessionRow
                   session={s}
-                  subagentCount={subagentsByParent.get(s.id)?.length ?? 0}
+                  subagentCount={subagentsByParent.get(sessionKey(s))?.length ?? 0}
                   onOpen={() => open(s)}
                 />
               </div>
@@ -579,11 +589,21 @@ export function SessionBrowser({
 
       <TranscriptDialog
         session={selected}
-        subagents={selected ? (subagentsByParent.get(selected.id) ?? []) : []}
+        subagents={selected ? (subagentsByParent.get(sessionKey(selected)) ?? []) : []}
         viewingPath={viewingPath}
         onView={setViewingPath}
         onClose={close}
       />
     </div>
   )
+}
+
+/** A transcript's identity: its file, not its id, which copies on disk share. */
+function sessionKey(s: Pick<SessionSummary, "source" | "path">): string {
+  return `${s.source}:${s.path}`
+}
+
+/** The folder a transcript file sits in, with its trailing separator. */
+function folderOf(path: string): string {
+  return path.slice(0, Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1)
 }

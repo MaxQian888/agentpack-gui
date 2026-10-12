@@ -34,7 +34,9 @@ const session = (over: Partial<SessionSummary>): SessionSummary => ({
   cost: null,
   startedAt: 0,
   updatedAt: 1000,
-  path: "p",
+  // One file per session unless a test says otherwise: a transcript's path,
+  // not its id, is what tells two of them apart.
+  path: `${over.source ?? "claude"}/${over.id ?? "s"}.jsonl`,
   gitBranch: null,
   parentId: null,
   agentName: null,
@@ -218,6 +220,31 @@ describe("SessionBrowser", () => {
       "aria-pressed",
       "true"
     )
+  })
+
+  // Claude Code copies a session into a worktree's project folder under the
+  // same id, sub-agents and all. Keyed by id, the two copies collided as React
+  // keys and each card claimed both copies' sub-agents.
+  it("keeps two copies of one session apart, each with its own sub-agents", () => {
+    renderBrowser([
+      session({ id: "dup", title: "Original", path: "/p/main/dup.jsonl" }),
+      session({ id: "dup", title: "Worktree copy", path: "/p/main--wt/dup.jsonl" }),
+      session({
+        id: "a1",
+        parentId: "dup",
+        title: "agent-one",
+        path: "/p/main/dup/subagents/agent-one.jsonl",
+      }),
+      session({
+        id: "a1",
+        parentId: "dup",
+        title: "agent-one",
+        path: "/p/main--wt/dup/subagents/agent-one.jsonl",
+      }),
+    ])
+    expect(screen.getByText("Original")).toBeInTheDocument()
+    expect(screen.getByText("Worktree copy")).toBeInTheDocument()
+    expect(screen.getAllByText(h.subagents(1))).toHaveLength(2)
   })
 
   it("keeps an orphaned sub-agent visible when its parent is gone", () => {
