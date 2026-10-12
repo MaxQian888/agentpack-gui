@@ -215,18 +215,22 @@ impl CodexAcc {
         }
       }
       "event_msg" => match s(payload, "type") {
-        Some("user_message") => {
-          self.count += 1;
-          if self.title.is_none() {
-            if let Some(msg) = s(payload, "message") {
-              let msg = msg.trim();
-              if !msg.is_empty() && !msg.starts_with('#') && !msg.starts_with('<') {
-                self.title = Some(truncate_title(msg));
-              }
+        Some("user_message") => self.user_message(s(payload, "message")),
+        Some("agent_message") => self.count += 1,
+        // Current Codex writes each turn as a completed item instead of the two
+        // events above, which only older rollouts carry. Counting the events
+        // alone read every session written since as having no messages at all.
+        Some("item_completed") => {
+          let item = payload.get("item").unwrap_or(&Value::Null);
+          match s(item, "type") {
+            Some("UserMessage") => {
+              let text = codex_content_text(item.get("content").unwrap_or(&Value::Null));
+              self.user_message(Some(&text));
             }
+            Some("AgentMessage") => self.count += 1,
+            _ => {}
           }
         }
-        Some("agent_message") => self.count += 1,
         Some("token_count") => {
           if let Some(info) = payload.get("info").filter(|i| !i.is_null()) {
             if let Some(us) = codex_token_usage(info) {
@@ -244,6 +248,19 @@ impl CodexAcc {
         _ => {}
       },
       _ => {}
+    }
+  }
+
+  /// One message the user typed; the first that isn't injected context
+  /// (instructions open with `#`, environment blocks with `<`) names the session.
+  fn user_message(&mut self, msg: Option<&str>) {
+    self.count += 1;
+    if self.title.is_none() {
+      if let Some(msg) = msg.map(str::trim) {
+        if !msg.is_empty() && !msg.starts_with('#') && !msg.starts_with('<') {
+          self.title = Some(truncate_title(msg));
+        }
+      }
     }
   }
 
@@ -336,6 +353,64 @@ fn codex_content_text(content: &Value) -> String {
     .unwrap_or_default()
 }
 
+/// A tool result as text a person can read.
+///
+/// Current Codex hands back its `exec` tool's result as an array of content
+/// blocks rather than a string: a "Script completed" header, then one block
+/// per thing the script printed — very often an `exec_command` result
+/// serialized as JSON, sometimes wrapped by `Promise.allSettled`. Dumped raw,
+/// the transcript showed `[{"text":"{\"chunk_id\"…` where the command's
+/// output should be. So: blocks are joined, an image block is named rather
+/// than dropped, and a block that is an exec result shows its `output`.
+/// Anything else the script printed is shown as it was.
+fn codex_tool_output(output: &Value) -> String {
+  match output {
+    Value::String(t) => t.clone(),
+    Value::Array(blocks) => blocks
+      .iter()
+      .filter_map(|b| match s(b, "type") {
+        Some("input_image") => Some("[image]".to_string()),
+        _ => s(b, "text").map(unwrap_exec_result),
+      })
+      .collect::<Vec<_>>()
+      .join("\n"),
+    Value::Null => String::new(),
+    other => serde_json::to_string(other).unwrap_or_default(),
+  }
+}
+
+/// One printed block: an `exec_command` result (or an `allSettled` record of
+/// one) becomes its output, with the exit code only when it failed; any other
+/// text comes back unchanged.
+fn unwrap_exec_result(text: &str) -> String {
+  let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(text) else {
+    return text.to_string();
+  };
+  let obj = Value::Object(obj);
+  if s(&obj, "status") == Some("rejected") {
+    let reason = match obj.get("reason") {
+      Some(Value::String(r)) => r.clone(),
+      Some(other) => serde_json::to_string(other).unwrap_or_default(),
+      None => String::new(),
+    };
+    return format!("[rejected] {reason}");
+  }
+  let result = match obj.get("value") {
+    Some(v) if v.is_object() && s(&obj, "status") == Some("fulfilled") => v,
+    _ => &obj,
+  };
+  let is_exec = ["chunk_id", "exit_code", "wall_time_seconds"]
+    .iter()
+    .any(|k| result.get(*k).is_some());
+  match (is_exec, s(result, "output")) {
+    (true, Some(out)) => match result.get("exit_code").and_then(Value::as_i64) {
+      Some(code) if code != 0 => format!("[exit {code}]\n{out}"),
+      _ => out.to_string(),
+    },
+    _ => text.to_string(),
+  }
+}
+
 /// Split a Codex inter-agent message into its envelope kind and its body.
 ///
 /// The readable `content` blocks join into a small header — `Message Type: …`,
@@ -408,6 +483,23 @@ pub(super) fn codex_detail(
     cur.as_mut().unwrap()
   }
 
+  fn user(messages: &mut Vec<Message>, i: usize, ts: Option<i64>, text: &str) {
+    let mut m = Message::new(format!("u{i}"), "user");
+    m.ts = ts;
+    m.parts.push(Part::text("text", text.to_string()));
+    messages.push(m);
+  }
+  /// A spawned agent's lifecycle. The old event and the new item carry the
+  /// same `kind` / `agent_path` fields, so both read through here.
+  fn sub_agent(cur: &mut Option<Message>, i: usize, ts: Option<i64>, record: &Value) {
+    assistant(cur, format!("a{i}"), ts).parts.push(Part {
+      kind: "subagentActivity".into(),
+      name: s(record, "kind").map(String::from),
+      agent: s(record, "agent_path").map(String::from),
+      ..Part::default()
+    });
+  }
+
   for (i, line) in lines.iter().enumerate() {
     let ty = s(line, "type").unwrap_or("");
     let ts = s(line, "timestamp").and_then(iso_to_epoch_ms);
@@ -417,10 +509,27 @@ pub(super) fn codex_detail(
       ("event_msg", "user_message") => {
         flush(&mut cur, &mut messages);
         if let Some(text) = s(payload, "message") {
-          let mut m = Message::new(format!("u{i}"), "user");
-          m.ts = ts;
-          m.parts.push(Part::text("text", text.to_string()));
-          messages.push(m);
+          user(&mut messages, i, ts, text);
+        }
+      }
+      // Current Codex's form of the user's turn and of agent lifecycle. Its
+      // `AgentMessage` items are not read here: each mirrors a
+      // `response_item` assistant message (same text, one for one), which is
+      // already rendered below — reading both would print every reply twice.
+      // The `response_item` user messages are not the user's either: they carry
+      // injected context (plugin lists, skills, AGENTS.md) beside the real ask.
+      ("event_msg", "item_completed") => {
+        let item = payload.get("item").unwrap_or(&Value::Null);
+        match s(item, "type") {
+          Some("UserMessage") => {
+            flush(&mut cur, &mut messages);
+            let text = codex_content_text(item.get("content").unwrap_or(&Value::Null));
+            if !text.trim().is_empty() {
+              user(&mut messages, i, ts, &text);
+            }
+          }
+          Some("SubAgentActivity") => sub_agent(&mut cur, i, ts, item),
+          _ => {}
         }
       }
       ("event_msg", "agent_message") => {
@@ -464,20 +573,23 @@ pub(super) fn codex_detail(
             .or_else(|| s(payload, "input"))
             .unwrap_or(""),
         );
+        // `exec` runs a JavaScript program; show the commands it ran first.
+        let (text, script) = if pty == "custom_tool_call" && name.as_deref() == Some("exec") {
+          super::codex_exec::exec_view(&input)
+        } else {
+          (input, None)
+        };
         assistant(&mut cur, format!("a{i}"), ts).parts.push(Part {
           kind: "toolCall".into(),
-          text: input,
+          text,
+          script,
           name,
           call_id: s(payload, "call_id").map(String::from),
           ..Part::default()
         });
       }
       ("response_item", "function_call_output") | ("response_item", "custom_tool_call_output") => {
-        let text = match payload.get("output") {
-          Some(Value::String(t)) => t.clone(),
-          Some(other) => serde_json::to_string(other).unwrap_or_default(),
-          None => String::new(),
-        };
+        let text = codex_tool_output(payload.get("output").unwrap_or(&Value::Null));
         assistant(&mut cur, format!("a{i}"), ts).parts.push(Part {
           kind: "toolResult".into(),
           text,
@@ -506,14 +618,7 @@ pub(super) fn codex_detail(
       }
       // Lifecycle of a spawned agent, which lives in its own rollout file — this
       // is the only trace of it in the thread that started it.
-      ("event_msg", "sub_agent_activity") => {
-        assistant(&mut cur, format!("a{i}"), ts).parts.push(Part {
-          kind: "subagentActivity".into(),
-          name: s(payload, "kind").map(String::from),
-          agent: s(payload, "agent_path").map(String::from),
-          ..Part::default()
-        });
-      }
+      ("event_msg", "sub_agent_activity") => sub_agent(&mut cur, i, ts, payload),
       ("response_item", "web_search_call") => {
         let q = payload
           .get("action")
@@ -579,6 +684,102 @@ mod tests {
         },
       }),
     )
+  }
+
+  /// A completed item, as current Codex writes each turn.
+  fn completed(item: Value) -> Value {
+    event(
+      "event_msg",
+      json!({ "type": "item_completed", "item": item }),
+    )
+  }
+  fn user_item(text: &str) -> Value {
+    completed(json!({ "type": "UserMessage", "content": [{ "type": "text", "text": text }] }))
+  }
+  fn agent_item(text: &str) -> Value {
+    completed(json!({ "type": "AgentMessage", "content": [{ "type": "Text", "text": text }] }))
+  }
+  fn assistant_response(text: &str) -> Value {
+    event(
+      "response_item",
+      json!({ "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": text }] }),
+    )
+  }
+
+  /// Current Codex records turns only as `item_completed`; counting the old
+  /// events alone read every session since as empty.
+  #[test]
+  fn counts_and_names_the_item_completed_turns_current_codex_writes() {
+    let p = parse(vec![
+      user_item("# AGENTS.md instructions"),
+      user_item("fix the login bug"),
+      agent_item("On it."),
+      assistant_response("On it."),
+      completed(json!({ "type": "Reasoning" })),
+    ]);
+    assert_eq!(p.summary.message_count, 3);
+    assert_eq!(p.summary.title, "fix the login bug");
+  }
+
+  #[test]
+  fn shows_the_users_turns_and_each_reply_once_in_a_current_transcript() {
+    let lines = vec![
+      // Injected context rides in as a response_item "user" message; not the user's words.
+      event(
+        "response_item",
+        json!({ "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "<recommended_plugins>…" }] }),
+      ),
+      user_item("fix the login bug"),
+      agent_item("On it."),
+      assistant_response("On it."),
+      completed(
+        json!({ "type": "SubAgentActivity", "kind": "started", "agent_path": "/root/research" }),
+      ),
+    ];
+    let d = codex_detail(Path::new("/p/rollout-1.jsonl"), &lines, &HashMap::new());
+    let roles: Vec<&str> = d.messages.iter().map(|m| m.role.as_str()).collect();
+    assert_eq!(roles, ["user", "assistant"]);
+    assert_eq!(d.messages[0].parts[0].text, "fix the login bug");
+    let texts: Vec<&str> = d.messages[1]
+      .parts
+      .iter()
+      .filter(|p| p.kind == "text")
+      .map(|p| p.text.as_str())
+      .collect();
+    assert_eq!(texts, ["On it."]);
+    let activity = d.messages[1]
+      .parts
+      .iter()
+      .find(|p| p.kind == "subagentActivity")
+      .unwrap();
+    assert_eq!(activity.name.as_deref(), Some("started"));
+    assert_eq!(activity.agent.as_deref(), Some("/root/research"));
+  }
+
+  #[test]
+  fn reads_a_block_array_tool_result_as_the_commands_output() {
+    let exec = |code: i64, out: &str| {
+      json!({ "chunk_id": "c", "wall_time_seconds": 0.1, "exit_code": code, "output": out })
+        .to_string()
+    };
+    let settled = json!({ "i": 0, "status": "fulfilled", "value": { "chunk_id": "d", "exit_code": 0, "output": "from allSettled" } }).to_string();
+    let rejected = json!({ "status": "rejected", "reason": "boom" }).to_string();
+    let output = json!([
+      { "type": "input_text", "text": "Script completed\nOutput:" },
+      { "type": "input_text", "text": exec(0, "hello") },
+      { "type": "input_text", "text": exec(1, "Missing --pipeline-run-id") },
+      { "type": "input_text", "text": settled },
+      { "type": "input_text", "text": rejected },
+      { "type": "input_image", "image_url": "data:…" },
+      // JSON the script printed itself is shown as it was.
+      { "type": "input_text", "text": "{\"i\":0,\"result\":3}" },
+    ]);
+    assert_eq!(
+      codex_tool_output(&output),
+      "Script completed\nOutput:\nhello\n[exit 1]\nMissing --pipeline-run-id\nfrom allSettled\n[rejected] boom\n[image]\n{\"i\":0,\"result\":3}"
+    );
+    // The older string form is untouched.
+    assert_eq!(codex_tool_output(&json!("plain")), "plain");
   }
 
   /// `total_token_usage` is cumulative: every `token_count` restates the running

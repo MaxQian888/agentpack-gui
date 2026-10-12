@@ -17,6 +17,7 @@ use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::claude_render::{tool_input_text, tool_result_text, user_text_part};
 use super::scan::{file_sig, FileSig};
 use super::util::{basename, collect_jsonl, iso_to_epoch_ms, s, stream_jsonl, truncate_title, u};
 use super::{
@@ -379,16 +380,26 @@ pub(super) fn claude_detail(path: &Path, lines: &[Value]) -> SessionDetail {
         msg.usage = Some(claude_usage(us));
       }
     }
+    // Claude Code writes its own records (slash commands, their output,
+    // task notifications, `isMeta` notes) as `user` text; see `claude_render`.
+    let is_meta = line.get("isMeta").and_then(Value::as_bool).unwrap_or(false);
+    let text_part = |t: &str| {
+      if ty == "user" {
+        user_text_part(t, is_meta)
+      } else {
+        Some(Part::text("text", t.to_string()))
+      }
+    };
     match content {
       Value::String(text) if !text.trim().is_empty() => {
-        msg.parts.push(Part::text("text", text.clone()));
+        msg.parts.extend(text_part(text));
       }
       Value::Array(blocks) => {
         for b in blocks {
           match s(b, "type") {
             Some("text") => {
               if let Some(t) = s(b, "text") {
-                msg.parts.push(Part::text("text", t.to_string()));
+                msg.parts.extend(text_part(t));
               }
             }
             Some("thinking") => {
@@ -400,7 +411,7 @@ pub(super) fn claude_detail(path: &Path, lines: &[Value]) -> SessionDetail {
               let name = s(b, "name").map(String::from);
               let input = b
                 .get("input")
-                .map(|i| serde_json::to_string_pretty(i).unwrap_or_default())
+                .map(|i| tool_input_text(name.as_deref(), i))
                 .unwrap_or_default();
               msg.parts.push(Part {
                 kind: "toolCall".into(),
@@ -411,15 +422,7 @@ pub(super) fn claude_detail(path: &Path, lines: &[Value]) -> SessionDetail {
               });
             }
             Some("tool_result") => {
-              let text = match b.get("content") {
-                Some(Value::String(t)) => t.clone(),
-                Some(Value::Array(arr)) => arr
-                  .iter()
-                  .filter_map(|x| s(x, "text"))
-                  .collect::<Vec<_>>()
-                  .join("\n"),
-                _ => String::new(),
-              };
+              let text = tool_result_text(b.get("content"));
               // Oversized outputs live in a sibling `tool-results/` file; the
               // inline text is only a preview plus the path. Carry the path as a
               // `file:` ref so the UI can fetch the real output on expand
@@ -439,6 +442,7 @@ pub(super) fn claude_detail(path: &Path, lines: &[Value]) -> SessionDetail {
                 truncated: external.as_ref().map(|_| true),
                 full_bytes,
                 full_ref: external.map(|p| format!("file:{p}")),
+                script: None,
               });
             }
             Some("image") => msg.parts.push(Part::text("image", "[image]".into())),

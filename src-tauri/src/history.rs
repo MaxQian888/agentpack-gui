@@ -366,6 +366,11 @@ pub struct Part {
   /// re-read it from the transcript.
   #[serde(rename = "ref")]
   full_ref: Option<String>,
+  /// For a Codex `exec` call shown as its decoded commands: the JavaScript it
+  /// actually ran, when that says more than the commands do. Capped at
+  /// [`SCRIPT_LIMIT`]; the commands in `text` are the part to read.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  script: Option<String>,
 }
 
 impl Part {
@@ -389,7 +394,20 @@ const PART_INLINE_LIMIT: usize = 4096;
 /// the full length and a locator to fetch it back. A part already carrying an
 /// explicit `full_ref` (externalized output) keeps it; otherwise the part is
 /// addressed by its position in the transcript. No-op for short text.
+/// How much of an `exec` script a transcript carries alongside its commands.
+const SCRIPT_LIMIT: usize = 16 * 1024;
+
 fn cap_part(mut part: Part, msg_id: &str, index: usize) -> Part {
+  if let Some(script) = part.script.as_mut() {
+    if script.len() > SCRIPT_LIMIT {
+      let mut cut = SCRIPT_LIMIT;
+      while cut > 0 && !script.is_char_boundary(cut) {
+        cut -= 1;
+      }
+      script.truncate(cut);
+      script.push_str("\n…");
+    }
+  }
   if part.full_ref.is_some() {
     // Externalized output: `text` is the inline preview, never the whole thing.
     return part;
@@ -507,6 +525,7 @@ mod scan;
 use scan::{scan_files, Progress, ScanProgressEvent};
 
 mod claude;
+mod claude_render;
 
 use claude::{claude_detail, claude_parse_from_file, claude_root, claude_sigs};
 
@@ -515,6 +534,7 @@ mod opencode;
 use opencode::{opencode_detail, opencode_series, scan_opencode};
 
 mod codex;
+mod codex_exec;
 
 use codex::{codex_detail, codex_parse_from_file, codex_sigs, codex_titles};
 

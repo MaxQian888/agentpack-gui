@@ -5,6 +5,7 @@ import {
   Bot,
   Brain,
   ChevronRight,
+  FileCode,
   FileDiff,
   Globe,
   ImageIcon,
@@ -181,6 +182,15 @@ function PartView({ part, source, path }: { part: Part; source: HistorySource; p
           ) : (
             <span className="text-xs text-muted-foreground">—</span>
           )}
+          {/* Codex `exec`: the commands above are what ran; the program that
+              ran them is here for when its logic matters. */}
+          {part.script ? (
+            <div className="mt-2">
+              <Foldable label={t.script} icon={<FileCode className="size-3.5" />}>
+                <CodeBlock text={part.script} lang="js" />
+              </Foldable>
+            </div>
+          ) : null}
         </Foldable>
       )
     case "toolResult":

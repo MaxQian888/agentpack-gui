@@ -162,6 +162,33 @@ describe("Transcript", () => {
     expect(screen.getByText("—")).toBeInTheDocument()
   })
 
+  it("shows a Codex exec call as its commands, with the script behind its own disclosure", async () => {
+    const user = userEvent.setup()
+    renderTranscript(
+      detail([
+        assistantTurn([
+          part({
+            kind: "toolCall",
+            name: "exec",
+            text: "$ rtk read a.ts",
+            script: 'const r=await Promise.allSettled([tools.exec_command({cmd:"rtk read a.ts"})])',
+          }),
+        ]),
+      ])
+    )
+    expect(screen.getByText("$ rtk read a.ts")).toBeInTheDocument()
+    expect(screen.queryByText(/Promise\.allSettled/)).not.toBeInTheDocument()
+    await user.click(screen.getByText(h.script))
+    expect(screen.getByText(/allSettled/)).toBeInTheDocument()
+  })
+
+  it("offers no script disclosure when the call was only commands", () => {
+    renderTranscript(
+      detail([assistantTurn([part({ kind: "toolCall", name: "exec", text: "$ ls" })])])
+    )
+    expect(screen.queryByText(h.script)).not.toBeInTheDocument()
+  })
+
   // The reason Foldable isn't a native <details>: React renders children
   // regardless of `open`, so a collapsed tool result would still put its whole
   // payload (~88% of a big transcript's bytes) in the DOM.
