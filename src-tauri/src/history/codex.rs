@@ -353,6 +353,64 @@ fn codex_content_text(content: &Value) -> String {
     .unwrap_or_default()
 }
 
+/// A tool result as text a person can read.
+///
+/// Current Codex hands back its `exec` tool's result as an array of content
+/// blocks rather than a string: a "Script completed" header, then one block
+/// per thing the script printed — very often an `exec_command` result
+/// serialized as JSON, sometimes wrapped by `Promise.allSettled`. Dumped raw,
+/// the transcript showed `[{"text":"{\"chunk_id\"…` where the command's
+/// output should be. So: blocks are joined, an image block is named rather
+/// than dropped, and a block that is an exec result shows its `output`.
+/// Anything else the script printed is shown as it was.
+fn codex_tool_output(output: &Value) -> String {
+  match output {
+    Value::String(t) => t.clone(),
+    Value::Array(blocks) => blocks
+      .iter()
+      .filter_map(|b| match s(b, "type") {
+        Some("input_image") => Some("[image]".to_string()),
+        _ => s(b, "text").map(unwrap_exec_result),
+      })
+      .collect::<Vec<_>>()
+      .join("\n"),
+    Value::Null => String::new(),
+    other => serde_json::to_string(other).unwrap_or_default(),
+  }
+}
+
+/// One printed block: an `exec_command` result (or an `allSettled` record of
+/// one) becomes its output, with the exit code only when it failed; any other
+/// text comes back unchanged.
+fn unwrap_exec_result(text: &str) -> String {
+  let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(text) else {
+    return text.to_string();
+  };
+  let obj = Value::Object(obj);
+  if s(&obj, "status") == Some("rejected") {
+    let reason = match obj.get("reason") {
+      Some(Value::String(r)) => r.clone(),
+      Some(other) => serde_json::to_string(other).unwrap_or_default(),
+      None => String::new(),
+    };
+    return format!("[rejected] {reason}");
+  }
+  let result = match obj.get("value") {
+    Some(v) if v.is_object() && s(&obj, "status") == Some("fulfilled") => v,
+    _ => &obj,
+  };
+  let is_exec = ["chunk_id", "exit_code", "wall_time_seconds"]
+    .iter()
+    .any(|k| result.get(*k).is_some());
+  match (is_exec, s(result, "output")) {
+    (true, Some(out)) => match result.get("exit_code").and_then(Value::as_i64) {
+      Some(code) if code != 0 => format!("[exit {code}]\n{out}"),
+      _ => out.to_string(),
+    },
+    _ => text.to_string(),
+  }
+}
+
 /// Split a Codex inter-agent message into its envelope kind and its body.
 ///
 /// The readable `content` blocks join into a small header — `Message Type: …`,
@@ -524,11 +582,7 @@ pub(super) fn codex_detail(
         });
       }
       ("response_item", "function_call_output") | ("response_item", "custom_tool_call_output") => {
-        let text = match payload.get("output") {
-          Some(Value::String(t)) => t.clone(),
-          Some(other) => serde_json::to_string(other).unwrap_or_default(),
-          None => String::new(),
-        };
+        let text = codex_tool_output(payload.get("output").unwrap_or(&Value::Null));
         assistant(&mut cur, format!("a{i}"), ts).parts.push(Part {
           kind: "toolResult".into(),
           text,
@@ -693,6 +747,32 @@ mod tests {
       .unwrap();
     assert_eq!(activity.name.as_deref(), Some("started"));
     assert_eq!(activity.agent.as_deref(), Some("/root/research"));
+  }
+
+  #[test]
+  fn reads_a_block_array_tool_result_as_the_commands_output() {
+    let exec = |code: i64, out: &str| {
+      json!({ "chunk_id": "c", "wall_time_seconds": 0.1, "exit_code": code, "output": out })
+        .to_string()
+    };
+    let settled = json!({ "i": 0, "status": "fulfilled", "value": { "chunk_id": "d", "exit_code": 0, "output": "from allSettled" } }).to_string();
+    let rejected = json!({ "status": "rejected", "reason": "boom" }).to_string();
+    let output = json!([
+      { "type": "input_text", "text": "Script completed\nOutput:" },
+      { "type": "input_text", "text": exec(0, "hello") },
+      { "type": "input_text", "text": exec(1, "Missing --pipeline-run-id") },
+      { "type": "input_text", "text": settled },
+      { "type": "input_text", "text": rejected },
+      { "type": "input_image", "image_url": "data:…" },
+      // JSON the script printed itself is shown as it was.
+      { "type": "input_text", "text": "{\"i\":0,\"result\":3}" },
+    ]);
+    assert_eq!(
+      codex_tool_output(&output),
+      "Script completed\nOutput:\nhello\n[exit 1]\nMissing --pipeline-run-id\nfrom allSettled\n[rejected] boom\n[image]\n{\"i\":0,\"result\":3}"
+    );
+    // The older string form is untouched.
+    assert_eq!(codex_tool_output(&json!("plain")), "plain");
   }
 
   /// `total_token_usage` is cumulative: every `token_count` restates the running
