@@ -525,6 +525,7 @@ mod scan;
 use scan::{scan_files, Progress, ScanProgressEvent};
 
 mod claude;
+mod claude_render;
 
 use claude::{claude_detail, claude_parse_from_file, claude_root, claude_sigs};
 
