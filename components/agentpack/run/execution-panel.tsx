@@ -3,7 +3,6 @@
 import { useRef } from "react"
 import { Eye, Play } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Progress } from "@/components/ui/progress"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Sheet,
@@ -15,14 +14,9 @@ import {
 } from "@/components/ui/sheet"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
-import { preflight } from "@/lib/agentpack/preflight"
-import { buildInventory } from "@/lib/agentpack/inventory"
 import type { InventoryInput } from "@/lib/agentpack/inventory"
 import type { NavigateIntent, SectionKey } from "@/lib/agentpack/workspaces"
-import { useRunnerCtx } from "./runner-context"
-import { StepLog } from "./step-log"
-import { Completion } from "./completion"
-import { PreflightBrief } from "./preflight-brief"
+import { RunBody, RunProgress, useRunView } from "./run-view"
 
 /**
  * The review panel — the single door every write goes through.
@@ -54,63 +48,24 @@ export function ExecutionPanel({
   const t = useT()
   const open = useAppStore((s) => s.panelOpen)
   const setPanelOpen = useAppStore((s) => s.setPanelOpen)
-  // Folded here rather than in the shell, and read from the store here too.
-  // `refreshDetections` writes `latestVersions` and `cliManagers` once per
-  // installed CLI, un-batched — subscribing the shell to those slices made every
-  // one of ~20 startup writes re-render the whole window, `<main>` and the
-  // section the user was scrolling included.
-  const detections = useAppStore((s) => s.detections)
-  const latestVersions = useAppStore((s) => s.latestVersions)
-  const cliManagers = useAppStore((s) => s.cliManagers)
-  const networkProbe = useAppStore((s) => s.networkProbe)
-  const paths = useAppStore((s) => s.paths)
+  // Shared with the first-run wizard, which draws the same review inline. It
+  // reads the detection slices itself, which is what keeps the shell off them.
+  const view = useRunView(scan)
   const {
     reports,
-    pendingSteps,
-    running,
     previewing,
     awaitingConfirm,
-    lastWasPreview,
-    cancelled,
-    runPlan,
     runTitle,
     previewPending,
     applyPending,
     abandonPending,
     retry,
     cancel,
-  } = useRunnerCtx()
-  const busy = running || previewing
-  const finished = !busy && !awaitingConfirm && reports.length > 0
-  // Also offered after a cancelled run: everything still to do is `skipped`, and
-  // retry picks those up, so Retry is how you resume.
-  const canRetry = reports.some((r) => r.status === "error" || r.status === "skipped")
-  const doneCount = reports.filter((r) => r.status !== "pending" && r.status !== "running").length
-  // A preview that has finished but is still staged: the log now holds "would …"
-  // lines, and Apply is still the next step.
-  const previewed = awaitingConfirm && !busy && lastWasPreview
-  // Only while the decision is still the user's. During the run the log is the
-  // thing to read, and a brief about what is "about to" happen would be stale
-  // the moment the first step starts.
-  const brief = awaitingConfirm
-    ? busy
-      ? null
-      : preflight(t, pendingSteps, {
-          // The run's own plan, or none: an MCP add must not be briefed about
-          // the API keys of whatever preset is sitting in the tray.
-          plan: runPlan ?? undefined,
-          // Only folded while the panel is actually asking — the readings are
-          // otherwise recomputed on every store write for a panel nobody sees.
-          inventory: buildInventory({
-            scan,
-            detections,
-            latestVersions,
-            cliManagers,
-            networkProbe,
-            paths,
-          }),
-        })
-    : null
+    busy,
+    finished,
+    canRetry,
+    previewed,
+  } = view
 
   /**
    * Closing the panel while steps are staged abandons them. It has to: a caller
@@ -150,45 +105,30 @@ export function ExecutionPanel({
           </SheetDescription>
         </SheetHeader>
 
-        {reports.length > 0 && !awaitingConfirm ? (
-          <div className="flex items-center gap-3 px-4 pb-3">
-            <Progress value={(doneCount / reports.length) * 100} className="h-1.5 flex-1" />
-            <span
-              aria-live="polite"
-              className="shrink-0 text-xs tabular-nums text-muted-foreground"
-            >
-              {doneCount}/{reports.length}
-            </span>
-          </div>
-        ) : null}
+        <div className="px-4 pb-3 empty:hidden">
+          <RunProgress view={view} />
+        </div>
 
         <div
           ref={logRef}
           tabIndex={-1}
           className="flex-1 space-y-4 overflow-auto px-4 outline-none"
         >
-          {brief ? <PreflightBrief report={brief} /> : null}
-          {finished ? (
-            <Completion
-              reports={reports}
-              plan={runPlan}
-              dryRun={lastWasPreview}
-              cancelled={cancelled}
-              onNavigate={
-                onNavigate
-                  ? (section, intent) => {
-                      // Leaving for the fix closes the panel behind you: a sheet
-                      // left open over the page it just sent you to is a page
-                      // you cannot use.
-                      setPanelOpen(false)
-                      if (intent) onNavigate(section, intent)
-                      else onNavigate(section)
-                    }
-                  : undefined
-              }
-            />
-          ) : null}
-          <StepLog reports={reports} />
+          <RunBody
+            view={view}
+            onNavigate={
+              onNavigate
+                ? (section, intent) => {
+                    // Leaving for the fix closes the panel behind you: a sheet
+                    // left open over the page it just sent you to is a page
+                    // you cannot use.
+                    setPanelOpen(false)
+                    if (intent) onNavigate(section, intent)
+                    else onNavigate(section)
+                  }
+                : undefined
+            }
+          />
         </div>
 
         <SheetFooter className="flex-row flex-wrap justify-end gap-2">

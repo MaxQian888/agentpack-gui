@@ -20,6 +20,13 @@ export interface RunOpts {
    * written for a human.
    */
   activity?: { title?: string; source?: ActivitySource }
+  /**
+   * Stage without opening the side panel: the caller renders the review itself
+   * (the first-run wizard does, as its last step). The gate is the same one —
+   * the same staged steps, the same `applyPending` — only where it is drawn
+   * differs.
+   */
+  inline?: boolean
 }
 
 export interface RunnerState {
@@ -325,7 +332,7 @@ export function useRunner(): RunnerState {
       setLastWasPreview(false)
       setPendingSteps(withVerify)
       setAwaitingConfirm(true)
-      setPanelOpen(true)
+      if (!opts.inline) setPanelOpen(true)
       return new Promise<StepReport[]>((resolve) => {
         settle.current = resolve
       })
