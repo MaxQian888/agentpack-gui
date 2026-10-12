@@ -46,6 +46,7 @@ describe("loadSettings", () => {
       reduceMotion: false,
       startupSection: null,
       osOverride: null,
+      autoSyncPrices: true,
     })
   })
 

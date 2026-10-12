@@ -103,6 +103,12 @@ it("persists the auto-check preference on toggle", async () => {
   expect(saveSettings).toHaveBeenCalledWith({ autoCheckUpdates: false })
 })
 
+it("persists the automatic price-sync preference on toggle", async () => {
+  renderPreferences()
+  await userEvent.click(screen.getByRole("switch", { name: prefs.autoSyncPricesLabel }))
+  expect(saveSettings).toHaveBeenCalledWith({ autoSyncPrices: false })
+})
+
 it("brings the Getting started checklist back", async () => {
   useAppStore.setState({ settings: { ...DEFAULT_SETTINGS, gettingStartedDismissed: true } })
   renderPreferences()
@@ -183,6 +189,7 @@ it("restores this page's defaults and leaves everything else alone", async () =>
       reduceMotion: true,
       startupSection: "history",
       autoCheckUpdates: false,
+      autoSyncPrices: false,
       gettingStartedDismissed: true,
       // Not this page's business: a reset that dropped the proxy would take the
       // route to npm with it.
@@ -202,6 +209,7 @@ it("restores this page's defaults and leaves everything else alone", async () =>
       reduceMotion: false,
       startupSection: null,
       autoCheckUpdates: true,
+      autoSyncPrices: true,
       gettingStartedDismissed: false,
       summonShortcut: null,
       osOverride: null,

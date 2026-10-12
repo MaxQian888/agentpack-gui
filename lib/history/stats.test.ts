@@ -1,5 +1,11 @@
 import { formatCostFigure } from "./format"
-import { computeUsageStats, matchesQuery, projectKey, statsCostFigure } from "./stats"
+import {
+  computeUsageStats,
+  matchesQuery,
+  projectKey,
+  statsCostFigure,
+  unpricedModels,
+} from "./stats"
 import type { SessionSummary, TokenUsage } from "./types"
 
 const usage = (over: Partial<TokenUsage> = {}): TokenUsage => ({
@@ -320,5 +326,23 @@ describe("computeUsageStats — wall-clock duration", () => {
     expect(claude?.durationMs).toBe(30_000)
     expect(codex?.durationMs).toBe(0)
     expect(codex?.durationSessions).toBe(0)
+  })
+})
+
+describe("unpricedModels", () => {
+  it("names what the total leaves out, heaviest first, and skips anything priced", () => {
+    const rows = unpricedModels([
+      session({ model: "mystery-a", usage: usage({ total: 10 }) }),
+      session({ model: "mystery-b", usage: usage({ total: 50 }) }),
+      session({ model: "mystery-a", usage: usage({ total: 5 }) }),
+      session({ model: "claude-opus-4-8", usage: usage({ total: 999 }) }),
+      // OpenCode recorded real dollars, so its model needs no price.
+      session({ model: "mystery-c", cost: 1, usage: usage({ total: 999 }) }),
+      session({ model: "", usage: usage({ total: 999 }) }),
+    ])
+    expect(rows).toEqual([
+      { model: "mystery-b", transcripts: 1, tokens: 50 },
+      { model: "mystery-a", transcripts: 2, tokens: 15 },
+    ])
   })
 })

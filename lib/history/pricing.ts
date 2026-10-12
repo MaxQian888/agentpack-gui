@@ -16,6 +16,11 @@ import type { HistorySource, TokenUsage } from "./types"
  * - DeepSeek (OpenCode proxies) — api-docs.deepseek.com/quick_start/pricing
  *
  * Rates change; treat non-OpenCode costs as estimates.
+ *
+ * This table is the **fallback**. Prices synced from models.dev
+ * (`pricing-sync.ts`, set through `setSyncedPrices`) are consulted first, by
+ * exact id; the table only answers for a model the sync doesn't know, or before
+ * the first sync has landed, or offline.
  */
 export interface ModelPrice {
   input: number
@@ -100,13 +105,76 @@ const TABLE: { keys: string[]; price: ModelPrice }[] = [
   },
 ]
 
-/** The pricing for a model id, or null when the model isn't in the table. */
-export function priceForModel(model: string): ModelPrice | null {
-  const id = model.toLowerCase()
+/**
+ * Vendor prices synced from models.dev, keyed by lower-cased model id. Module
+ * state rather than a parameter because every cost in the app — the session
+ * list, the usage dashboard, the spend card — comes through `priceForModel`,
+ * and threading a table through all of them would be a parameter nobody
+ * forgets until someone does. Null until the first sync (or cached copy) loads.
+ */
+let synced: ReadonlyMap<string, ModelPrice> | null = null
+
+/** Replace the synced prices; null forgets them and falls back to the table. */
+export function setSyncedPrices(prices: Readonly<Record<string, ModelPrice>> | null): void {
+  synced = prices ? new Map(Object.entries(prices)) : null
+}
+
+/**
+ * The forms an id is looked up under: as recorded, without a `vendor/` route
+ * prefix (Pi records `z-ai/glm-5.3-flash`), and without a trailing date
+ * (`claude-haiku-4-5-20251001`). Most specific first.
+ */
+export function idCandidates(model: string): string[] {
+  const id = model.trim().toLowerCase()
+  const bare = id.slice(id.lastIndexOf("/") + 1)
+  const undated = bare.replace(/-\d{8}$/, "")
+  return [...new Set([id, bare, undated])].filter(Boolean)
+}
+
+/**
+ * Whether table key `k` names model `id`: it must sit at a token boundary, and
+ * whatever follows it must start a new word, not continue a version. Matching
+ * by plain substring priced `gpt-5.6-sol` as `gpt-5` — a different generation
+ * at a third of the price, shown as a normal-looking figure rather than as
+ * unpriced. `gpt-5-codex` still matches `gpt-5`; `gpt-5.6` and `gpt-5-3` don't.
+ */
+function keyMatches(id: string, k: string): boolean {
+  let at = id.indexOf(k)
+  while (at !== -1) {
+    const before = at === 0 ? "" : id[at - 1]
+    const after = id.slice(at + k.length)
+    if ((before === "" || /[-/:_]/.test(before)) && (after === "" || /^-[a-z]/.test(after))) {
+      return true
+    }
+    at = id.indexOf(k, at + 1)
+  }
+  return false
+}
+
+/** Where a model's price came from, for saying so beside it. */
+export type PriceSource = "synced" | "builtin"
+
+/** The pricing for a model id and where it came from, or null when nothing knows it. */
+export function lookupPrice(model: string): { price: ModelPrice; source: PriceSource } | null {
+  const candidates = idCandidates(model)
+  if (synced) {
+    for (const id of candidates) {
+      const hit = synced.get(id)
+      if (hit) return { price: hit, source: "synced" }
+    }
+  }
+  const undated = candidates[candidates.length - 1] ?? ""
   for (const entry of TABLE) {
-    if (entry.keys.some((k) => id.includes(k))) return entry.price
+    if (entry.keys.some((k) => keyMatches(undated, k))) {
+      return { price: entry.price, source: "builtin" }
+    }
   }
   return null
+}
+
+/** The pricing for a model id, or null when the model is unpriced. */
+export function priceForModel(model: string): ModelPrice | null {
+  return lookupPrice(model)?.price ?? null
 }
 
 /**
@@ -141,7 +209,7 @@ export function estimateRequestCost(
 ): number | null {
   const base = priceForModel(model)
   if (!base) return null
-  return priceUsage(source, applyLongContext(base, usage), usage)
+  return priceUsage(source, applyLongContext(source, base, usage), usage)
 }
 
 /**
@@ -150,13 +218,14 @@ export function estimateRequestCost(
  * a cache read is a fixed fraction of the input rate, so doubling one doubles
  * the other.
  */
-function applyLongContext(price: ModelPrice, usage: TokenUsage): ModelPrice {
+function applyLongContext(source: HistorySource, price: ModelPrice, usage: TokenUsage): ModelPrice {
   const tier = price.longContext
   if (!tier) return price
-  // Claude's buckets are disjoint, so the prompt is all three input-side ones;
-  // for Codex `input` already subsumes the cached part, and no Codex model in
-  // the table carries a tier anyway.
-  const prompt = usage.input + usage.cacheRead + usage.cacheWrite
+  // Claude's buckets are disjoint, so the prompt is all three input-side ones.
+  // Codex's `input` already subsumes the cached part — and synced OpenAI
+  // prices do carry a tier, so adding `cacheRead` again would push a prompt
+  // over the threshold at half its real size.
+  const prompt = source === "codex" ? usage.input : usage.input + usage.cacheRead + usage.cacheWrite
   if (prompt <= tier.threshold) return price
   return {
     input: price.input * tier.inputMultiplier,

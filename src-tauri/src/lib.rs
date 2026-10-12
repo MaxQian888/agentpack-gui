@@ -170,6 +170,7 @@ pub fn run() {
       net::tool_proxy_snapshot,
       net::proxy_check,
       net::http_get,
+      net::fetch_model_catalog,
       net::set_process_proxy,
       download::github_latest_release,
       download::manifest_latest_release,

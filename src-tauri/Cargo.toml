@@ -43,7 +43,7 @@ dirs = "6"
 # so `net::proxy_from_env` silently returned None and our own downloads (skill
 # tarballs, release assets) went DIRECT on a machine whose only route out is a
 # SOCKS proxy — i.e. they failed for exactly the users who needed the proxy most.
-ureq = { version = "2", default-features = false, features = ["tls", "socks-proxy"] }
+ureq = { version = "2", default-features = false, features = ["tls", "socks-proxy", "gzip"] }
 flate2 = "1"
 tar = "0.4"
 # Content hashing for skill update detection (see skills::hash_skill_dir).

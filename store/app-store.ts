@@ -28,6 +28,21 @@ import {
 } from "@/lib/agentpack/presets"
 import type { UpdateInfo } from "@/lib/tauri/updater"
 import { type AppSettings, DEFAULT_SETTINGS } from "@/lib/tauri/settings"
+import { setSyncedPrices } from "@/lib/history/pricing"
+import type { SyncedPrices } from "@/lib/history/pricing-sync"
+
+/**
+ * Where the models.dev price sync stands. `fetchedAt` is the price data's own
+ * date (null: never synced, the built-in table is all there is); `status` is
+ * what the last attempt did.
+ */
+export interface PriceSyncState {
+  fetchedAt: number | null
+  /** How many models the synced table prices. */
+  models: number
+  status: "idle" | "syncing" | "failed"
+  error: string | null
+}
 
 /** Stable-ish local id for a profile (no Date import needed at module scope). */
 function newProfileId(): string {
@@ -108,6 +123,15 @@ interface State {
    * startup and replaced after each real run; the file on disk is the truth.
    */
   activity: ActivityRecord[]
+  priceSync: PriceSyncState
+  /**
+   * Bumped whenever the prices `priceForModel` answers with change. Every cost
+   * in the app is derived from them, so whatever caches a cost watches this.
+   */
+  pricesVersion: number
+  /** Install a synced table: `priceForModel` consults it from now on. */
+  applyPrices: (prices: SyncedPrices) => void
+  setPriceSync: (patch: Partial<PriceSyncState>) => void
 
   // App self-update + persisted settings.
   appVersion: string | null
@@ -219,6 +243,8 @@ export const useAppStore = create<State>((set, get) => ({
   profiles: [],
   currentProfileId: null,
   activity: [],
+  priceSync: { fetchedAt: null, models: 0, status: "idle", error: null },
+  pricesVersion: 0,
 
   appVersion: null,
   updateState: "idle",
@@ -282,6 +308,19 @@ export const useAppStore = create<State>((set, get) => ({
   setPanelOpen: (open) => set({ panelOpen: open }),
   setOnboardingOpen: (open) => set({ onboardingOpen: open }),
   setTourActive: (active) => set({ tourActive: active }),
+  applyPrices: (prices) => {
+    setSyncedPrices(prices.models)
+    set((s) => ({
+      priceSync: {
+        fetchedAt: prices.fetchedAt,
+        models: Object.keys(prices.models).length,
+        status: "idle",
+        error: null,
+      },
+      pricesVersion: s.pricesVersion + 1,
+    }))
+  },
+  setPriceSync: (patch) => set((s) => ({ priceSync: { ...s.priceSync, ...patch } })),
 
   setClis: (clis) => set((s) => ({ plan: { ...s.plan, clis } })),
   toggleCli: (id) =>

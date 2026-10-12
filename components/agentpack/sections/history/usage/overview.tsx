@@ -29,9 +29,10 @@ import {
 } from "@/lib/history/format"
 import { CHART_SERIES, SOURCE_COLORS } from "@/lib/history/display"
 import { bucketLabel } from "@/lib/history/range"
-import { statsCostFigure } from "@/lib/history/stats"
+import { statsCostFigure, unpricedModels } from "@/lib/history/stats"
 import { Stat, StatGrid, PanelTitle } from "./stat"
 import { DrillButton } from "./drill-button"
+import { PriceSync } from "./price-sync"
 import type { UsageView } from "./view"
 import type { UsageDrilldown } from "./index"
 
@@ -134,6 +135,10 @@ export function OverviewPanel({
             note={t.costUnpricedNote}
           />
         </div>
+        <PriceSync
+          unpriced={unpriced.transcripts > 0 ? unpricedModels(view.sessions) : []}
+          className="border-t pt-3"
+        />
       </Card>
 
       <StatGrid className="grid-cols-2 md:grid-cols-4">

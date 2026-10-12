@@ -776,9 +776,37 @@ transcript contributes tokens and cost, only top-level ones count as sessions**
 (sub-agents are 57% of Claude's files), and an **unpriced model is reported as
 unpriced**, never as a real `$0`.
 
-Update `lib/history/pricing.ts` when model prices change — the date is in its
-header comment. `longContext` belongs only on models that really surcharge
-oversized prompts (Sonnet 4.5/4.0); Sonnet 4.6 and Opus 4.6+ are flat-rate.
+**Prices are synced from models.dev**, and the table in `lib/history/pricing.ts`
+is only the fallback (offline, before the first sync, a model the sync doesn't
+know). `fetch_model_catalog` (`net.rs`, a fixed URL) downloads the catalog;
+`lib/history/pricing-sync.ts` keeps the vendor prices; `lib/tauri/pricing.ts`
+caches them at `~/.agentpack/model-prices.json`; `components/agentpack/
+model-prices.ts` runs it — at startup when the cache is a day old and
+`settings.autoSyncPrices` allows, and from the usage dashboard's cost card or
+Preferences on demand. Four rules:
+
+1. **Only the vendor's price.** The catalog lists one id under dozens of
+   resellers at dozens of prices; `VENDOR_PROVIDERS` decides whose counts, and a
+   model no vendor lists stays unpriced rather than borrowing a reseller's.
+2. **Exact id first, then a strict table match.** Synced prices are looked up by
+   exact id (also without a `vendor/` prefix or a `-YYYYMMDD` date). The table's
+   keys match only at a token boundary with a new _word_ after them: plain
+   substring matching priced `gpt-5.6-sol` as `gpt-5`, a third of its real rate,
+   shown as a normal figure.
+3. **New prices re-derive, never re-read.** `applyPrices` bumps
+   `pricesVersion`; the shell answers with `useHistoryScans().reprice()`, which
+   hands out new session arrays so every memoised cost recomputes.
+4. **Not a reviewed write.** The review panel gates the agents' configuration;
+   this is the app's own cache, like the history cache or `settings.json`.
+
+⚠️ The fetch is gzip'd and timed by silence: `timeout_read` 30 s, 3 min overall.
+A 30-second whole-request timeout read a reachable-but-slow models.dev as
+"timeout" — the plain 5.4 MB body was still arriving after a minute.
+
+`longContext` comes from a catalog `context` tier when synced; in the fallback
+table it belongs only on models that really surcharge oversized prompts (Sonnet
+4.5/4.0). A Codex prompt is sized by `input` alone, which already holds the
+cached part.
 
 ### Docs Structure (`docs/`)
 
