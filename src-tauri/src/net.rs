@@ -513,6 +513,22 @@ fn transport_reason(err: &ureq::Transport) -> &'static str {
   }
 }
 
+/// Whether an HTTP error status still proves the route reaches `test_url`.
+///
+/// Any status the far end answers with is proof the route works: the default
+/// target, `api.anthropic.com/v1/models`, answers 401 to a request without a
+/// key, and several other test URLs answer 404 at their root. Counting those as
+/// failures made a healthy machine read as offline. The exceptions are the
+/// statuses a proxy sends on its own behalf: 407 (it wants credentials) and the
+/// gateway errors it returns when it could not reach the upstream at all.
+fn status_proves_route(code: u16, via_proxy: bool) -> bool {
+  match code {
+    407 => false,
+    502..=504 => !via_proxy,
+    _ => true,
+  }
+}
+
 /// Send one real GET through `proxy_url` (or direct when it's null, which is how
 /// the UI offers a "compare with no proxy" baseline) and report what happened.
 /// Never errors: an unreachable endpoint is a result, not a failure.
@@ -544,6 +560,7 @@ pub fn proxy_check(
       }
     }
   }
+  let via_proxy = proxy_url.as_deref().is_some_and(|u| !u.trim().is_empty());
   let started = Instant::now();
   let elapsed = |t: Instant| Some(t.elapsed().as_millis() as u64);
   match builder.build().get(&test_url).call() {
@@ -553,10 +570,8 @@ pub fn proxy_check(
       latency_ms: elapsed(started),
       reason: "ok".into(),
     },
-    // A status response still proves the tunnel works — except 407, which means
-    // the proxy itself wants credentials.
     Err(ureq::Error::Status(code, _)) => ProxyCheckResult {
-      ok: code < 400,
+      ok: status_proves_route(code, via_proxy),
       status: Some(code),
       latency_ms: elapsed(started),
       reason: if code == 407 {
@@ -803,6 +818,52 @@ mod tests {
     assert!(!result.ok);
     assert!(result.status.is_none());
     assert_ne!(result.reason, "ok");
+  }
+
+  #[test]
+  fn an_answering_server_proves_the_route_whatever_its_status() {
+    assert!(
+      status_proves_route(401, false),
+      "the API answers 401 without a key"
+    );
+    assert!(status_proves_route(404, true));
+    assert!(
+      status_proves_route(503, false),
+      "a direct 503 still came from the host"
+    );
+    assert!(
+      !status_proves_route(407, true),
+      "the proxy wants credentials"
+    );
+    assert!(
+      !status_proves_route(502, true),
+      "the proxy could not reach upstream"
+    );
+    assert!(!status_proves_route(504, true));
+  }
+
+  #[test]
+  fn proxy_check_counts_a_401_as_reachable() {
+    // A one-shot local server that answers like the API does to a keyless call.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+      use std::io::{Read, Write};
+      let (mut stream, _) = listener.accept().unwrap();
+      let mut buf = [0u8; 1024];
+      let _ = stream.read(&mut buf);
+      let _ = stream
+        .write_all(b"HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+    });
+    let result = proxy_check(
+      None,
+      format!("http://127.0.0.1:{port}/v1/models"),
+      Some(2000),
+    );
+    server.join().unwrap();
+    assert!(result.ok, "{:?}", result.reason);
+    assert_eq!(result.status, Some(401));
+    assert_eq!(result.reason, "http-401");
   }
 
   #[test]
