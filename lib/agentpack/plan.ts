@@ -281,12 +281,20 @@ export function buildSteps(
   // isn't detected, install it first and make the npm CLI installs depend on it.
   const nodeStepId = "runtime-node"
   let nodeStepIsCommand = false
+  const nodeRuntime = findRuntime("node")
+  const nodeMethod = nodeRuntime ? installMethodsFor(nodeRuntime, plan.os)[0] : undefined
+  // Where Node is missing and this OS has no installer for it, an npm CLI with
+  // another route takes that route instead (see the CLI loop), and needs no Node.
+  const nodeRoute = (tool: CliTool, r: ReturnType<typeof resolveCli>) => {
+    if (installed.has("node") || nodeMethod || r.upgrade) return undefined
+    return fallbackMethodsFor(tool, plan.os, r.methodId)[0]
+  }
   const needsNodeForCli = plan.clis.some((id) => {
     const tool = findCli(id)
     if (!tool?.npmPackage) return false
     const r = resolveCli(tool)
     // A skipped (already-current) CLI does no npm work, so it needs no Node.
-    return !r.skip && isNpmBased(r.methodId)
+    return !r.skip && isNpmBased(r.methodId) && !nodeRoute(tool, r)
   })
   // An npx-launched server needs Node to *start*, which is a different question
   // from whether anything here is installed through npm. The desktop-app path
@@ -300,10 +308,10 @@ export function buildSteps(
   })
   const needsNode = needsNodeForCli || needsNodeForMcp
   if (needsNode && !installed.has("node")) {
-    const node = findRuntime("node")
+    const node = nodeRuntime
     const title = cat.runtime["node"]?.title ?? "Node.js"
     // Auto-install Node with its default (recommended) method.
-    const method = node ? installMethodsFor(node, plan.os)[0] : undefined
+    const method = nodeMethod
     if (method) {
       nodeStepIsCommand = true
       steps.push({
@@ -372,7 +380,8 @@ export function buildSteps(
   for (const id of plan.clis) {
     const tool = findCli(id)
     if (!tool) continue
-    const { skip, upgrade, cmd, methodId, requiresElevation } = resolveCli(tool)
+    const resolved = resolveCli(tool)
+    const { skip, upgrade, cmd, methodId, requiresElevation } = resolved
     if (skip) continue
     const title = cat.cli[id]?.title ?? id
     const npmBased = Boolean(tool.npmPackage) && isNpmBased(methodId)
@@ -399,6 +408,27 @@ export function buildSteps(
         manual: true,
       })
       continue
+    }
+
+    // No Node, and no way to install it on this OS (Linux has no default
+    // installer, so the Node step above is a manual note). An npm install would
+    // just fail with "command not found", so a tool with a route that doesn't go
+    // through the registry — the vendor's native script — takes that instead.
+    // A tool without one still attempts npm: detection can miss a Node that is
+    // really there, and refusing outright would cost those machines the install.
+    if (npmBased) {
+      const alt = nodeRoute(tool, resolved)
+      if (alt) {
+        steps.push({
+          kind: "command",
+          id: `cli-${id}`,
+          label: t.installCliVia(title, alt.id),
+          command: alt.command,
+          requiresElevation: alt.requiresElevation || undefined,
+          fallbacks: fallbacksFor(tool, title, alt.id),
+        })
+        continue
+      }
     }
 
     if (cmd) {

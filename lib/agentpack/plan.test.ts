@@ -115,6 +115,38 @@ it("uses an info note for the Node prerequisite when the OS has no installer", (
   expect(steps.find((s) => s.id === "cli-claude-code")!.dependsOn).toBeUndefined()
 })
 
+it("routes an npm CLI to its native installer when Node can't be installed here", () => {
+  const linuxPlan: Plan = { ...plan, os: "linux", clis: ["claude-code"], mcps: [] }
+  const cli = buildSteps(linuxPlan, { ...paths, os: "linux" }).find(
+    (s) => s.id === "cli-claude-code"
+  )!
+  // npm would only fail with "command not found"; the vendor script needs no Node.
+  expect(cli.kind === "command" && cli.command.file).toBe("bash")
+  expect(cli.label).toBe(en.steps.installCliVia("Claude Code", "native"))
+})
+
+it("drops the manual Node note once no CLI needs Node", () => {
+  const linuxPlan: Plan = { ...plan, os: "linux", clis: ["claude-code"], mcps: [] }
+  const ids = buildSteps(linuxPlan, { ...paths, os: "linux" }).map((s) => s.id)
+  expect(ids).not.toContain("runtime-node")
+})
+
+it("still attempts npm for a CLI with no other route, in case Node went undetected", () => {
+  const linuxPlan: Plan = { ...plan, os: "linux", clis: ["gemini-cli"], mcps: [] }
+  const cli = buildSteps(linuxPlan, { ...paths, os: "linux" }).find(
+    (s) => s.id === "cli-gemini-cli"
+  )!
+  expect(cli.kind === "command" && cli.command.file).toBe("npm")
+})
+
+it("keeps npm on Linux once Node is there", () => {
+  const linuxPlan: Plan = { ...plan, os: "linux", clis: ["claude-code"], mcps: [] }
+  const cli = buildSteps(linuxPlan, { ...paths, os: "linux" }, undefined, new Set(["node"])).find(
+    (s) => s.id === "cli-claude-code"
+  )!
+  expect(cli.kind === "command" && cli.command.file).toBe("npm")
+})
+
 it("a chosen non-npm method uses that command and skips the Node prerequisite", () => {
   const winPlan: Plan = {
     ...plan,
