@@ -218,7 +218,7 @@ export type Arch = "x64" | "arm64"
  * lookup without launching. Display text lives in the i18n catalog.
  */
 export interface Runtime {
-  id: "windows-terminal" | "node" | "bun" | "python" | "uv"
+  id: "windows-terminal" | "homebrew" | "node" | "bun" | "python" | "uv"
   /** Platforms where this environment dependency is relevant. Omit for all. */
   platforms?: readonly OS[]
   /** Minimum supported Windows build, when this dependency has one. */

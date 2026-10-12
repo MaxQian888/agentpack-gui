@@ -627,6 +627,9 @@ function ShellBody() {
         buildSteps(toRun, paths, t, installedTools, installedState, {
           arch,
           ghMirrorPrefix: settings.ghMirrorPrefix,
+          // Only a real "looked and it isn't there": Homebrew is detected on
+          // macOS alone, and an unmeasured brew keeps its routes.
+          brewMissing: detections["homebrew"] ? !detections["homebrew"].installed : undefined,
         }),
         {
           plan,

@@ -554,6 +554,52 @@ describe("no package-manager path on this OS", () => {
   })
 })
 
+describe("a Mac without Homebrew", () => {
+  const macPlan: Plan = { ...plan, os: "mac", skills: [], mcps: [], network: {} }
+  const macPaths = { ...paths, os: "mac" as const }
+  const build = (p: Plan, brewMissing?: boolean, installed = new Set<string>()) =>
+    buildSteps(p, macPaths, undefined, installed, undefined, { brewMissing })
+
+  it("installs Claude Desktop from Anthropic's release instead of brew", () => {
+    const steps = build({ ...macPlan, clis: ["claude-desktop"] }, true)
+    expect(steps.find((s) => s.id === "cli-claude-desktop")).toBeUndefined()
+    expect(steps.find((s) => s.id === "cli-claude-desktop-release")?.kind).toBe("releaseInstall")
+  })
+
+  it("says Homebrew is what's missing for a tool brew is the only route to", () => {
+    const step = build({ ...macPlan, clis: ["codex-app"] }, true).find(
+      (s) => s.id === "cli-codex-app"
+    )!
+    expect(step.kind).toBe("info")
+    expect(step.kind === "info" && step.lines[0]).toBe(en.steps.needsHomebrew("Codex app"))
+  })
+
+  it("names Homebrew in the Node note, and installs the agent natively instead", () => {
+    const steps = build(
+      { ...macPlan, clis: ["claude-code"], mcps: [{ id: "memory", targets: ["claude"] }] },
+      true
+    )
+    // The npx server still needs Node, so the note stays — and it says why.
+    const node = steps.find((s) => s.id === "runtime-node")!
+    expect(node.kind === "info" && node.lines[0]).toBe(en.steps.needsHomebrew("Node.js"))
+    const cli = steps.find((s) => s.id === "cli-claude-code")!
+    expect(cli.kind === "command" && cli.command.file).toBe("bash")
+  })
+
+  it("never offers a brew fallback route", () => {
+    const steps = build({ ...macPlan, clis: ["claude-code"] }, true)
+    const fallbacks = steps.flatMap((s) => (s.kind === "command" ? (s.fallbacks ?? []) : []))
+    expect(fallbacks.some((f) => f.kind === "command" && f.command.file === "brew")).toBe(false)
+  })
+
+  it("keeps the brew routes when nothing measured brew", () => {
+    const steps = build({ ...macPlan, clis: ["claude-desktop", "claude-code"] }, undefined)
+    const desktop = steps.find((s) => s.id === "cli-claude-desktop")!
+    expect(desktop.kind === "command" && desktop.command.file).toBe("brew")
+    expect(steps.find((s) => s.id === "runtime-node")?.kind).toBe("command")
+  })
+})
+
 describe("network fallbacks on install steps", () => {
   it("gives a winget cc-switch install the release download as a last resort", () => {
     const winPlan = {

@@ -77,6 +77,7 @@ import type {
   CliTool,
   Command,
   CommandStep,
+  InstallMethod,
   McpServer,
   McpTarget,
   NetworkConfig,
@@ -136,6 +137,12 @@ export interface BuildOptions {
   arch?: Arch
   /** GitHub download mirror prefix from app settings, or null for direct. */
   ghMirrorPrefix?: string | null
+  /**
+   * True only when detection looked for Homebrew and didn't find it. Unknown
+   * (undefined) keeps the brew routes, since most Macs that install developer
+   * tools have it and a guess would route everyone away from them.
+   */
+  brewMissing?: boolean
 }
 
 /**
@@ -164,6 +171,11 @@ export function buildSteps(
   const steps: StepDescriptor[] = []
   const arch = opts.arch ?? "x64"
   const ghMirrorPrefix = opts.ghMirrorPrefix ?? null
+  // A brew command on a Mac without brew can only fail with "command not
+  // found", so those methods are dropped up front and the next route is used.
+  const usable = (m: InstallMethod) => !(opts.brewMissing && m.command.file === "brew")
+  const viaBrewOnly = (methods: readonly InstallMethod[]) =>
+    !!opts.brewMissing && methods.length > 0 && !methods.some(usable)
 
   /**
    * The GitHub-Release install step for a tool, when it publishes something
@@ -191,13 +203,15 @@ export function buildSteps(
    * command fails *on the network* (see `lib/agentpack/network/recovery.ts`).
    */
   const fallbacksFor = (tool: CliTool, title: string, chosenId: string | undefined) => {
-    const out: StepDescriptor[] = fallbackMethodsFor(tool, plan.os, chosenId).map((mth) => ({
-      kind: "command" as const,
-      id: `cli-${tool.id}-${mth.id}`,
-      label: t.installCliVia(title, mth.id),
-      command: mth.command,
-      requiresElevation: mth.requiresElevation || undefined,
-    }))
+    const out: StepDescriptor[] = fallbackMethodsFor(tool, plan.os, chosenId)
+      .filter(usable)
+      .map((mth) => ({
+        kind: "command" as const,
+        id: `cli-${tool.id}-${mth.id}`,
+        label: t.installCliVia(title, mth.id),
+        command: mth.command,
+        requiresElevation: mth.requiresElevation || undefined,
+      }))
     const release = releaseStep(tool, title)
     if (release) out.push(release)
     return out.length > 0 ? out : undefined
@@ -263,7 +277,7 @@ export function buildSteps(
         requiresElevation: false,
       }
     }
-    const methods = installMethodsFor(tool, plan.os)
+    const methods = installMethodsFor(tool, plan.os).filter(usable)
     const chosen = methods.find((mth) => mth.id === plan.cliMethods?.[tool.id]) ?? methods[0]
     return {
       skip: false,
@@ -282,12 +296,13 @@ export function buildSteps(
   const nodeStepId = "runtime-node"
   let nodeStepIsCommand = false
   const nodeRuntime = findRuntime("node")
-  const nodeMethod = nodeRuntime ? installMethodsFor(nodeRuntime, plan.os)[0] : undefined
+  const nodeMethods = nodeRuntime ? installMethodsFor(nodeRuntime, plan.os) : []
+  const nodeMethod = nodeMethods.filter(usable)[0]
   // Where Node is missing and this OS has no installer for it, an npm CLI with
   // another route takes that route instead (see the CLI loop), and needs no Node.
   const nodeRoute = (tool: CliTool, r: ReturnType<typeof resolveCli>) => {
     if (installed.has("node") || nodeMethod || r.upgrade) return undefined
-    return fallbackMethodsFor(tool, plan.os, r.methodId)[0]
+    return fallbackMethodsFor(tool, plan.os, r.methodId).filter(usable)[0]
   }
   const needsNodeForCli = plan.clis.some((id) => {
     const tool = findCli(id)
@@ -323,13 +338,15 @@ export function buildSteps(
         // On Windows, scoop is a user-scope route that avoids both UAC and
         // whatever blocked winget's download.
         fallbacks: node
-          ? fallbackMethodsFor(node, plan.os, method.id).map((mth) => ({
-              kind: "command" as const,
-              id: `${nodeStepId}-${mth.id}`,
-              label: t.installRuntimeVia(title, mth.id),
-              command: mth.command,
-              requiresElevation: mth.requiresElevation || undefined,
-            }))
+          ? fallbackMethodsFor(node, plan.os, method.id)
+              .filter(usable)
+              .map((mth) => ({
+                kind: "command" as const,
+                id: `${nodeStepId}-${mth.id}`,
+                label: t.installRuntimeVia(title, mth.id),
+                command: mth.command,
+                requiresElevation: mth.requiresElevation || undefined,
+              }))
           : undefined,
       })
     } else {
@@ -337,7 +354,12 @@ export function buildSteps(
         kind: "info",
         id: nodeStepId,
         label: t.installRuntime(title),
-        lines: [node?.manualNote ?? t.noInstaller(title), t.manualInstall],
+        lines: [
+          viaBrewOnly(nodeMethods)
+            ? t.needsHomebrew(title)
+            : (node?.manualNote ?? t.noInstaller(title)),
+          t.manualInstall,
+        ],
         manual: true,
       })
     }
@@ -457,7 +479,12 @@ export function buildSteps(
         kind: "info",
         id: `cli-${id}`,
         label: t.installCli(title),
-        lines: [tool.manualNote ?? t.noInstaller(title), t.manualInstall],
+        lines: [
+          viaBrewOnly(installMethodsFor(tool, plan.os))
+            ? t.needsHomebrew(title)
+            : (tool.manualNote ?? t.noInstaller(title)),
+          t.manualInstall,
+        ],
         manual: true,
       }
     )

@@ -189,6 +189,19 @@ export const RUNTIMES: readonly Runtime[] = [
     downloadUrl: "https://learn.microsoft.com/windows/terminal/install",
   },
   {
+    // Not something agentpack installs: its installer asks for the admin
+    // password on a terminal, which a spawned process doesn't have. Listed so
+    // its absence is a fact the app can see — Node, the desktop apps and
+    // cc-switch all install through `brew` on macOS, and without this a missing
+    // brew only surfaced as "command not found" halfway through a run.
+    id: "homebrew",
+    platforms: ["mac"],
+    bin: "brew",
+    install: { win: null, mac: null, linux: null },
+    downloadUrl: "https://brew.sh",
+    manualNote: "Install Homebrew from https://brew.sh, then rescan.",
+  },
+  {
     id: "node",
     bin: "node",
     install: {
@@ -387,9 +400,10 @@ export const CLI_TOOLS: readonly CliTool[] = [
           "--disable-interactivity",
         ],
       },
-      // Homebrew is the fallback, NOT the default — see `release` below. A user
-      // who needs an app installed for them is unlikely to already have brew,
-      // and bootstrapping brew costs more than the app it would install.
+      // Homebrew where it is present. On a Mac without it the plan installs from
+      // `release` below instead: a user who needs an app installed for them is
+      // unlikely to already have brew, and bootstrapping brew costs more than the
+      // app it would install. The release is also the network fallback.
       mac: { file: "brew", args: ["install", "--cask", "claude"] },
       linux: null,
     },
