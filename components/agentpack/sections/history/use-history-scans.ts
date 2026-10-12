@@ -29,6 +29,12 @@ export interface HistoryScans {
   rescan: () => Promise<void>
   /** Fetch the series; a no-op while one is in flight or already loaded. */
   loadSeries: () => Promise<void>
+  /**
+   * Re-derive every cost without re-reading a file: the prices changed, the
+   * transcripts didn't. New array identities are what make each surface's
+   * memoised cost recompute.
+   */
+  reprice: () => void
 }
 
 /**
@@ -97,6 +103,11 @@ export function useHistoryScans(): HistoryScans {
     }
   }, [acceptSummary])
 
+  const reprice = useCallback(() => {
+    setResult((r) => (r ? { ...r, sessions: [...r.sessions] } : r))
+    setSeries((r) => (r ? { ...r, sessions: [...r.sessions] } : r))
+  }, [])
+
   const loadSeries = useCallback(async () => {
     if (!isTauri() || seriesGeneration.current === generation.current) return
     const gen = generation.current
@@ -153,5 +164,5 @@ export function useHistoryScans(): HistoryScans {
     }
   }, [result, acceptSummary])
 
-  return { result, loading, progress, series, seriesLoading, rescan, loadSeries }
+  return { result, loading, progress, series, seriesLoading, rescan, loadSeries, reprice }
 }

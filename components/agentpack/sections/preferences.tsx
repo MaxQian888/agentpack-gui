@@ -33,6 +33,7 @@ import { useAppStore } from "@/store/app-store"
 import { CapabilityTile, CapabilityWorkbench } from "./capability-workbench"
 import { SectionStatus } from "./section-status"
 import { SettingsGroup, SettingsPanel, SettingsRow } from "./settings-panel"
+import { PriceSync } from "./history/usage/price-sync"
 import { sectionMeta } from "../sidebar-nav"
 import { DesktopOnlyNote } from "../desktop-only-note"
 
@@ -126,6 +127,7 @@ export function PreferencesSection() {
       reduceMotion: DEFAULT_SETTINGS.reduceMotion,
       startupSection: DEFAULT_SETTINGS.startupSection,
       autoCheckUpdates: DEFAULT_SETTINGS.autoCheckUpdates,
+      autoSyncPrices: DEFAULT_SETTINGS.autoSyncPrices,
       gettingStartedDismissed: DEFAULT_SETTINGS.gettingStartedDismissed,
       summonShortcut: DEFAULT_SETTINGS.summonShortcut,
       osOverride: DEFAULT_SETTINGS.osOverride,
@@ -280,6 +282,20 @@ export function PreferencesSection() {
                   id="pref-auto-check"
                   checked={settings.autoCheckUpdates}
                   onCheckedChange={(on) => persist({ autoCheckUpdates: on })}
+                />
+              }
+            />
+            <SettingsRow
+              label={prefs.autoSyncPricesLabel}
+              hint={prefs.autoSyncPricesHint}
+              // The sync line is a block of its own; a hint renders inside a <p>.
+              note={<PriceSync />}
+              htmlFor="pref-auto-sync-prices"
+              control={
+                <Switch
+                  id="pref-auto-sync-prices"
+                  checked={settings.autoSyncPrices !== false}
+                  onCheckedChange={(on) => persist({ autoSyncPrices: on })}
                 />
               }
             />

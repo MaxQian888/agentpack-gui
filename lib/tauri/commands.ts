@@ -590,6 +590,13 @@ export const launchAgentLogin = (agent: "claude" | "codex") =>
  */
 export const launchAgent = (agent: "claude" | "codex") => invoke<void>("launch_agent", { agent })
 
+/**
+ * Download the models.dev catalog (~5 MB of JSON) through the applied proxy.
+ * The URL is Rust's constant; picking the vendor prices out is
+ * `lib/history/pricing-sync.ts`.
+ */
+export const fetchModelCatalog = () => invoke<string>("fetch_model_catalog")
+
 /** Raw result of an authenticated GET (mirrors Rust `HttpGetResult`). */
 export interface HttpGetResult {
   status: number | null

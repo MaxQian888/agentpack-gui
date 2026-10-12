@@ -3478,6 +3478,18 @@ export const en = {
     costUnpriced: "Unpriced",
     costUnpricedNone: "None",
     costUnpricedNote: "Models with no known rate — excluded from both figures above.",
+    prices: {
+      title: "Prices",
+      synced: (when: string, models: number) => `models.dev · ${models} models · updated ${when}`,
+      builtin: "Built-in table only — not synced from models.dev yet",
+      syncing: "Syncing…",
+      syncNow: "Sync now",
+      failed: (reason: string) =>
+        `Couldn't reach models.dev (${reason}). The prices already here still apply.`,
+      unpriced: (models: string, more: number) =>
+        `No price yet: ${models}${more > 0 ? ` and ${more} more` : ""}`,
+      desktopOnly: "Syncing prices needs the desktop app.",
+    },
     unpricedValue: (transcripts: number, tokens: string) =>
       `${transcripts} transcript${transcripts === 1 ? "" : "s"} · ${tokens}`,
     unpricedExcluded: (sessions: number) =>
@@ -3677,6 +3689,9 @@ export const en = {
     startupDefault: "Overview (default)",
     autoCheckLabel: "Check for updates on startup",
     autoCheckHint: "One request to the release feed, at launch.",
+    autoSyncPricesLabel: "Update model prices automatically",
+    autoSyncPricesHint:
+      "One request to models.dev at launch, at most once a day. Costs for a model newer than this build are missing without it.",
     gettingStartedLabel: "Show the Getting started list",
     gettingStartedHint:
       "The Overview's checklist of what's left — installing, connecting, a first message.",

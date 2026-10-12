@@ -30,6 +30,30 @@ export function sessionCost(s: SessionSummary): SessionCost {
   return { value: 0, estimated: false, unpriced: true }
 }
 
+/** A model nothing could price, with how much of the history it accounts for. */
+export interface UnpricedModel {
+  model: string
+  transcripts: number
+  tokens: number
+}
+
+/**
+ * The models behind the "unpriced" count, heaviest first — so the dashboard
+ * can name what its total leaves out, instead of only saying that something
+ * is missing. A transcript with no model id at all has nothing to name.
+ */
+export function unpricedModels(sessions: readonly SessionSummary[]): UnpricedModel[] {
+  const byModel = new Map<string, UnpricedModel>()
+  for (const s of sessions) {
+    if (!s.model || !sessionCost(s).unpriced) continue
+    const row = byModel.get(s.model) ?? { model: s.model, transcripts: 0, tokens: 0 }
+    row.transcripts += 1
+    row.tokens += s.usage.total
+    byModel.set(s.model, row)
+  }
+  return [...byModel.values()].sort((a, b) => b.tokens - a.tokens || a.model.localeCompare(b.model))
+}
+
 /** One transcript's cost in the shape `formatCostFigure` writes. */
 export function sessionCostFigure(s: SessionSummary): CostFigure {
   const cost = sessionCost(s)

@@ -664,9 +664,70 @@ pub fn http_get(
   }
 }
 
+/// Where model prices are synced from. A constant, not a parameter: the
+/// frontend asks for "the catalog", never for a URL.
+const MODEL_CATALOG_URL: &str = "https://models.dev/api.json";
+
+/// The catalog is ~5 MB today; the cap leaves room to grow while still refusing
+/// a response that has stopped being a price list.
+const MODEL_CATALOG_CAP: u64 = 32 * 1024 * 1024;
+
+/// Download the models.dev catalog, through the proxy the user applied. Returns
+/// the raw JSON: picking the vendor prices out of it is pure logic, and lives in
+/// `lib/history/pricing-sync.ts` where it is unit-tested.
+///
+/// Compressed (the `gzip` feature sends `Accept-Encoding` and inflates): 5.4 MB
+/// of JSON is ~540 KB on the wire. And timed by silence, not by the clock: on a
+/// slow route the plain body took over a minute while still arriving, and a
+/// 30-second whole-request timeout reported a reachable site as "timeout". So
+/// the read only fails after 30 s with no data at all, under a 3-minute cap.
+#[tauri::command(async)]
+pub fn fetch_model_catalog() -> Result<String, String> {
+  let mut builder = ureq::AgentBuilder::new()
+    .timeout_connect(Duration::from_secs(15))
+    .timeout_read(Duration::from_secs(30))
+    .timeout(Duration::from_secs(180))
+    .redirects(2);
+  if let Some(proxy) = proxy_from_env() {
+    builder = builder.proxy(proxy);
+  }
+  let resp = builder
+    .build()
+    .get(MODEL_CATALOG_URL)
+    .call()
+    .map_err(|e| match e {
+      ureq::Error::Status(code, _) => format!("HTTP {code}"),
+      ureq::Error::Transport(t) => transport_reason(&t).to_string(),
+    })?;
+  read_catalog(resp.into_reader())
+}
+
+/// Read at most `MODEL_CATALOG_CAP` bytes, refusing (rather than truncating) a
+/// body that runs past it — half a JSON document parses as nothing useful.
+fn read_catalog(reader: impl std::io::Read) -> Result<String, String> {
+  use std::io::Read;
+  let mut buf = String::new();
+  reader
+    .take(MODEL_CATALOG_CAP + 1)
+    .read_to_string(&mut buf)
+    .map_err(|e| e.to_string())?;
+  if buf.len() as u64 > MODEL_CATALOG_CAP {
+    return Err("model catalog is larger than expected".into());
+  }
+  Ok(buf)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn the_catalog_read_refuses_rather_than_truncates() {
+    assert_eq!(read_catalog(&b"{}"[..]).unwrap(), "{}");
+    use std::io::Read;
+    let huge = std::io::repeat(b' ').take(MODEL_CATALOG_CAP + 10);
+    assert!(read_catalog(huge).is_err());
+  }
 
   const SCUTIL: &str = r#"
 <dictionary> {

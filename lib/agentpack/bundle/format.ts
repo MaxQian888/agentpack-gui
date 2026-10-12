@@ -65,6 +65,7 @@ export const EXPORTED_SETTINGS_KEYS = [
   "uiScale",
   "reduceMotion",
   "startupSection",
+  "autoSyncPrices",
 ] as const satisfies readonly (keyof AppSettings)[]
 
 function buildSettings(settings: AppSettings, includeSecrets: boolean): Partial<AppSettings> {

@@ -196,3 +196,20 @@ describe("useHistoryScans — overlapping scans", () => {
     expect(result.current.series).toBeNull()
   })
 })
+
+describe("useHistoryScans — reprice", () => {
+  it("hands out new session arrays, same contents, without re-reading anything", async () => {
+    mockList.mockResolvedValue(list("first"))
+    mockSeries.mockResolvedValue(SERIES)
+    const { result } = renderHook(() => useHistoryScans())
+    await waitFor(() => expect(result.current.result).not.toBeNull())
+    await act(() => result.current.loadSeries())
+    const before = result.current.result!.sessions
+    const seriesBefore = result.current.series!.sessions
+    act(() => result.current.reprice())
+    expect(result.current.result!.sessions).not.toBe(before)
+    expect(result.current.result!.sessions).toEqual(before)
+    expect(result.current.series!.sessions).not.toBe(seriesBefore)
+    expect(mockList).toHaveBeenCalledTimes(1)
+  })
+})

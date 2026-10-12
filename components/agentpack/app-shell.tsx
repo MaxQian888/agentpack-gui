@@ -18,6 +18,7 @@ import {
 } from "@/lib/tauri/commands"
 import { checkForUpdate, getAppVersion } from "@/lib/tauri/updater"
 import { loadActivity } from "@/lib/tauri/activity"
+import { initModelPrices } from "./model-prices"
 import { loadSettings, saveSettings, type OnboardingProgress } from "@/lib/tauri/settings"
 import { registerSummonShortcut } from "@/lib/tauri/shortcut"
 import { notify } from "@/lib/tauri/system"
@@ -218,7 +219,14 @@ function ShellBody() {
     seriesLoading,
     rescan: loadHistory,
     loadSeries,
+    reprice,
   } = useHistoryScans()
+  // New prices (a sync, or the cached copy loading at startup) change every
+  // cost derived from the history — re-derive them from the readings in hand.
+  const pricesVersion = useAppStore((s) => s.pricesVersion)
+  useEffect(() => {
+    if (pricesVersion > 0) reprice()
+  }, [pricesVersion, reprice])
   const piController = usePiManagementController(
     historyResult?.sessions
       .filter((session) => session.source === "pi" && session.cwd)
@@ -390,6 +398,10 @@ function ShellBody() {
         loadActivity(p.home)
           .then(setActivity)
           .catch(() => {})
+        // Model prices: the cached copy at once, a background refresh if it is
+        // a day old and the user hasn't turned that off. Settings are read here
+        // rather than waited for — the startup effect below owns their hydration.
+        void loadSettings().then((s) => initModelPrices(p.home, s.autoSyncPrices !== false))
       })
       // Path resolution is not required for ordinary PATH probes. Preserve the
       // old best-effort scan if it fails, using the store's fallback OS.

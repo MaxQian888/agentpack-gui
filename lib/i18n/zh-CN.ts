@@ -3182,6 +3182,17 @@ export const zhCN = {
     costUnpriced: "无定价",
     costUnpricedNone: "无",
     costUnpricedNote: "价格表里没有的模型 —— 未计入上面任何一项。",
+    prices: {
+      title: "价格",
+      synced: (when: string, models: number) => `models.dev · ${models} 个模型 · 更新于 ${when}`,
+      builtin: "仅使用内置价格表 —— 还没有从 models.dev 同步过",
+      syncing: "同步中…",
+      syncNow: "立即同步",
+      failed: (reason: string) => `无法连接 models.dev（${reason}），继续使用现有价格。`,
+      unpriced: (models: string, more: number) =>
+        `还没有价格：${models}${more > 0 ? ` 等另外 ${more} 个` : ""}`,
+      desktopOnly: "同步价格需要桌面版应用。",
+    },
     unpricedValue: (transcripts: number, tokens: string) => `${transcripts} 条转录 · ${tokens}`,
     unpricedExcluded: (sessions: number) => `另有 ${sessions} 个会话未纳入 —— 模型没有已知单价。`,
     unpricedBadge: "无定价",
@@ -3365,6 +3376,9 @@ export const zhCN = {
     startupDefault: "总览（默认）",
     autoCheckLabel: "启动时检查更新",
     autoCheckHint: "启动时向发布源发一次请求。",
+    autoSyncPricesLabel: "自动更新模型价格",
+    autoSyncPricesHint:
+      "启动时向 models.dev 发一次请求，每天最多一次。不开的话，比当前版本更新的模型就没有价格。",
     gettingStartedLabel: "显示「开始使用」清单",
     gettingStartedHint: "总览页上还没做完的事 —— 安装、连接、第一条消息。",
 

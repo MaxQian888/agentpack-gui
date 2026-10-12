@@ -130,6 +130,13 @@ export interface AppSettings {
   startedWithWizard?: boolean
   /** The guided tour has been opened and closed once, which ticks its checklist row. */
   tourSeen?: boolean
+  /**
+   * Refresh model prices from models.dev at startup when the cached copy is
+   * over a day old. One request to models.dev; on by default, because costs
+   * for a model released after this build are otherwise simply missing.
+   * Absent (an older settings file) counts as on.
+   */
+  autoSyncPrices?: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -149,6 +156,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   reduceMotion: false,
   startupSection: null,
   osOverride: null,
+  autoSyncPrices: true,
 }
 
 const STORE_FILE = "settings.json"

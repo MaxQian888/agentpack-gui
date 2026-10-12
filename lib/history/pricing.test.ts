@@ -1,4 +1,11 @@
-import { estimateCost, estimateRequestCost, priceForModel } from "./pricing"
+import {
+  estimateCost,
+  estimateRequestCost,
+  idCandidates,
+  lookupPrice,
+  priceForModel,
+  setSyncedPrices,
+} from "./pricing"
 import type { TokenUsage } from "./types"
 
 const usage = (over: Partial<TokenUsage> = {}): TokenUsage => ({
@@ -115,5 +122,66 @@ describe("long-context pricing", () => {
     // A session total is many prompts added up; it carries no evidence that any
     // single one was oversized, so it must not be surcharged.
     expect(estimateCost("claude", "claude-sonnet-4-5", usage({ input: 1e6 }))).toBeCloseTo(3)
+  })
+})
+
+describe("matching the built-in table", () => {
+  it("does not price a newer generation as an older one", () => {
+    // `gpt-5` used to match `gpt-5.6-sol` by substring and price it at a third
+    // of its real rate, shown as a normal figure rather than as unpriced.
+    expect(priceForModel("gpt-5.6-sol")).toBeNull()
+    expect(priceForModel("gpt-5-3-something")).toBeNull()
+    // Same family, a new word after it, still matches.
+    expect(priceForModel("gpt-5-codex")?.input).toBe(1.25)
+    expect(priceForModel("deepseek-flash")?.input).toBe(0.14)
+  })
+
+  it("reads through route prefixes and release dates", () => {
+    expect(idCandidates("Z-AI/GLM-5.3-Flash")).toEqual(["z-ai/glm-5.3-flash", "glm-5.3-flash"])
+    expect(idCandidates("claude-haiku-4-5-20251001")).toEqual([
+      "claude-haiku-4-5-20251001",
+      "claude-haiku-4-5",
+    ])
+    expect(priceForModel("anthropic/claude-haiku-4-5-20251001")?.output).toBe(5)
+  })
+})
+
+describe("synced prices", () => {
+  afterEach(() => setSyncedPrices(null))
+  const opus = { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 }
+
+  it("are consulted first, by exact id, and say where they came from", () => {
+    setSyncedPrices({ "claude-opus-5-5": opus, "claude-opus-4-8": { ...opus, input: 9 } })
+    expect(lookupPrice("claude-opus-5-5")).toEqual({ price: opus, source: "synced" })
+    // A synced id overrides the table's own entry.
+    expect(priceForModel("claude-opus-4-8")?.input).toBe(9)
+    // An id the sync doesn't know still falls back to the table.
+    expect(lookupPrice("claude-haiku-4-5")?.source).toBe("builtin")
+  })
+
+  it("match a dated or routed id", () => {
+    setSyncedPrices({ "glm-5.3-flash": opus })
+    expect(priceForModel("z-ai/glm-5.3-flash")).toEqual(opus)
+  })
+
+  it("are forgotten on null", () => {
+    setSyncedPrices({ "claude-opus-5-5": opus })
+    setSyncedPrices(null)
+    expect(priceForModel("claude-opus-5-5")).toBeNull()
+  })
+
+  it("size a Codex prompt by its input alone, which already holds the cached part", () => {
+    setSyncedPrices({
+      "gpt-x": {
+        input: 4,
+        output: 20,
+        cacheRead: 0.4,
+        cacheWrite: 0,
+        longContext: { threshold: 272_000, inputMultiplier: 2, outputMultiplier: 1.5 },
+      },
+    })
+    // 200K input of which 150K cached: a 200K prompt, under the threshold.
+    const c = estimateRequestCost("codex", "gpt-x", usage({ input: 200_000, cacheRead: 150_000 }))
+    expect(c).toBeCloseTo((50_000 * 4 + 150_000 * 0.4) / 1e6)
   })
 })
