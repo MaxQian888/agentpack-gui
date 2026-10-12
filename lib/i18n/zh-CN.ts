@@ -34,7 +34,37 @@ export const zhCN = {
     desktopLabel: "同时安装桌面应用",
     desktopHint: "Claude Desktop 或 ChatGPT 应用，和终端 agent 读的是同一份设置。",
     coreNote: "还会顺带装好三个不需要账号的服务：记忆、分步推理和网页抓取。",
-    // 第 2 步，只在需要代理的网络上出现。
+    // 第 2 步：每个 agent 怎么连到模型。安装前问清，安装过程中不会中途停下来提问。
+    // 认证变量从不作为问题出现。
+    connectIntro: "它要怎么连到模型？安装之前什么都不会保存。",
+    connectFor: (agent: string) => agent,
+    connectOfficial: "用我的订阅账号登录",
+    connectOfficialHint: {
+      claude: "Claude Pro 或 Max。装好之后再登录。",
+      codex: "你的 ChatGPT 套餐。装好之后再登录。",
+    } as Record<string, string>,
+    connectApiKey: "使用 API key",
+    connectApiKeyHint: {
+      claude: "在 console.anthropic.com 获取的 key。",
+      codex: "在 platform.openai.com 获取的 key。",
+    } as Record<string, string>,
+    connectRelay: "使用中转服务",
+    connectRelayHint: "第三方提供的接口地址，以及它给你的 key。",
+    relayCustom: "其他 —— 填写地址",
+    fieldKey: "API key",
+    fieldBaseUrl: "接口地址（Base URL）",
+    testing: "正在检测…",
+    // 检测只是提示，「继续」照样可用。有些中转会拒绝它发出的请求。
+    testNotBlocking: "仍然可以继续。",
+    // 安装完成后，针对官方订阅。
+    signInTitle: "登录",
+    signInHint: "每个 agent 用自己的账号在终端里登录。登录完成后这里会自动打勾。",
+    signInOpen: "打开终端",
+    signInWaiting: "正在等待登录完成…",
+    signedIn: "已登录",
+    signInManual: "没能打开终端。请自己运行：",
+    copy: "复制",
+    // 第 3 步，只在需要代理的网络上出现。
     networkIntro: "你的网络直连不上 agent 的服务器，不过这台机器上有一个在运行的代理。",
     proxyAdopt: "安装时走这个代理",
     proxyAdoptHint: "取消勾选则保持直连。之后可以在「网络」里修改。",
@@ -1440,6 +1470,12 @@ export const zhCN = {
     ccProviderUpdate: (name: string) => `更新 cc-switch 供应商 “${name}”`,
     ccProviderDelete: (name: string) => `删除 cc-switch 供应商 “${name}”`,
     ccProviderSetCurrent: (name: string) => `将 cc-switch 供应商 “${name}” 设为当前`,
+    // agentpack 自己的存储用的同样四个动作，和 cc-switch 无关 —— 在这里提 cc-switch
+    // 会让从没装过它的人摸不着头脑。
+    providerAdd: (name: string) => `保存供应商 “${name}”`,
+    providerUpdate: (name: string) => `更新供应商 “${name}”`,
+    providerDelete: (name: string) => `删除供应商 “${name}”`,
+    providerSetCurrent: (name: string) => `使用供应商 “${name}”`,
     addMcpClaude: (title: string) => `添加 MCP “${title}” → Claude Code`,
     addMcpCodex: (title: string) => `添加 MCP “${title}” → Codex`,
     addMcpOpencode: (title: string) => `添加 MCP “${title}” → OpenCode`,

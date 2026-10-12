@@ -1541,14 +1541,15 @@ function ccProviderStep(
   backend: ProviderBackend
 ): StepDescriptor {
   const s = messages.steps
+  const native = backend === "native"
   const label =
     op === "add"
-      ? s.ccProviderAdd(name)
+      ? (native ? s.providerAdd : s.ccProviderAdd)(name)
       : op === "update"
-        ? s.ccProviderUpdate(name)
+        ? (native ? s.providerUpdate : s.ccProviderUpdate)(name)
         : op === "delete"
-          ? s.ccProviderDelete(name)
-          : s.ccProviderSetCurrent(name)
+          ? (native ? s.providerDelete : s.ccProviderDelete)(name)
+          : (native ? s.providerSetCurrent : s.ccProviderSetCurrent)(name)
   return {
     kind: "ccProvider",
     // Scoped by app so a run that switches several apps at once (applying an

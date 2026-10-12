@@ -12,6 +12,7 @@ import {
   latestVersion,
   npmOwns,
   pkgManagerOwns,
+  providerLoad,
   setProcessProxy,
   skillsScan,
 } from "@/lib/tauri/commands"
@@ -26,12 +27,19 @@ import {
   unappliedNetwork,
   type InstalledState,
 } from "@/lib/agentpack/plan"
-import type { Plan } from "@/lib/agentpack/types"
+import type { Plan, StepReport } from "@/lib/agentpack/types"
 import { effectiveProxy, isProxyActive } from "@/lib/agentpack/network/proxy"
 import { scanNetwork } from "@/lib/agentpack/network/scan"
 import { hostArch } from "@/lib/tauri/system"
 import { CLI_TOOLS, RUNTIMES, runtimePkgManager, runtimesForOS } from "@/lib/agentpack/registry"
-import { networkAdoption, wizardSelection } from "@/lib/agentpack/onboarding"
+import {
+  connectionForm,
+  networkAdoption,
+  providerSetupSteps,
+  wizardSelection,
+  type ConnectApp,
+} from "@/lib/agentpack/onboarding"
+import type { ProviderForm } from "@/lib/agentpack/ccswitch/types"
 import {
   hasTabs,
   SECTION_KEYS,
@@ -548,19 +556,19 @@ function ShellBody() {
   // Resolves as soon as staging is decided — not when the run finishes — with
   // what happened, so the first-run wizard can draw the review itself (`inline`)
   // or say why there is nothing to review. What a finished run means for the
-  // plan is still handled here, after the user applies.
+  // plan is handled by `settleRun`, after the user applies.
   const stageReview = useCallback(
-    (opts: StageOptions = {}): Promise<StageOutcome> => {
+    async (opts: StageOptions = {}): Promise<StageOutcome> => {
       const paths = useAppStore.getState().paths
       if (!paths) {
         void run([], { plan: useAppStore.getState().plan })
-        return Promise.resolve("unavailable")
+        return "unavailable"
       }
-      if (preparingRef.current) return Promise.resolve("busy")
+      if (preparingRef.current) return "busy"
       if (runningRef.current) {
         toast.message(t.shell.runBusy)
         setPanelOpen(true)
-        return Promise.resolve("busy")
+        return "busy"
       }
       preparingRef.current = true
       setPreparing(true)
@@ -568,122 +576,100 @@ function ShellBody() {
         preparingRef.current = false
         setPreparing(false)
       }
-      return new Promise<StageOutcome>(
-        (staged) =>
-          void (async () => {
-            if (Object.keys(useAppStore.getState().detections).length === 0) {
-              await refreshDetections().catch(() => undefined)
-            }
-            const scan = await scanEnvironment(
-              paths,
-              useAppStore.getState().settings.providerBackend
-            ).catch(() => null)
-            // Keep the dashboard in sync with the state this run deduped against (but
-            // don't clobber a good cached scan if this fresh one failed).
-            if (scan) rememberScan(scan)
-            // A scan that couldn't read its sources used to fall back to "nothing is
-            // installed", which turns the dedup off entirely: every MCP add and skill
-            // copy is re-emitted, and `claude mcp add` rejects a duplicate id, so a
-            // transient read error produced a screenful of red. Prefer the last good
-            // scan; with neither, refuse to run rather than guess — guessing wrong
-            // here is the loud, confusing case.
-            const effective = scan && !scan.degraded ? scan : lastGoodScan.current
-            if (!effective) {
-              ready()
-              toast.error(t.shell.scanFailed)
-              staged("failed")
-              return
-            }
-            const { plan, detections, latestVersions, cliManagers, settings, appliedNpmRegistry } =
-              useAppStore.getState()
-            const arch = await hostArch()
-              .catch(() => undefined)
-              .finally(ready)
-            const installedTools = new Set(
-              Object.entries(detections)
-                .filter(([, d]) => d.installed)
-                .map(([id]) => id)
-            )
-            const installedState: InstalledState = {
-              versions: Object.fromEntries(
-                Object.entries(detections).map(([id, d]) => [id, d.version])
-              ),
-              latest: latestVersions,
-              managers: cliManagers,
-              claudeMcps: [...effective.claudeMcps.known, ...effective.claudeMcps.custom],
-              codexMcps: [...effective.codexMcps.known, ...effective.codexMcps.custom],
-              opencodeMcps: [...effective.opencodeMcps.known, ...effective.opencodeMcps.custom],
-              claudeSkills: [...effective.claudeSkills.known, ...effective.claudeSkills.custom],
-              codexSkills: [...effective.codexSkills.known, ...effective.codexSkills.custom],
-            }
-            // A proxy or mirror that is already on the machine isn't written again:
-            // it isn't something the user picked this time, and the review would list
-            // four config writes they never asked for.
-            const toRun = {
-              ...plan,
-              network: unappliedNetwork(plan.network, {
-                proxy: settings.proxy,
-                npmRegistry: appliedNpmRegistry,
-              }),
-            }
-            const steps = buildSteps(toRun, paths, t, installedTools, installedState, {
-              arch,
-              // The wizard stages a mirror it has not saved yet: it is saved only
-              // once the user applies, so walking away leaves settings untouched.
-              ghMirrorPrefix:
-                opts.ghMirrorPrefix !== undefined ? opts.ghMirrorPrefix : settings.ghMirrorPrefix,
-              // Only a real "looked and it isn't there": Homebrew is detected on
-              // macOS alone, and an unmeasured brew keeps its routes.
-              brewMissing: detections["homebrew"] ? !detections["homebrew"].installed : undefined,
-            })
-            // Inline, the caller says "already installed" in its own words; the
-            // toast `run` raises for an empty batch is for the tray's button.
-            if (steps.length === 0 && opts.inline) {
-              staged("empty")
-              return
-            }
-            const applied = run(steps, {
-              plan,
-              inline: opts.inline,
-              activity: {
-                title: t.tray.runTitle(countSelections(toRun)),
-                source: "quick-config",
-              },
-            })
-            // `run` stages synchronously before handing back its promise.
-            staged(steps.length > 0 ? "staged" : "empty")
-            const reports = await applied
-            // Clear the selection only once it has actually landed. An error or a
-            // skipped step means part of the plan is still outstanding, and wiping it
-            // would leave the user to rebuild by hand exactly when they are least
-            // inclined to. `resetPlan` keeps the network config and MCP keys either
-            // way — those are the machine's setup, not this batch's selection.
-            const settled = reports.length > 0
-            const incomplete = reports.some((r) => r.status === "error" || r.status === "skipped")
-            if (settled && !incomplete) {
-              const store = useAppStore.getState()
-              store.markNetworkApplied(toRun.network)
-              // A proxy applied from here is as applied as one applied from the
-              // Network page: persisted, and used for agentpack's own traffic.
-              const proxy = toRun.network.proxy
-              if (proxy && isProxyActive(proxy)) {
-                store.setSettings({ proxy })
-                void saveSettings({ proxy })
-                const eff = effectiveProxy(proxy)
-                void setProcessProxy({
-                  http: eff.http,
-                  https: eff.https,
-                  all: eff.all,
-                  noProxy: eff.noProxy,
-                })
-              }
-              store.resetPlan()
-            }
-          })()
+      if (Object.keys(useAppStore.getState().detections).length === 0) {
+        await refreshDetections().catch(() => undefined)
+      }
+      const scan = await scanEnvironment(
+        paths,
+        useAppStore.getState().settings.providerBackend
+      ).catch(() => null)
+      // Keep the dashboard in sync with the state this run deduped against (but
+      // don't clobber a good cached scan if this fresh one failed).
+      if (scan) rememberScan(scan)
+      // A scan that couldn't read its sources used to fall back to "nothing is
+      // installed", which turns the dedup off entirely: every MCP add and skill
+      // copy is re-emitted, and `claude mcp add` rejects a duplicate id, so a
+      // transient read error produced a screenful of red. Prefer the last good
+      // scan; with neither, refuse to run rather than guess — guessing wrong
+      // here is the loud, confusing case.
+      const effective = scan && !scan.degraded ? scan : lastGoodScan.current
+      if (!effective) {
+        ready()
+        toast.error(t.shell.scanFailed)
+        return "failed"
+      }
+      const { plan, detections, latestVersions, cliManagers, settings, appliedNpmRegistry } =
+        useAppStore.getState()
+      const [arch, existingProviders] = await Promise.all([
+        hostArch().catch(() => undefined),
+        // Read against the stored rows, so a key that is already saved isn't
+        // saved twice. Only the wizard brings accounts.
+        opts.providers?.length
+          ? providerLoad(settings.providerBackend).catch(() => [])
+          : Promise.resolve([]),
+      ]).finally(ready)
+      const installedTools = new Set(
+        Object.entries(detections)
+          .filter(([, d]) => d.installed)
+          .map(([id]) => id)
       )
+      const installedState: InstalledState = {
+        versions: Object.fromEntries(Object.entries(detections).map(([id, d]) => [id, d.version])),
+        latest: latestVersions,
+        managers: cliManagers,
+        claudeMcps: [...effective.claudeMcps.known, ...effective.claudeMcps.custom],
+        codexMcps: [...effective.codexMcps.known, ...effective.codexMcps.custom],
+        opencodeMcps: [...effective.opencodeMcps.known, ...effective.opencodeMcps.custom],
+        claudeSkills: [...effective.claudeSkills.known, ...effective.claudeSkills.custom],
+        codexSkills: [...effective.codexSkills.known, ...effective.codexSkills.custom],
+      }
+      // A proxy or mirror that is already on the machine isn't written again:
+      // it isn't something the user picked this time, and the review would list
+      // four config writes they never asked for.
+      const toRun = {
+        ...plan,
+        network: unappliedNetwork(plan.network, {
+          proxy: settings.proxy,
+          npmRegistry: appliedNpmRegistry,
+        }),
+      }
+      const steps = [
+        ...buildSteps(toRun, paths, t, installedTools, installedState, {
+          arch,
+          // The wizard stages a mirror it has not saved yet: it is saved only
+          // once the user applies, so walking away leaves settings untouched.
+          ghMirrorPrefix:
+            opts.ghMirrorPrefix !== undefined ? opts.ghMirrorPrefix : settings.ghMirrorPrefix,
+          // Only a real "looked and it isn't there": Homebrew is detected on
+          // macOS alone, and an unmeasured brew keeps its routes.
+          brewMissing: detections["homebrew"] ? !detections["homebrew"].installed : undefined,
+        }),
+        // The wizard's accounts ride in the same run as the install, so there
+        // is one review and one Apply for both.
+        ...providerSetupSteps(
+          opts.providers ?? [],
+          existingProviders,
+          paths,
+          t,
+          settings.providerBackend,
+          newProviderId
+        ),
+      ]
+      // Inline, the caller says "already installed" in its own words; the
+      // toast `run` raises for an empty batch is for the tray's button.
+      if (steps.length === 0 && opts.inline) return "empty"
+      // `run` stages synchronously before handing back its promise, which
+      // settles only once the user has applied (or walked away).
+      void run(steps, {
+        plan,
+        inline: opts.inline,
+        activity: { title: t.tray.runTitle(countSelections(toRun)), source: "quick-config" },
+      }).then((reports) => settleRun(reports, toRun.network))
+      return steps.length > 0 ? "staged" : "empty"
     },
     [run, refreshDetections, rememberScan, setPanelOpen, t]
   )
+
   const reviewChanges = useCallback(() => void stageReview(), [stageReview])
 
   // A wizard that was finished (Install now or "Maybe later") starts over when
@@ -742,7 +728,10 @@ function ShellBody() {
       const net = networkAdoption(store.networkProbe, answer)
       if (net.proxy) store.setProxy(net.proxy)
       if (net.npmRegistry) store.setNetwork({ npmRegistry: net.npmRegistry.url })
-      return stageReview({ inline: true, ghMirrorPrefix: net.ghMirrorPrefix?.url })
+      const providers = Object.entries(answer.connections)
+        .map(([app, c]) => (c ? connectionForm(app as ConnectApp, c) : null))
+        .filter((f): f is ProviderForm => !!f)
+      return stageReview({ inline: true, ghMirrorPrefix: net.ghMirrorPrefix?.url, providers })
     },
     [stageReview]
   )
@@ -984,6 +973,44 @@ interface StageOptions {
   inline?: boolean
   /** A GitHub mirror to build with, in place of the saved one. Null is direct. */
   ghMirrorPrefix?: string | null
+  /** Provider rows to add and make current in the same run. */
+  providers?: ProviderForm[]
+}
+
+// Clear the selection only once it has actually landed. An error or a
+// skipped step means part of the plan is still outstanding, and wiping it
+// would leave the user to rebuild by hand exactly when they are least
+// inclined to. `resetPlan` keeps the network config and MCP keys either way
+// — those are the machine's setup, not this batch's selection.
+function settleRun(reports: StepReport[], network: Plan["network"]) {
+  const settled = reports.length > 0
+  const incomplete = reports.some((r) => r.status === "error" || r.status === "skipped")
+  if (!settled || incomplete) return
+  const store = useAppStore.getState()
+  store.markNetworkApplied(network)
+  // A proxy applied from here is as applied as one applied from the Network
+  // page: persisted, and used for agentpack's own traffic.
+  const proxy = network.proxy
+  if (proxy && isProxyActive(proxy)) {
+    store.setSettings({ proxy })
+    void saveSettings({ proxy })
+    const eff = effectiveProxy(proxy)
+    void setProcessProxy({
+      http: eff.http,
+      https: eff.https,
+      all: eff.all,
+      noProxy: eff.noProxy,
+    })
+  }
+  store.resetPlan()
+}
+
+/** An id for a row the same run must name again (to make it current). */
+function newProviderId(): string {
+  const c = globalThis.crypto
+  return c?.randomUUID
+    ? c.randomUUID().replace(/-/g, "")
+    : `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`
 }
 
 export function AppShell() {

@@ -1,7 +1,12 @@
+import type { Messages } from "@/lib/i18n/types"
 import type { NetworkProbeResult } from "./network/probe"
 import { isDefaultMirror, pickMirror } from "./network/probe"
 import { mcpTargetsFor, type PresetSelection } from "./presets"
-import type { ProxyConfig } from "./types"
+import { providerStep, providerStepId, syncLiveConfigSteps } from "./plan"
+import { buildSettingsConfig } from "./ccswitch/provider"
+import { RECOMMENDED_PROVIDERS, type ProviderPreset } from "./ccswitch/preset"
+import type { Provider, ProviderBackend, ProviderForm } from "./ccswitch/types"
+import type { Paths, ProxyConfig, StepDescriptor } from "./types"
 
 /**
  * The first-run wizard's choices, and what they become.
@@ -103,3 +108,172 @@ export function networkAdoption(
   }
   return out
 }
+
+// ── Connecting an account ────────────────────────────────────────────────────
+
+/** The provider app each wizard agent is configured through. */
+export type ConnectApp = "claude" | "codex"
+
+/** The agents a choice installs, as the apps their accounts belong to. */
+export function appsFor(agent: AgentChoice): ConnectApp[] {
+  return agent === "both" ? ["claude", "codex"] : agent === "codex" ? ["codex"] : ["claude"]
+}
+
+/**
+ * How an agent reaches a model. `official` is the subscription the vendor's
+ * own sign-in unlocks (Claude Pro/Max, ChatGPT), finished after the install;
+ * `apiKey` is a key for the vendor's API; `relay` is a third-party endpoint.
+ */
+export type ConnectKind = "official" | "apiKey" | "relay"
+
+export interface AgentConnection {
+  kind: ConnectKind
+  /** Relay only: a preset key from `relayPresets`, or `CUSTOM_RELAY`. */
+  preset?: string
+  baseUrl: string
+  token: string
+}
+
+export const CUSTOM_RELAY = "custom"
+
+export const OFFICIAL_CONNECTION: AgentConnection = { kind: "official", baseUrl: "", token: "" }
+
+/**
+ * Where a vendor API key is used. Claude's is the CLI's own default, so its
+ * config carries no base URL — the URL here is only what the connection test
+ * calls. Codex is different: its live sync writes `config.toml` and never
+ * `auth.json`, so a key with no base URL would be stored and never applied.
+ * Spelling out the official endpoint routes it through `config.toml`, where it
+ * does take effect.
+ */
+const VENDOR_API: Record<ConnectApp, string> = {
+  claude: "https://api.anthropic.com",
+  codex: "https://api.openai.com/v1",
+}
+
+/**
+ * The relay presets offered for an app: those that name an endpoint, all on
+ * an equal footing, in catalog order. The endpoint-less "…-compatible" presets
+ * are what `CUSTOM_RELAY` stands for here.
+ */
+export function relayPresets(app: ConnectApp): ProviderPreset[] {
+  return RECOMMENDED_PROVIDERS.filter((p) => p.form.app === app && !!p.form.baseUrl)
+}
+
+/** Whether every field the connection needs is filled. The test result is not one of them. */
+export function connectionComplete(c: AgentConnection): boolean {
+  if (c.kind === "official") return true
+  if (!c.token.trim()) return false
+  return c.kind === "apiKey" || !!c.baseUrl.trim()
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
+
+/**
+ * The provider row a connection becomes, or null for `official`, which writes
+ * none: the vendor's sign-in stores its own credentials. The auth variable is
+ * decided here rather than asked — an Anthropic key is `ANTHROPIC_API_KEY`, a
+ * relay takes the bearer `ANTHROPIC_AUTH_TOKEN` (or what its preset says).
+ */
+export function connectionForm(app: ConnectApp, c: AgentConnection): ProviderForm | null {
+  if (c.kind === "official") return null
+  const token = c.token.trim()
+  if (c.kind === "apiKey") {
+    return app === "claude"
+      ? { name: "Anthropic API", app, baseUrl: "", token, claudeAuthKind: "api_key" }
+      : { name: "OpenAI API", app, baseUrl: VENDOR_API.codex, token, claudeAuthKind: "auth_token" }
+  }
+  const preset = relayPresets(app).find((p) => p.key === c.preset)
+  const baseUrl = c.baseUrl.trim() || preset?.form.baseUrl || ""
+  return {
+    name: preset?.form.name ?? hostOf(baseUrl),
+    app,
+    baseUrl,
+    token,
+    claudeAuthKind: preset?.form.claudeAuthKind ?? "auth_token",
+  }
+}
+
+/** What the connection test calls: the row's own endpoint, or the vendor API a key is for. */
+export function probeFormFor(
+  app: ConnectApp,
+  c: AgentConnection
+): Pick<ProviderForm, "app" | "baseUrl" | "token" | "claudeAuthKind"> | null {
+  const form = connectionForm(app, c)
+  if (!form) return null
+  return { ...form, baseUrl: form.baseUrl || VENDOR_API[app] }
+}
+
+/**
+ * The steps that make each connection the one its agent uses: add the row,
+ * make it current, and sync the live config — staged in the same review as
+ * the install, so there is one Apply for both.
+ *
+ * - A row identical to one already stored isn't added twice; it is made
+ *   current if it isn't already, and left alone if it is.
+ * - A new row becomes current by itself when its app has none. When it has
+ *   one, the row is added under a known id (`newId`) so the same run can make
+ *   it current — an id generated at write time couldn't be named here.
+ * - Each live sync depends on the write before it: a failed save must not
+ *   rewrite the agent's settings to point at a row that doesn't exist.
+ */
+export function providerSetupSteps(
+  forms: readonly ProviderForm[],
+  existing: readonly Provider[],
+  paths: Paths,
+  messages: Messages,
+  backend: ProviderBackend,
+  newId: () => string
+): StepDescriptor[] {
+  const steps: StepDescriptor[] = []
+  for (const form of forms) {
+    const settings = buildSettingsConfig(form)
+    const same = existing.find((p) => p.app_type === form.app && p.settings_config === settings)
+    if (same?.is_current) continue
+    const id = same?.id ?? newId()
+    const hasCurrent = existing.some((p) => p.app_type === form.app && p.is_current)
+    let syncAfter: string
+    if (!same) {
+      const add = providerStep("add", form.app, form.name, form, id, messages, backend)
+      steps.push(add)
+      syncAfter = add.id
+    }
+    if (same || hasCurrent) {
+      const current = providerStep(
+        "setCurrent",
+        form.app,
+        form.name,
+        undefined,
+        id,
+        messages,
+        backend
+      )
+      steps.push(
+        same ? current : { ...current, dependsOn: [providerStepId("add", form.app, backend)] }
+      )
+      syncAfter = current.id
+    }
+    const live: Provider = {
+      id,
+      app_type: form.app,
+      name: form.name,
+      settings_config: settings,
+      is_current: true,
+    }
+    steps.push(...syncLiveConfigSteps(live, paths, messages, [syncAfter!]))
+  }
+  return steps
+}
+
+/**
+ * The command each agent signs in with, as the user would type it. Shown as
+ * the copy-paste fallback when no terminal can be opened; it must match the
+ * table in `login.rs`, which is what actually runs.
+ */
+export const LOGIN_COMMAND: Record<ConnectApp, string> = { claude: "claude", codex: "codex login" }

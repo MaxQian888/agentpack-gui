@@ -16,11 +16,16 @@ import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import {
   AGENT_CHOICES,
+  appsFor,
   asAgentChoice,
+  connectionComplete,
   DEFAULT_AGENT,
   needsProxyStep,
   networkAdoption,
+  OFFICIAL_CONNECTION,
   type AgentChoice,
+  type AgentConnection,
+  type ConnectApp,
 } from "@/lib/agentpack/onboarding"
 import type { InventoryInput } from "@/lib/agentpack/inventory"
 import type { NavigateIntent, SectionKey } from "@/lib/agentpack/workspaces"
@@ -29,11 +34,12 @@ import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
 import { DesktopOnlyNote } from "./desktop-only-note"
+import { ConnectStep, SignInPanel } from "./onboarding-connect"
 import { OnboardingNetworkStep } from "./onboarding-network-step"
 import { RunBody, RunProgress, useRunView } from "./run/run-view"
 
 /** Every stop, in order. `network` is dropped unless the machine needs a proxy. */
-const STEPS = ["agent", "network", "review"] as const
+const STEPS = ["agent", "connect", "network", "review"] as const
 type Step = (typeof STEPS)[number]
 
 /** Persisted progress is plain JSON, so a stale or hand-edited step falls back. */
@@ -49,7 +55,12 @@ export interface WizardAnswer {
   proxy: boolean
   /** Keep the faster npm / GitHub mirror the probe found. */
   mirrors: boolean
+  /** How each agent being installed reaches a model. Never persisted: it can hold a key. */
+  connections: Partial<Record<ConnectApp, AgentConnection>>
 }
+
+/** The CLI whose install a sign-in waits on. */
+const CLI_OF: Record<ConnectApp, string> = { claude: "claude-code", codex: "codex" }
 
 /**
  * What staging a review produced. `staged` is the only one with a review to
@@ -129,6 +140,8 @@ export function OnboardingDialog({
   const [desktop, setDesktop] = useState(progress?.desktop ?? false)
   const [proxy, setProxy] = useState(progress?.proxy ?? true)
   const [mirrors, setMirrors] = useState(true)
+  // Kept in memory only — `report` never sees it — because it can hold a key.
+  const [connections, setConnections] = useState<Partial<Record<ConnectApp, AgentConnection>>>({})
   const [step, setStep] = useState<Step>(asStep(progress?.step))
   const [stage, setStage] = useState<Stage>("idle")
   // Install now has been pressed. From here on the review is a run log, and
@@ -137,7 +150,14 @@ export function OnboardingDialog({
   // Bumped by "Try again", which restages the same answer.
   const [attempt, setAttempt] = useState(0)
 
-  const answer: WizardAnswer = { agent, desktop, proxy, mirrors }
+  const apps = appsFor(agent)
+  // One connection per agent being installed, official until said otherwise.
+  // Switching agents keeps what was typed for the other one, in case they
+  // switch back.
+  const chosen = Object.fromEntries(
+    apps.map((app) => [app, connections[app] ?? OFFICIAL_CONNECTION])
+  ) as Partial<Record<ConnectApp, AgentConnection>>
+  const answer: WizardAnswer = { agent, desktop, proxy, mirrors, connections: chosen }
   const answerKey = JSON.stringify(answer)
   // The answer the current staging belongs to. A different answer — Back and a
   // new pick, or the mirror opt-out — restages; the same one never does.
@@ -215,21 +235,23 @@ export function OnboardingDialog({
   const subtitle =
     current === "agent"
       ? w.intro
-      : current === "network"
-        ? w.networkIntro
-        : !applied
-          ? // Only a staged review has "exact changes" to point at; every other
-            // outcome is its own sentence, said once, up here.
-            stage === "empty"
-            ? w.nothingToDo
-            : stage === "unavailable"
-              ? w.picksReady
-              : stage === "busy" || stage === "failed"
-                ? w.stageFailed
-                : w.reviewIntro
-          : view.finished
-            ? w.finishedIntro
-            : w.installingIntro
+      : current === "connect"
+        ? w.connectIntro
+        : current === "network"
+          ? w.networkIntro
+          : !applied
+            ? // Only a staged review has "exact changes" to point at; every other
+              // outcome is its own sentence, said once, up here.
+              stage === "empty"
+              ? w.nothingToDo
+              : stage === "unavailable"
+                ? w.picksReady
+                : stage === "busy" || stage === "failed"
+                  ? w.stageFailed
+                  : w.reviewIntro
+            : view.finished
+              ? w.finishedIntro
+              : w.installingIntro
 
   const agentMeta: Record<AgentChoice, { icon: typeof Bot; title: string; hint: string }> = {
     "claude-code": { icon: Terminal, title: w.agentClaude, hint: w.agentClaudeHint },
@@ -329,6 +351,14 @@ export function OnboardingDialog({
           </div>
         ) : null}
 
+        {current === "connect" ? (
+          <ConnectStep
+            apps={apps}
+            connections={chosen}
+            onChange={(app, next) => setConnections((prev) => ({ ...prev, [app]: next }))}
+          />
+        ) : null}
+
         {current === "network" ? (
           <OnboardingNetworkStep
             probe={probe}
@@ -368,6 +398,20 @@ export function OnboardingDialog({
                   </p>
                 ) : null}
                 <RunProgress view={view} />
+                {applied && view.finished ? (
+                  <SignInPanel
+                    apps={apps.filter(
+                      (app) =>
+                        chosen[app]?.kind === "official" &&
+                        // An agent that didn't install has nothing to sign in to.
+                        !view.reports.some(
+                          (r) =>
+                            r.id === `cli-${CLI_OF[app]}` &&
+                            (r.status === "error" || r.status === "skipped")
+                        )
+                    )}
+                  />
+                ) : null}
                 <RunBody
                   view={view}
                   onNavigate={
@@ -411,7 +455,15 @@ export function OnboardingDialog({
                 </Button>
               ) : null}
               {current !== "review" ? (
-                <Button onClick={next}>{t.welcome.continue}</Button>
+                <Button
+                  onClick={next}
+                  // The connection test never blocks; an empty key field does.
+                  disabled={
+                    current === "connect" && !apps.every((app) => connectionComplete(chosen[app]!))
+                  }
+                >
+                  {t.welcome.continue}
+                </Button>
               ) : stage === "empty" || stage === "unavailable" ? (
                 <Button onClick={later}>{w.done}</Button>
               ) : stage === "busy" || stage === "failed" ? (

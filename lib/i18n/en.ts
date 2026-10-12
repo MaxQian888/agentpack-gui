@@ -40,7 +40,38 @@ export const en = {
       "Claude Desktop or the ChatGPT app. They read the same settings as the terminal agent.",
     coreNote:
       "Also sets up three servers that need no account: memory, step-by-step reasoning and web fetch.",
-    // Step 2, only on a network that needs a proxy.
+    // Step 2: how each agent reaches a model. Asked before the install, so the
+    // run never stops halfway to ask. The auth variable is never a question.
+    connectIntro: "How should it reach a model? Nothing is saved until you install.",
+    connectFor: (agent: string) => agent,
+    connectOfficial: "Sign in with my subscription",
+    connectOfficialHint: {
+      claude: "Claude Pro or Max. You'll sign in once it's installed.",
+      codex: "Your ChatGPT plan. You'll sign in once it's installed.",
+    } as Record<string, string>,
+    connectApiKey: "Use an API key",
+    connectApiKeyHint: {
+      claude: "A key from console.anthropic.com.",
+      codex: "A key from platform.openai.com.",
+    } as Record<string, string>,
+    connectRelay: "Use a relay service",
+    connectRelayHint: "A third-party endpoint, with the key it gave you.",
+    relayCustom: "Other — enter its URL",
+    fieldKey: "API key",
+    fieldBaseUrl: "Base URL",
+    testing: "Checking…",
+    // The test informs; Continue still works. Some relays refuse the call it makes.
+    testNotBlocking: "You can still continue.",
+    // After the install, for an official subscription.
+    signInTitle: "Sign in",
+    signInHint:
+      "Each agent signs in with its own account, in your terminal. This ticks off when it's done.",
+    signInOpen: "Open terminal",
+    signInWaiting: "Waiting for the sign-in to finish…",
+    signedIn: "Signed in",
+    signInManual: "Couldn't open a terminal. Run this yourself:",
+    copy: "Copy",
+    // Step 3, only on a network that needs a proxy.
     networkIntro:
       "Your network can't reach the agents' servers directly, but there's a proxy running on this machine.",
     proxyAdopt: "Route installs through this proxy",
@@ -1575,6 +1606,12 @@ export const en = {
     ccProviderUpdate: (name: string) => `Update cc-switch provider "${name}"`,
     ccProviderDelete: (name: string) => `Delete cc-switch provider "${name}"`,
     ccProviderSetCurrent: (name: string) => `Set cc-switch provider "${name}" as current`,
+    // The same four on agentpack's own store, which has nothing to do with
+    // cc-switch — naming it there confused anyone who had never installed it.
+    providerAdd: (name: string) => `Save provider "${name}"`,
+    providerUpdate: (name: string) => `Update provider "${name}"`,
+    providerDelete: (name: string) => `Delete provider "${name}"`,
+    providerSetCurrent: (name: string) => `Use provider "${name}"`,
     addMcpClaude: (title: string) => `Add MCP "${title}" → Claude Code`,
     addMcpCodex: (title: string) => `Add MCP "${title}" → Codex`,
     addMcpOpencode: (title: string) => `Add MCP "${title}" → OpenCode`,

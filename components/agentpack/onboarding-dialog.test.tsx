@@ -1,5 +1,15 @@
 jest.mock("@/lib/tauri", () => ({ isTauri: () => true }))
 jest.mock("@/lib/tauri/activity", () => ({ appendActivity: jest.fn(async () => []) }))
+const mockSignedOut = { signedIn: false, mode: null, plan: null, expiresAt: null, source: "x" }
+jest.mock("@/lib/tauri/commands", () => ({
+  loginStatus: jest.fn(async () => ({
+    claude: mockSignedOut,
+    codex: mockSignedOut,
+    opencode: mockSignedOut,
+  })),
+  launchAgentLogin: jest.fn(async () => undefined),
+  httpGet: jest.fn(async () => ({ status: 200, latencyMs: 40, body: "{}", error: null })),
+}))
 jest.mock("sonner", () => ({
   toast: { success: jest.fn(), error: jest.fn(), message: jest.fn() },
 }))
@@ -124,6 +134,11 @@ function renderWizard({
 }
 
 const cont = () => userEvent.click(screen.getByRole("button", { name: w.continue }))
+/** Agent → connect (official, the default) → review, on a network that needs no proxy. */
+const toReview = async () => {
+  await cont()
+  await cont()
+}
 const installNow = () => screen.getByRole("button", { name: w.installNow })
 
 describe("the agent question", () => {
@@ -160,11 +175,31 @@ describe("the agent question", () => {
   })
 })
 
+describe("the connect step", () => {
+  it("holds Continue until a key is typed, never for the test, and keeps the key out of progress", async () => {
+    const { answers, onProgress } = renderWizard()
+    await cont()
+    expect(screen.getByText(w.connectIntro)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("radio", { name: new RegExp(w.connectApiKey) }))
+    expect(screen.getByRole("button", { name: w.continue })).toBeDisabled()
+
+    await userEvent.type(screen.getByLabelText(`${w.agentClaude} ${w.fieldKey}`), "sk-ant")
+    await cont()
+    await waitFor(() =>
+      expect(answers.at(-1)?.connections).toEqual({
+        claude: { kind: "apiKey", baseUrl: "", token: "sk-ant" },
+      })
+    )
+    // A key is never part of what a suspended wizard saves.
+    expect(JSON.stringify(onProgress.mock.calls)).not.toContain("sk-ant")
+  })
+})
+
 describe("the network step", () => {
   it("is skipped on a network that needs no proxy", async () => {
     renderWizard()
-    expect(screen.getByText(en.tour.progress(1, 2))).toBeInTheDocument()
-    await cont()
+    expect(screen.getByText(en.tour.progress(1, 3))).toBeInTheDocument()
+    await toReview()
     expect(screen.getByText(w.reviewIntro)).toBeInTheDocument()
   })
 
@@ -176,7 +211,8 @@ describe("the network step", () => {
       proxies: [clash],
     })
     const { answers } = renderWizard()
-    expect(screen.getByText(en.tour.progress(1, 3))).toBeInTheDocument()
+    expect(screen.getByText(en.tour.progress(1, 4))).toBeInTheDocument()
+    await cont()
     await cont()
     const keep = screen.getByRole("checkbox", { name: new RegExp(w.proxyAdopt) })
     expect(keep).toBeChecked()
@@ -193,6 +229,7 @@ describe("the network step", () => {
     useAppStore.getState().setNetworkProbing(true)
     renderWizard()
     await cont()
+    await cont()
     expect(screen.getByText(en.network.probe.running)).toBeInTheDocument()
   })
 })
@@ -202,10 +239,18 @@ describe("the review step", () => {
     const { answers } = renderWizard()
     await userEvent.click(screen.getByRole("radio", { name: new RegExp(`^${w.agentCodex}`) }))
     await userEvent.click(screen.getByRole("checkbox", { name: new RegExp(w.desktopLabel) }))
-    await cont()
+    await toReview()
 
     expect(await screen.findByText("Install Claude Code")).toBeInTheDocument()
-    expect(answers).toEqual([{ agent: "codex", desktop: true, proxy: true, mirrors: true }])
+    expect(answers).toEqual([
+      {
+        agent: "codex",
+        desktop: true,
+        proxy: true,
+        mirrors: true,
+        connections: { codex: { kind: "official", baseUrl: "", token: "" } },
+      },
+    ])
     // Drawn here, not in the side panel.
     expect(useAppStore.getState().panelOpen).toBe(false)
     expect(installNow()).toBeEnabled()
@@ -216,7 +261,7 @@ describe("the review step", () => {
 
   it("Install now records the yes, runs in place, and ends on Done", async () => {
     const { onApplied, onClose } = renderWizard()
-    await cont()
+    await toReview()
     await waitFor(() => expect(installNow()).toBeEnabled())
     await userEvent.click(installNow())
 
@@ -227,9 +272,27 @@ describe("the review step", () => {
     expect(onClose).toHaveBeenCalled()
   })
 
+  it("follows an official install with its sign-in", async () => {
+    renderWizard()
+    await toReview()
+    await waitFor(() => expect(installNow()).toBeEnabled())
+    await userEvent.click(installNow())
+    expect(await screen.findByText(w.signInTitle)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: w.signInOpen })).toBeInTheDocument()
+  })
+
+  it("offers no sign-in for an agent whose install failed", async () => {
+    renderWizard({ steps: [step("cli-claude-code", "FAIL")] })
+    await toReview()
+    await waitFor(() => expect(installNow()).toBeEnabled())
+    await userEvent.click(installNow())
+    await screen.findByRole("button", { name: en.shell.retry })
+    expect(screen.queryByText(w.signInTitle)).toBeNull()
+  })
+
   it("offers Retry in place when a step fails", async () => {
     renderWizard({ steps: [step("a", "FAIL")] })
-    await cont()
+    await toReview()
     await waitFor(() => expect(installNow()).toBeEnabled())
     await userEvent.click(installNow())
     expect(await screen.findByRole("button", { name: en.shell.retry })).toBeInTheDocument()
@@ -237,10 +300,10 @@ describe("the review step", () => {
 
   it("Back drops the staged steps rather than leaving them waiting", async () => {
     renderWizard()
-    await cont()
+    await toReview()
     await screen.findByText("Install Claude Code")
     await userEvent.click(screen.getByRole("button", { name: en.tour.back }))
-    expect(screen.getByText(w.agentLabel)).toBeInTheDocument()
+    expect(screen.getByText(w.connectIntro)).toBeInTheDocument()
     expect(screen.queryByText("Install Claude Code")).not.toBeInTheDocument()
   })
 
@@ -259,7 +322,7 @@ describe("the review step", () => {
       ],
     })
     const { answers } = renderWizard()
-    await cont()
+    await toReview()
     const note = w.mirrorNote("npmmirror (npm)")
     expect(await screen.findByText(note, { exact: false })).toBeInTheDocument()
     await userEvent.click(screen.getByRole("button", { name: w.mirrorDecline }))
@@ -269,7 +332,7 @@ describe("the review step", () => {
 
   it("says so when everything picked is already installed, and Done is a deliberate exit", async () => {
     const { onLater } = renderWizard({ outcome: "empty" })
-    await cont()
+    await toReview()
     expect(await screen.findByText(w.nothingToDo)).toBeInTheDocument()
     await userEvent.click(screen.getByRole("button", { name: w.done }))
     expect(onLater).toHaveBeenCalled()
@@ -277,13 +340,13 @@ describe("the review step", () => {
 
   it("says installing needs the desktop app when there is nothing to install with", async () => {
     renderWizard({ outcome: "unavailable" })
-    await cont()
+    await toReview()
     expect(await screen.findByText(w.unavailable)).toBeInTheDocument()
   })
 
   it("offers to try again when the machine couldn't be read", async () => {
     const { answers } = renderWizard({ outcome: "failed" })
-    await cont()
+    await toReview()
     await userEvent.click(await screen.findByRole("button", { name: w.tryAgain }))
     await waitFor(() => expect(answers).toHaveLength(2))
   })
@@ -299,7 +362,7 @@ describe("leaving", () => {
 
   it("Escape before Install now only suspends", async () => {
     const { onLater, onSuspend } = renderWizard()
-    await cont()
+    await toReview()
     await screen.findByText("Install Claude Code")
     await userEvent.keyboard("{Escape}")
     expect(onSuspend).toHaveBeenCalled()
@@ -310,7 +373,7 @@ describe("leaving", () => {
     let release!: () => void
     holdRun = new Promise((r) => (release = r))
     const { onClose, onSuspend } = renderWizard()
-    await cont()
+    await toReview()
     await waitFor(() => expect(installNow()).toBeEnabled())
     await userEvent.click(installNow())
     expect(await screen.findByText(w.installingIntro)).toBeInTheDocument()
