@@ -396,6 +396,15 @@ it("shows neither the card nor the finding once an assistant is installed", asyn
   expect(screen.queryByText(en.diagnostics.noAgentTitle)).not.toBeInTheDocument()
 })
 
+it("counts a desktop-only setup as an installed assistant", async () => {
+  // The wizard's "in a window" path installs only the desktop app.
+  useAppStore.setState({ detections: { "claude-desktop": { installed: true } } })
+  renderDashboard()
+  await screen.findByText("my-custom") // flush the async scan
+  expect(screen.queryByText(en.quickStart.title)).not.toBeInTheDocument()
+  expect(screen.queryByText(en.diagnostics.noAgentTitle)).not.toBeInTheDocument()
+})
+
 describe("the quick-start card, in web mode", () => {
   beforeEach(() => (isTauri as jest.Mock).mockReturnValue(false))
 

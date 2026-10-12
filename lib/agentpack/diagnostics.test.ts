@@ -65,6 +65,19 @@ describe("what counts as a finding", () => {
     expect(ids(build({ detections: { codex: { installed: false } } }))).toContain("no-agent")
   })
 
+  it("counts a desktop app as an agent, since it bundles its own", () => {
+    expect(ids(build({ detections: { "claude-desktop": { installed: true } } }))).not.toContain(
+      "no-agent"
+    )
+    expect(ids(build({ detections: { "codex-app": { installed: true } } }))).not.toContain(
+      "no-agent"
+    )
+  })
+
+  it("does not count a third-party agent agentpack writes no config into", () => {
+    expect(ids(build({ detections: { "gemini-cli": { installed: true } } }))).toContain("no-agent")
+  })
+
   it("flags a config that doesn't parse, and offers the backup", () => {
     const items = build({
       scan: {

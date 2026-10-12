@@ -99,14 +99,19 @@ export interface DiagnosticItem {
 }
 
 /**
- * The agents this app exists to set up. If neither is present, nothing else on
+ * The agents this app exists to set up. If none is present, nothing else on
  * the list matters yet — which is why that item outranks everything.
+ *
+ * The desktop apps count: each bundles its own copy of the agent and reads the
+ * same `~/.claude` / `~/.codex` config, and the wizard installs them when asked
+ * to set up "in a window". Leaving them out reported a machine the wizard had
+ * just finished as having no agent at all.
  *
  * Deliberately narrower than the inventory's `agent` kind, which also covers
  * the third-party terminal agents agentpack installs but writes no config into.
  * A machine with only one of those is still a machine agentpack has not set up.
  */
-const AGENT_CLI_IDS = ["claude-code", "codex"] as const
+export const SETUP_AGENT_IDS = ["claude-code", "codex", "claude-desktop", "codex-app"] as const
 
 export function buildDiagnostics(
   t: Messages,
@@ -135,7 +140,7 @@ export function buildDiagnostics(
     })
   }
 
-  if (!AGENT_CLI_IDS.some((id) => findCatalogAsset(inventory, id))) {
+  if (!SETUP_AGENT_IDS.some((id) => findCatalogAsset(inventory, id))) {
     items.push({
       id: "no-agent",
       severity: "critical",
