@@ -3,15 +3,22 @@ import { NOT_IN_TAURI, navTo, openApp } from "../../helpers"
 
 test.beforeEach(async ({ page }) => openApp(page))
 
-test("asks one question, and leaves the picks in the tray where nothing can install", async ({
+test("asks which agent and how it connects, and leaves the picks in the tray where nothing can install", async ({
   page,
 }) => {
   await page.getByRole("button", { name: "Open the guide" }).click()
   const wizard = page.getByRole("dialog", { name: "Welcome to agentpack" })
 
-  // One real question: which agent. No bundle, no skills, no API keys.
+  // Which agent — no bundle, no skills, no MCP keys.
   await wizard.getByRole("radio", { name: /^Codex/ }).click()
   await expect(wizard.getByRole("textbox")).toHaveCount(0)
+  await wizard.getByRole("button", { name: "Continue" }).click()
+
+  // How it reaches a model: the subscription by default, which needs no key here.
+  await expect(wizard.getByRole("radio", { name: /Sign in with my subscription/ })).toBeChecked()
+  await wizard.getByRole("radio", { name: /Use an API key/ }).click()
+  await expect(wizard.getByRole("button", { name: "Continue" })).toBeDisabled()
+  await wizard.getByRole("radio", { name: /Sign in with my subscription/ }).click()
   await wizard.getByRole("button", { name: "Continue" }).click()
 
   // The review step is the gate; web mode has nothing to install with, and says so.

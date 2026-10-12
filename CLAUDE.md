@@ -513,6 +513,32 @@ key-gated servers wait for after the agent works. A proxy the machine needs
 gets its own step, kept by default; a faster mirror is one line in the review
 with an opt-out, staged as the `npm-registry` step it really is.
 
+⚠️ **The wizard ends where the agent can answer, so it asks how each agent
+reaches a model** — official subscription, API key, or relay — _before_ the
+install (`onboarding-connect.tsx`, pure half in `lib/agentpack/onboarding.ts`).
+Four rules:
+
+1. **One Apply for the account and the install.** `providerSetupSteps` stages
+   add → make current → live sync in the same run as the installs. To make a
+   new row current when its app already has one, the row is added under an id
+   chosen up front: `add` in both `providers.rs` and `ccswitch.rs` accepts a
+   caller-supplied id (refusing a taken one), because an id generated at write
+   time can't be named by a later step in the same run.
+2. **The auth variable is decided, never asked.** An Anthropic key is
+   `ANTHROPIC_API_KEY`, a relay the bearer `ANTHROPIC_AUTH_TOKEN`. A Codex key
+   is written with the official base URL on purpose: the live sync writes
+   `config.toml` and never `auth.json`, so a key with no URL is stored and never
+   applied.
+3. **The connection test informs, never blocks.** Some relays refuse the
+   `/models` call it makes. Continue waits only for empty fields. A key never
+   reaches `onboardingProgress`.
+4. **Signing in is the CLI's own, in a terminal.** `launch_agent_login` (in
+   `login.rs`) maps `claude`/`codex` to a fixed command line — nothing the
+   frontend sends becomes one — and opens it through `exec::open_in_terminal`,
+   which Pi's launcher shares. `loginStatus` is polled to tick it off; where no
+   terminal opens, the command (`LOGIN_COMMAND`, which must match the Rust
+   table) is offered to copy.
+
 Also: the completion screen derives its next action and chores from `reports`,
 not from `plan` — with **no step at all** reading as success, because the dedup
 emits nothing for what's already installed.

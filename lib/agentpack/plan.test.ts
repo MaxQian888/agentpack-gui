@@ -1021,6 +1021,19 @@ describe("menu-action builders", () => {
     }
   })
 
+  it("names agentpack's own store without mentioning cc-switch", () => {
+    const label = (
+      op: "add" | "update" | "delete" | "setCurrent",
+      backend: "native" | "ccswitch"
+    ) => providerStep(op, "claude", "Mine", undefined, "id-1", en, backend).label
+    expect(label("add", "native")).toBe(en.steps.providerAdd("Mine"))
+    expect(label("update", "native")).toBe(en.steps.providerUpdate("Mine"))
+    expect(label("delete", "native")).toBe(en.steps.providerDelete("Mine"))
+    expect(label("setCurrent", "native")).toBe(en.steps.providerSetCurrent("Mine"))
+    expect(label("add", "ccswitch")).toBe(en.steps.ccProviderAdd("Mine"))
+    expect(label("setCurrent", "native")).not.toContain("cc-switch")
+  })
+
   it("syncLiveConfigSteps threads dependsOn onto every sync step", () => {
     const provider: Provider = {
       id: "1",

@@ -37,6 +37,13 @@ jest.mock("@/lib/tauri/commands", () => ({
   ),
   listSkills: jest.fn(async () => [] as string[]),
   providerLoad: jest.fn(async () => []),
+  loginStatus: jest.fn(async () => ({
+    claude: { signedIn: false, mode: null, plan: null, expiresAt: null, source: "x" },
+    codex: { signedIn: false, mode: null, plan: null, expiresAt: null, source: "x" },
+    opencode: { signedIn: false, mode: null, plan: null, expiresAt: null, source: "x" },
+  })),
+  launchAgentLogin: jest.fn(async () => undefined),
+  httpGet: jest.fn(async () => ({ status: 200, latencyMs: 1, body: "{}", error: null })),
   pathExists: jest.fn(async () => false),
   historyListSessions: jest.fn(async () => ({ sessions: [], errors: [] })),
 }))
@@ -121,6 +128,12 @@ const claudeMcpLabel = (id: "memory" | "sequential-thinking") =>
 
 const wizardHeading = () => screen.queryByRole("heading", { name: w.title })
 
+/** Agent → connect (the official subscription, by default) → review. */
+const toReview = async () => {
+  await userEvent.click(screen.getByRole("button", { name: w.continue }))
+  await userEvent.click(screen.getByRole("button", { name: w.continue }))
+}
+
 const settingsWith = (patch: object) => ({
   autoCheckUpdates: false,
   skippedVersion: null,
@@ -149,7 +162,7 @@ it("stages a deduped review inside the wizard, and records nothing yet", async (
   await waitFor(() => expect(wizardHeading()).toBeInTheDocument())
   await waitFor(() => expect(useAppStore.getState().paths).not.toBeNull())
 
-  await userEvent.click(screen.getByRole("button", { name: w.continue }))
+  await toReview()
 
   // The review is in the wizard: a missing core server is added, the one
   // already on Claude is dropped, and Claude Code itself (installed, current)
@@ -165,7 +178,7 @@ it("Install now marks onboarded, runs, and leaves the wizard on its result", asy
   renderShell()
   await waitFor(() => expect(wizardHeading()).toBeInTheDocument())
   await waitFor(() => expect(useAppStore.getState().paths).not.toBeNull())
-  await userEvent.click(screen.getByRole("button", { name: w.continue }))
+  await toReview()
   const install = await screen.findByRole("button", { name: w.installNow })
   await waitFor(() => expect(install).toBeEnabled())
   await userEvent.click(install)
@@ -252,7 +265,7 @@ it("stages a suggested npm mirror as a step, and drops it again on request", asy
     })
   )
 
-  await userEvent.click(screen.getByRole("button", { name: w.continue }))
+  await toReview()
   const mirrorStep = en.steps.npmRegistry("https://m.example")
   expect(await screen.findByText(mirrorStep)).toBeInTheDocument()
 
@@ -260,4 +273,24 @@ it("stages a suggested npm mirror as a step, and drops it again on request", asy
   await screen.findByText(claudeMcpLabel("sequential-thinking"))
   expect(screen.queryByText(mirrorStep)).not.toBeInTheDocument()
   expect(useAppStore.getState().plan.network.npmRegistry).toBeUndefined()
+})
+
+/**
+ * The account rides in the same review as the install: one Apply saves the
+ * key, makes it the one Claude Code uses, and syncs its settings.
+ */
+it("stages an API key as provider steps in the same review as the install", async () => {
+  mockedLoad.mockResolvedValueOnce(settingsWith({ providerBackend: "native" }))
+  renderShell()
+  await waitFor(() => expect(wizardHeading()).toBeInTheDocument())
+  await waitFor(() => expect(useAppStore.getState().paths).not.toBeNull())
+
+  await userEvent.click(screen.getByRole("button", { name: w.continue }))
+  await userEvent.click(screen.getByRole("radio", { name: new RegExp(w.connectApiKey) }))
+  await userEvent.type(screen.getByLabelText(`${w.agentClaude} ${w.fieldKey}`), "sk-ant")
+  await userEvent.click(screen.getByRole("button", { name: w.continue }))
+
+  expect(await screen.findByText(en.steps.providerAdd("Anthropic API"))).toBeInTheDocument()
+  expect(screen.getByText(en.steps.syncClaude)).toBeInTheDocument()
+  expect(screen.getByText(claudeMcpLabel("sequential-thinking"))).toBeInTheDocument()
 })

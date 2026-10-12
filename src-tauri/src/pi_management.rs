@@ -3,9 +3,6 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-#[cfg(target_os = "macos")]
-use std::process::Stdio;
 use std::time::Duration;
 
 fn extra_session_dirs_path(home: &Path) -> PathBuf {
@@ -1418,11 +1415,6 @@ pub fn pi_auth_status(refresh: bool) -> Result<PiAuthReport, String> {
   })
 }
 
-#[cfg(target_os = "macos")]
-fn shell_quote(value: &str) -> String {
-  format!("'{}'", value.replace('\'', "'\\''"))
-}
-
 #[tauri::command(async)]
 pub fn launch_pi_interactive(cwd: Option<String>) -> Result<(), String> {
   if !crate::exec::on_path("pi") {
@@ -1438,62 +1430,7 @@ pub fn launch_pi_interactive(cwd: Option<String>) -> Result<(), String> {
       cwd.display()
     ));
   }
-  #[cfg(target_os = "macos")]
-  {
-    let command = format!("cd {} && exec pi", shell_quote(&cwd.to_string_lossy()));
-    let escaped = command.replace('\\', "\\\\").replace('"', "\\\"");
-    let status = Command::new("osascript")
-      .args([
-        "-e",
-        &format!("tell application \"Terminal\" to do script \"{escaped}\""),
-      ])
-      .stdin(Stdio::null())
-      .stdout(Stdio::null())
-      .stderr(Stdio::null())
-      .status()
-      .map_err(|error| error.to_string())?;
-    status
-      .success()
-      .then_some(())
-      .ok_or_else(|| "could not launch Pi in Terminal".into())
-  }
-  #[cfg(windows)]
-  {
-    if crate::exec::on_path("wt") {
-      Command::new("wt")
-        .args(["-d", cwd.to_string_lossy().as_ref(), "pi"])
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    } else {
-      Command::new("cmd")
-        .args(["/c", "start", "", "cmd", "/K", "pi"])
-        .current_dir(&cwd)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    }
-    Ok(())
-  }
-  #[cfg(all(not(windows), not(target_os = "macos")))]
-  {
-    for terminal in ["x-terminal-emulator", "gnome-terminal", "konsole"] {
-      if !crate::exec::on_path(terminal) {
-        continue;
-      }
-      let mut command = Command::new(terminal);
-      command.current_dir(&cwd);
-      match terminal {
-        "gnome-terminal" => {
-          command.args(["--", "pi"]);
-        }
-        _ => {
-          command.args(["-e", "pi"]);
-        }
-      }
-      command.spawn().map_err(|e| e.to_string())?;
-      return Ok(());
-    }
-    Err("no supported terminal application found".into())
-  }
+  crate::exec::open_in_terminal("pi", &[], &cwd)
 }
 
 #[cfg(test)]

@@ -128,8 +128,17 @@ fn run_native_op(store: &mut NativeStore, req: &ProviderWriteReq) -> Result<Vec<
         .providers
         .iter()
         .any(|provider| provider.app_type == req.app && provider.is_current);
+      // A caller that must make the new row current in the same run supplies
+      // the id up front; it can't learn one generated here until the run ends.
+      let id = match req.id.as_deref().filter(|id| !id.trim().is_empty()) {
+        Some(id) if store.providers.iter().any(|p| p.id == id) => {
+          return Err(format!("a provider with id {id} already exists"))
+        }
+        Some(id) => id.to_string(),
+        None => crate::ccswitch::unique_id(),
+      };
       store.providers.push(Provider {
-        id: crate::ccswitch::unique_id(),
+        id,
         app_type: req.app.clone(),
         name: form.name.clone(),
         settings_config: settings.clone(),
@@ -292,6 +301,40 @@ mod tests {
     assert!(!rows[0].is_current);
     assert!(rows[1].is_current);
 
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn add_takes_a_caller_supplied_id_so_the_same_run_can_make_it_current() {
+    let _lock = TEST_ENV_LOCK
+      .lock()
+      .unwrap_or_else(|error| error.into_inner());
+    let (root, _env) = setup();
+    provider_write(add("Existing", "claude")).unwrap();
+    provider_write(ProviderWriteReq {
+      id: Some("wizard-claude".into()),
+      ..add("Wizard", "claude")
+    })
+    .unwrap();
+    provider_write(ProviderWriteReq {
+      backend: "native".into(),
+      op: "setCurrent".into(),
+      dry_run: false,
+      id: Some("wizard-claude".into()),
+      app: "claude".into(),
+      form: None,
+      settings_config: None,
+    })
+    .unwrap();
+    let rows = provider_load("native".into()).unwrap();
+    let wizard = rows.iter().find(|p| p.id == "wizard-claude").unwrap();
+    assert!(wizard.is_current);
+    // An id that is already taken is refused rather than duplicated.
+    let dup = provider_write(ProviderWriteReq {
+      id: Some("wizard-claude".into()),
+      ..add("Again", "claude")
+    });
+    assert!(dup.unwrap_err().contains("already exists"));
     let _ = fs::remove_dir_all(root);
   }
 
