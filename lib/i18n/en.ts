@@ -1432,6 +1432,10 @@ export const en = {
         title: "Windows Terminal",
         description: "Microsoft's modern terminal app — available on Windows 10 2004 and later.",
       },
+      homebrew: {
+        title: "Homebrew",
+        description: "The macOS package manager — how Node.js and the desktop apps install here.",
+      },
       node: {
         title: "Node.js",
         description: "JavaScript runtime + npm — required to install and run the agent CLIs.",
@@ -1556,6 +1560,8 @@ export const en = {
     installRuntimeVia: (title: string, method: string) => `Install ${title} via ${method}`,
     installFromRelease: (title: string) => `Install ${title} from its GitHub release`,
     noInstaller: (title: string) => `No automated installer for ${title} on this OS.`,
+    needsHomebrew: (title: string) =>
+      `${title} installs through Homebrew, which isn't on this Mac. Install it from https://brew.sh, then run this again.`,
     manualInstall: "manual install required",
     nodeTooOld: (title: string, need: number | string, found: string) =>
       `${title} requires Node.js ${need} or newer, but Node ${found} is installed.`,

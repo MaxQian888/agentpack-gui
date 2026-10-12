@@ -1307,6 +1307,10 @@ export const zhCN = {
         title: "Windows 终端",
         description: "微软的新式终端应用，支持 Windows 10 2004 及以上版本。",
       },
+      homebrew: {
+        title: "Homebrew",
+        description: "macOS 的包管理器 —— Node.js 和桌面应用在这里都通过它安装。",
+      },
       node: {
         title: "Node.js",
         description: "JavaScript 运行时 + npm —— 安装与运行 agent CLI 的必备环境。",
@@ -1424,6 +1428,8 @@ export const zhCN = {
     installFromRelease: (title: string) => `从 GitHub 发行版安装 ${title}`,
     upgradeCli: (title: string) => `升级 ${title}`,
     noInstaller: (title: string) => `本系统没有 ${title} 的自动安装方式。`,
+    needsHomebrew: (title: string) =>
+      `${title} 需要通过 Homebrew 安装，但这台 Mac 上没有 Homebrew。请先从 https://brew.sh 安装，再重新运行。`,
     manualInstall: "需要手动安装",
     nodeTooOld: (title: string, need: number | string, found: string) =>
       `${title} 需要 Node.js ${need} 或更高版本，但当前安装的是 Node ${found}。`,

@@ -98,6 +98,10 @@ beforeEach(() => {
     p.includes(".claude.json") ? JSON.stringify({ mcpServers: { memory: {} } }) : ""
   )
   ;(listSkills as jest.Mock).mockImplementation(async () => [] as string[])
+  ;(detectRuntime as jest.Mock).mockImplementation(async () => ({
+    installed: true,
+    version: "1.0.0",
+  }))
 })
 
 const claudeMcpLabel = (id: "memory" | "context7") =>
@@ -157,6 +161,28 @@ it("Run drops an already-installed MCP and keeps a missing one", async () => {
   await waitFor(() => expect(screen.getByText(claudeMcpLabel("context7"))).toBeInTheDocument())
   // …and the already-installed memory add was dropped.
   expect(screen.queryByText(claudeMcpLabel("memory"))).not.toBeInTheDocument()
+})
+
+it("on a Mac where detection found no Homebrew, installs Claude Desktop from its release", async () => {
+  ;(detectRuntime as jest.Mock).mockImplementation(async (rt: { id: string }) =>
+    rt.id === "homebrew" ? { installed: false } : { installed: true, version: "1.0.0" }
+  )
+  render(
+    <I18nProvider>
+      <AppShell />
+    </I18nProvider>
+  )
+  await waitFor(() => expect(useAppStore.getState().detections["homebrew"]).toBeDefined())
+
+  act(() => useAppStore.getState().toggleCli("claude-desktop"))
+  await userEvent.click(await screen.findByRole("button", { name: en.tray.review }))
+
+  const title = en.catalog.cli["claude-desktop"].title
+  await waitFor(() =>
+    expect(screen.getByText(en.steps.installFromRelease(title))).toBeInTheDocument()
+  )
+  // `brew install --cask claude` would only fail with "command not found".
+  expect(screen.queryByText(en.steps.installCli(title))).not.toBeInTheDocument()
 })
 
 /**

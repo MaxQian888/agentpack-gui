@@ -48,6 +48,7 @@ import { DiagnosticsList } from "./diagnostics-list"
 import { ActivityCard } from "./activity-card"
 import {
   buildDiagnostics,
+  SETUP_AGENT_IDS,
   type DiagnosticItem,
   type DiagnosticSeverity,
 } from "@/lib/agentpack/diagnostics"
@@ -427,7 +428,7 @@ export function DashboardSection({
   }
 
   // The quick-start card is a safety net for anyone who skipped the welcome
-  // wizard: shown until they've set up an assistant (Claude Code / Codex) or
+  // wizard: shown until they've set up an assistant (`SETUP_AGENT_IDS`) or
   // explicitly hide it via "don't show again". It reopens the same wizard.
   //
   // On the desktop, not before the machine has been read — detections start
@@ -436,7 +437,7 @@ export function DashboardSection({
   // which says the same thing with its own "Set one up". Two buttons to one
   // wizard, the louder one second, is one too many. In web mode nothing is ever
   // measured, and the card is the only way in.
-  const noAgentCli = !detections["claude-code"]?.installed && !detections["codex"]?.installed
+  const noAgentCli = !SETUP_AGENT_IDS.some((id) => detections[id]?.installed)
   const agentsKnown = desktopAvailable ? inventory.measured : true
   const showQuickStart =
     !settings.quickStartDismissed &&

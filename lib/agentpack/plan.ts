@@ -77,6 +77,7 @@ import type {
   CliTool,
   Command,
   CommandStep,
+  InstallMethod,
   McpServer,
   McpTarget,
   NetworkConfig,
@@ -136,6 +137,12 @@ export interface BuildOptions {
   arch?: Arch
   /** GitHub download mirror prefix from app settings, or null for direct. */
   ghMirrorPrefix?: string | null
+  /**
+   * True only when detection looked for Homebrew and didn't find it. Unknown
+   * (undefined) keeps the brew routes, since most Macs that install developer
+   * tools have it and a guess would route everyone away from them.
+   */
+  brewMissing?: boolean
 }
 
 /**
@@ -164,6 +171,11 @@ export function buildSteps(
   const steps: StepDescriptor[] = []
   const arch = opts.arch ?? "x64"
   const ghMirrorPrefix = opts.ghMirrorPrefix ?? null
+  // A brew command on a Mac without brew can only fail with "command not
+  // found", so those methods are dropped up front and the next route is used.
+  const usable = (m: InstallMethod) => !(opts.brewMissing && m.command.file === "brew")
+  const viaBrewOnly = (methods: readonly InstallMethod[]) =>
+    !!opts.brewMissing && methods.length > 0 && !methods.some(usable)
 
   /**
    * The GitHub-Release install step for a tool, when it publishes something
@@ -191,13 +203,15 @@ export function buildSteps(
    * command fails *on the network* (see `lib/agentpack/network/recovery.ts`).
    */
   const fallbacksFor = (tool: CliTool, title: string, chosenId: string | undefined) => {
-    const out: StepDescriptor[] = fallbackMethodsFor(tool, plan.os, chosenId).map((mth) => ({
-      kind: "command" as const,
-      id: `cli-${tool.id}-${mth.id}`,
-      label: t.installCliVia(title, mth.id),
-      command: mth.command,
-      requiresElevation: mth.requiresElevation || undefined,
-    }))
+    const out: StepDescriptor[] = fallbackMethodsFor(tool, plan.os, chosenId)
+      .filter(usable)
+      .map((mth) => ({
+        kind: "command" as const,
+        id: `cli-${tool.id}-${mth.id}`,
+        label: t.installCliVia(title, mth.id),
+        command: mth.command,
+        requiresElevation: mth.requiresElevation || undefined,
+      }))
     const release = releaseStep(tool, title)
     if (release) out.push(release)
     return out.length > 0 ? out : undefined
@@ -263,7 +277,7 @@ export function buildSteps(
         requiresElevation: false,
       }
     }
-    const methods = installMethodsFor(tool, plan.os)
+    const methods = installMethodsFor(tool, plan.os).filter(usable)
     const chosen = methods.find((mth) => mth.id === plan.cliMethods?.[tool.id]) ?? methods[0]
     return {
       skip: false,
@@ -281,12 +295,21 @@ export function buildSteps(
   // isn't detected, install it first and make the npm CLI installs depend on it.
   const nodeStepId = "runtime-node"
   let nodeStepIsCommand = false
+  const nodeRuntime = findRuntime("node")
+  const nodeMethods = nodeRuntime ? installMethodsFor(nodeRuntime, plan.os) : []
+  const nodeMethod = nodeMethods.filter(usable)[0]
+  // Where Node is missing and this OS has no installer for it, an npm CLI with
+  // another route takes that route instead (see the CLI loop), and needs no Node.
+  const nodeRoute = (tool: CliTool, r: ReturnType<typeof resolveCli>) => {
+    if (installed.has("node") || nodeMethod || r.upgrade) return undefined
+    return fallbackMethodsFor(tool, plan.os, r.methodId).filter(usable)[0]
+  }
   const needsNodeForCli = plan.clis.some((id) => {
     const tool = findCli(id)
     if (!tool?.npmPackage) return false
     const r = resolveCli(tool)
     // A skipped (already-current) CLI does no npm work, so it needs no Node.
-    return !r.skip && isNpmBased(r.methodId)
+    return !r.skip && isNpmBased(r.methodId) && !nodeRoute(tool, r)
   })
   // An npx-launched server needs Node to *start*, which is a different question
   // from whether anything here is installed through npm. The desktop-app path
@@ -300,10 +323,10 @@ export function buildSteps(
   })
   const needsNode = needsNodeForCli || needsNodeForMcp
   if (needsNode && !installed.has("node")) {
-    const node = findRuntime("node")
+    const node = nodeRuntime
     const title = cat.runtime["node"]?.title ?? "Node.js"
     // Auto-install Node with its default (recommended) method.
-    const method = node ? installMethodsFor(node, plan.os)[0] : undefined
+    const method = nodeMethod
     if (method) {
       nodeStepIsCommand = true
       steps.push({
@@ -315,13 +338,15 @@ export function buildSteps(
         // On Windows, scoop is a user-scope route that avoids both UAC and
         // whatever blocked winget's download.
         fallbacks: node
-          ? fallbackMethodsFor(node, plan.os, method.id).map((mth) => ({
-              kind: "command" as const,
-              id: `${nodeStepId}-${mth.id}`,
-              label: t.installRuntimeVia(title, mth.id),
-              command: mth.command,
-              requiresElevation: mth.requiresElevation || undefined,
-            }))
+          ? fallbackMethodsFor(node, plan.os, method.id)
+              .filter(usable)
+              .map((mth) => ({
+                kind: "command" as const,
+                id: `${nodeStepId}-${mth.id}`,
+                label: t.installRuntimeVia(title, mth.id),
+                command: mth.command,
+                requiresElevation: mth.requiresElevation || undefined,
+              }))
           : undefined,
       })
     } else {
@@ -329,7 +354,12 @@ export function buildSteps(
         kind: "info",
         id: nodeStepId,
         label: t.installRuntime(title),
-        lines: [node?.manualNote ?? t.noInstaller(title), t.manualInstall],
+        lines: [
+          viaBrewOnly(nodeMethods)
+            ? t.needsHomebrew(title)
+            : (node?.manualNote ?? t.noInstaller(title)),
+          t.manualInstall,
+        ],
         manual: true,
       })
     }
@@ -372,7 +402,8 @@ export function buildSteps(
   for (const id of plan.clis) {
     const tool = findCli(id)
     if (!tool) continue
-    const { skip, upgrade, cmd, methodId, requiresElevation } = resolveCli(tool)
+    const resolved = resolveCli(tool)
+    const { skip, upgrade, cmd, methodId, requiresElevation } = resolved
     if (skip) continue
     const title = cat.cli[id]?.title ?? id
     const npmBased = Boolean(tool.npmPackage) && isNpmBased(methodId)
@@ -401,6 +432,27 @@ export function buildSteps(
       continue
     }
 
+    // No Node, and no way to install it on this OS (Linux has no default
+    // installer, so the Node step above is a manual note). An npm install would
+    // just fail with "command not found", so a tool with a route that doesn't go
+    // through the registry — the vendor's native script — takes that instead.
+    // A tool without one still attempts npm: detection can miss a Node that is
+    // really there, and refusing outright would cost those machines the install.
+    if (npmBased) {
+      const alt = nodeRoute(tool, resolved)
+      if (alt) {
+        steps.push({
+          kind: "command",
+          id: `cli-${id}`,
+          label: t.installCliVia(title, alt.id),
+          command: alt.command,
+          requiresElevation: alt.requiresElevation || undefined,
+          fallbacks: fallbacksFor(tool, title, alt.id),
+        })
+        continue
+      }
+    }
+
     if (cmd) {
       steps.push({
         kind: "command",
@@ -427,7 +479,12 @@ export function buildSteps(
         kind: "info",
         id: `cli-${id}`,
         label: t.installCli(title),
-        lines: [tool.manualNote ?? t.noInstaller(title), t.manualInstall],
+        lines: [
+          viaBrewOnly(installMethodsFor(tool, plan.os))
+            ? t.needsHomebrew(title)
+            : (tool.manualNote ?? t.noInstaller(title)),
+          t.manualInstall,
+        ],
         manual: true,
       }
     )
