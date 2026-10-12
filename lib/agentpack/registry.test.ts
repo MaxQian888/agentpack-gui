@@ -156,11 +156,16 @@ describe("npm-managed CLIs", () => {
     }
   })
 
-  it("offers npm first, then pnpm and bun, on every OS", () => {
+  const NATIVE_FIRST: string[] = ["claude-code", "codex"]
+
+  it("offers npm first, then pnpm and bun, on every OS — after native where that leads", () => {
     for (const tool of npmCli) {
       for (const os of ["win", "mac", "linux"] as const) {
         const methods = installMethodsFor(tool, os).map((m) => m.id)
         if (tool.id === "pi") expect(methods).toEqual(["npm"])
+        // The two config-written agents lead with their vendor script (no Node).
+        else if (NATIVE_FIRST.includes(tool.id))
+          expect(methods).toEqual(["native", "npm", "pnpm", "bun"])
         else expect(methods.slice(0, 3)).toEqual(["npm", "pnpm", "bun"])
       }
     }
@@ -355,13 +360,13 @@ it("finders work", () => {
 })
 
 describe("installMethodsFor", () => {
-  it("returns the tool's explicit methods (npm default first) when present", () => {
+  it("returns the tool's explicit methods (native default first) when present", () => {
     const methods = installMethodsFor(findCli("claude-code")!, "win")
     expect(methods.length).toBeGreaterThan(1)
-    expect(methods[0].id).toBe("npm")
-    // the npm default matches the single-command install entry
-    expect(methods[0].command).toEqual(findCli("claude-code")!.install.win)
-    expect(methods.map((m) => m.id)).toContain("native")
+    expect(methods[0].id).toBe("native")
+    // the npm method matches the single-command install entry
+    const npm = methods.find((m) => m.id === "npm")!
+    expect(npm.command).toEqual(findCli("claude-code")!.install.win)
   })
 
   it("wraps a single install command as one default method when no methods are declared", () => {
