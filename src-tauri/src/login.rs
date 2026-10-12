@@ -167,6 +167,33 @@ pub fn login_status() -> Result<LoginReport, String> {
   })
 }
 
+/// The one command that signs each agent CLI in, interactively. The login
+/// itself is the CLI's own (a browser OAuth flow); agentpack only opens it in a
+/// terminal and then watches `login_status` for the result. A fixed table, not
+/// a parameter: nothing the frontend sends ever becomes a command line.
+fn login_command(agent: &str) -> Option<(&'static str, &'static [&'static str])> {
+  match agent {
+    // A fresh `claude` with no credentials starts at its sign-in screen.
+    "claude" => Some(("claude", &[])),
+    "codex" => Some(("codex", &["login"])),
+    _ => None,
+  }
+}
+
+/// Open the user's terminal on an agent's sign-in. Returns once the terminal
+/// has been asked to open; whether the user finished signing in is what
+/// `login_status` answers.
+///
+/// The binary is not checked against PATH first: an agent installed a minute
+/// ago by its vendor script is on the PATH of a new login shell, but not
+/// necessarily on the one this process started with.
+#[tauri::command(async)]
+pub fn launch_agent_login(agent: String) -> Result<(), String> {
+  let (program, args) = login_command(&agent).ok_or_else(|| format!("unknown agent: {agent}"))?;
+  let home = dirs::home_dir().ok_or("no home dir")?;
+  crate::exec::open_in_terminal(program, args, &home)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -274,6 +301,15 @@ mod tests {
     assert!(status.signed_in);
     assert_eq!(status.mode.as_deref(), Some("2 providers"));
     assert!(!serde_json::to_string(&status).unwrap().contains("SECRET"));
+  }
+
+  #[test]
+  fn only_the_two_agents_have_a_login_command() {
+    assert_eq!(login_command("claude"), Some(("claude", &[][..])));
+    assert_eq!(login_command("codex"), Some(("codex", &["login"][..])));
+    assert_eq!(login_command("opencode"), None);
+    assert_eq!(login_command("claude; rm -rf ~"), None);
+    assert!(launch_agent_login("sh".into()).is_err());
   }
 
   #[test]

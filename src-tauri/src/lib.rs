@@ -182,6 +182,7 @@ pub fn run() {
       providers::provider_load,
       providers::provider_write,
       login::login_status,
+      login::launch_agent_login,
       backup::backup_snapshot,
       backup::backup_list,
       backup::backup_restore,

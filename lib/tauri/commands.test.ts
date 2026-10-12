@@ -63,6 +63,7 @@ import {
   deleteSkillBackup,
   createSkill,
   loginStatus,
+  launchAgentLogin,
   httpGet,
   providerLoad,
   providerWrite,
@@ -506,6 +507,8 @@ describe("command wrappers", () => {
   it("maps the login + http commands", async () => {
     await loginStatus()
     expect(invoke).toHaveBeenCalledWith("login_status")
+    await launchAgentLogin("codex")
+    expect(invoke).toHaveBeenCalledWith("launch_agent_login", { agent: "codex" })
 
     await httpGet("https://api.example.com", { Authorization: "Bearer x" }, 4000)
     expect(invoke).toHaveBeenCalledWith("http_get", {

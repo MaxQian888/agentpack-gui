@@ -574,6 +574,15 @@ export interface LoginReport {
  */
 export const loginStatus = () => invoke<LoginReport>("login_status")
 
+/**
+ * Open the user's terminal on an agent's own sign-in (`claude`, `codex login`).
+ * The command is chosen in Rust from a fixed table keyed by `agent`; nothing
+ * here becomes a command line. Whether the sign-in finished is `loginStatus`'s
+ * to answer.
+ */
+export const launchAgentLogin = (agent: "claude" | "codex") =>
+  invoke<void>("launch_agent_login", { agent })
+
 /** Raw result of an authenticated GET (mirrors Rust `HttpGetResult`). */
 export interface HttpGetResult {
   status: number | null

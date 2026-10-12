@@ -273,7 +273,22 @@ fn run_op(conn: &Connection, req: &WriteReq) -> Result<Vec<String>, String> {
         .settings_config
         .clone()
         .ok_or("missing settings_config")?;
-      let id = unique_id();
+      // Same contract as the native store: a caller that must make the new row
+      // current in the same run supplies the id up front.
+      let id = match req.id.as_deref().filter(|id| !id.trim().is_empty()) {
+        Some(id) => {
+          let taken: i64 = conn
+            .query_row("SELECT COUNT(*) FROM providers WHERE id=?1", [id], |r| {
+              r.get(0)
+            })
+            .map_err(|e| e.to_string())?;
+          if taken > 0 {
+            return Err(format!("a provider with id {id} already exists"));
+          }
+          id.to_string()
+        }
+        None => unique_id(),
+      };
       let sort: i64 = conn
         .query_row(
           "SELECT COALESCE(MAX(sort_index),-1)+1 FROM providers WHERE app_type=?1",
@@ -466,6 +481,26 @@ mod tests {
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].name, "Test");
     assert!(list[0].is_current); // first provider becomes current
+
+    let _ = std::fs::remove_file(&p);
+  }
+
+  #[test]
+  fn add_takes_a_caller_supplied_id_and_refuses_a_taken_one() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (p, _env) = setup_db();
+
+    cc_write_provider(WriteReq {
+      id: Some("wizard-claude".into()),
+      ..add_req("Wizard")
+    })
+    .unwrap();
+    assert_eq!(cc_load_providers().unwrap()[0].id, "wizard-claude");
+    let dup = cc_write_provider(WriteReq {
+      id: Some("wizard-claude".into()),
+      ..add_req("Again")
+    });
+    assert!(dup.unwrap_err().contains("already exists"));
 
     let _ = std::fs::remove_file(&p);
   }

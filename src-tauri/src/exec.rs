@@ -1602,6 +1602,95 @@ pub fn is_process_running(name: String) -> bool {
   }
 }
 
+/// POSIX single-quoting, for a word spliced into an AppleScript `do script`.
+#[cfg(target_os = "macos")]
+fn shell_quote(value: &str) -> String {
+  format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+/// Open the user's terminal on `program args…` in `cwd`, for a command they
+/// have to interact with (a login, an agent session). Never call this with
+/// user-supplied input: every caller passes a fixed, allowlisted program.
+///
+/// - macOS: Terminal.app via AppleScript, brought to the front, in a login
+///   shell — so a binary a vendor installer just put on PATH resolves.
+/// - Windows: Windows Terminal when present, else a `cmd /K` console.
+/// - Linux: the first of `x-terminal-emulator`, `gnome-terminal`, `konsole`.
+pub(crate) fn open_in_terminal(
+  program: &str,
+  args: &[&str],
+  cwd: &std::path::Path,
+) -> Result<(), String> {
+  #[cfg(target_os = "macos")]
+  {
+    let words: Vec<String> = std::iter::once(program)
+      .chain(args.iter().copied())
+      .map(shell_quote)
+      .collect();
+    let command = format!(
+      "cd {} && exec {}",
+      shell_quote(&cwd.to_string_lossy()),
+      words.join(" ")
+    );
+    let escaped = command.replace('\\', "\\\\").replace('"', "\\\"");
+    let status = Command::new("osascript")
+      .args([
+        "-e",
+        &format!("tell application \"Terminal\" to do script \"{escaped}\""),
+        "-e",
+        "tell application \"Terminal\" to activate",
+      ])
+      .stdin(Stdio::null())
+      .stdout(Stdio::null())
+      .stderr(Stdio::null())
+      .status()
+      .map_err(|error| error.to_string())?;
+    status
+      .success()
+      .then_some(())
+      .ok_or_else(|| format!("could not open {program} in Terminal"))
+  }
+  #[cfg(windows)]
+  {
+    if on_path("wt") {
+      let mut wt = Command::new("wt");
+      wt.args(["-d", cwd.to_string_lossy().as_ref(), program])
+        .args(args);
+      wt.spawn().map_err(|e| e.to_string())?;
+    } else {
+      Command::new("cmd")
+        .args(["/c", "start", "", "cmd", "/K", program])
+        .args(args)
+        .current_dir(cwd)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+  }
+  #[cfg(all(not(windows), not(target_os = "macos")))]
+  {
+    for terminal in ["x-terminal-emulator", "gnome-terminal", "konsole"] {
+      if !on_path(terminal) {
+        continue;
+      }
+      let mut command = Command::new(terminal);
+      command.current_dir(cwd);
+      match terminal {
+        "gnome-terminal" => {
+          command.arg("--");
+        }
+        _ => {
+          command.arg("-e");
+        }
+      }
+      command.arg(program).args(args);
+      command.spawn().map_err(|e| e.to_string())?;
+      return Ok(());
+    }
+    Err("no supported terminal application found".into())
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
