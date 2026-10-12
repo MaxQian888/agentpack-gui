@@ -590,6 +590,7 @@ export function CcConnectSection() {
             statusLabels={{
               done: t.shell.setupDone,
               current: t.shell.setupCurrent,
+              todo: t.shell.setupTodo,
               waiting: t.shell.setupWaiting,
               blocked: t.shell.setupBlocked,
             }}

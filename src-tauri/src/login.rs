@@ -180,6 +180,27 @@ fn login_command(agent: &str) -> Option<(&'static str, &'static [&'static str])>
   }
 }
 
+/// The command that opens each agent for a conversation — the Getting started
+/// checklist's "send your first message". The same fixed-table rule as
+/// `login_command`.
+fn agent_command(agent: &str) -> Option<&'static str> {
+  match agent {
+    "claude" => Some("claude"),
+    "codex" => Some("codex"),
+    _ => None,
+  }
+}
+
+/// Open the user's terminal on an agent, in their home directory, so the
+/// first message is one keystroke away. Like `launch_agent_login`, the binary
+/// is not checked against PATH first.
+#[tauri::command(async)]
+pub fn launch_agent(agent: String) -> Result<(), String> {
+  let program = agent_command(&agent).ok_or_else(|| format!("unknown agent: {agent}"))?;
+  let home = dirs::home_dir().ok_or("no home dir")?;
+  crate::exec::open_in_terminal(program, &[], &home)
+}
+
 /// Open the user's terminal on an agent's sign-in. Returns once the terminal
 /// has been asked to open; whether the user finished signing in is what
 /// `login_status` answers.
@@ -310,6 +331,13 @@ mod tests {
     assert_eq!(login_command("opencode"), None);
     assert_eq!(login_command("claude; rm -rf ~"), None);
     assert!(launch_agent_login("sh".into()).is_err());
+  }
+  #[test]
+  fn only_the_two_agents_can_be_opened() {
+    assert_eq!(agent_command("claude"), Some("claude"));
+    assert_eq!(agent_command("codex"), Some("codex"));
+    assert_eq!(agent_command("opencode"), None);
+    assert_eq!(agent_command("claude; rm -rf ~"), None);
   }
 
   #[test]

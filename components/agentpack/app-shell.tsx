@@ -747,6 +747,9 @@ function ShellBody() {
       const patch = {
         onboarded: true,
         onboardingProgress: null,
+        // A newcomer's machine: the checklist shows them the whole path,
+        // ticked rows and extras included, not only what's missing.
+        startedWithWizard: true,
         ...(ghMirrorPrefix ? { ghMirrorPrefix } : {}),
       }
       setSettings(patch)
@@ -755,11 +758,14 @@ function ShellBody() {
     [setSettings]
   )
 
-  // The tour drives section navigation itself; when it ends, return home.
+  // The tour drives section navigation itself; when it ends, return home —
+  // where the checklist's tour row now reads as done, however it was closed.
   const endTour = useCallback(() => {
     setTourActive(false)
+    setSettings({ tourSeen: true })
+    void saveSettings({ tourSeen: true })
     navigate("overview", "dashboard")
-  }, [setTourActive, navigate])
+  }, [setTourActive, setSettings, navigate])
 
   const renderSection = () => {
     switch (section) {

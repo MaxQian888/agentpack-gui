@@ -58,7 +58,7 @@ jest.mock("@/lib/tauri/settings", () => ({
     lastCheckAt: null,
     onboarded: false,
     onboardingProgress: null,
-    quickStartDismissed: true,
+    gettingStartedDismissed: true,
   })),
   saveSettings: jest.fn(async () => undefined),
   DEFAULT_SETTINGS: {
@@ -67,7 +67,7 @@ jest.mock("@/lib/tauri/settings", () => ({
     lastCheckAt: null,
     onboarded: false,
     onboardingProgress: null,
-    quickStartDismissed: false,
+    gettingStartedDismissed: false,
   },
 }))
 // Install now really executes; the executor is stubbed so nothing spawns.
@@ -140,7 +140,7 @@ const settingsWith = (patch: object) => ({
   lastCheckAt: null,
   onboarded: false,
   onboardingProgress: null,
-  quickStartDismissed: true,
+  gettingStartedDismissed: true,
   ...patch,
 })
 
@@ -184,7 +184,12 @@ it("Install now marks onboarded, runs, and leaves the wizard on its result", asy
   await userEvent.click(install)
 
   await waitFor(() =>
-    expect(mockedSave).toHaveBeenCalledWith({ onboarded: true, onboardingProgress: null })
+    expect(mockedSave).toHaveBeenCalledWith({
+      onboarded: true,
+      onboardingProgress: null,
+      // What makes the checklist show this newcomer the whole path.
+      startedWithWizard: true,
+    })
   )
   expect(await screen.findByText(w.finishedIntro)).toBeInTheDocument()
   await userEvent.click(screen.getByRole("button", { name: w.done }))

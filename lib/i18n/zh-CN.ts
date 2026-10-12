@@ -82,6 +82,8 @@ export const zhCN = {
     installNow: "立即安装",
     installingIntro: "正在安装。可以关掉这个窗口 —— 安装会在侧边面板里继续。",
     finishedIntro: "结果如下。",
+    checklistPointer:
+      "总览页的「开始使用」清单会记着还没做完的事 —— 登录、第一条消息，以及其他可选项。",
     done: "完成",
   },
 
@@ -95,117 +97,37 @@ export const zhCN = {
     done: "完成",
     progress: (i: number, n: number) => `${i} / ${n}`,
     steps: {
-      nav: {
-        title: "七个聚焦工作区",
-        body: "左侧导航将个人账户与管理员运营分开，并按机器状态、安装修复、能力管理、用量与设置分组。",
+      overview: {
+        title: "总览",
+        body: "这台机器现在的样子 —— 装了什么、哪里需要处理，以及你的「开始使用」清单。每条发现都直达能修好它的页面。",
       },
-      dashboard: {
-        title: "仪表盘",
-        body: "一眼看清装了什么、配了什么、哪里需要处理 —— 每条发现都直达能修好它的页面。",
+      install: {
+        title: "安装与修复",
+        body: "快速配置套餐、助手依赖的运行环境、助手本身、网络线路，以及清理各个 CLI 留下的几个 GB 的数据。",
       },
-      history: {
-        title: "对话历史",
-        body: "回看 Claude Code、Codex、OpenCode 与 Pi 的全部历史会话，并算清每一次对话真正花了多少钱。",
+      capabilities: {
+        title: "能力",
+        body: "助手能用到的东西：教它做事的技能、给它工具的 MCP 服务、你的账号与中转、Pi 和 cc-connect。",
       },
-      "management-overview": {
-        title: "账号与额度总览",
-        body: "查看实例健康、直属账号关系、额度风险和待处理告警，局部失败数据不会被错误合并。",
-      },
-      accounts: {
-        title: "账号中心",
-        body: "管理主账号与直属子账号的完整生命周期，敏感变更必须先预览并填写审计原因。",
-      },
-      quota: {
-        title: "额度中心",
-        body: "通过服务端账本完成转账、批次、撤销和调整，并配置自动化额度策略。",
-      },
-      analytics: {
-        title: "用量洞察",
-        body: "并列查看权威计费日志和明确标注的本地 CLI 估算，并按当前口径导出。",
-      },
-      audit: {
-        title: "审计与告警",
-        body: "追踪不可变的前后差异事件、管理告警规则，并确认每次通知结果。",
-      },
-      "my-account": {
+      account: {
         title: "我的账户",
-        body: "登录个人 more-token 套件，仅管理自己的资料与账户状态。",
+        body: "你自己的 more-token 资料、余额、用量、模型与安全 —— 不包含任何管理员操作。",
       },
-      "my-balance": {
-        title: "我的余额",
-        body: "查看自己的可用余额与个人账本，不暴露任何管理员操作。",
+      management: {
+        title: "账号与额度",
+        body: "给管理员用：账号、额度转账与策略、用量洞察、审计与告警。",
       },
-      "my-usage": {
-        title: "我的用量",
-        body: "按所选时间范围查看只属于当前账户的权威计费记录。",
+      usage: {
+        title: "用量",
+        body: "Claude Code、Codex、OpenCode 与 Pi 的全部历史会话，以及你的 token 花了多少钱。",
       },
-      "my-models": {
-        title: "模型广场",
-        body: "查看当前账户可用的模型、计费方式、分组与端点类型。",
-      },
-      "my-security": {
-        title: "我的安全",
-        body: "修改密码、查看和撤销桌面会话，或发起账户销户。",
-      },
-      presets: {
-        title: "套餐",
-        body: "第一次用？选一套组合，一键预填一批合理的工具。",
-      },
-      environment: {
-        title: "运行环境",
-        body: "终端、Node、Python、Bun 和 uv —— 助手依赖的工具。缺什么 agentpack 会帮你装上。",
-      },
-      clis: {
-        title: "CLI",
-        body: "安装或升级你在终端里运行的 AI 助手 —— Claude Code、Codex、cc-switch。",
-      },
-      skills: {
-        title: "技能",
-        body: "添加可复用的做事套路，教 AI 把常见工程任务做好。",
-      },
-      mcp: {
-        title: "MCP 服务",
-        body: "用插件给 AI 增加外部能力 —— 联网、记忆、GitHub 等等。",
-      },
-      pi: {
-        title: "Pi",
-        body: "安全管理 Pi Packages、项目资源、会话分支与 Provider 认证。",
-      },
-      network: {
-        title: "网络",
-        body: "自动发现并应用代理，或为 npm、pip 等选择更快的镜像源。",
-      },
-      cleanup: {
-        title: "环境清理",
-        body: "各个 CLI 会把每一份聊天记录、缓存和日志永久留着。这里能看清它们占了多少，并把不需要的清掉——而且可以还原。",
-      },
-      ccswitch: {
-        title: "cc-switch",
-        body: "保存多套 API 供应商/密钥，点一下就切换当前使用的那套。",
-      },
-      ccconnect: {
-        title: "cc-connect",
-        body: "把本地的编码助手接到聊天软件 —— 飞书、Slack、Telegram —— 人不在电脑前也能用。",
-      },
-      preferences: {
-        title: "偏好设置",
-        body: "主题、语言、界面缩放，以及 agentpack 启动时打开哪一页 —— 都在这里。",
-      },
-      config: {
-        title: "环境档案与备份",
-        body: "把配置存成档案，或整台机器导出，换个地方也能原样重建。",
-      },
-      recovery: {
-        title: "恢复点",
-        body: "这个应用留下过的每一条退路——配置快照、Skill 备份、被隔离的清理批次——并且在某个备份比它要覆盖的文件更旧时给出警告。",
-      },
-      about: {
-        title: "关于与更新",
-        body: "你正在用哪个版本，以及怎么升级到下一个。",
+      settings: {
+        title: "设置",
+        body: "偏好、环境档案与备份、各 CLI 自己的配置文件、所有恢复点，以及你正在用的版本。",
       },
       command: {
         title: "一个入口，去任何地方",
-        body: "按 ⌘K（Windows / Linux 上是 Ctrl+K）就能跳到任意任务分区，或直接执行一个应用操作，不用到处翻。",
+        body: "按 ⌘K（Windows / Linux 上是 Ctrl+K）就能跳到任意页面，或直接执行一个应用操作，不用到处翻。",
       },
       review: {
         title: "不点确认，就不会写盘",
@@ -214,16 +136,54 @@ export const zhCN = {
     } as Record<string, { title: string; body: string }>,
   },
 
-  /** 仪表盘「快速开始」卡片 —— 给跳过向导的用户留的引导入口。 */
-  quickStart: {
-    title: "快速开始",
-    intro: "第一次用 agentpack？跟着引导，几步就能装好你的 AI 编程工具。",
-    stepPick: "选套餐",
-    stepPreview: "逐步审查",
-    stepInstall: "应用，随时可回退",
-    openGuide: "打开引导",
-    dismiss: "不再显示",
+  /** 总览页「开始使用」清单。每一项的勾都来自本机的实际测量 —— 没有一项是手动勾选的。 */
+  gettingStarted: {
+    title: "开始使用",
+    hint: "每一项在本机实际完成后会自动打勾。",
+    progress: (done: number, total: number) => `已完成 ${done} / ${total}`,
+    hide: "隐藏",
     networkBlocked: "当前网络无法直连外网 —— 先把网络配好 →",
+    checking: "检测中…",
+    pendingFor: (agents: string) => `尚未完成：${agents}`,
+    install: {
+      title: "安装一个编程助手",
+      body: "Claude Code 或 Codex，用官方安装器安装。引导会问你装哪个、怎么连到模型。",
+      action: "打开引导",
+    },
+    connect: {
+      title: "把它连到模型",
+      body: "在终端里用你的订阅登录，或者使用 API key、中转。",
+      signIn: (agent: string) => `登录 ${agent}`,
+      waiting: "等待登录完成…",
+      useKey: "使用 key 或中转",
+    },
+    firstMessage: {
+      title: "发出第一条消息",
+      body: "在终端里打开助手，问它点什么。对话写入本机后这一项会自动打勾。",
+      open: (command: string) => `在终端里打开 ${command}`,
+    },
+    manual: "没能打开终端，请自己运行：",
+    copy: "复制",
+    keyedServer: {
+      title: "添加需要 key 的 MCP 服务",
+      body: "Context7（最新的库文档）和 GitHub 需要你自己的 key，所以首次配置没有装它们。",
+      action: "选择服务",
+    },
+    skills: {
+      title: "添加技能",
+      body: "教助手把常见工程任务做好的做事套路。",
+      action: "浏览技能",
+    },
+    desktopApp: {
+      title: "添加桌面应用",
+      body: "Claude 和 Codex 都有自己的窗口版，读取同一份配置。",
+      action: "查看应用",
+    },
+    tour: {
+      title: "逛一圈功能导览",
+      body: "九站：agentpack 每个部分是做什么的。",
+      action: "开始导览",
+    },
   },
 
   /** 快速安装弹窗 —— 从 header「执行 ▾」菜单打开的一页式选择面板，不用逐个页面翻。 */
@@ -2927,6 +2887,7 @@ export const zhCN = {
     /** SetupSteps 的四种状态，供读屏软件使用——视觉上只有颜色和图标。 */
     setupDone: "已完成",
     setupCurrent: "下一步做这个",
+    setupTodo: "待办",
     setupWaiting: "等待上一步完成",
     setupBlocked: "需要处理",
     add: "添加",
@@ -3404,8 +3365,8 @@ export const zhCN = {
     startupDefault: "总览（默认）",
     autoCheckLabel: "启动时检查更新",
     autoCheckHint: "启动时向发布源发一次请求。",
-    quickStartLabel: "显示快速开始卡片",
-    quickStartHint: "总览页的安装快捷入口，在尚未装任何助手时显示。",
+    gettingStartedLabel: "显示「开始使用」清单",
+    gettingStartedHint: "总览页上还没做完的事 —— 安装、连接、第一条消息。",
 
     systemTitle: "这台机器",
     hotkeyLabel: "全局快捷键",

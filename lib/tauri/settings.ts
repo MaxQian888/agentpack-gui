@@ -53,12 +53,12 @@ export interface AppSettings {
    */
   onboardingProgress: OnboardingProgress | null
   /**
-   * Whether the user permanently hid the dashboard "quick start" card via its
-   * "don't show again". Independent of `onboarded`: the card is a lingering
-   * safety net for anyone who skipped the wizard, until they set up an assistant
-   * or dismiss it here.
+   * Whether the user hid the Overview's Getting started checklist. Independent
+   * of `onboarded`: the checklist carries whatever the first run left undone,
+   * until every item it shows is measured done or the user hides it here.
+   * Preferences can bring it back.
    */
-  quickStartDismissed: boolean
+  gettingStartedDismissed: boolean
   /**
    * Optional URL prefix prepended to GitHub tarball downloads (e.g.
    * `https://gh-proxy.com/`) for networks where github.com is unreachable.
@@ -120,6 +120,16 @@ export interface AppSettings {
    * the rest: a settings object written before it simply has no override.
    */
   osOverride?: OS | null
+  /**
+   * The first-run wizard's Install now was pressed on this install. Such a
+   * machine is a newcomer's, so the Getting started checklist shows its whole
+   * path — ticked rows and the optional extras included — rather than only
+   * what an existing user is missing. Optional for the same reason as
+   * `osOverride`.
+   */
+  startedWithWizard?: boolean
+  /** The guided tour has been opened and closed once, which ticks its checklist row. */
+  tourSeen?: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -128,7 +138,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lastCheckAt: null,
   onboarded: false,
   onboardingProgress: null,
-  quickStartDismissed: false,
+  gettingStartedDismissed: false,
   ghMirrorPrefix: null,
   skillRepoSources: [],
   proxy: null,

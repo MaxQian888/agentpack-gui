@@ -51,8 +51,8 @@ export interface BundleSource {
  * exported by default just because nobody remembered to exclude it.
  *
  * Omitted on purpose: `skippedVersion`, `lastCheckAt`, `onboarded`,
- * `onboardingProgress` and `quickStartDismissed` describe this install's
- * history, not its configuration.
+ * `onboardingProgress`, `gettingStartedDismissed`, `startedWithWizard` and
+ * `tourSeen` describe this install's history, not its configuration.
  */
 export const EXPORTED_SETTINGS_KEYS = [
   "autoCheckUpdates",

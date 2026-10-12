@@ -21,7 +21,12 @@ it("parseClaudeRelay reads back what a provider sync wrote", () => {
 it("parseClaudeRelay tolerates empty / malformed input", () => {
   expect(parseClaudeRelay("")).toEqual({ hasToken: false })
   expect(parseClaudeRelay("{not json")).toEqual({ hasToken: false })
-  expect(parseClaudeRelay("{}")).toEqual({ hasToken: false })
+  expect(parseClaudeRelay("{}")).toEqual({ hasToken: false, hasApiKey: false })
+})
+
+it("parseClaudeRelay tells an Anthropic key apart from a relay token", () => {
+  const out = parseClaudeRelay(JSON.stringify({ env: { ANTHROPIC_API_KEY: "sk-ant" } }))
+  expect(out).toEqual({ hasToken: false, hasApiKey: true })
 })
 
 it("parseCodexConfig lists mcp servers and detects relay provider", () => {

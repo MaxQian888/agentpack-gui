@@ -7,12 +7,12 @@ jest.mock("@/lib/tauri/settings", () => ({
     skippedVersion: null,
     lastCheckAt: null,
     onboarded: false,
-    quickStartDismissed: false,
+    gettingStartedDismissed: false,
   },
 }))
 
 import { useCallback, useEffect, useState } from "react"
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { act, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import * as api from "@/lib/tauri/commands"
 import { DEFAULT_SETTINGS, saveSettings } from "@/lib/tauri/settings"
@@ -75,10 +75,19 @@ beforeEach(() => {
   ;(api.listSkills as jest.Mock).mockResolvedValue([])
   ;(api.providerLoad as jest.Mock).mockResolvedValue([])
   ;(api.pathExists as jest.Mock).mockResolvedValue(false)
+  // Unanswered unless a test is about it: a login read landing after a
+  // synchronous test has finished is an update outside act().
+  ;(api.loginStatus as jest.Mock).mockReturnValue(new Promise(() => {}))
 })
 
 // Mirrors how ShellBody owns the scan: run it once and feed it down as props.
-function DashboardHarness({ onNavigate }: { onNavigate: (key: SectionKey) => void }) {
+function DashboardHarness({
+  onNavigate,
+  history = { data: { sessions: [], errors: [] }, progress: null },
+}: {
+  onNavigate: (key: SectionKey) => void
+  history?: React.ComponentProps<typeof DashboardSection>["history"]
+}) {
   const paths = useAppStore((s) => s.paths)
   const [scan, setScan] = useState<DashboardScan | null>(null)
   const [scanning, setScanning] = useState(false)
@@ -109,19 +118,19 @@ function DashboardHarness({ onNavigate }: { onNavigate: (key: SectionKey) => voi
       scanning={scanning}
       rescan={rescan}
       onNavigate={onNavigate}
-      // The spend card has its own suite; here it only needs to be a scanned,
+      // The spend card has its own suite; by default it only needs a scanned,
       // empty history so it renders its terminal state and not a skeleton.
-      history={{ data: { sessions: [], errors: [] }, progress: null }}
+      history={history}
     />
   )
 }
 
-function renderDashboard() {
+function renderDashboard(history?: React.ComponentProps<typeof DashboardSection>["history"]) {
   const onNavigate = jest.fn()
   render(
     <I18nProvider>
       <RunnerHarness autoApply>
-        <DashboardHarness onNavigate={onNavigate} />
+        <DashboardHarness onNavigate={onNavigate} history={history} />
       </RunnerHarness>
     </I18nProvider>
   )
@@ -350,6 +359,8 @@ it("says everything is fine when there is nothing to fix", async () => {
 })
 
 it("names the missing agent as the blocking finding on a bare machine", async () => {
+  // With the checklist hidden — while it is up, it carries this finding itself.
+  useAppStore.setState({ settings: { ...DEFAULT_SETTINGS, gettingStartedDismissed: true } })
   renderDashboard()
   await screen.findByText("my-custom")
   const list = screen.getByRole("region", { name: en.diagnostics.title })
@@ -377,49 +388,163 @@ it("truncates a long list and hands off to the owning section", async () => {
   expect(onNavigate).toHaveBeenCalledWith("mcp")
 })
 
-it("on a fresh setup, offers the wizard once — from the finding, not twice", async () => {
-  renderDashboard()
-  // Nothing before the machine is read: an empty detection list is not "no agent".
-  expect(screen.queryByText(en.quickStart.title)).not.toBeInTheDocument()
-  await screen.findByText("my-custom") // flush the async scan
-  expect(screen.getByText(en.diagnostics.noAgentTitle)).toBeInTheDocument()
-  expect(screen.queryByText(en.quickStart.title)).not.toBeInTheDocument()
-  await userEvent.click(screen.getByRole("button", { name: en.diagnostics.setUp }))
-  expect(useAppStore.getState().onboardingOpen).toBe(true)
+const g = en.gettingStarted
+const signedOut = { signedIn: false, mode: null, plan: null, expiresAt: null, source: "x" }
+const loginReport = (claude: boolean) => ({
+  claude: { ...signedOut, signedIn: claude },
+  codex: signedOut,
+  opencode: signedOut,
 })
+const claudeSession = {
+  data: {
+    sessions: [
+      {
+        id: "s1",
+        source: "claude" as const,
+        title: "hi",
+        cwd: "/h",
+        projectName: "h",
+        model: "claude-sonnet-4-5",
+        models: ["claude-sonnet-4-5"],
+        messageCount: 2,
+        usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 2 },
+        cost: null,
+        startedAt: 0,
+        updatedAt: 0,
+        path: "/h/s1.jsonl",
+        gitBranch: null,
+        parentId: null,
+        agentName: null,
+        durationMs: null,
+      },
+    ],
+    errors: [],
+  },
+  progress: null,
+}
 
-it("shows neither the card nor the finding once an assistant is installed", async () => {
-  useAppStore.setState({ detections: { "claude-code": { installed: true, version: "1.0.0" } } })
-  renderDashboard()
-  await screen.findByText("my-custom") // flush the async scan
-  expect(screen.queryByText(en.quickStart.title)).not.toBeInTheDocument()
-  expect(screen.queryByText(en.diagnostics.noAgentTitle)).not.toBeInTheDocument()
-})
+describe("Getting started", () => {
+  beforeEach(() => {
+    ;(api.loginStatus as jest.Mock).mockResolvedValue(loginReport(false))
+    ;(api.launchAgentLogin as jest.Mock).mockResolvedValue(undefined)
+    ;(api.launchAgent as jest.Mock).mockResolvedValue(undefined)
+  })
 
-it("counts a desktop-only setup as an installed assistant", async () => {
-  // The wizard's "in a window" path installs only the desktop app.
-  useAppStore.setState({ detections: { "claude-desktop": { installed: true } } })
-  renderDashboard()
-  await screen.findByText("my-custom") // flush the async scan
-  expect(screen.queryByText(en.quickStart.title)).not.toBeInTheDocument()
-  expect(screen.queryByText(en.diagnostics.noAgentTitle)).not.toBeInTheDocument()
-})
-
-describe("the quick-start card, in web mode", () => {
-  beforeEach(() => (isTauri as jest.Mock).mockReturnValue(false))
-
-  it("is the way into the wizard where nothing can be measured", async () => {
+  it("on a fresh machine, offers the wizard once — from the checklist, not the finding too", async () => {
     renderDashboard()
-    await userEvent.click(await screen.findByRole("button", { name: en.quickStart.openGuide }))
+    // Nothing before the machine is read: an empty detection list is not "no agent".
+    expect(screen.queryByText(g.title)).not.toBeInTheDocument()
+    await screen.findByText("my-custom") // flush the async scan
+    expect(screen.getByText(g.title)).toBeInTheDocument()
+    expect(screen.queryByText(en.diagnostics.noAgentTitle)).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: g.install.action }))
     expect(useAppStore.getState().onboardingOpen).toBe(true)
   })
 
-  it("hides for good on Don't show again", async () => {
+  it("hands the finding back once the checklist is hidden", async () => {
+    useAppStore.setState({ settings: { ...DEFAULT_SETTINGS, gettingStartedDismissed: true } })
     renderDashboard()
-    await userEvent.click(await screen.findByRole("button", { name: en.quickStart.dismiss }))
-    expect(screen.queryByText(en.quickStart.title)).not.toBeInTheDocument()
-    expect(useAppStore.getState().settings.quickStartDismissed).toBe(true)
-    expect(saveSettings).toHaveBeenCalledWith({ quickStartDismissed: true })
+    await screen.findByText("my-custom")
+    expect(screen.queryByText(g.title)).not.toBeInTheDocument()
+    expect(screen.getByText(en.diagnostics.noAgentTitle)).toBeInTheDocument()
+  })
+
+  it("never appears for an existing user whose agent already answers", async () => {
+    useAppStore.setState({ detections: { "claude-code": { installed: true, version: "1.0.0" } } })
+    renderDashboard(claudeSession)
+    await screen.findByText("my-custom")
+    expect(screen.queryByText(g.title)).not.toBeInTheDocument()
+    expect(screen.queryByText(en.diagnostics.noAgentTitle)).not.toBeInTheDocument()
+  })
+
+  it("counts a desktop-only setup as an installed agent", async () => {
+    useAppStore.setState({ detections: { "claude-desktop": { installed: true } } })
+    renderDashboard(claudeSession)
+    await screen.findByText("my-custom")
+    expect(screen.queryByText(g.install.title)).not.toBeInTheDocument()
+    expect(screen.queryByText(en.diagnostics.noAgentTitle)).not.toBeInTheDocument()
+  })
+
+  describe("for a newcomer the wizard set up", () => {
+    beforeEach(() => {
+      useAppStore.setState({
+        detections: { "claude-code": { installed: true, version: "1.0.0" } },
+        settings: { ...DEFAULT_SETTINGS, startedWithWizard: true },
+      })
+    })
+
+    it("signs in through the agent's own command, then ticks it from login_status", async () => {
+      renderDashboard()
+      const signIn = await screen.findByRole("button", {
+        name: g.connect.signIn(en.welcome.agentClaude),
+      })
+      ;(api.loginStatus as jest.Mock).mockResolvedValue(loginReport(true))
+      await userEvent.click(signIn)
+      expect(api.launchAgentLogin).toHaveBeenCalledWith("claude")
+      // Polled until it lands; then the next row takes the accent.
+      const open = await screen.findByRole(
+        "button",
+        { name: g.firstMessage.open("claude") },
+        { timeout: 3000 }
+      )
+      await userEvent.click(open)
+      expect(api.launchAgent).toHaveBeenCalledWith("claude")
+    })
+
+    it("offers the command to copy when no terminal opens", async () => {
+      ;(api.launchAgentLogin as jest.Mock).mockRejectedValue(new Error("no terminal"))
+      renderDashboard()
+      await userEvent.click(
+        await screen.findByRole("button", { name: g.connect.signIn(en.welcome.agentClaude) })
+      )
+      expect(await screen.findByText(g.manual)).toBeInTheDocument()
+      expect(screen.getByText("claude", { selector: "code" })).toBeInTheDocument()
+    })
+
+    it("sends a key or relay to Accounts & relays instead", async () => {
+      const { onNavigate } = renderDashboard()
+      await userEvent.click(await screen.findByRole("button", { name: g.connect.useKey }))
+      expect(onNavigate).toHaveBeenCalledWith("ccswitch")
+    })
+
+    it("re-reads the history when the window comes back, while it waits on a first message", async () => {
+      ;(api.loginStatus as jest.Mock).mockResolvedValue(loginReport(true))
+      const retry = jest.fn()
+      renderDashboard({ data: { sessions: [], errors: [] }, progress: null, retry })
+      await screen.findByRole("button", { name: g.firstMessage.open("claude") })
+      // Focus also re-reads the login, so let that land inside act.
+      await act(async () => {
+        window.dispatchEvent(new Event("focus"))
+      })
+      expect(retry).toHaveBeenCalled()
+    })
+
+    it("offers the extras once the agent has answered, and starts the tour from the last row", async () => {
+      ;(api.loginStatus as jest.Mock).mockResolvedValue(loginReport(true))
+      const { onNavigate } = renderDashboard(claudeSession)
+      await userEvent.click(await screen.findByRole("button", { name: g.skills.action }))
+      expect(onNavigate).toHaveBeenCalledWith("skills")
+      await userEvent.click(screen.getByRole("button", { name: g.tour.action }))
+      expect(useAppStore.getState().tourActive).toBe(true)
+    })
+  })
+
+  describe("in web mode", () => {
+    beforeEach(() => (isTauri as jest.Mock).mockReturnValue(false))
+
+    it("is the way into the wizard where nothing can be measured", async () => {
+      renderDashboard()
+      await userEvent.click(await screen.findByRole("button", { name: g.install.action }))
+      expect(useAppStore.getState().onboardingOpen).toBe(true)
+    })
+
+    it("hides for good on Hide", async () => {
+      renderDashboard()
+      await userEvent.click(await screen.findByRole("button", { name: g.hide }))
+      expect(screen.queryByText(g.title)).not.toBeInTheDocument()
+      expect(useAppStore.getState().settings.gettingStartedDismissed).toBe(true)
+      expect(saveSettings).toHaveBeenCalledWith({ gettingStartedDismissed: true })
+    })
   })
 })
 
