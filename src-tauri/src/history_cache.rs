@@ -25,7 +25,9 @@ use crate::history::{SessionSeries, SessionSummary};
 /// same story, unchanged files holding stale (null) values.
 /// v5 deduped Claude assistant turns by `(message.id, requestId)`; every cached
 /// Claude summary before it over-counted tokens and messages by roughly 2.4×.
-pub const CACHE_VERSION: u32 = 7;
+/// v8 read Codex's `item_completed` turns: every cached Codex summary written
+/// since Codex moved to them had `messageCount: 0` and an unnamed fallback title.
+pub const CACHE_VERSION: u32 = 8;
 
 /// Bump when the *series* shape or its extracted values change. Versioned
 /// separately from [`CACHE_VERSION`] so a change to one doesn't throw away the

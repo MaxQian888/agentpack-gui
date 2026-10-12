@@ -215,18 +215,22 @@ impl CodexAcc {
         }
       }
       "event_msg" => match s(payload, "type") {
-        Some("user_message") => {
-          self.count += 1;
-          if self.title.is_none() {
-            if let Some(msg) = s(payload, "message") {
-              let msg = msg.trim();
-              if !msg.is_empty() && !msg.starts_with('#') && !msg.starts_with('<') {
-                self.title = Some(truncate_title(msg));
-              }
+        Some("user_message") => self.user_message(s(payload, "message")),
+        Some("agent_message") => self.count += 1,
+        // Current Codex writes each turn as a completed item instead of the two
+        // events above, which only older rollouts carry. Counting the events
+        // alone read every session written since as having no messages at all.
+        Some("item_completed") => {
+          let item = payload.get("item").unwrap_or(&Value::Null);
+          match s(item, "type") {
+            Some("UserMessage") => {
+              let text = codex_content_text(item.get("content").unwrap_or(&Value::Null));
+              self.user_message(Some(&text));
             }
+            Some("AgentMessage") => self.count += 1,
+            _ => {}
           }
         }
-        Some("agent_message") => self.count += 1,
         Some("token_count") => {
           if let Some(info) = payload.get("info").filter(|i| !i.is_null()) {
             if let Some(us) = codex_token_usage(info) {
@@ -244,6 +248,19 @@ impl CodexAcc {
         _ => {}
       },
       _ => {}
+    }
+  }
+
+  /// One message the user typed; the first that isn't injected context
+  /// (instructions open with `#`, environment blocks with `<`) names the session.
+  fn user_message(&mut self, msg: Option<&str>) {
+    self.count += 1;
+    if self.title.is_none() {
+      if let Some(msg) = msg.map(str::trim) {
+        if !msg.is_empty() && !msg.starts_with('#') && !msg.starts_with('<') {
+          self.title = Some(truncate_title(msg));
+        }
+      }
     }
   }
 
@@ -408,6 +425,23 @@ pub(super) fn codex_detail(
     cur.as_mut().unwrap()
   }
 
+  fn user(messages: &mut Vec<Message>, i: usize, ts: Option<i64>, text: &str) {
+    let mut m = Message::new(format!("u{i}"), "user");
+    m.ts = ts;
+    m.parts.push(Part::text("text", text.to_string()));
+    messages.push(m);
+  }
+  /// A spawned agent's lifecycle. The old event and the new item carry the
+  /// same `kind` / `agent_path` fields, so both read through here.
+  fn sub_agent(cur: &mut Option<Message>, i: usize, ts: Option<i64>, record: &Value) {
+    assistant(cur, format!("a{i}"), ts).parts.push(Part {
+      kind: "subagentActivity".into(),
+      name: s(record, "kind").map(String::from),
+      agent: s(record, "agent_path").map(String::from),
+      ..Part::default()
+    });
+  }
+
   for (i, line) in lines.iter().enumerate() {
     let ty = s(line, "type").unwrap_or("");
     let ts = s(line, "timestamp").and_then(iso_to_epoch_ms);
@@ -417,10 +451,27 @@ pub(super) fn codex_detail(
       ("event_msg", "user_message") => {
         flush(&mut cur, &mut messages);
         if let Some(text) = s(payload, "message") {
-          let mut m = Message::new(format!("u{i}"), "user");
-          m.ts = ts;
-          m.parts.push(Part::text("text", text.to_string()));
-          messages.push(m);
+          user(&mut messages, i, ts, text);
+        }
+      }
+      // Current Codex's form of the user's turn and of agent lifecycle. Its
+      // `AgentMessage` items are not read here: each mirrors a
+      // `response_item` assistant message (same text, one for one), which is
+      // already rendered below — reading both would print every reply twice.
+      // The `response_item` user messages are not the user's either: they carry
+      // injected context (plugin lists, skills, AGENTS.md) beside the real ask.
+      ("event_msg", "item_completed") => {
+        let item = payload.get("item").unwrap_or(&Value::Null);
+        match s(item, "type") {
+          Some("UserMessage") => {
+            flush(&mut cur, &mut messages);
+            let text = codex_content_text(item.get("content").unwrap_or(&Value::Null));
+            if !text.trim().is_empty() {
+              user(&mut messages, i, ts, &text);
+            }
+          }
+          Some("SubAgentActivity") => sub_agent(&mut cur, i, ts, item),
+          _ => {}
         }
       }
       ("event_msg", "agent_message") => {
@@ -506,14 +557,7 @@ pub(super) fn codex_detail(
       }
       // Lifecycle of a spawned agent, which lives in its own rollout file — this
       // is the only trace of it in the thread that started it.
-      ("event_msg", "sub_agent_activity") => {
-        assistant(&mut cur, format!("a{i}"), ts).parts.push(Part {
-          kind: "subagentActivity".into(),
-          name: s(payload, "kind").map(String::from),
-          agent: s(payload, "agent_path").map(String::from),
-          ..Part::default()
-        });
-      }
+      ("event_msg", "sub_agent_activity") => sub_agent(&mut cur, i, ts, payload),
       ("response_item", "web_search_call") => {
         let q = payload
           .get("action")
@@ -579,6 +623,76 @@ mod tests {
         },
       }),
     )
+  }
+
+  /// A completed item, as current Codex writes each turn.
+  fn completed(item: Value) -> Value {
+    event(
+      "event_msg",
+      json!({ "type": "item_completed", "item": item }),
+    )
+  }
+  fn user_item(text: &str) -> Value {
+    completed(json!({ "type": "UserMessage", "content": [{ "type": "text", "text": text }] }))
+  }
+  fn agent_item(text: &str) -> Value {
+    completed(json!({ "type": "AgentMessage", "content": [{ "type": "Text", "text": text }] }))
+  }
+  fn assistant_response(text: &str) -> Value {
+    event(
+      "response_item",
+      json!({ "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": text }] }),
+    )
+  }
+
+  /// Current Codex records turns only as `item_completed`; counting the old
+  /// events alone read every session since as empty.
+  #[test]
+  fn counts_and_names_the_item_completed_turns_current_codex_writes() {
+    let p = parse(vec![
+      user_item("# AGENTS.md instructions"),
+      user_item("fix the login bug"),
+      agent_item("On it."),
+      assistant_response("On it."),
+      completed(json!({ "type": "Reasoning" })),
+    ]);
+    assert_eq!(p.summary.message_count, 3);
+    assert_eq!(p.summary.title, "fix the login bug");
+  }
+
+  #[test]
+  fn shows_the_users_turns_and_each_reply_once_in_a_current_transcript() {
+    let lines = vec![
+      // Injected context rides in as a response_item "user" message; not the user's words.
+      event(
+        "response_item",
+        json!({ "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "<recommended_plugins>…" }] }),
+      ),
+      user_item("fix the login bug"),
+      agent_item("On it."),
+      assistant_response("On it."),
+      completed(
+        json!({ "type": "SubAgentActivity", "kind": "started", "agent_path": "/root/research" }),
+      ),
+    ];
+    let d = codex_detail(Path::new("/p/rollout-1.jsonl"), &lines, &HashMap::new());
+    let roles: Vec<&str> = d.messages.iter().map(|m| m.role.as_str()).collect();
+    assert_eq!(roles, ["user", "assistant"]);
+    assert_eq!(d.messages[0].parts[0].text, "fix the login bug");
+    let texts: Vec<&str> = d.messages[1]
+      .parts
+      .iter()
+      .filter(|p| p.kind == "text")
+      .map(|p| p.text.as_str())
+      .collect();
+    assert_eq!(texts, ["On it."]);
+    let activity = d.messages[1]
+      .parts
+      .iter()
+      .find(|p| p.kind == "subagentActivity")
+      .unwrap();
+    assert_eq!(activity.name.as_deref(), Some("started"));
+    assert_eq!(activity.agent.as_deref(), Some("/root/research"));
   }
 
   /// `total_token_usage` is cumulative: every `token_count` restates the running
