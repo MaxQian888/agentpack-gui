@@ -85,6 +85,20 @@ describe("the review gate", () => {
     await expect(settled).resolves.toHaveLength(1)
   })
 
+  it("stages inline without opening the panel, behind the same gate", async () => {
+    const { result } = renderHook(() => useRunner(), { wrapper })
+    const settled = stage(result, [cmd("a", "A")], { inline: true })
+
+    await waitFor(() => expect(result.current.awaitingConfirm).toBe(true))
+    // The wizard draws the review itself; the side panel stays shut.
+    expect(useAppStore.getState().panelOpen).toBe(false)
+    expect(runSteps).not.toHaveBeenCalled()
+    await act(async () => {
+      await result.current.applyPending()
+    })
+    await expect(settled).resolves.toHaveLength(1)
+  })
+
   it("previews without writing, and leaves the steps staged for a later apply", async () => {
     const { result } = renderHook(() => useRunner(), { wrapper })
     void stage(result, [cmd("a", "A")])

@@ -110,8 +110,9 @@ catalog must be live and undeprecated.
   `inventory` (the machine's asset list — see below),
   `recovery` (every restore point, folded — see below),
   `diagnostics` (the overview's to-do list, derived from it), `palette` (⌘K contents),
-  `activity` (the run log's shape + redaction) and `cleanup` (the disk-cleanup
-  catalog — see below).
+  `activity` (the run log's shape + redaction), `onboarding` (the first-run
+  wizard's answer → selection, proxy step and network adoption) and `cleanup`
+  (the disk-cleanup catalog — see below).
   `plan.ts` turns a `Plan` into a declarative `StepDescriptor[]`; `preview.ts`
   renders dry-run "would …" lines; `runner.ts` executes descriptors.
 - `lib/skills/` — the Skills section's pure logic (`browse`, `conflicts`,
@@ -428,10 +429,14 @@ Five rules the first-run and install paths depend on. Each replaced a behaviour
 that looked reasonable in the code and lied to the user in the app.
 
 1. **Only a deliberate exit marks someone onboarded.** `settings.onboarded` is
-   written by "Maybe later" and by Install — never by Esc, the overlay, or the
-   tour link, which write `settings.onboardingProgress` instead so the next
-   launch resumes. Treating every close as consent meant one mis-click on
-   question 1 and the user was never guided again.
+   written by "Maybe later", by Done on a machine with nothing to change, and by
+   **Install now** — at the press, whatever the run's outcome, so one failed
+   optional server can't reopen the wizard on every launch (the Getting started
+   checklist carries what is left). Never by Esc or the overlay, which write
+   `settings.onboardingProgress` instead so the next launch resumes; and never
+   by merely reaching the review, which is staging, not consent. Treating every
+   close as consent meant one mis-click on question 1 and the user was never
+   guided again.
 2. **A run's verdict reads all four statuses.** `done`, `warning`, `error` and
    `skipped` together (plus `cancelled` from `useRunner`, since `skipped` alone
    can't tell a stopped run from a dependency-skipped step). Counting only
@@ -454,6 +459,15 @@ that looked reasonable in the code and lied to the user in the app.
    they act on, and a preview leaves the steps staged so applying afterwards is
    one click. Section tests use `run/__testing__/harness` (`autoApply` to stand
    in for the user, `panel` to drive the gate by hand).
+
+   The gate is the staged steps and `applyPending`, not the side sheet.
+   `run(steps, { inline: true })` stages without opening the panel, for a caller
+   that draws the review itself — the first-run wizard, whose last step _is_ the
+   review. Both surfaces render `run/run-view` (`useRunView`, `RunBody`,
+   `RunProgress`), so the wizard can't brief, list or finish a run differently
+   from the panel; each keeps only its own header and footer. The wizard offers
+   no Preview: to a newcomer every "would …" line reads as an install that
+   didn't happen.
 
 6. **The panel briefs before it asks.** `lib/agentpack/preflight.ts` turns the
    staged `StepDescriptor[]` into sentences (`PreflightBrief`, above the step
@@ -488,11 +502,16 @@ that looked reasonable in the code and lied to the user in the app.
 ⚠️ A **preview** gets no diagnosis. A dry run wrote nothing, so a reading about
 why it "failed" would be about a run that never happened.
 
-⚠️ The wizard's last button is **"Review and install"**, not "Install now", and
-`welcome.installIntro` says the changes come next. It used to promise the run
-started there; it never did — it stages, and the panel is where a human says
-yes. Copy that describes a gate as if it weren't one is how the gate reads as
-the app refusing the click that was just made.
+⚠️ The wizard's last button is **"Install now"**, and it is honest: the step it
+sits on is the review, so pressing it really runs the install. It used to be
+"Review and install" on a summary page that only staged, with the real review
+in a second panel after it. Copy that describes a gate as if it weren't one is
+how the gate reads as the app refusing the click that was just made — and the
+reverse holds too: a button on the gate must not promise another gate. The
+wizard asks only which agent (and whether to add its desktop app); skills and
+key-gated servers wait for after the agent works. A proxy the machine needs
+gets its own step, kept by default; a faster mirror is one line in the review
+with an opt-out, staged as the `npm-registry` step it really is.
 
 Also: the completion screen derives its next action and chores from `reports`,
 not from `plan` — with **no step at all** reading as success, because the dedup

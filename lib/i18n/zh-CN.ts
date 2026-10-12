@@ -15,53 +15,44 @@ export const zhCN = {
 
   welcome: {
     title: "欢迎使用 agentpack",
-    // 第 1 步的副标题，这一步问的是「窗口还是终端」，所以不能承诺一个
-    // 要到第 2 步才出现的套餐选择器。
+    // 第 1 步的副标题。第二句承诺的就是审查那一步：确切步骤摆在眼前之前，什么都不会执行。
     intro:
-      "第一次用？agentpack 帮你安装并配置好 AI 编程工具。先说说，你打算怎么用它们？确认之前不会改动任何文件。",
+      "agentpack 帮你装好一个编程 agent 并配置妥当。在你看过确切步骤并点头之前，这台机器上什么都不会改动。",
     continue: "继续",
-    // 首次启动向导（GUI）。用大白话讲清楚会装些什么。
-    whatTitle: "它会帮你装好这些",
-    whatClis: "AI 编程助手（Claude Code、Codex）—— 在终端里和你对话的那位。",
-    whatMcp: "MCP 服务 —— 给 AI 增加外部能力的插件：联网、记忆、GitHub……",
-    whatSkills: "工程技能 —— 现成的做事套路，AI 处理常见任务时照着做。",
-    whatCcswitch: "cc-switch —— 存多套 API 供应商/密钥，一键切换。",
-    presetLabel: "选一个起步套餐",
-    presetHint: "拿不准就选「推荐」。之后每一项都能再细调。",
-    previewLabel: "先预览（演练，不真正执行）",
-    previewHint: "先看清楚会发生什么 —— 不改动任何东西。",
     later: "以后再说",
-    install: "去确认并安装",
     reopen: "重新查看入门引导",
-    // 第 2、3 步的副标题。网络自检特意放在安装之前：提前发现网络不通，
-    // 好过看着六个步骤一个个变红。
-    networkIntro: "先快速看一眼网络，免得安装到一半失败。",
-    installIntro: "这是你选的东西。下一步会逐条列出它需要做的改动，你在那里确认之后才会真正执行。",
-    // 最后一步：列出所选套餐会装什么，以及需要密钥的服务要填的密钥 ——
-    // 放在这里问，是因为缺密钥的服务能装上但根本用不了。
-    summaryClis: "AI 助手",
-    summarySkills: "工程技能",
-    summaryMcp: "MCP 服务",
-    summaryNothing: "这个套餐本身不安装任何东西。",
-    summaryInstalled: "已安装",
-    summaryWritesTo: (targets: string) => `配置到：${targets}`,
-    // 技能是按技术栈选的：全塞给用户等于给写 Rust 的人装一套安卓套路，
-    // 所以向导问一句，而不是替他猜。
-    skillsHint: "选装 —— 挑和你写的东西对得上的。之后也能再加。",
-    keysTitle: "API 密钥",
-    keysHint: "可选 —— 之后也能在「MCP 服务」里补填，留空没关系。",
-    // 第 1 步先问打算怎么用，因为它决定了「装 Claude」到底指什么：
-    // 桌面 App、终端命令，还是两个都要。
-    surfaceLabel: "你打算怎么用它？",
-    surfaceHint: "之后随时可以再加另一种，这里选什么都不是定死的。",
-    surfaceGui: "在窗口里点着用",
-    surfaceGuiHint: "安装桌面 App，不用开终端。",
-    surfaceCli: "在终端里敲命令",
-    surfaceCliHint: "安装命令行版，输入 `claude` 就能用。",
-    surfaceBoth: "两个都要",
-    surfaceBothHint: "桌面 App 和终端命令一起装好。",
     recommendedTag: "推荐",
-    bundleIntro: "接下来选装哪些能力。选完之后每一项都还能改。",
+    // 第 1 步：唯一真正的问题。首次安装的其余内容都由它推出。
+    agentLabel: "你想用哪个编程 agent？",
+    agentHint: "另一个之后随时可以再加。",
+    agentClaude: "Claude Code",
+    agentClaudeHint: "Anthropic 的编程 agent，在终端里输入 `claude` 使用。",
+    agentCodex: "Codex",
+    agentCodexHint: "OpenAI 的编程 agent，在终端里输入 `codex` 使用。",
+    agentBoth: "两个都要",
+    agentBothHint: "Claude Code 和 Codex 一起装，共用同一套服务。",
+    desktopLabel: "同时安装桌面应用",
+    desktopHint: "Claude Desktop 或 ChatGPT 应用，和终端 agent 读的是同一份设置。",
+    coreNote: "还会顺带装好三个不需要账号的服务：记忆、分步推理和网页抓取。",
+    // 第 2 步，只在需要代理的网络上出现。
+    networkIntro: "你的网络直连不上 agent 的服务器，不过这台机器上有一个在运行的代理。",
+    proxyAdopt: "安装时走这个代理",
+    proxyAdoptHint: "取消勾选则保持直连。之后可以在「网络」里修改。",
+    // 第 3 步就是真正的审查 —— 和侧边面板同一批待执行步骤、同一个「应用」——
+    // 所以这里的按钮会真的执行安装，「立即安装」是诚实的。
+    reviewIntro: "以下就是确切的改动，目前还什么都没执行。",
+    preparing: "正在计算需要改动哪些内容…",
+    nothingToDo: "你选的东西这台机器上都已经有了。",
+    picksReady: "你选的内容已经准备好。",
+    unavailable: "安装需要桌面版 App。你选的内容已放在待处理托盘里。",
+    stageFailed: "读不出这台机器当前的配置，所以没有准备任何改动。",
+    tryAgain: "重试",
+    mirrorNote: (via: string) => `下载会走 ${via}，在你的网络上更快。`,
+    mirrorDecline: "改用官方源",
+    installNow: "立即安装",
+    installingIntro: "正在安装。可以关掉这个窗口 —— 安装会在侧边面板里继续。",
+    finishedIntro: "结果如下。",
+    done: "完成",
   },
 
   /** 功能漫游导览 —— 聚光灯式逐步走查 App 各个部分。 */
@@ -1119,18 +1110,9 @@ export const zhCN = {
       running: "正在检测网络…",
       recheck: "重新检测",
       unreachable: "不可达",
-      directOk: "直连正常 —— 不需要代理。",
       directBlocked: "直连失败。agentpack 会用检测到的线路来跑安装。",
       proxyFound: (host: string, ms: number) => `找到可用代理：${host}（${ms}ms）`,
-      noProxyFound: "没有在这台机器上找到可用的代理。",
-      fastestMirror: (kind: string, label: string) => `最快的 ${kind}：${label}`,
-      // PyPI 和 Homebrew 是 agentpack 只在失败重试时注入的环境变量，「采用」
-      // 应用不了它们。与其把四个镜像并排列在一个只管两个的按钮下面，不如注明。
-      retryOnly: "安装失败时会自动用上",
-      adopt: "采用这些设置",
-      adopted: "已应用。",
       skip: "暂时跳过",
-      nothingToDo: "网络看起来没问题 —— 无需调整。",
     },
   },
 

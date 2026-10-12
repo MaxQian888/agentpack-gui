@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { AppWindow, ArrowLeftRight, Server, Sparkles, Terminal, Wrench } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import { Bot, Loader2, Play, Sparkles, Terminal } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -14,180 +14,236 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { PRESETS, presetSelection, skillTargetsFor, type Surface } from "@/lib/agentpack/presets"
-import { findMcp, SKILLS } from "@/lib/agentpack/registry"
+import {
+  AGENT_CHOICES,
+  asAgentChoice,
+  DEFAULT_AGENT,
+  needsProxyStep,
+  networkAdoption,
+  type AgentChoice,
+} from "@/lib/agentpack/onboarding"
+import type { InventoryInput } from "@/lib/agentpack/inventory"
+import type { NavigateIntent, SectionKey } from "@/lib/agentpack/workspaces"
 import type { OnboardingProgress } from "@/lib/tauri/settings"
-import { probeSuggestsChange } from "@/lib/agentpack/network/probe"
 import { cn } from "@/lib/utils"
 import { useT } from "@/lib/i18n/provider"
 import { useAppStore } from "@/store/app-store"
+import { DesktopOnlyNote } from "./desktop-only-note"
 import { OnboardingNetworkStep } from "./onboarding-network-step"
-import { KeyInput } from "./sections/mcp/helpers"
+import { RunBody, RunProgress, useRunView } from "./run/run-view"
 
-/** Bundle ids offered on first run, in "gentlest first" order. */
-const PRESET_IDS = PRESETS.map((p) => p.id)
-const DEFAULT_PRESET = "recommended"
-/** The desktop app needs no terminal and no Node, so it leads. */
-const DEFAULT_SURFACE: Surface = "gui"
-
-const SURFACES: readonly Surface[] = ["gui", "cli", "both"]
-
-/** Every stop, in order. `network` is dropped when there's nothing to report. */
-const STEPS = ["surface", "bundle", "network", "install"] as const
+/** Every stop, in order. `network` is dropped unless the machine needs a proxy. */
+const STEPS = ["agent", "network", "review"] as const
 type Step = (typeof STEPS)[number]
 
 /** Persisted progress is plain JSON, so a stale or hand-edited step falls back. */
 function asStep(step: string | undefined): Step {
-  return STEPS.find((s) => s === step) ?? "surface"
+  return STEPS.find((s) => s === step) ?? "agent"
 }
 
-/** The skills a bundle brings, which the last step then lets the user adjust. */
-function skillsOf(presetId: string): string[] {
-  return presetSelection(presetId)?.skills.map((s) => s.id) ?? []
+/** Everything the wizard asks, as one value the shell can stage from. */
+export interface WizardAnswer {
+  agent: AgentChoice
+  desktop: boolean
+  /** Keep the proxy the probe found (only asked when one is needed). */
+  proxy: boolean
+  /** Keep the faster npm / GitHub mirror the probe found. */
+  mirrors: boolean
 }
 
 /**
- * First-run welcome wizard.
+ * What staging a review produced. `staged` is the only one with a review to
+ * draw; the rest each have their own sentence, because "nothing happened"
+ * reads as a broken button.
+ */
+export type StageOutcome = "staged" | "empty" | "unavailable" | "busy" | "failed"
+
+type Stage = "idle" | "preparing" | StageOutcome
+
+/**
+ * First-run welcome wizard. It ends where the agent works, not where a list of
+ * picks is handed to another panel.
  *
- *  1. **surface** — window or terminal. Asked first and on its own because it
- *     decides what "install Claude" even means, and because the honest answer
- *     for someone who has never opened a terminal is the desktop app.
- *  2. **bundle** — which capabilities to set up. Kept separate from the surface
- *     so bundles don't need a GUI variant apiece (see `applySurface`).
- *  3. **network** — the self-check, *only when the probe found something*. A
- *     blocked network is the most common reason a first install fails, and
- *     finding out before the run beats watching six steps go red — but a
- *     healthy machine shouldn't be made to read green ticks and press Continue.
- *  4. **install** — run it.
+ *  1. **agent** — which coding agent, plus whether to add its desktop app.
+ *     The one real question: everything else is derived (`wizardSelection`),
+ *     including the three servers that need no account. Skills and key-gated
+ *     servers are asked for afterwards, from Overview, once the agent works.
+ *  2. **network** — only when the direct route fails and a proxy works. Kept by
+ *     default; a faster mirror is a line in the review instead.
+ *  3. **review** — the real review: the same staged steps, brief and Apply as
+ *     the side panel, drawn here (`run({ inline })`). It is the only gate —
+ *     there is no summary page before it, and no second panel after it — and
+ *     the run, its failures and Retry all stay on this screen.
  *
- * There is no dry-run toggle here any more. "Preview without changing anything"
- * is a real feature and it stays in the header, but as the *first* question a
- * newcomer is asked it only invites the wrong answer: they press Preview, watch
- * every step report that it would have done something, and conclude the install
- * didn't work.
+ * There is no Preview button here. Preview is a real feature of the side
+ * panel, but offered to a newcomer it only invites the wrong reading: every
+ * step reports what it would have done, and the install looks like it failed.
  *
- * Controlled by the caller: `open` comes from the store's `onboardingOpen` flag
- * (set on a fresh install, or manually from About). The two ways out are kept
- * apart on purpose — `onLater` is the user saying "not now" and is what marks
- * them onboarded, while `onSuspend` (Esc, the overlay) is a mis-click and only
- * records where they got to. `progress` restores that on the next launch.
+ * The ways out are kept apart on purpose. `onLater` ("Maybe later", or Done on
+ * a machine with nothing to change) is a deliberate no and marks the user
+ * onboarded; so does Install now, through `onApplied`. `onSuspend` (Esc, the
+ * overlay, before Install now) is a mis-click and only records where they got
+ * to. After Install now, closing just closes — and if the run is still going,
+ * it carries on in the side panel.
  */
 export function OnboardingDialog({
   open,
   progress,
   onProgress,
-  onInstall,
+  scan = null,
+  onStage,
+  onApplied,
   onLater,
   onSuspend,
-  onTour,
+  onClose,
+  onNavigate,
 }: {
   open: boolean
   /** Where a previously suspended run got to, or null to start from the top. */
   progress: OnboardingProgress | null
   /** Fired on every answer, so the caller can persist it if the wizard is suspended. */
   onProgress: (progress: OnboardingProgress) => void
-  /**
-   * `keys` carries only the API keys the user actually filled in; `skills` is
-   * the final skill selection, which the bundle seeds and the user adjusts.
-   */
-  onInstall: (
-    presetId: string,
-    surface: Surface,
-    keys: Record<string, string>,
-    skills: string[]
-  ) => void
+  /** The last dashboard scan, for the brief's "already installed" count. */
+  scan?: InventoryInput["scan"]
+  /** Stage the answer as a review this dialog draws. Resolves once staging is decided. */
+  onStage: (answer: WizardAnswer) => Promise<StageOutcome>
+  /** Install now was pressed. Carries the GitHub mirror the run was built with. */
+  onApplied: (ghMirrorPrefix?: string) => void
   /** "Maybe later" — a deliberate no, which marks the user as onboarded. */
   onLater: () => void
-  /** Esc / overlay — an incidental close, which only saves progress. */
+  /** Esc / overlay before Install now — an incidental close, which only saves progress. */
   onSuspend: () => void
-  /** Start the guided product tour instead of installing right away. */
-  onTour: () => void
+  /** Close after Install now. Onboarding is already recorded. */
+  onClose: () => void
+  /** Follow a failure's reading (or a to-do) to the page that fixes it. */
+  onNavigate?: (section: SectionKey, intent?: NavigateIntent) => void
 }) {
   const t = useT()
   const w = t.welcome
   const probe = useAppStore((s) => s.networkProbe)
   const probing = useAppStore((s) => s.networkProbing)
-  const [preset, setPreset] = useState(progress?.preset ?? DEFAULT_PRESET)
-  const [surface, setSurface] = useState<Surface>(progress?.surface ?? DEFAULT_SURFACE)
+  const setPanelOpen = useAppStore((s) => s.setPanelOpen)
+  const view = useRunView(scan)
+
+  const [agent, setAgent] = useState<AgentChoice>(asAgentChoice(progress?.agent))
+  const [desktop, setDesktop] = useState(progress?.desktop ?? false)
+  const [proxy, setProxy] = useState(progress?.proxy ?? true)
+  const [mirrors, setMirrors] = useState(true)
   const [step, setStep] = useState<Step>(asStep(progress?.step))
-  // Kept local until Install: an abandoned wizard shouldn't leave half-typed keys
-  // in the shared plan, and they are deliberately never persisted to disk.
-  const [keys, setKeys] = useState<Record<string, string>>({})
-  /**
-   * Which skills to install. Seeded from the bundle, then adjustable on the last
-   * step — the bundles can't choose these for you (they're per-stack: Rust,
-   * Android, STM32…), which is why `minimal` and `recommended` carry none, and
-   * why the wizard promised skills it never delivered until it started asking.
-   */
-  const [skills, setSkills] = useState<string[]>(() => skillsOf(progress?.preset ?? DEFAULT_PRESET))
+  const [stage, setStage] = useState<Stage>("idle")
+  // Install now has been pressed. From here on the review is a run log, and
+  // closing the dialog no longer means "not now".
+  const [applied, setApplied] = useState(false)
+  // Bumped by "Try again", which restages the same answer.
+  const [attempt, setAttempt] = useState(0)
+
+  const answer: WizardAnswer = { agent, desktop, proxy, mirrors }
+  const answerKey = JSON.stringify(answer)
+  // The answer the current staging belongs to. A different answer — Back and a
+  // new pick, or the mirror opt-out — restages; the same one never does.
+  const stagedFor = useRef<string | null>(null)
 
   // Every answer is reported up as a whole, so the caller never has to reassemble
-  // one from three separate callbacks.
+  // one from separate callbacks.
   const report = (patch: Partial<OnboardingProgress>) =>
-    onProgress({ step, preset, surface, ...patch })
-  // Changing the bundle re-seeds the skills, so the last step always opens
-  // showing what the bundle you just picked would install.
-  const pickPreset = (id: string) => {
-    setPreset(id)
-    setSkills(skillsOf(id))
-    report({ preset: id })
-  }
-  const toggleSkill = (id: string) =>
-    setSkills((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]))
-  const pickSurface = (id: Surface) => {
-    setSurface(id)
-    report({ surface: id })
-  }
+    onProgress({ step, agent, desktop, proxy, ...patch })
 
   // Skipping is done by removing the step from the sequence rather than by
   // jumping over it, so Back, Continue and the counter all stay consistent
-  // without any of them special-casing it.
-  const steps = STEPS.filter((s) => s !== "network" || probing || probeSuggestsChange(probe))
-  // A step can vanish under the user if the probe lands late (a healthy network
-  // drops `network` from the sequence). Fall back to the LAST step rather than
-  // rendering nothing — clamping indexOf's -1 would send them back to step 1,
-  // undoing answers they already gave.
+  // without any of them special-casing it. While the probe is in flight the
+  // step stays in, so a proxy found late still gets asked about.
+  const steps = STEPS.filter((s) => s !== "network" || probing || needsProxyStep(probe))
+  // A step can vanish under the user if the probe lands late. Fall back to the
+  // LAST step rather than rendering nothing — clamping indexOf's -1 would send
+  // them back to step 1, undoing answers they already gave.
   const found = steps.indexOf(step)
   const index = found === -1 ? steps.length - 1 : found
   const current = steps[index]!
-  const isLast = index === steps.length - 1
+
+  /** Drop a review this dialog staged and is no longer showing. */
+  const unstage = () => {
+    if (view.awaitingConfirm) view.abandonPending()
+    stagedFor.current = null
+    setStage("idle")
+  }
   const go = (to: Step) => {
+    if (current === "review" && to !== "review") unstage()
     setStep(to)
     report({ step: to })
   }
   const back = () => go(steps[Math.max(0, index - 1)]!)
   const next = () => go(steps[Math.min(steps.length - 1, index + 1)]!)
 
-  const bullets = [
-    { icon: Terminal, text: w.whatClis },
-    { icon: Server, text: w.whatMcp },
-    { icon: Wrench, text: w.whatSkills },
-    { icon: ArrowLeftRight, text: w.whatCcswitch },
-  ]
+  useEffect(() => {
+    if (!open || current !== "review" || applied || stagedFor.current === answerKey) return
+    stagedFor.current = answerKey
+    setStage("preparing")
+    void onStage(JSON.parse(answerKey) as WizardAnswer).then((outcome) => {
+      // A later answer took over while this one was preparing.
+      if (stagedFor.current === answerKey) setStage(outcome)
+    })
+  }, [open, current, applied, answerKey, attempt, onStage])
 
-  const surfaceMeta: Record<Surface, { icon: typeof AppWindow; title: string; hint: string }> = {
-    gui: { icon: AppWindow, title: w.surfaceGui, hint: w.surfaceGuiHint },
-    cli: { icon: Terminal, title: w.surfaceCli, hint: w.surfaceCliHint },
-    both: { icon: Sparkles, title: w.surfaceBoth, hint: w.surfaceBothHint },
+  const adoption = networkAdoption(probe, answer)
+  const mirrorLabels = [
+    adoption.npmRegistry ? `${adoption.npmRegistry.label} (npm)` : null,
+    adoption.ghMirrorPrefix ? `${adoption.ghMirrorPrefix.label} (GitHub)` : null,
+  ].filter((l): l is string => !!l)
+
+  const install = () => {
+    onApplied(adoption.ghMirrorPrefix?.url)
+    setApplied(true)
+    void view.applyPending()
+  }
+  const later = () => {
+    unstage()
+    onLater()
+  }
+  const dismiss = () => {
+    if (applied) {
+      // The run outlives the dialog; hand it to the side panel rather than
+      // leave it running somewhere nobody can see.
+      if (view.busy) setPanelOpen(true)
+      onClose()
+      return
+    }
+    unstage()
+    onSuspend()
   }
 
+  const ready = current === "review" && stage === "staged" && view.awaitingConfirm && !view.busy
   const subtitle =
-    current === "surface"
+    current === "agent"
       ? w.intro
-      : current === "bundle"
-        ? w.bundleIntro
-        : current === "network"
-          ? w.networkIntro
-          : w.installIntro
+      : current === "network"
+        ? w.networkIntro
+        : !applied
+          ? // Only a staged review has "exact changes" to point at; every other
+            // outcome is its own sentence, said once, up here.
+            stage === "empty"
+            ? w.nothingToDo
+            : stage === "unavailable"
+              ? w.picksReady
+              : stage === "busy" || stage === "failed"
+                ? w.stageFailed
+                : w.reviewIntro
+          : view.finished
+            ? w.finishedIntro
+            : w.installingIntro
+
+  const agentMeta: Record<AgentChoice, { icon: typeof Bot; title: string; hint: string }> = {
+    "claude-code": { icon: Terminal, title: w.agentClaude, hint: w.agentClaudeHint },
+    codex: { icon: Bot, title: w.agentCodex, hint: w.agentCodexHint },
+    both: { icon: Sparkles, title: w.agentBoth, hint: w.agentBothHint },
+  }
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onSuspend()}>
-      <DialogContent className="max-h-[90vh] gap-5 overflow-y-auto sm:max-w-lg">
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && dismiss()}>
+      <DialogContent className="max-h-[90vh] gap-5 overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           {/* The step counter sits beside the title, not inside it: folding it
-              into DialogTitle would append "1 / 4" to the dialog's accessible
-              name on every step. */}
-          {/* `pr-8` keeps the counter clear of the dialog's close button,
+              into DialogTitle would append "1 / 3" to the dialog's accessible
+              name on every step. `pr-8` keeps it clear of the close button,
               which is absolutely placed in the same top-right corner. */}
           <div className="flex items-center justify-between gap-3 pr-8">
             <DialogTitle className="flex items-center gap-2">
@@ -201,51 +257,34 @@ export function OnboardingDialog({
           <DialogDescription>{subtitle}</DialogDescription>
         </DialogHeader>
 
-        {current === "surface" ? (
-          <>
-            {/* Plain-language "what it does" list. */}
-            <div className="flex flex-col gap-2 rounded-lg border bg-muted/30 p-3">
-              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                {w.whatTitle}
-              </div>
-              {bullets.map(({ icon: Icon, text }) => (
-                <div key={text} className="flex items-start gap-2.5 text-sm">
-                  <Icon
-                    className="mt-0.5 size-4 shrink-0 text-muted-foreground"
-                    aria-hidden="true"
-                  />
-                  <span>{text}</span>
-                </div>
-              ))}
-            </div>
-
+        {current === "agent" ? (
+          <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
               <div>
-                <div className="text-sm font-medium">{w.surfaceLabel}</div>
-                <p className="text-xs text-muted-foreground">{w.surfaceHint}</p>
+                <div className="text-sm font-medium">{w.agentLabel}</div>
+                <p className="text-xs text-muted-foreground">{w.agentHint}</p>
               </div>
               <RadioGroup
-                value={surface}
-                onValueChange={(v) => pickSurface(v as Surface)}
+                value={agent}
+                onValueChange={(v) => {
+                  setAgent(v as AgentChoice)
+                  report({ agent: v })
+                }}
                 className="gap-2"
               >
-                {SURFACES.map((id) => {
-                  const meta = surfaceMeta[id]
+                {AGENT_CHOICES.map((id) => {
+                  const meta = agentMeta[id]
                   const Icon = meta.icon
                   return (
                     <Label
                       key={id}
-                      htmlFor={`onboarding-surface-${id}`}
+                      htmlFor={`onboarding-agent-${id}`}
                       className={cn(
                         "flex cursor-pointer items-start gap-3 rounded-lg border p-3 font-normal transition-colors hover:border-primary/50",
-                        surface === id && "border-primary ring-1 ring-primary"
+                        agent === id && "border-primary ring-1 ring-primary"
                       )}
                     >
-                      <RadioGroupItem
-                        id={`onboarding-surface-${id}`}
-                        value={id}
-                        className="mt-0.5"
-                      />
+                      <RadioGroupItem id={`onboarding-agent-${id}`} value={id} className="mt-0.5" />
                       <span className="flex flex-1 items-start gap-2.5">
                         <Icon
                           className="mt-0.5 size-4 shrink-0 text-muted-foreground"
@@ -254,7 +293,7 @@ export function OnboardingDialog({
                         <span className="flex flex-col gap-0.5">
                           <span className="text-sm font-medium">
                             {meta.title}
-                            {id === DEFAULT_SURFACE ? (
+                            {id === DEFAULT_AGENT ? (
                               <span className="ml-2 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
                                 {w.recommendedTag}
                               </span>
@@ -268,281 +307,132 @@ export function OnboardingDialog({
                 })}
               </RadioGroup>
             </div>
-          </>
-        ) : null}
-
-        {current === "bundle" ? (
-          <div className="flex flex-col gap-2">
-            <div>
-              <div className="text-sm font-medium">{w.presetLabel}</div>
-              <p className="text-xs text-muted-foreground">{w.presetHint}</p>
-            </div>
-            <RadioGroup value={preset} onValueChange={pickPreset} className="gap-2">
-              {PRESET_IDS.map((id) => {
-                const meta = t.presets[id]
-                // Its size, for the surface already chosen — read from the same
-                // function the store applies, so it is the real bundle rather
-                // than a second description of it. Without it the only way to
-                // tell Minimal from Everything is to pick one and walk to the
-                // last step, which is a question answered by trial and error.
-                const picked = presetSelection(id, surface)
-                return (
-                  <Label
-                    key={id}
-                    htmlFor={`onboarding-preset-${id}`}
-                    className={cn(
-                      "flex cursor-pointer items-start gap-3 rounded-lg border p-3 font-normal transition-colors hover:border-primary/50",
-                      preset === id && "border-primary ring-1 ring-primary"
-                    )}
-                  >
-                    <RadioGroupItem id={`onboarding-preset-${id}`} value={id} className="mt-0.5" />
-                    <span className="flex flex-col gap-0.5">
-                      <span className="text-sm font-medium">{meta?.title ?? id}</span>
-                      <span className="text-xs text-muted-foreground">{meta?.description}</span>
-                      {picked ? (
-                        <span className="mt-0.5 font-mono text-[11px] text-muted-foreground">
-                          {t.presetsScreen.presetCounts(
-                            picked.clis.length,
-                            picked.skills.length,
-                            picked.mcps.length
-                          )}
-                        </span>
-                      ) : null}
-                    </span>
-                  </Label>
-                )
-              })}
-            </RadioGroup>
+            <Label
+              htmlFor="onboarding-desktop"
+              className="flex cursor-pointer items-start gap-3 font-normal"
+            >
+              <Checkbox
+                id="onboarding-desktop"
+                checked={desktop}
+                onCheckedChange={(v) => {
+                  setDesktop(v === true)
+                  report({ desktop: v === true })
+                }}
+                className="mt-0.5"
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="text-sm font-medium">{w.desktopLabel}</span>
+                <span className="text-xs text-muted-foreground">{w.desktopHint}</span>
+              </span>
+            </Label>
+            <p className="text-xs text-muted-foreground">{w.coreNote}</p>
           </div>
         ) : null}
 
-        {current === "network" ? <OnboardingNetworkStep probe={probe} probing={probing} /> : null}
-
-        {current === "install" ? (
-          <InstallSummary
-            preset={preset}
-            surface={surface}
-            keys={keys}
-            onKeyChange={(id, v) => setKeys((prev) => ({ ...prev, [id]: v }))}
-            skills={skills}
-            onSkillToggle={toggleSkill}
+        {current === "network" ? (
+          <OnboardingNetworkStep
+            probe={probe}
+            probing={probing}
+            adopt={proxy}
+            onAdoptChange={(v) => {
+              setProxy(v)
+              report({ proxy: v })
+            }}
           />
         ) : null}
 
-        <button
-          type="button"
-          onClick={onTour}
-          className="self-start text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-        >
-          {t.tour.start} →
-        </button>
+        {current === "review" ? (
+          <div className="flex min-w-0 flex-col gap-4">
+            {stage === "preparing" || stage === "idle" ? (
+              <div className="flex items-center gap-2 rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                {w.preparing}
+              </div>
+            ) : stage === "unavailable" ? (
+              <DesktopOnlyNote>{w.unavailable}</DesktopOnlyNote>
+            ) : stage === "empty" || stage === "busy" || stage === "failed" ? null : (
+              <>
+                {!applied && mirrorLabels.length > 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    {w.mirrorNote(mirrorLabels.join(", "))}{" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        unstage()
+                        setMirrors(false)
+                      }}
+                      className="underline underline-offset-4 hover:text-foreground"
+                    >
+                      {w.mirrorDecline}
+                    </button>
+                  </p>
+                ) : null}
+                <RunProgress view={view} />
+                <RunBody
+                  view={view}
+                  onNavigate={
+                    onNavigate
+                      ? (section, intent) => {
+                          if (view.busy) setPanelOpen(true)
+                          onNavigate(section, intent)
+                        }
+                      : undefined
+                  }
+                />
+              </>
+            )}
+          </div>
+        ) : null}
 
         <DialogFooter className="gap-2 sm:gap-2">
-          <Button variant="ghost" onClick={onLater}>
-            {w.later}
-          </Button>
-          {index > 0 ? (
-            <Button variant="outline" onClick={back}>
-              {t.tour.back}
-            </Button>
-          ) : null}
-          {isLast ? (
-            <Button onClick={() => onInstall(preset, surface, nonEmpty(keys), skills)}>
-              {w.install}
-            </Button>
+          {applied ? (
+            view.busy ? (
+              <Button variant="outline" onClick={view.cancel}>
+                {t.shell.cancel}
+              </Button>
+            ) : (
+              <>
+                {view.finished && view.canRetry ? (
+                  <Button variant="outline" onClick={() => void view.retry()}>
+                    {t.shell.retry}
+                  </Button>
+                ) : null}
+                <Button onClick={onClose}>{w.done}</Button>
+              </>
+            )
           ) : (
-            <Button onClick={next}>{w.continue}</Button>
+            <>
+              <Button variant="ghost" onClick={later}>
+                {w.later}
+              </Button>
+              {index > 0 ? (
+                <Button variant="outline" onClick={back}>
+                  {t.tour.back}
+                </Button>
+              ) : null}
+              {current !== "review" ? (
+                <Button onClick={next}>{t.welcome.continue}</Button>
+              ) : stage === "empty" || stage === "unavailable" ? (
+                <Button onClick={later}>{w.done}</Button>
+              ) : stage === "busy" || stage === "failed" ? (
+                <Button
+                  onClick={() => {
+                    stagedFor.current = null
+                    setAttempt((n) => n + 1)
+                  }}
+                >
+                  {w.tryAgain}
+                </Button>
+              ) : (
+                <Button disabled={!ready} onClick={install}>
+                  <Play className="size-4" />
+                  {w.installNow}
+                </Button>
+              )}
+            </>
           )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  )
-}
-
-/** Drop the keys the user left blank, so an empty box never becomes an empty key. */
-function nonEmpty(keys: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(Object.entries(keys).filter(([, v]) => v.trim() !== ""))
-}
-
-/**
- * The final step: what the chosen bundle actually installs, the skills to go
- * with it, and the API keys it needs. All three are here for the same reason —
- * the wizard used to end on a blank screen with an Install button, so the first
- * time anyone saw the list was in the review panel, a key-gated server
- * (context7, github, both in the Recommended bundle) went in without its key and
- * silently didn't work, and the skills the first screen promised were never
- * installed at all unless you picked "everything".
- *
- * The CLI and MCP lists come from `presetSelection`, the same function the store
- * applies, so this is a preview of the real plan rather than a second
- * description of it. Skills are the one editable part: they're per-stack, so a
- * bundle can't pick them for you.
- */
-function InstallSummary({
-  preset,
-  surface,
-  keys,
-  onKeyChange,
-  skills,
-  onSkillToggle,
-}: {
-  preset: string
-  surface: Surface
-  keys: Record<string, string>
-  onKeyChange: (id: string, value: string) => void
-  skills: string[]
-  onSkillToggle: (id: string) => void
-}) {
-  const t = useT()
-  const w = t.welcome
-  const detections = useAppStore((s) => s.detections)
-  const picked = presetSelection(preset, surface)
-
-  const clis = picked?.clis ?? []
-  const mcps = picked?.mcps ?? []
-  const skillTargets = skillTargetsFor(clis)
-  const targetNames = (targets: readonly string[]) =>
-    targets.map((tg) => t.mcp.targets[tg] ?? tg).join(" · ")
-  // Only the servers this bundle actually selects, so the key list can't ask for
-  // a credential that nothing here will use.
-  const keyed = mcps
-    .map((m) => findMcp(m.id))
-    .filter((m): m is NonNullable<typeof m> => !!m?.keyEnv)
-
-  if (clis.length + mcps.length === 0 && SKILLS.length === 0) {
-    return <p className="text-sm text-muted-foreground">{w.summaryNothing}</p>
-  }
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-3">
-        <SummaryGroup icon={Terminal} title={w.summaryClis}>
-          {clis.map((id) => (
-            <SummaryRow
-              key={id}
-              label={t.catalog.cli[id]?.title ?? id}
-              installed={detections[id]?.installed}
-              installedLabel={w.summaryInstalled}
-            />
-          ))}
-        </SummaryGroup>
-        {mcps.length > 0 ? (
-          <SummaryGroup
-            icon={Server}
-            title={w.summaryMcp}
-            note={w.summaryWritesTo(targetNames(mcps[0]!.targets))}
-          >
-            {mcps.map((m) => (
-              <SummaryRow key={m.id} label={t.catalog.mcp[m.id]?.title ?? m.id} />
-            ))}
-          </SummaryGroup>
-        ) : null}
-      </div>
-
-      {/* Checkable, unlike the two lists above: the bundle seeds these but can't
-          know whether you write Rust or Android, so it asks. */}
-      <div className="flex flex-col gap-2">
-        <div>
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <Wrench className="size-4 text-muted-foreground" aria-hidden="true" />
-            {w.summarySkills}
-          </div>
-          <p className="text-xs text-muted-foreground">{w.skillsHint}</p>
-          {skills.length > 0 ? (
-            <p className="text-xs text-muted-foreground">
-              {w.summaryWritesTo(targetNames(skillTargets))}
-            </p>
-          ) : null}
-        </div>
-        <div className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
-          {SKILLS.map((skill) => (
-            <label
-              key={skill.id}
-              htmlFor={`onboarding-skill-${skill.id}`}
-              className="flex cursor-pointer items-center gap-2 rounded-md px-1 py-1 text-sm transition-colors hover:bg-muted/50"
-            >
-              <Checkbox
-                id={`onboarding-skill-${skill.id}`}
-                checked={skills.includes(skill.id)}
-                onCheckedChange={() => onSkillToggle(skill.id)}
-              />
-              <span className="min-w-0 flex-1 truncate">
-                {t.catalog.skills[skill.id]?.title ?? skill.id}
-              </span>
-            </label>
-          ))}
-        </div>
-      </div>
-
-      {keyed.length > 0 ? (
-        <div className="flex flex-col gap-2">
-          <div>
-            <div className="text-sm font-medium">{w.keysTitle}</div>
-            <p className="text-xs text-muted-foreground">{w.keysHint}</p>
-          </div>
-          {keyed.map((server) => (
-            <div key={server.id} className="flex flex-col gap-1">
-              <Label htmlFor={`onboarding-key-${server.id}`} className="text-xs font-normal">
-                {t.catalog.mcp[server.id]?.title ?? server.id}
-              </Label>
-              <KeyInput
-                ariaLabel={`${server.id} ${server.keyEnv}`}
-                placeholder={server.keyEnv}
-                value={keys[server.id] ?? ""}
-                onChange={(v) => onKeyChange(server.id, v)}
-              />
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-/** A titled group in the summary, with an optional "configured for: …" sub-line. */
-function SummaryGroup({
-  icon: Icon,
-  title,
-  note,
-  children,
-}: {
-  icon: typeof AppWindow
-  title: string
-  note?: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        <Icon className="size-3.5" aria-hidden="true" />
-        {title}
-      </div>
-      {note ? <p className="text-xs text-muted-foreground">{note}</p> : null}
-      <div className="flex flex-wrap gap-x-3 gap-y-0.5 pl-5.5">{children}</div>
-    </div>
-  )
-}
-
-/** One item, with a green dot when it's already on the machine. */
-function SummaryRow({
-  label,
-  installed,
-  installedLabel,
-}: {
-  label: string
-  installed?: boolean
-  installedLabel?: string
-}) {
-  return (
-    <span className="flex items-center gap-1.5 text-sm">
-      {label}
-      {installed ? (
-        <span
-          className="size-1.5 shrink-0 rounded-full bg-[var(--hm-ok)]"
-          title={installedLabel}
-          aria-label={installedLabel}
-        />
-      ) : null}
-    </span>
   )
 }
