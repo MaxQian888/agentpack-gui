@@ -13,7 +13,7 @@ test("keeps a picked mirror across bundle switches, and Clear clears it", async 
   // Picking a bundle replaces the install selection, not the network route.
   await navTo(page, "presets")
   await page.getByRole("button", { name: "Recommended", exact: true }).click()
-  await expect(tray).toContainText("9 selected")
+  await expect(tray).toContainText("8 selected")
 
   await page.getByRole("button", { name: "Review changes" }).click()
   await expect(page.getByText(NOT_IN_TAURI).first()).toBeVisible()

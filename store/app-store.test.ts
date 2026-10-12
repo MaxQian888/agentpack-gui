@@ -38,7 +38,7 @@ it("setCliMethod sets/clears a method; deselecting the cli clears it", () => {
 
 it("applyPreset recommended fills clis", () => {
   useAppStore.getState().applyPreset("recommended")
-  expect(useAppStore.getState().plan.clis).toContain("cc-switch")
+  expect(useAppStore.getState().plan.clis).toEqual(["claude-code", "codex"])
 })
 
 it("applyPreset installs the surface the wizard asked for", () => {

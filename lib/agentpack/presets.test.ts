@@ -140,13 +140,17 @@ describe("presetSelection", () => {
     // "gui" swaps the CLIs for the desktop apps, and the targets must follow the
     // resolved list — a desktop-only pick still configures claude and codex.
     const picked = presetSelection("recommended", "gui")!
-    expect(picked.clis).toEqual(["claude-desktop", "codex-app", "cc-switch"])
+    expect(picked.clis).toEqual(["claude-desktop", "codex-app"])
     expect(picked.mcps.map((m) => m.id)).toContain("context7")
     expect(picked.mcps[0]!.targets).toEqual(["claude", "codex"])
   })
 
   it("passes the bundle through untouched when no surface is given", () => {
-    expect(presetSelection("recommended")!.clis).toEqual(["claude-code", "codex", "cc-switch"])
+    expect(presetSelection("recommended")!.clis).toEqual(["claude-code", "codex"])
+  })
+
+  it("leaves cc-switch out of the recommended bundle — the default provider store is native", () => {
+    expect(presetSelection("recommended")!.clis).not.toContain("cc-switch")
   })
 
   // The wizard's summary and the store's applyPreset both read this, so a drift

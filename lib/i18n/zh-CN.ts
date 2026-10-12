@@ -469,7 +469,7 @@ export const zhCN = {
     minimal: { title: "极简", description: "Claude Code + 本地记忆 MCP。" },
     recommended: {
       title: "推荐",
-      description: "Claude Code、Codex、cc-switch + 核心 MCP 服务。",
+      description: "Claude Code、Codex + 核心 MCP 服务。",
     },
     everything: {
       title: "全部",
