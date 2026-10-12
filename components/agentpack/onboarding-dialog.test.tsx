@@ -260,7 +260,7 @@ describe("the review step", () => {
   })
 
   it("Install now records the yes, runs in place, and ends on Done", async () => {
-    const { onApplied, onClose } = renderWizard()
+    const { onApplied, onNavigate } = renderWizard()
     await toReview()
     await waitFor(() => expect(installNow()).toBeEnabled())
     await userEvent.click(installNow())
@@ -268,8 +268,10 @@ describe("the review step", () => {
     expect(onApplied).toHaveBeenCalledWith(undefined)
     expect(await screen.findByText(w.finishedIntro)).toBeInTheDocument()
     expect(screen.getByText(en.completion.done)).toBeInTheDocument()
+    // The completion points at the checklist, and Done goes where it lives.
+    expect(screen.getByText(w.checklistPointer)).toBeInTheDocument()
     await userEvent.click(screen.getByRole("button", { name: w.done }))
-    expect(onClose).toHaveBeenCalled()
+    expect(onNavigate).toHaveBeenCalledWith("dashboard")
   })
 
   it("follows an official install with its sign-in", async () => {

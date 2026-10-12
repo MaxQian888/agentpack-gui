@@ -35,7 +35,7 @@ describe("loadSettings", () => {
       lastCheckAt: null,
       onboarded: false,
       onboardingProgress: null,
-      quickStartDismissed: false,
+      gettingStartedDismissed: false,
       ghMirrorPrefix: null,
       skillRepoSources: [],
       proxy: null,

@@ -103,11 +103,11 @@ it("persists the auto-check preference on toggle", async () => {
   expect(saveSettings).toHaveBeenCalledWith({ autoCheckUpdates: false })
 })
 
-it("brings the quick-start card back", async () => {
-  useAppStore.setState({ settings: { ...DEFAULT_SETTINGS, quickStartDismissed: true } })
+it("brings the Getting started checklist back", async () => {
+  useAppStore.setState({ settings: { ...DEFAULT_SETTINGS, gettingStartedDismissed: true } })
   renderPreferences()
-  await userEvent.click(screen.getByRole("switch", { name: prefs.quickStartLabel }))
-  expect(saveSettings).toHaveBeenCalledWith({ quickStartDismissed: false })
+  await userEvent.click(screen.getByRole("switch", { name: prefs.gettingStartedLabel }))
+  expect(saveSettings).toHaveBeenCalledWith({ gettingStartedDismissed: false })
 })
 
 it("claims the global hotkey and persists it once the OS grants it", async () => {
@@ -183,7 +183,7 @@ it("restores this page's defaults and leaves everything else alone", async () =>
       reduceMotion: true,
       startupSection: "history",
       autoCheckUpdates: false,
-      quickStartDismissed: true,
+      gettingStartedDismissed: true,
       // Not this page's business: a reset that dropped the proxy would take the
       // route to npm with it.
       proxy: { mode: "manual", httpUrl: "http://127.0.0.1:7890", targets: ["npm"] },
@@ -202,7 +202,7 @@ it("restores this page's defaults and leaves everything else alone", async () =>
       reduceMotion: false,
       startupSection: null,
       autoCheckUpdates: true,
-      quickStartDismissed: false,
+      gettingStartedDismissed: false,
       summonShortcut: null,
       osOverride: null,
     })

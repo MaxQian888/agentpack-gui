@@ -4,6 +4,7 @@ import { SetupSteps, type SetupStep } from "./setup-steps"
 const LABELS = {
   done: "done",
   current: "do this next",
+  todo: "to do",
   waiting: "waiting on the step above",
   blocked: "needs attention",
 } as const
@@ -71,4 +72,18 @@ it("omits the tally when no progress label is given", () => {
   render(<SetupSteps title="Untallied" steps={STEPS} statusLabels={LABELS} />)
   expect(screen.queryByText(/of 3 done/)).not.toBeInTheDocument()
   expect(screen.getByRole("region", { name: "Untallied" })).toBeInTheDocument()
+})
+
+it("puts a panel-wide control beside the tally, and reads a todo row as its own state", () => {
+  render(
+    <SetupSteps
+      title="Getting started"
+      steps={[{ id: "x", title: "Add skills", status: "todo" }]}
+      statusLabels={LABELS}
+      progressLabel={(done, total) => `${done} of ${total} done`}
+      actions={<button type="button">Hide</button>}
+    />
+  )
+  expect(screen.getByRole("button", { name: "Hide" })).toBeInTheDocument()
+  expect(screen.getByText("to do")).toBeInTheDocument()
 })

@@ -109,7 +109,8 @@ catalog must be live and undeprecated.
   `appearance` (the interface-scale vocabulary),
   `inventory` (the machine's asset list — see below),
   `recovery` (every restore point, folded — see below),
-  `diagnostics` (the overview's to-do list, derived from it), `palette` (⌘K contents),
+  `diagnostics` (the overview's to-do list, derived from it), `getting-started`
+  (the overview's Getting started checklist — see below), `palette` (⌘K contents),
   `activity` (the run log's shape + redaction), `onboarding` (the first-run
   wizard's answer → selection, proxy step and network adoption) and `cleanup`
   (the disk-cleanup catalog — see below).
@@ -147,9 +148,12 @@ Sheet.
 Adding a section means touching six places, and `workspaces.test.ts` fails until
 the first two agree: the `SectionKey` union, `WORKSPACES`, the hand-written list
 in that test, `SECTIONS` in `sidebar-nav.tsx` (label + icon), `SECTION_LABEL` in
-`palette.ts`, and `NAV` in `e2e/helpers.ts`. The guided tour and the ⌘K palette
-both walk `SECTIONS`, so a new one needs `menu.*` and `tour.steps.*` copy in
-both catalogs or the tour renders an untitled step.
+`palette.ts`, and `NAV` in `e2e/helpers.ts`. The ⌘K palette walks `SECTIONS`,
+so a new one needs `menu.*` copy in both catalogs. The guided tour walks
+`WORKSPACES` instead — one stop per workspace (it rings the rail item), then ⌘K
+and the change tray, nine stops in all; it used to visit every section, and
+twenty-nine Nexts is a tour nobody finishes. A new **workspace** needs
+`tour.steps.<key>` copy in both catalogs or the tour renders an untitled step.
 
 **Five shared primitives carry every section's chrome.** Use them rather than
 hand-rolling the shape again: `section-shell` (heading + subtitle + `help` +
@@ -383,12 +387,14 @@ shell passes it the raw `dashboardScan`, which it already owns.
 `sections/setup-steps.tsx` (`SetupSteps`) is the frame for any section whose work
 is **staged** — where nothing can be started before it is installed and nothing
 opens before it is started. It renders one hairline panel, one row per step, in
-the order the steps must happen: a marker (done · doing now · waiting ·
+the order the steps must happen: a marker (done · doing now · to do · waiting ·
 blocked), the verb as a title, one plain sentence of why, the measured fact in
-mono, and the single control that advances that step.
+mono, and the single control that advances that step. `actions` puts one quiet
+panel-wide control beside the tally (the checklist's Hide).
 
-Two sections use it, and both used to say the same thing as three sibling cards
-of equal weight, each with its own badge row and its own disabled buttons:
+Three surfaces use it. Two are sections, and both used to say the same thing as
+three sibling cards of equal weight, each with its own badge row and its own
+disabled buttons; the third is the Overview's Getting started checklist (below).
 
 - **cc-connect management** (`sections/ccconnect.tsx`) — install → configure a
   project → start the bridge → open the dashboard. There is no separate service
@@ -402,12 +408,14 @@ of equal weight, each with its own badge row and its own disabled buttons:
   aside carries `quick-add-card`, `logins-card`, `app-card` and
   `visible-apps-card`.
 
-Three rules these two depend on:
+Three rules these depend on:
 
 1. **A step's status is its own precondition, not its position.** `waiting`
    means the thing it needs hasn't happened; `current` is the accent, and it is
    the only accent in the panel — a checklist of primary buttons is four
-   primaries. A state the scan hasn't answered yet (`dbReady === null`) is
+   primaries. `todo` is a step that can be done now but isn't the one suggested
+   next: without it, the second of two available steps was either a second
+   accent or "waiting on the step above" with a live button beside it. A state the scan hasn't answered yet (`dbReady === null`) is
    `waiting`, never `current`: accenting a row with nothing to click reads as
    stuck rather than as still measuring.
 2. **A step that is absent beats a step that is present and ticked.** The native
@@ -417,11 +425,40 @@ Three rules these two depend on:
    state, where a first provider is actually chosen, and in the aside once the
    list has rows. Rendered in both, every preset button is on screen twice.
 
-⚠️ The step titles and the four status words are the only strings `SetupSteps`
-does not own: `statusLabels` comes from `t.shell.setup{Done,Current,Waiting,
-Blocked}` and is **required**, because the marker that carries the state
+⚠️ The step titles and the five status words are the only strings `SetupSteps`
+does not own: `statusLabels` comes from `t.shell.setup{Done,Current,Todo,
+Waiting,Blocked}` and is **required**, because the marker that carries the state
 visually is `aria-hidden`. The status word is a sibling of the title, not part
 of it, so `getByText(title)` still matches exactly.
+
+### Getting started
+
+The Overview's checklist (`sections/getting-started.tsx`, pure half in
+`lib/agentpack/getting-started.ts`) carries a first run to "the agent answers":
+install → connect to a model → send a first message, then the extras the wizard
+leaves out (a key-gated MCP server, skills, a desktop app, the tour). It replaced
+the quick-start card. Four rules:
+
+1. **Every tick is measured, never clicked.** Install from the inventory,
+   connect from `login_status` or the live config (`ANTHROPIC_API_KEY` /
+   `ANTHROPIC_AUTH_TOKEN` in `settings.json`, a provider in `config.toml`), the
+   first message from a top-level session in the history scan. A reading that
+   hasn't come back is `unknown`, not `todo` — the history scan takes seconds.
+2. **A session proves a connection.** Nothing can see a key exported in
+   `.zshrc`, but an agent that has held a conversation reached a model.
+3. **Newcomers see the path, everyone else sees only the gap.**
+   `settings.startedWithWizard` (written by Install now) shows ticked rows and
+   the extras. Without it, the checklist appears only when a core row is
+   measured `todo`, listing just those rows — a machine that already works
+   never sees it. Hidden by `gettingStartedDismissed`, restored in Preferences.
+4. **While it is up, it is the "no coding agent" finding.** The dashboard drops
+   `no-agent` from the diagnostics so the wizard has one button, not two; once
+   the checklist is hidden the finding speaks again.
+
+The first message opens the agent through `launch_agent` (`login.rs`, the same
+fixed-table rule as the sign-in), and the history is re-read on window focus
+only while that row is waiting. The tour row ticks from `settings.tourSeen`,
+written whenever the tour closes.
 
 ### Onboarding & run invariants
 
@@ -533,7 +570,8 @@ Four rules:
    `/models` call it makes. Continue waits only for empty fields. A key never
    reaches `onboardingProgress`.
 4. **Signing in is the CLI's own, in a terminal.** `launch_agent_login` (in
-   `login.rs`) maps `claude`/`codex` to a fixed command line — nothing the
+   `login.rs`, beside `launch_agent`, which opens the agent itself for the
+   checklist's first message) maps `claude`/`codex` to a fixed command line — nothing the
    frontend sends becomes one — and opens it through `exec::open_in_terminal`,
    which Pi's launcher shares. `loginStatus` is polled to tick it off; where no
    terminal opens, the command (`LOGIN_COMMAND`, which must match the Rust
@@ -542,6 +580,9 @@ Four rules:
 Also: the completion screen derives its next action and chores from `reports`,
 not from `plan` — with **no step at all** reading as success, because the dedup
 emits nothing for what's already installed.
+In the wizard it adds one line pointing at Getting started, and Done lands on
+the Overview where that checklist is — a finished run whose chores vanish when
+the dialog closes was the old "Still to do" list's whole problem.
 
 ⚠️ The plan it reads is **`useRunner().runPlan`**, the snapshot `run()` took
 from `opts.plan` — never the live store plan. `reviewChanges` resets the live

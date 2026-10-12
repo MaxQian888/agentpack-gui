@@ -583,6 +583,13 @@ export const loginStatus = () => invoke<LoginReport>("login_status")
 export const launchAgentLogin = (agent: "claude" | "codex") =>
   invoke<void>("launch_agent_login", { agent })
 
+/**
+ * Open the user's terminal on an agent itself (`claude`, `codex`), for the
+ * Getting started checklist's first message. Same fixed-table rule as the
+ * login: the command line is Rust's, keyed by `agent`.
+ */
+export const launchAgent = (agent: "claude" | "codex") => invoke<void>("launch_agent", { agent })
+
 /** Raw result of an authenticated GET (mirrors Rust `HttpGetResult`). */
 export interface HttpGetResult {
   status: number | null

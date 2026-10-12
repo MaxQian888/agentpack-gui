@@ -14,11 +14,11 @@ import {
   MonitorDown,
   RefreshCw,
   Server,
-  Sparkles,
   Terminal,
   Wrench,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -48,10 +48,12 @@ import { DiagnosticsList } from "./diagnostics-list"
 import { ActivityCard } from "./activity-card"
 import {
   buildDiagnostics,
-  SETUP_AGENT_IDS,
   type DiagnosticItem,
   type DiagnosticSeverity,
 } from "@/lib/agentpack/diagnostics"
+import { checklistRows, gettingStarted } from "@/lib/agentpack/getting-started"
+import type { ConnectApp } from "@/lib/agentpack/onboarding"
+import { GettingStarted, useLoginReport } from "./getting-started"
 import { buildInventory } from "@/lib/agentpack/inventory"
 import type { InboxBatch } from "@/lib/agentpack/inbox"
 import { useLocale, useT } from "@/lib/i18n/provider"
@@ -269,6 +271,7 @@ export function DashboardSection({
   const settings = useAppStore((s) => s.settings)
   const setSettings = useAppStore((s) => s.setSettings)
   const setOnboardingOpen = useAppStore((s) => s.setOnboardingOpen)
+  const setTourActive = useAppStore((s) => s.setTourActive)
   const { run } = useRunnerCtx()
   // `isTauri()` is false in the pre-rendered HTML but true inside the desktop
   // webview; gate the runtime-only branch on mount so the first client render
@@ -326,7 +329,47 @@ export function DashboardSection({
     networkProbe: probe,
     paths,
   })
-  const diagnostics = buildDiagnostics(t, inventory, os)
+  // The agent whose sign-in terminal was opened from the checklist, watched
+  // until `login_status` says it landed.
+  const [signInWatch, setSignInWatch] = useState<ConnectApp | null>(null)
+  const login = useLoginReport(desktopAvailable, signInWatch)
+  const rows = checklistRows(
+    gettingStarted({
+      inventory,
+      scan,
+      login,
+      history: history.data,
+      tourSeen: !!settings.tourSeen,
+    }),
+    {
+      full: !!settings.startedWithWizard,
+      dismissed: settings.gettingStartedDismissed,
+      // Web mode measures nothing; the checklist is then the way into the wizard.
+      unmeasurable: runtimeResolved && !desktopAvailable,
+    }
+  )
+  const dismissChecklist = () => {
+    setSettings({ gettingStartedDismissed: true })
+    void saveSettings({ gettingStartedDismissed: true })
+  }
+
+  // The first message is typed in a terminal, so focus coming back is when it
+  // may have landed. Re-read the history then — but only while the checklist is
+  // actually waiting on it, or every window switch would re-scan for nobody.
+  const awaitingFirstMessage = rows?.some((r) => r.id === "firstMessage" && r.tick === "todo")
+  const retryHistory = history.retry
+  useEffect(() => {
+    if (!desktopAvailable || !awaitingFirstMessage || !retryHistory) return
+    window.addEventListener("focus", retryHistory)
+    return () => window.removeEventListener("focus", retryHistory)
+  }, [desktopAvailable, awaitingFirstMessage, retryHistory])
+
+  // While the checklist is up it *is* the "no coding agent" finding, with its
+  // own way into the wizard. Two buttons to one wizard is one too many; once
+  // the checklist is hidden or done, the finding speaks for itself again.
+  const diagnostics = buildDiagnostics(t, inventory, os).filter(
+    (item) => !rows || item.id !== "no-agent"
+  )
   const baseMeasured = desktopAvailable && !loading
   const scanMeasured = baseMeasured && !view.degraded
   /** An unmeasured value is an em dash — never a plausible-looking zero. */
@@ -427,28 +470,6 @@ export function DashboardSection({
     runThen(steps, t.diagnostics.batch[batch.key](batch.items.length))
   }
 
-  // The quick-start card is a safety net for anyone who skipped the welcome
-  // wizard: shown until they've set up an assistant (`SETUP_AGENT_IDS`) or
-  // explicitly hide it via "don't show again". It reopens the same wizard.
-  //
-  // On the desktop, not before the machine has been read — detections start
-  // empty, so the card flashed up on a machine that had Claude installed and
-  // vanished a second later — and not beside the "no coding agent" finding,
-  // which says the same thing with its own "Set one up". Two buttons to one
-  // wizard, the louder one second, is one too many. In web mode nothing is ever
-  // measured, and the card is the only way in.
-  const noAgentCli = !SETUP_AGENT_IDS.some((id) => detections[id]?.installed)
-  const agentsKnown = desktopAvailable ? inventory.measured : true
-  const showQuickStart =
-    !settings.quickStartDismissed &&
-    noAgentCli &&
-    agentsKnown &&
-    !diagnostics.some((d) => d.id === "no-agent")
-  const dismissQuickStart = () => {
-    setSettings({ quickStartDismissed: true })
-    void saveSettings({ quickStartDismissed: true })
-  }
-
   return (
     <CapabilityWorkbench
       title={d.title}
@@ -512,13 +533,19 @@ export function DashboardSection({
         <div className="flex min-w-0 flex-col gap-4">
           <DiagnosticsList items={diagnostics} onAct={actOn} onBatch={actOnBatch} />
 
-          {showQuickStart ? (
-            <QuickStartCard
-              q={t.quickStart}
+          {rows ? (
+            <GettingStarted
+              rows={rows}
+              desktop={desktopAvailable}
               networkBlocked={!!probe && !probe.directOk && !probe.bestProxy}
-              onOpen={() => setOnboardingOpen(true)}
-              onNetwork={() => onNavigate("network")}
-              onDismiss={dismissQuickStart}
+              agentTitle={(app) =>
+                app === "claude" ? t.welcome.agentClaude : t.welcome.agentCodex
+              }
+              onOpenGuide={() => setOnboardingOpen(true)}
+              onNavigate={onNavigate}
+              onStartTour={() => setTourActive(true)}
+              onSignInStarted={setSignInWatch}
+              onDismiss={dismissChecklist}
             />
           ) : null}
 
@@ -828,65 +855,6 @@ function StatReadout({
  */
 function Unmeasured() {
   return <p className="font-mono text-sm text-muted-foreground">{UNMEASURED}</p>
-}
-
-/** A newcomer's lingering guide, shown until an assistant is set up. */
-function QuickStartCard({
-  q,
-  networkBlocked,
-  onOpen,
-  onNetwork,
-  onDismiss,
-}: {
-  q: ReturnType<typeof useT>["quickStart"]
-  /** The startup probe couldn't reach the internet directly and found no proxy. */
-  networkBlocked: boolean
-  onOpen: () => void
-  onNetwork: () => void
-  onDismiss: () => void
-}) {
-  const steps = [q.stepPick, q.stepPreview, q.stepInstall]
-  return (
-    <section aria-label={q.title} className="min-w-0 rounded-[var(--hm-radius-surface)] border p-4">
-      {/* Dismiss sits with the primary action, not opposite the title: in the
-          8-column workspace a button up there squeezed the intro onto two
-          lines and left one word alone on the second. */}
-      <div className="flex items-start gap-3">
-        <Sparkles className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
-        <div className="min-w-0">
-          <h3 className="font-medium">{q.title}</h3>
-          <p className="text-sm text-muted-foreground">{q.intro}</p>
-        </div>
-      </div>
-      <ol className="mt-3 grid gap-2 sm:grid-cols-3">
-        {steps.map((step, i) => (
-          <li key={step} className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-            <span className="font-mono text-primary tabular-nums">0{i + 1}</span>
-            <span>{step}</span>
-          </li>
-        ))}
-      </ol>
-      {/* Point a blocked machine at the fix before it watches an install fail. */}
-      {networkBlocked ? (
-        <button
-          type="button"
-          onClick={onNetwork}
-          className="mt-3 self-start rounded-sm text-left text-sm text-[var(--hm-warn)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-        >
-          {q.networkBlocked}
-        </button>
-      ) : null}
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Button size="sm" className="gap-2" onClick={onOpen}>
-          <Sparkles className="size-4" aria-hidden="true" />
-          {q.openGuide}
-        </Button>
-        <Button variant="ghost" size="sm" onClick={onDismiss}>
-          {q.dismiss}
-        </Button>
-      </div>
-    </section>
-  )
 }
 
 /** The small on/off dot shared by the CLI, provider and relay rows. */

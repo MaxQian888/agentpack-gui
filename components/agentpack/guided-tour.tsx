@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { useT } from "@/lib/i18n/provider"
-import { SECTIONS, type SectionKey } from "./sidebar-nav"
+import { landingSection, WORKSPACES, type SectionKey } from "@/lib/agentpack/workspaces"
 
 /**
  * One stop on the tour: which section to switch to first (auto-navigation) and
@@ -17,22 +17,27 @@ interface TourStep {
 }
 
 /**
- * The ordered walkthrough: the task rail, then **every** section in the order it
- * appears there, then the two things that tie the flow together — the ⌘K
- * palette and the change tray that leads to the review panel.
+ * The ordered walkthrough: one stop per workspace, in rail order, then the two
+ * things that tie the flow together — the ⌘K palette and the change tray that
+ * leads to the review panel.
  *
- * Every section gets a stop on purpose — a tour that skips five of them leaves
- * the user believing those features don't exist. The section list is derived
- * from `SECTIONS` rather than retyped, so adding a section to the sidebar
- * without giving it a stop here is impossible; `guided-tour.test.tsx` also
- * asserts each stop has copy in both languages.
+ * One stop per workspace, not per section. It used to visit all twenty-five
+ * sections plus four extras — twenty-nine Nexts, most of them about pages a
+ * newcomer had no reason to open yet, which is how a tour gets skipped at
+ * stop three. A workspace's stop names what its tabs are for and rings its
+ * rail item, so the way back to it is the thing being pointed at. The list is
+ * derived from `WORKSPACES`, so a workspace can't be added without a stop;
+ * `guided-tour.test.tsx` asserts each stop has copy in both languages.
  *
- * Step ids match the section keys, which is what `messages.tour.steps` is keyed
- * by.
+ * Step ids are the workspace keys, which is what `messages.tour.steps` is
+ * keyed by.
  */
 const STEPS: readonly TourStep[] = [
-  { id: "nav", section: "dashboard", target: "nav" },
-  ...SECTIONS.map((s) => ({ id: s.key, section: s.key, target: "section-heading" })),
+  ...WORKSPACES.map((w) => ({
+    id: w.key,
+    section: landingSection(w.key),
+    target: `workspace-${w.key}`,
+  })),
   { id: "command", section: "dashboard" as SectionKey, target: "command" },
   { id: "review", section: "presets" as SectionKey, target: "tray" },
 ]

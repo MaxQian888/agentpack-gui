@@ -5,7 +5,13 @@
 import { Check } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-export type SetupStepStatus = "done" | "current" | "waiting" | "blocked"
+/**
+ * `todo` is a step that can be done now but isn't the one suggested next —
+ * the Getting started checklist's extras, which depend on nothing but each
+ * other's order on the page. Without it they were either a second accent or
+ * "waiting on the step above" with a live button beside it.
+ */
+export type SetupStepStatus = "done" | "current" | "todo" | "waiting" | "blocked"
 
 export interface SetupStep {
   id: string
@@ -28,6 +34,7 @@ export interface SetupStep {
 const MARKER: Record<SetupStepStatus, string> = {
   done: "border-[var(--hm-ok)] text-[var(--hm-ok)]",
   current: "border-primary bg-primary text-primary-foreground",
+  todo: "border-border text-foreground",
   waiting: "border-border text-muted-foreground",
   blocked: "border-[var(--hm-warn)] text-[var(--hm-warn)]",
 }
@@ -58,9 +65,12 @@ export function SetupSteps({
   steps,
   progressLabel,
   statusLabels,
+  actions,
 }: {
   title: string
   hint?: React.ReactNode
+  /** A quiet control for the panel as a whole, beside the tally (Hide). */
+  actions?: React.ReactNode
   steps: readonly SetupStep[]
   /** Renders the tally, e.g. `(done, total) => "2 of 4 done"`. */
   progressLabel?: (done: number, total: number) => string
@@ -77,9 +87,14 @@ export function SetupSteps({
     <section aria-label={title} className="min-w-0 rounded-lg border">
       <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-4 py-3">
         <h3 className="font-medium">{title}</h3>
-        {progressLabel ? (
-          <span className="font-mono text-xs tabular-nums text-muted-foreground">
-            {progressLabel(done, steps.length)}
+        {progressLabel || actions ? (
+          <span className="flex items-center gap-2">
+            {progressLabel ? (
+              <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                {progressLabel(done, steps.length)}
+              </span>
+            ) : null}
+            {actions}
           </span>
         ) : null}
         {hint ? (

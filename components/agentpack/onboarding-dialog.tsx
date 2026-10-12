@@ -412,6 +412,9 @@ export function OnboardingDialog({
                     )}
                   />
                 ) : null}
+                {applied && view.finished && !view.lastWasPreview ? (
+                  <p className="text-xs text-muted-foreground">{w.checklistPointer}</p>
+                ) : null}
                 <RunBody
                   view={view}
                   onNavigate={
@@ -441,7 +444,11 @@ export function OnboardingDialog({
                     {t.shell.retry}
                   </Button>
                 ) : null}
-                <Button onClick={onClose}>{w.done}</Button>
+                {/* Done lands on the Overview, where the checklist the line
+                    above points to is waiting. */}
+                <Button onClick={() => (onNavigate ? onNavigate("dashboard") : onClose())}>
+                  {w.done}
+                </Button>
               </>
             )
           ) : (

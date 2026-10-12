@@ -126,7 +126,7 @@ export function PreferencesSection() {
       reduceMotion: DEFAULT_SETTINGS.reduceMotion,
       startupSection: DEFAULT_SETTINGS.startupSection,
       autoCheckUpdates: DEFAULT_SETTINGS.autoCheckUpdates,
-      quickStartDismissed: DEFAULT_SETTINGS.quickStartDismissed,
+      gettingStartedDismissed: DEFAULT_SETTINGS.gettingStartedDismissed,
       summonShortcut: DEFAULT_SETTINGS.summonShortcut,
       osOverride: DEFAULT_SETTINGS.osOverride,
     })
@@ -284,14 +284,14 @@ export function PreferencesSection() {
               }
             />
             <SettingsRow
-              label={prefs.quickStartLabel}
-              hint={prefs.quickStartHint}
+              label={prefs.gettingStartedLabel}
+              hint={prefs.gettingStartedHint}
               htmlFor="pref-quick-start"
               control={
                 <Switch
                   id="pref-quick-start"
-                  checked={!settings.quickStartDismissed}
-                  onCheckedChange={(on) => persist({ quickStartDismissed: !on })}
+                  checked={!settings.gettingStartedDismissed}
+                  onCheckedChange={(on) => persist({ gettingStartedDismissed: !on })}
                 />
               }
             />

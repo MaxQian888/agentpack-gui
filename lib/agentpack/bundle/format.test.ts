@@ -42,7 +42,9 @@ const SETTINGS: AppSettings = {
   lastCheckAt: 123,
   onboarded: true,
   onboardingProgress: null,
-  quickStartDismissed: true,
+  gettingStartedDismissed: true,
+  startedWithWizard: true,
+  tourSeen: true,
   ghMirrorPrefix: "https://mirror/",
   skillRepoSources: [],
   proxy: {
@@ -175,7 +177,9 @@ describe("settings allowlist", () => {
     expect(bundle.settings).not.toHaveProperty("skippedVersion")
     expect(bundle.settings).not.toHaveProperty("lastCheckAt")
     expect(bundle.settings).not.toHaveProperty("onboarded")
-    expect(bundle.settings).not.toHaveProperty("quickStartDismissed")
+    expect(bundle.settings).not.toHaveProperty("gettingStartedDismissed")
+    expect(bundle.settings).not.toHaveProperty("startedWithWizard")
+    expect(bundle.settings).not.toHaveProperty("tourSeen")
   })
 
   it("drops an unknown key arriving in a bundle", () => {

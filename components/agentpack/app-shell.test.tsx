@@ -87,7 +87,7 @@ it("shows the header update badge when an update is available and opens About", 
       lastCheckAt: null,
       onboarded: true,
       onboardingProgress: null,
-      quickStartDismissed: false,
+      gettingStartedDismissed: false,
       ghMirrorPrefix: null,
       skillRepoSources: [],
       proxy: null,
@@ -112,6 +112,6 @@ it("shows the header update badge when an update is available and opens About", 
  */
 it("can still open the welcome wizard in web mode", async () => {
   renderShell()
-  await userEvent.click(screen.getByRole("button", { name: en.quickStart.openGuide }))
+  await userEvent.click(screen.getByRole("button", { name: en.gettingStarted.install.action }))
   expect(await screen.findByRole("heading", { name: en.welcome.title })).toBeInTheDocument()
 })

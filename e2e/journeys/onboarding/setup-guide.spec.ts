@@ -46,22 +46,29 @@ test("offers no tour detour mid-setup; the tour lives in Preferences", async ({ 
   await navTo(page, "preferences")
   await page.getByRole("button", { name: "Take a tour" }).click()
   const tour = page.getByRole("dialog", { name: "Guided tour" })
-  await expect(tour.getByText("Seven focused workspaces")).toBeVisible()
+  // One stop per workspace plus ⌘K and the tray — not one per section.
+  await expect(tour.getByRole("heading", { name: "Overview" })).toBeVisible()
+  await expect(tour.getByText("1 / 9")).toBeVisible()
   await page.keyboard.press("Escape")
   await expect(tour).toBeHidden()
   await expect(page.getByRole("heading", { name: "Environment dashboard" })).toBeVisible()
 })
 
-test("restores the quick-start entry point from Preferences", async ({ page }) => {
-  await page.getByRole("button", { name: "Don't show again" }).click()
-  await expect(page.getByRole("region", { name: "Quick start" })).toHaveCount(0)
+test("hides the Getting started checklist, and brings it back from Preferences", async ({
+  page,
+}) => {
+  const checklist = page.getByRole("region", { name: "Getting started" })
+  // Web mode measures nothing, so every row is unticked and the first is the wizard.
+  await expect(checklist.getByRole("button", { name: "Open the guide" })).toBeVisible()
+  await checklist.getByRole("button", { name: "Hide" }).click()
+  await expect(checklist).toHaveCount(0)
 
   await navTo(page, "preferences")
-  const quickStart = page.getByRole("switch", { name: "Show the quick-start card" })
-  await expect(quickStart).not.toBeChecked()
-  await quickStart.click()
-  await expect(quickStart).toBeChecked()
+  const toggle = page.getByRole("switch", { name: "Show the Getting started list" })
+  await expect(toggle).not.toBeChecked()
+  await toggle.click()
+  await expect(toggle).toBeChecked()
 
   await navTo(page, "dashboard")
-  await expect(page.getByRole("region", { name: "Quick start" })).toBeVisible()
+  await expect(checklist).toBeVisible()
 })

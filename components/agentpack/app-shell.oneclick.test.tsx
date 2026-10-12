@@ -52,7 +52,7 @@ jest.mock("@/lib/tauri/settings", () => ({
     lastCheckAt: null,
     onboarded: true,
     onboardingProgress: null,
-    quickStartDismissed: true,
+    gettingStartedDismissed: true,
   })),
   saveSettings: jest.fn(async () => undefined),
   DEFAULT_SETTINGS: {
@@ -61,7 +61,7 @@ jest.mock("@/lib/tauri/settings", () => ({
     lastCheckAt: null,
     onboarded: false,
     onboardingProgress: null,
-    quickStartDismissed: false,
+    gettingStartedDismissed: false,
   },
 }))
 jest.mock("sonner", () => ({

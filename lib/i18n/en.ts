@@ -91,6 +91,8 @@ export const en = {
     installingIntro:
       "Installing. You can close this window — the run carries on in the side panel.",
     finishedIntro: "Here's how it went.",
+    checklistPointer:
+      "Getting started, on the Overview, keeps track of what's left — signing in, your first message, and the extras.",
     done: "Done",
   },
 
@@ -104,117 +106,37 @@ export const en = {
     done: "Done",
     progress: (i: number, n: number) => `${i} / ${n}`,
     steps: {
-      nav: {
-        title: "Seven focused workspaces",
-        body: "The rail separates your own account from administrator operations, alongside machine health, installation, capabilities, usage, and settings.",
+      overview: {
+        title: "Overview",
+        body: "What this machine looks like right now — what's installed, what needs attention, and your Getting started list. Each finding links to the page that fixes it.",
       },
-      dashboard: {
-        title: "Dashboard",
-        body: "See what's installed and configured at a glance, and what needs attention — each finding links to the page that fixes it.",
+      install: {
+        title: "Install & repair",
+        body: "Quick setup bundles, the runtimes the agents need, the agents themselves, the network route, and a clean-up for the gigabytes the CLIs leave behind.",
       },
-      history: {
-        title: "Chat history",
-        body: "Read back every past session across Claude Code, Codex, OpenCode and Pi, and see exactly what your tokens cost.",
+      capabilities: {
+        title: "Capabilities",
+        body: "What the agents can reach: skills that teach them how to work, MCP servers that give them tools, your accounts and relays, Pi, and cc-connect.",
       },
-      "management-overview": {
-        title: "Accounts & quota overview",
-        body: "Inspect instance health, direct account relationships, quota risk and open alerts without merging partial data.",
-      },
-      accounts: {
-        title: "Account center",
-        body: "Manage the complete master and direct-child lifecycle, with previews and audit reasons for sensitive changes.",
-      },
-      quota: {
-        title: "Quota center",
-        body: "Transfer, batch, reverse and adjust quota through the server ledger, then configure automated policies.",
-      },
-      analytics: {
-        title: "Usage insights",
-        body: "Compare authoritative billing logs with clearly labelled local CLI estimates and export the selected scope.",
-      },
-      audit: {
-        title: "Audit & alerts",
-        body: "Trace immutable before-and-after events, manage alert rules and acknowledge delivery outcomes.",
-      },
-      "my-account": {
+      account: {
         title: "My account",
-        body: "Sign in to a personal more-token package and manage only your own profile and account state.",
+        body: "Your own more-token profile, balance, usage, models and security — nothing an administrator manages.",
       },
-      "my-balance": {
-        title: "My balance",
-        body: "Review your available balance and personal ledger without exposing administrator controls.",
+      management: {
+        title: "Accounts & quota",
+        body: "For administrators: accounts, quota transfers and policies, usage insights, audit and alerts.",
       },
-      "my-usage": {
-        title: "My usage",
-        body: "Inspect the authoritative billing records associated with your own account and selected period.",
+      usage: {
+        title: "Usage",
+        body: "Every past session across Claude Code, Codex, OpenCode and Pi, and what your tokens cost.",
       },
-      "my-models": {
-        title: "Model marketplace",
-        body: "Browse the models, billing modes, groups, and endpoint types currently available to your account.",
-      },
-      "my-security": {
-        title: "My security",
-        body: "Change your password, review paired desktop sessions, revoke access, or request account closure.",
-      },
-      presets: {
-        title: "Presets",
-        body: "New here? Pick a bundle and it pre-fills a sensible set of tools in one tap.",
-      },
-      environment: {
-        title: "Environment",
-        body: "Terminal, Node, Python, Bun and uv — the tools the assistants need. agentpack installs any that are missing.",
-      },
-      clis: {
-        title: "CLIs",
-        body: "Install or upgrade the AI assistants you run in a terminal — Claude Code, Codex, cc-switch.",
-      },
-      skills: {
-        title: "Skills",
-        body: "Add reusable playbooks that teach the AI how to do common engineering tasks well.",
-      },
-      mcp: {
-        title: "MCP servers",
-        body: "Give the AI extra powers with plugins — web access, memory, GitHub and more.",
-      },
-      pi: {
-        title: "Pi",
-        body: "Manage Pi packages, project resources, session branches, and provider authentication safely.",
-      },
-      network: {
-        title: "Network",
-        body: "Detect and apply a proxy, or pick faster mirrors for npm, pip and friends.",
-      },
-      cleanup: {
-        title: "Clean up",
-        body: "The CLIs keep every transcript, cache and log forever. See what they're holding, and clear what you don't need — recoverably.",
-      },
-      ccswitch: {
-        title: "cc-switch",
-        body: "Keep several API providers/keys and switch the active one with a click.",
-      },
-      ccconnect: {
-        title: "cc-connect",
-        body: "Drive your local coding agents from a chat app — Feishu, Slack, Telegram — so you can work away from your desk.",
-      },
-      preferences: {
-        title: "Preferences",
-        body: "Theme, language, interface scale and the screen agentpack opens on — all in one place.",
-      },
-      config: {
-        title: "Profiles & backup",
-        body: "Save your setup as a profile, or export the whole machine so you can rebuild it somewhere else.",
-      },
-      recovery: {
-        title: "Recovery points",
-        body: "Every way back this app has left behind — config snapshots, skill backups and quarantined cleanups — with a warning when one is older than the file it would overwrite.",
-      },
-      about: {
-        title: "About & updates",
-        body: "Which build you're running, and how to get the next one.",
+      settings: {
+        title: "Settings",
+        body: "Preferences, profiles and backups, the CLIs' own config files, every recovery point, and which build you're on.",
       },
       command: {
         title: "One way to anywhere",
-        body: "Press ⌘K (Ctrl+K on Windows and Linux) to jump to any task area, or to run an app action without hunting for it.",
+        body: "Press ⌘K (Ctrl+K on Windows and Linux) to jump to any page, or to run an app action without hunting for it.",
       },
       review: {
         title: "Nothing is written until you say so",
@@ -223,16 +145,57 @@ export const en = {
     } as Record<string, { title: string; body: string }>,
   },
 
-  /** Dashboard "quick start" card — a lingering guide for anyone who skipped the wizard. */
-  quickStart: {
-    title: "Quick start",
-    intro: "New to agentpack? The guide sets up your AI coding tools in a few clicks.",
-    stepPick: "Pick a bundle",
-    stepPreview: "Review the steps",
-    stepInstall: "Apply, with a way back",
-    openGuide: "Open the guide",
-    dismiss: "Don't show again",
+  /**
+   * The Overview's "Getting started" checklist. Every tick is measured on the
+   * machine (lib/agentpack/getting-started) — nothing here is ticked by hand.
+   */
+  gettingStarted: {
+    title: "Getting started",
+    hint: "Each row ticks itself once this machine shows it's done.",
+    progress: (done: number, total: number) => `${done} of ${total} done`,
+    hide: "Hide",
     networkBlocked: "Your network can't reach the internet directly — set that up first →",
+    checking: "Checking…",
+    pendingFor: (agents: string) => `Not yet: ${agents}`,
+    install: {
+      title: "Install a coding agent",
+      body: "Claude Code or Codex, with its official installer. The guide asks which, and how it should reach a model.",
+      action: "Open the guide",
+    },
+    connect: {
+      title: "Connect it to a model",
+      body: "Sign in with your subscription in a terminal, or use an API key or a relay.",
+      signIn: (agent: string) => `Sign in to ${agent}`,
+      waiting: "Waiting for the sign-in to finish…",
+      useKey: "Use a key or relay",
+    },
+    firstMessage: {
+      title: "Send your first message",
+      body: "Open the agent in a terminal and ask it something. This ticks once the conversation is on disk.",
+      open: (command: string) => `Open ${command} in a terminal`,
+    },
+    manual: "No terminal could be opened. Run this yourself:",
+    copy: "Copy",
+    keyedServer: {
+      title: "Add a server that needs a key",
+      body: "Context7 (current library docs) and GitHub take a key of your own, so the first run left them out.",
+      action: "Choose a server",
+    },
+    skills: {
+      title: "Add skills",
+      body: "Playbooks that teach the agent how to do common engineering work well.",
+      action: "Browse skills",
+    },
+    desktopApp: {
+      title: "Add a desktop app",
+      body: "Claude and Codex each have a window of their own that reads the same config.",
+      action: "See the apps",
+    },
+    tour: {
+      title: "Take the tour",
+      body: "Nine stops: what each part of agentpack is for.",
+      action: "Take the tour",
+    },
   },
 
   /**
@@ -3172,6 +3135,7 @@ export const en = {
     /** The four SetupSteps states as words — the marker itself is only colour. */
     setupDone: "done",
     setupCurrent: "do this next",
+    setupTodo: "to do",
     setupWaiting: "waiting on the step above",
     setupBlocked: "needs attention",
     add: "Add",
@@ -3713,8 +3677,9 @@ export const en = {
     startupDefault: "Overview (default)",
     autoCheckLabel: "Check for updates on startup",
     autoCheckHint: "One request to the release feed, at launch.",
-    quickStartLabel: "Show the quick-start card",
-    quickStartHint: "The overview's setup shortcut, shown while no assistant is installed.",
+    gettingStartedLabel: "Show the Getting started list",
+    gettingStartedHint:
+      "The Overview's checklist of what's left — installing, connecting, a first message.",
 
     systemTitle: "This machine",
     hotkeyLabel: "Global hotkey",

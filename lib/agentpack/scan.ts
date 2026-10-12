@@ -14,6 +14,13 @@ import { MCP_SERVERS, SKILLS } from "./registry"
 export interface ClaudeRelayState {
   baseUrl?: string
   hasToken: boolean
+  /**
+   * `ANTHROPIC_API_KEY` is set in the same `env` — an Anthropic key rather
+   * than a relay, so it is kept apart from `hasToken`, which the overview
+   * reads as "a relay is configured". Optional because a scan taken before it
+   * existed simply has no answer.
+   */
+  hasApiKey?: boolean
 }
 
 /** What a Codex config.toml currently declares. */
@@ -44,7 +51,11 @@ export function parseClaudeRelay(json: string): ClaudeRelayState {
   const env = (data["env"] as Record<string, unknown> | undefined) ?? {}
   const baseUrl =
     typeof env["ANTHROPIC_BASE_URL"] === "string" ? env["ANTHROPIC_BASE_URL"] : undefined
-  return { baseUrl, hasToken: typeof env["ANTHROPIC_AUTH_TOKEN"] === "string" }
+  return {
+    baseUrl,
+    hasToken: typeof env["ANTHROPIC_AUTH_TOKEN"] === "string",
+    hasApiKey: typeof env["ANTHROPIC_API_KEY"] === "string",
+  }
 }
 
 /** List declared MCP servers + relay provider from Codex config.toml. */
