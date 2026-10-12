@@ -529,7 +529,7 @@ export const en = {
     minimal: { title: "Minimal", description: "Claude Code + local memory MCP." },
     recommended: {
       title: "Recommended",
-      description: "Claude Code, Codex, cc-switch + core MCP servers.",
+      description: "Claude Code, Codex + core MCP servers.",
     },
     everything: {
       title: "Everything",

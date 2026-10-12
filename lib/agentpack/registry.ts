@@ -64,6 +64,26 @@ function safeNpmCli(pkg: string): Pick<CliTool, "install" | "methods" | "upgrade
 }
 
 /**
+ * The vendor's own install script first, then the package-manager channels.
+ * For the two agents agentpack writes config into, the vendor script is the
+ * recommendation: it needs no Node (nor, on macOS, the Homebrew that installs
+ * Node), so the agent works even where the runtime install fails, and the
+ * agent updates itself in place. npm stays one pick away in the CLIs section,
+ * and a machine where npm already owns the binary keeps upgrading through npm
+ * (see `upgradeCommandFor`) rather than gaining a second, shadowing copy.
+ */
+function nativeThenPmMethods(
+  pkg: string,
+  native: Record<OS, Command>
+): Partial<Record<OS, InstallMethod[]>> {
+  return {
+    win: [{ id: "native", command: native.win }, ...pmMethods(pkg)],
+    mac: [{ id: "native", command: native.mac }, ...pmMethods(pkg)],
+    linux: [{ id: "native", command: native.linux }, ...pmMethods(pkg)],
+  }
+}
+
+/**
  * The package-manager channels plus the vendor's own install script, which is
  * the only route on a machine with no Node at all. `native` is deliberately
  * last: it is the fallback, not the recommendation, and `routeOf` treats it as a
@@ -352,9 +372,10 @@ export const RUNTIMES: readonly Runtime[] = [
 /**
  * Installable CLI tools.
  *
- * Cross-platform default for the agent CLIs is `npm i -g`, which works on every
- * OS that has Node. cc-switch is a Tauri desktop GUI, so it uses the platform's
- * app package manager.
+ * Cross-platform default for most agent CLIs is `npm i -g`, which works on every
+ * OS that has Node. Claude Code and Codex default to their vendors' native
+ * installers instead (`nativeThenPmMethods`), which need no Node. cc-switch is a
+ * Tauri desktop GUI, so it uses the platform's app package manager.
  */
 export const CLI_TOOLS: readonly CliTool[] = [
   {
@@ -365,10 +386,10 @@ export const CLI_TOOLS: readonly CliTool[] = [
     // package.json engines: { node: ">=22.0.0" }
     minNodeMajor: 22,
     ...npmCli("@anthropic-ai/claude-code"),
-    // Package-manager choice (npm default) plus Anthropic's official native
-    // installer as a fallback for machines without Node. Native URLs are the
-    // documented ones at code.claude.com/docs/en/setup.
-    methods: pmAndNativeMethods(
+    // Anthropic's official native installer by default, the package managers
+    // as alternatives. Native URLs are the documented ones at
+    // code.claude.com/docs/en/setup.
+    methods: nativeThenPmMethods(
       "@anthropic-ai/claude-code",
       scriptInstall("https://claude.ai/install.sh", "https://claude.ai/install.ps1")
     ),
@@ -478,47 +499,23 @@ export const CLI_TOOLS: readonly CliTool[] = [
     bin: "codex",
     npmPackage: "@openai/codex",
     ...npmCli("@openai/codex"),
-    // Package-manager choice (npm default) plus OpenAI's official native
-    // installer (chatgpt.com/codex/install.*) for machines without Node. Spelled
-    // out rather than built from `scriptInstall`: the Windows script needs an
-    // explicit execution policy, and the POSIX one is piped into `sh`.
-    methods: {
-      win: [
-        ...pmMethods("@openai/codex"),
-        {
-          id: "native",
-          command: {
-            file: "powershell",
-            args: [
-              "-ExecutionPolicy",
-              "ByPass",
-              "-c",
-              "irm https://chatgpt.com/codex/install.ps1 | iex",
-            ],
-          },
-        },
-      ],
-      mac: [
-        ...pmMethods("@openai/codex"),
-        {
-          id: "native",
-          command: {
-            file: "bash",
-            args: ["-c", "curl -fsSL https://chatgpt.com/codex/install.sh | sh"],
-          },
-        },
-      ],
-      linux: [
-        ...pmMethods("@openai/codex"),
-        {
-          id: "native",
-          command: {
-            file: "bash",
-            args: ["-c", "curl -fsSL https://chatgpt.com/codex/install.sh | sh"],
-          },
-        },
-      ],
-    },
+    // OpenAI's official native installer (chatgpt.com/codex/install.*) by
+    // default, the package managers as alternatives. Not built from
+    // `scriptInstall`: the Windows script needs an explicit execution policy,
+    // and the POSIX one is piped into `sh`.
+    methods: nativeThenPmMethods("@openai/codex", {
+      win: {
+        file: "powershell",
+        args: [
+          "-ExecutionPolicy",
+          "ByPass",
+          "-c",
+          "irm https://chatgpt.com/codex/install.ps1 | iex",
+        ],
+      },
+      mac: { file: "bash", args: ["-c", "curl -fsSL https://chatgpt.com/codex/install.sh | sh"] },
+      linux: { file: "bash", args: ["-c", "curl -fsSL https://chatgpt.com/codex/install.sh | sh"] },
+    }),
   },
   {
     id: "opencode",
@@ -888,8 +885,15 @@ export function fallbackMethodsFor(
   os: OS,
   chosenId: string | undefined
 ): InstallMethod[] {
-  const chosenRoute = routeOf(chosenId ?? "default")
-  return installMethodsFor(tool, os).filter((m) => routeOf(m.id) !== chosenRoute)
+  // One method per route: after the chosen route fails, npm, pnpm and bun would
+  // each pull the same package from the same registry and fail the same way.
+  const seen = new Set([routeOf(chosenId ?? "default")])
+  return installMethodsFor(tool, os).filter((m) => {
+    const route = routeOf(m.id)
+    if (seen.has(route)) return false
+    seen.add(route)
+    return true
+  })
 }
 
 /**

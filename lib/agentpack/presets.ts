@@ -21,8 +21,11 @@ export const PRESETS: readonly Preset[] = [
     mcps: ["memory"],
   },
   {
+    // No cc-switch: the default provider store is agentpack's own, so the
+    // external app would be installed and never used. The Accounts & relays
+    // section offers it when someone picks the CC Switch-compatible store.
     id: "recommended",
-    clis: ["claude-code", "codex", "cc-switch"],
+    clis: ["claude-code", "codex"],
     skills: [],
     mcps: ["memory", "context7", "sequential-thinking", "fetch", "github"],
   },

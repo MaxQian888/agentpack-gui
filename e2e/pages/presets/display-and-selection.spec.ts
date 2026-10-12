@@ -31,7 +31,7 @@ test("applies a complete preset and Custom clears the staged plan", async ({ pag
   await page.getByRole("button", { name: "Recommended", exact: true }).click()
   await expect(page.getByRole("button", { name: "Review changes" })).toBeVisible()
   // Step 03 names the same destination from the page itself, with the count.
-  await expect(page.getByRole("button", { name: "Review 8 changes" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Review 7 changes" })).toBeVisible()
   await page.getByRole("button", { name: "Custom", exact: true }).click()
   await expect(page.getByRole("button", { name: "Review changes" })).toHaveCount(0)
 })

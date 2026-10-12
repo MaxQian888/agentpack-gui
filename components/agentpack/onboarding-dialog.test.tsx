@@ -256,7 +256,7 @@ describe("step 4 — install", () => {
     renderDialog()
     await goToInstall()
     expect(screen.getByText(en.welcome.summaryClis)).toBeInTheDocument()
-    // Recommended, in a window: the desktop apps plus cc-switch, and its servers.
+    // Recommended, in a window: the desktop apps and its servers.
     expect(screen.getByText(en.catalog.cli["claude-desktop"].title)).toBeInTheDocument()
     expect(screen.getByText(en.catalog.mcp.memory.title)).toBeInTheDocument()
     // A key-gated server is named twice on purpose — once in the list, once

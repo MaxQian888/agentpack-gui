@@ -71,14 +71,65 @@ const paths: Paths = {
   os: "mac",
 }
 
+// Pinned to npm: most tests here are about the npm path (Node prerequisite,
+// engines floor, registry mirror). The native default has its own tests below.
 const plan: Plan = {
   os: "mac",
   clis: ["claude-code"],
+  cliMethods: { "claude-code": "npm" },
   skills: [{ id: "rust", targets: ["claude"] }],
   mcps: [{ id: "context7", targets: ["claude", "codex"] }],
   mcpKeys: { context7: "k" },
   network: { npmRegistry: "https://m" },
 }
+
+describe("the native installer is the default for the config-written agents", () => {
+  const fresh: Plan = {
+    os: "mac",
+    clis: ["claude-code", "codex"],
+    skills: [],
+    mcps: [],
+    mcpKeys: {},
+    network: {},
+  }
+
+  it("installs Claude Code and Codex with their vendor scripts, and pulls in no Node", () => {
+    const steps = buildSteps(fresh, paths)
+    for (const id of ["claude-code", "codex"]) {
+      const cli = steps.find((s) => s.id === `cli-${id}`)!
+      expect(cli.kind === "command" && cli.command.file).toBe("bash")
+      expect(cli.dependsOn).toBeUndefined()
+    }
+    expect(steps.map((s) => s.id)).not.toContain("runtime-node")
+  })
+
+  it("keeps npm one route away, for a network failure", () => {
+    const cli = buildSteps(fresh, paths).find((s) => s.id === "cli-claude-code")!
+    const ids = cli.kind === "command" ? (cli.fallbacks ?? []).map((f) => f.id) : []
+    // pnpm and bun pull from the same registry as npm, so one rung covers them.
+    expect(ids).toEqual(["cli-claude-code-npm"])
+  })
+
+  it("upgrades an npm-owned install through npm, not the vendor script", () => {
+    const steps = buildSteps(fresh, paths, undefined, new Set(["claude-code"]), {
+      versions: { "claude-code": "1.0.0" },
+      latest: { "claude-code": "2.0.0" },
+      managers: { "claude-code": "npm" },
+    })
+    const cli = steps.find((s) => s.id === "cli-claude-code")!
+    expect(cli.kind === "command" && cli.command.file).toBe("npm")
+  })
+
+  it("upgrades a native install by re-running the vendor script", () => {
+    const steps = buildSteps(fresh, paths, undefined, new Set(["claude-code"]), {
+      versions: { "claude-code": "1.0.0" },
+      latest: { "claude-code": "2.0.0" },
+      managers: { "claude-code": "native" },
+    })
+    const cli = steps.find((s) => s.id === "cli-claude-code")!
+    expect(cli.kind === "command" && cli.command.file).toBe("bash")
+  })
+})
 
 it("orders steps registry→install→skills→mcp", () => {
   const ids = buildSteps(plan, paths).map((s) => s.id)

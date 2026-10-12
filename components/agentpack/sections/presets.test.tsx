@@ -25,14 +25,14 @@ describe("presets", () => {
   it("clicking Recommended fills the plan", async () => {
     renderSection()
     await userEvent.click(await screen.findByRole("button", { name: "Recommended" }))
-    expect(useAppStore.getState().plan.clis).toContain("cc-switch")
+    expect(useAppStore.getState().plan.clis).toEqual(["claude-code", "codex"])
   })
 
   it("states what each preset installs before it is picked", () => {
     renderSection()
-    // 3 CLIs, no skills, 5 MCP servers — read off the row, not discovered by
+    // 2 CLIs, no skills, 5 MCP servers — read off the row, not discovered by
     // clicking it and counting the ticks that appear.
-    expect(screen.getByText(en.presetsScreen.presetCounts(3, 0, 5))).toBeInTheDocument()
+    expect(screen.getByText(en.presetsScreen.presetCounts(2, 0, 5))).toBeInTheDocument()
     expect(screen.getByText(en.presetsScreen.presetCountsCustom)).toBeInTheDocument()
   })
 
@@ -148,7 +148,7 @@ describe("step 03", () => {
     expect(screen.getByText(en.presetsScreen.emptyHint)).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole("button", { name: "Recommended" }))
-    await userEvent.click(screen.getByRole("button", { name: en.presetsScreen.reviewAction(8) }))
+    await userEvent.click(screen.getByRole("button", { name: en.presetsScreen.reviewAction(7) }))
     expect(onReview).toHaveBeenCalled()
   })
 
