@@ -113,6 +113,11 @@ export interface Part {
   fullBytes: number | null
   /** Locator `getPartText` fetches the full payload with. */
   ref: string | null
+  /**
+   * A Codex `exec` call whose `text` is the decoded commands it ran: the
+   * JavaScript itself, present only when it does more than call them.
+   */
+  script?: string
 }
 
 /** One turn in a transcript. */

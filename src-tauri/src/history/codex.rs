@@ -573,9 +573,16 @@ pub(super) fn codex_detail(
             .or_else(|| s(payload, "input"))
             .unwrap_or(""),
         );
+        // `exec` runs a JavaScript program; show the commands it ran first.
+        let (text, script) = if pty == "custom_tool_call" && name.as_deref() == Some("exec") {
+          super::codex_exec::exec_view(&input)
+        } else {
+          (input, None)
+        };
         assistant(&mut cur, format!("a{i}"), ts).parts.push(Part {
           kind: "toolCall".into(),
-          text: input,
+          text,
+          script,
           name,
           call_id: s(payload, "call_id").map(String::from),
           ..Part::default()

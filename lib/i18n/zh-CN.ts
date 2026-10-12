@@ -3060,6 +3060,7 @@ export const zhCN = {
     roleTool: "工具",
     thinking: "思考",
     toolCall: (name: string) => `工具 · ${name}`,
+    script: "脚本",
     toolResult: "结果",
     toolError: "错误",
     webSearch: "网络搜索",

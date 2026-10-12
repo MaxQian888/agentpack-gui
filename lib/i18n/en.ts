@@ -3346,6 +3346,7 @@ export const en = {
     roleTool: "Tool",
     thinking: "Thinking",
     toolCall: (name: string) => `Tool · ${name}`,
+    script: "Script",
     toolResult: "Result",
     toolError: "Error",
     webSearch: "Web search",

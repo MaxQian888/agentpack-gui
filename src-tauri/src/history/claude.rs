@@ -439,6 +439,7 @@ pub(super) fn claude_detail(path: &Path, lines: &[Value]) -> SessionDetail {
                 truncated: external.as_ref().map(|_| true),
                 full_bytes,
                 full_ref: external.map(|p| format!("file:{p}")),
+                script: None,
               });
             }
             Some("image") => msg.parts.push(Part::text("image", "[image]".into())),
