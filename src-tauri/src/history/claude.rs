@@ -349,7 +349,11 @@ pub(super) fn claude_detail(path: &Path, lines: &[Value]) -> SessionDetail {
       duration_ms: None,
     });
 
-  let mut messages = Vec::new();
+  let mut messages: Vec<Message> = Vec::new();
+  // The API response id of the assistant message last pushed, while it is
+  // still the last message: Claude writes one JSONL line per content block of
+  // a response, each repeating that id, and they are one turn.
+  let mut open_response: Option<String> = None;
   for line in lines {
     let ty = s(line, "type").unwrap_or("");
     if ty == "attachment" {
@@ -358,6 +362,7 @@ pub(super) fn claude_detail(path: &Path, lines: &[Value]) -> SessionDetail {
         msg.ts = s(line, "timestamp").and_then(iso_to_epoch_ms);
         msg.parts.push(part);
         messages.push(msg);
+        open_response = None;
       }
       continue;
     }
@@ -452,9 +457,35 @@ pub(super) fn claude_detail(path: &Path, lines: &[Value]) -> SessionDetail {
       }
       _ => {}
     }
-    if !msg.parts.is_empty() {
-      messages.push(msg);
+    if msg.parts.is_empty() {
+      continue;
     }
+    // Claude writes a tool's result as a `user` record; it is the tool
+    // answering, not the user. It joins the assistant turn that made the call,
+    // so a call and its result read together — and where no such turn is the
+    // last message (a hook event landed between them), it stands as the tool's
+    // own message rather than as something the user said.
+    let tool_results = ty == "user" && msg.parts.iter().all(|p| p.kind == "toolResult");
+    let response = (ty == "assistant")
+      .then(|| s(m, "id"))
+      .flatten()
+      .map(String::from);
+    let continues = match messages.last() {
+      Some(last) if last.role == "assistant" => {
+        tool_results || (response.is_some() && response == open_response)
+      }
+      _ => false,
+    };
+    if continues {
+      // Usage is the whole response's, repeated on every line: kept once.
+      messages.last_mut().unwrap().parts.extend(msg.parts);
+      continue;
+    }
+    if tool_results {
+      msg.role = "tool".into();
+    }
+    open_response = response;
+    messages.push(msg);
   }
   SessionDetail {
     summary,
@@ -595,6 +626,64 @@ mod tests {
   use super::*;
   use serde_json::json;
   use std::path::Path;
+
+  /// A response's blocks arrive as separate lines and its tool results as
+  /// `user` records; the transcript reads them as one assistant turn.
+  #[test]
+  fn reads_a_tool_call_and_its_result_as_one_assistant_turn() {
+    let assistant = |uuid: &str, block: Value| {
+      json!({ "type": "assistant", "uuid": uuid, "timestamp": "2026-01-01T00:00:00.000Z",
+              "message": { "id": "msg_1", "model": "claude-x", "content": [block],
+                           "usage": { "input_tokens": 10, "output_tokens": 5 } } })
+    };
+    let result = |uuid: &str, id: &str| {
+      json!({ "type": "user", "uuid": uuid, "message": { "content": [
+        { "type": "tool_result", "tool_use_id": id, "content": "ok" } ] } })
+    };
+    let lines = vec![
+      json!({ "type": "user", "uuid": "u0", "message": { "content": "check the probe" } }),
+      assistant("a1", json!({ "type": "text", "text": "Looking." })),
+      assistant(
+        "a2",
+        json!({ "type": "tool_use", "id": "t1", "name": "Bash", "input": { "command": "ls" } }),
+      ),
+      result("u1", "t1"),
+      json!({ "type": "assistant", "uuid": "a3", "message": { "id": "msg_2", "content": [
+        { "type": "text", "text": "Done." } ] } }),
+      // A result with no assistant turn right before it is still not the user's.
+      json!({ "type": "attachment", "uuid": "x", "attachment": { "type": "edited_text_file", "filename": "a.rs" } }),
+      result("u2", "t2"),
+    ];
+    let d = claude_detail(Path::new("/p/s.jsonl"), &lines);
+    let shape: Vec<(String, Vec<String>)> = d
+      .messages
+      .iter()
+      .map(|m| {
+        (
+          m.role.clone(),
+          m.parts.iter().map(|p| p.kind.clone()).collect(),
+        )
+      })
+      .collect();
+    let v = |r: &str, k: &[&str]| {
+      (
+        r.to_string(),
+        k.iter().map(|x| x.to_string()).collect::<Vec<_>>(),
+      )
+    };
+    assert_eq!(
+      shape,
+      vec![
+        v("user", &["text"]),
+        v("assistant", &["text", "toolCall", "toolResult"]),
+        v("assistant", &["text"]),
+        v("system", &["event"]),
+        v("tool", &["toolResult"]),
+      ]
+    );
+    // The repeated whole-response usage is counted once.
+    assert_eq!(d.messages[1].usage.as_ref().map(|u| u.output), Some(5));
+  }
 
   /// Parse a session from in-memory lines, as `claude_parse` does on a cache miss.
   fn parse(lines: Vec<Value>) -> ParsedSession {
