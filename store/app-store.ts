@@ -23,6 +23,7 @@ import {
   mcpTargetsFor,
   presetSelection,
   skillTargetsFor,
+  type PresetSelection,
   type Surface,
 } from "@/lib/agentpack/presets"
 import type { UpdateInfo } from "@/lib/tauri/updater"
@@ -160,6 +161,11 @@ interface State {
    * agents, so it needs no GUI variant.
    */
   applyPreset: (presetId: string, surface?: Surface) => void
+  /**
+   * Load an already-resolved selection — the first-run wizard's, which isn't a
+   * named bundle. `applyPreset` is this plus the bundle lookup.
+   */
+  applySelection: (picked: PresetSelection | null) => void
   loadPlan: (plan: Plan) => void
   /** Clear the selection (CLIs / skills / MCP), keeping network config + MCP keys. */
   resetPlan: () => void
@@ -315,12 +321,12 @@ export const useAppStore = create<State>((set, get) => ({
       const proxy = { ...DEFAULT_PROXY, ...s.plan.network.proxy, ...patch }
       return { plan: { ...s.plan, network: { ...s.plan.network, proxy } } }
     }),
-  applyPreset: (presetId, surface) =>
+  // Shared with the Presets page's counts, so the size a bundle claims is
+  // derived from the same code as the plan it loads.
+  applyPreset: (presetId, surface) => get().applySelection(presetSelection(presetId, surface)),
+  applySelection: (picked) =>
     set((s) => {
       const base = { ...emptyPlan(s.plan.os), ...keptOnReselect(s.plan) }
-      // Shared with the welcome wizard's "what this installs" list, so the
-      // preview the user reads is derived from the same code as the plan.
-      const picked = presetSelection(presetId, surface)
       if (!picked) return { plan: base }
       // Keep a deliberate install-channel choice (e.g. Claude Code via the native
       // script instead of npm) for every CLI the bundle still installs; drop the
