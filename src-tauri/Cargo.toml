@@ -34,7 +34,7 @@ tauri-plugin-window-state = "2"
 tauri-plugin-os = "2"
 tauri-plugin-clipboard-manager = "2"
 rusqlite = { version = "0.40", features = ["bundled"] }
-dirs = "6"
+dirs = "7"
 # GitHub direct skill install: fetch a repo tarball (rustls; no default features so
 # responses are never transparently gunzipped — GzDecoder handles the .tar.gz) and
 # unpack it (tar's `unpack` refuses entries escaping the destination).
